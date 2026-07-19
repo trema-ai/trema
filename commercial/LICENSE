@@ -1,0 +1,49 @@
+The Trema Commercial License (the "Commercial License")
+
+Copyright (c) 2026 Trema
+
+With regard to the Trema software found in this directory and its
+subdirectories (the "Software"):
+
+This Software and associated documentation files may only be used in
+production if you (and any entity that you represent) hold a valid Trema
+subscription ("Subscription") for the correct number of user seats, and
+only for the features and capacity included in your Subscription's
+entitlements. Notwithstanding the foregoing, functionality that the
+Software itself makes available without a license file (such as use of
+the surface applications in one-to-one direct messages) may be used in
+production without a Subscription.
+
+Subject to the foregoing, you are free to copy and modify this Software
+for development and testing purposes, without requiring a Subscription.
+You agree that Trema retains all right, title and interest in and to all
+such modifications.
+
+You are not granted any other rights beyond what is expressly stated
+herein. Subject to the foregoing, it is forbidden to copy, merge,
+publish, distribute, sublicense, and/or sell the Software.
+
+This Commercial License applies only to the Software found in this
+directory and its subdirectories; all other parts of this repository are
+licensed under the AGPL-3.0 license, as noted in the LICENSE file at the
+root of this repository. Notwithstanding the above, any file in this
+directory that is served client-side as an image, font, cascading
+stylesheet (CSS), or file which produces or is compiled, arranged or
+marked up to produce JavaScript, is licensed under the MIT (Expat)
+license; the entitlement checks governing the features remain
+server-side and under this Commercial License.
+
+The full text of this Commercial License shall be included in all copies
+or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For all third-party components incorporated into the Software, those
+components are licensed under the original license provided by the owner
+of the applicable component.
