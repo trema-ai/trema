@@ -3,15 +3,18 @@ import type { LoopResult } from "../loop/index.js";
 import type { ContextSession, Engine, RunRecord, RunStore } from "../ports/index.js";
 import type { ThreadDispatchLock } from "../dispatch/index.js";
 
+/** Metadata and optional execution task for a new run. */
 export interface CreateRunInput {
   threadRef: string;
   trigger: Exclude<Trigger, "resume">;
   sessionId?: string;
   retryOfRunId?: string;
   retryAttempt?: number;
+  /** Task enqueued after the run record is created. */
   execute?: () => Promise<void>;
 }
 
+/** Terminal state, usage, and session messages for a run. */
 export interface FinishRunInput {
   runId: string;
   outcome: "completed" | "failed" | "cancelled";
@@ -20,13 +23,17 @@ export interface FinishRunInput {
   messages?: TranscriptMessage[];
 }
 
+/** Options for creating a retry run. */
 export interface RetryRunInput {
   runId: string;
+  /** Enforces the configured automatic retry limit when true. */
   automatic?: boolean;
+  /** Delay in milliseconds before the retry run is created. */
   retryAfterMs?: number;
   execute?: (run: RunRecord) => Promise<void>;
 }
 
+/** Persistence, scheduling, context, locking, and policy dependencies for run lifecycle operations. */
 export interface RunLifecycleOptions {
   store: RunStore;
   engine: Engine;
@@ -34,10 +41,16 @@ export interface RunLifecycleOptions {
   lock: ThreadDispatchLock;
   createId: () => string;
   now: () => string;
+  /** Delay implementation used for retry-after handling. */
   sleep?: (milliseconds: number) => Promise<void>;
+  /**
+   * Maximum automatic retries in a chain.
+   * @defaultValue 2
+   */
   maxAutoRetries?: number;
 }
 
+/** Signals an abort without the durable stop fact required to classify cancellation. */
 export class InfrastructureAbortError extends Error {
   constructor(runId: string) {
     super(`run aborted without a stop intent: ${runId}`);
@@ -47,6 +60,7 @@ export class InfrastructureAbortError extends Error {
 
 class AutomaticRetryLimitError extends Error {}
 
+/** Coordinates run records, execution, terminal state, retries, stops, and session reporting. */
 export class RunLifecycle {
   readonly #options: RunLifecycleOptions;
   readonly #aborts = new Map<string, AbortController>();
@@ -55,6 +69,7 @@ export class RunLifecycle {
     this.#options = options;
   }
 
+  /** Creates a queued run and optionally enqueues its execution task. */
   async create(input: CreateRunInput): Promise<RunRecord> {
     const run: RunRecord = {
       id: this.#options.createId(),
@@ -71,6 +86,7 @@ export class RunLifecycle {
     return run;
   }
 
+  /** Transitions a queued or parked run to running and records its trigger. */
   async start(runId: string, trigger?: Trigger): Promise<void> {
     const run = await this.#requireRun(runId);
     await this.#options.store.transitionRun({
@@ -80,6 +96,10 @@ export class RunLifecycle {
     });
   }
 
+  /**
+   * Commits terminal state and promotes late steering to thread follow-ups.
+   * It then reports messages and closes an attached context session.
+   */
   async finish(input: FinishRunInput): Promise<void> {
     const run = await this.#requireRun(input.runId);
     await this.#options.lock.run(run.threadRef, async () => {
@@ -110,6 +130,12 @@ export class RunLifecycle {
     this.#aborts.delete(run.id);
   }
 
+  /**
+   * Starts a run, executes its loop, and finishes terminal results.
+   * Paused results leave the run parked and end this execution.
+   * Retryable errors create a new run until the automatic retry limit.
+   * @throws {InfrastructureAbortError} When execution aborts without a recorded stop intent.
+   */
   async execute(
     runId: string,
     loop: (abort: AbortSignal, runId: string) => Promise<LoopResult>,
@@ -162,6 +188,7 @@ export class RunLifecycle {
     return result;
   }
 
+  /** Records a stop intent before aborting active execution. */
   async stop(intentId: string, runId: string, by: { principalId: string; displayName?: string }): Promise<void> {
     await this.#options.store.recordStop({
       intentId,
@@ -172,6 +199,11 @@ export class RunLifecycle {
     this.#aborts.get(runId)?.abort();
   }
 
+  /**
+   * Creates a queued retry for a failed or stale run after any requested delay.
+   * Automatic retries stop after `maxAutoRetries`; manual retries do not use that limit.
+   * @throws {Error} When the source run is not failed or stale.
+   */
   async retry(input: RetryRunInput): Promise<RunRecord> {
     const failed = await this.#requireRun(input.runId);
     if (!["failed", "stale"].includes(failed.state)) {
@@ -201,6 +233,7 @@ export class RunLifecycle {
     return retry;
   }
 
+  /** Reports feedback when the run has a context session. */
   async feedback(runId: string, value: string): Promise<void> {
     const run = await this.#requireRun(runId);
     if (run.sessionId !== undefined) {

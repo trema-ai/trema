@@ -8,6 +8,7 @@ import type {
   RunStore,
 } from "../ports/index.js";
 
+/** Principal decision that resolves a blocking elicitation. */
 export interface ResolveInterruptInput {
   elicitationId: string;
   optionId: string;
@@ -17,15 +18,23 @@ export interface ResolveInterruptInput {
   reason?: string;
 }
 
+/** Persistence, context, identity, and scheduling dependencies for interrupts. */
 export interface InterruptManagerOptions {
   store: RunStore;
   context: ContextSession;
   now: () => string;
+  /** Determines whether a principal may answer non-approval elicitations. */
   isParticipant: (run: RunRecord, principal: PrincipalRef) => Promise<boolean> | boolean;
+  /** Schedules fresh execution after a successful resolution. */
   enqueueResume: (run: RunRecord) => Promise<void>;
+  /**
+   * Principal recorded when an elicitation expires.
+   * @defaultValue `{ principalId: "system" }`
+   */
   expiryPrincipal?: PrincipalRef;
 }
 
+/** Provider approval, user question, or hook confirmation normalized as an elicitation. */
 export type InterruptSource =
   | {
       type: "approval_required";
@@ -47,6 +56,11 @@ export type InterruptSource =
       options?: Array<{ id: string; label: string; style?: "primary" | "danger" }>;
     };
 
+/**
+ * Converts an interrupt source into a blocking elicitation event.
+ * Approval sources include approve and deny options.
+ * Confirmation sources use those options when none are provided.
+ */
 export function createBlockingElicitation(
   elicitationId: string,
   source: InterruptSource,
@@ -90,6 +104,7 @@ export function createBlockingElicitation(
   };
 }
 
+/** Resolves or expires blocking elicitations and schedules fresh execution after resolution. */
 export class InterruptManager {
   readonly #options: InterruptManagerOptions;
   readonly #resolutionTails = new Map<string, Promise<void>>();
@@ -98,6 +113,13 @@ export class InterruptManager {
     this.#options = options;
   }
 
+  /**
+   * Atomically records the first valid resolution and schedules resume.
+   * Approval resolutions update the context session.
+   * An `always` scope also proposes a persistent policy edit.
+   * Later attempts return `already-resolved` without repeating side effects.
+   * @throws {Error} When the run, principal, expiry, or decision is invalid.
+   */
   async resolve(input: ResolveInterruptInput): Promise<"resolved" | "already-resolved"> {
     return this.#withResolutionLock(input.elicitationId, () => this.#resolve(input));
   }
@@ -148,6 +170,12 @@ export class InterruptManager {
     return "resolved";
   }
 
+  /**
+   * Resolves an elapsed elicitation as expired and marks its parked run stale.
+   * It does not schedule resume.
+   * Later attempts return `already-resolved`.
+   * @throws {Error} When the elicitation has not elapsed.
+   */
   async expire(elicitationId: string): Promise<"resolved" | "already-resolved"> {
     const record = await this.#requireElicitation(elicitationId);
     if (record.resolution !== undefined) return "already-resolved";

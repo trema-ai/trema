@@ -1,5 +1,6 @@
 import type { Engine, EngineTask } from "../ports/index.js";
 
+/** In-memory reference engine with serial execution per thread and concurrent execution across threads. */
 export class InMemoryEngine implements Engine {
   readonly #tails = new Map<string, Promise<void>>();
   readonly #pending: Promise<void>[] = [];

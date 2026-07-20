@@ -9,25 +9,31 @@ import type {
   ToolExecutor,
 } from "../ports/index.js";
 
+/** Calls, definitions, executor, and hooks for one assistant-ordered tool batch. */
 export interface ToolBatchInput {
   calls: ToolCall[];
   tools: ToolDef[];
   executor: ToolExecutor;
+  /** Resolved approvals indexed by the original call identifier. */
   executionOptions?: Readonly<Record<string, ToolExecutionOptions>>;
   beforeToolCall?: BeforeToolCallHook;
   afterToolCall?: AfterToolCallHook;
+  /** Existing gate that stops execution before its referenced call. */
   gate?: {
     callId: string;
     elicitation: Extract<RunEventData, { type: "elicitation" }>;
   };
+  /** Receives tool and recoverable hook events as they occur. */
   onEvent?: (event: RunEventData) => Promise<void> | void;
 }
 
+/** Tool call that remains after a blocking elicitation. */
 export interface PendingToolCall {
   callId: string;
   elicitationId: string;
 }
 
+/** Ordered tool outputs, transcript messages, events, and any pending elicitation. */
 export interface ToolBatchResult {
   results: ToolExecutionResult[];
   messages: TranscriptMessage[];
@@ -50,6 +56,10 @@ interface PreparedBatch {
   pendingToolCall?: PendingToolCall;
 }
 
+/**
+ * Executes calls in parallel unless any definition requires sequential execution.
+ * Results retain assistant order, and a blocking elicitation stops before its call.
+ */
 export async function executeToolBatch(input: ToolBatchInput): Promise<ToolBatchResult> {
   const prepared = await prepareCalls(input);
   const mustRunSequentially = prepared.calls.some(

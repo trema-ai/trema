@@ -15,6 +15,7 @@ import type {
   TurnRecord,
 } from "../ports/index.js";
 
+/** In-memory reference implementation of the complete `RunStore` contract. */
 export class InMemoryRunStore implements RunStore {
   readonly #clock: Clock;
   readonly #runs = new Map<string, RunRecord>();
