@@ -1,0 +1,18 @@
+{
+  "name": "@trema/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "blume dev",
+    "build": "blume build",
+    "stage:assets": "rm -rf .cloudflare && mkdir -p .cloudflare/docs && cp -R dist/. .cloudflare/docs/ && mv .cloudflare/docs/_headers .cloudflare/_headers",
+    "deploy": "blume build && pnpm run stage:assets && wrangler deploy"
+  },
+  "dependencies": {
+    "blume": "^1.1.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.112.0"
+  }
+}
