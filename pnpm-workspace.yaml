@@ -12,6 +12,8 @@ allowBuilds:
   "@prisma/engines": true
   esbuild: true
   prisma: true
+  sharp: true
+  workerd: true
 
 # Fail on a lockfile that does not match package.json (CI is stricter still).
 strictPeerDependencies: true
