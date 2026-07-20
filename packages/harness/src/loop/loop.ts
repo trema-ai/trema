@@ -1,0 +1,413 @@
+import type {
+  ModelRef,
+  StopReason,
+  ToolCall,
+  ToolDef,
+  TranscriptMessage,
+  Usage,
+} from "../core/index.js";
+import type { RunEventData } from "../events/index.js";
+import type {
+  HarnessHooks,
+  ModelPort,
+  RunStore,
+  SessionStanding,
+  ThinkingLevel,
+  ToolExecutionResult,
+  ToolExecutor,
+  TurnRecord,
+  TurnResult,
+} from "../ports/index.js";
+import { executeToolBatch } from "./tool-batch.js";
+
+export interface LoopInput {
+  runId: string;
+  threadRef: string;
+  model: ModelRef;
+  standing: SessionStanding;
+  threadMessages: TranscriptMessage[];
+  tools: ToolDef[];
+  modelPort: ModelPort;
+  store: RunStore;
+  toolExecutor: ToolExecutor;
+  abort: AbortSignal;
+  thinking?: ThinkingLevel;
+  budget?: { maxOutputTokens?: number };
+  /** Hard cap on turns per run; the shouldStop hook can only stop earlier. */
+  maxTurns?: number;
+  hooks?: HarnessHooks;
+}
+
+export const DEFAULT_MAX_TURNS = 50;
+
+export interface FinishedLoopResult {
+  status: "finished";
+  outcome: "completed" | "failed" | "cancelled";
+  stopReason: StopReason;
+  turns: number;
+  usage: Usage;
+}
+
+export interface PausedLoopResult {
+  status: "paused";
+  stopReason: "paused";
+  turn: number;
+  elicitation: Extract<RunEventData, { type: "elicitation" }>;
+  usage: Usage;
+}
+
+export type LoopResult = FinishedLoopResult | PausedLoopResult;
+
+export async function runLoop(input: LoopInput): Promise<LoopResult> {
+  const committed = await input.store.listTurns(input.runId);
+  const messages = assembleCommittedMessages(input.threadMessages, committed);
+  const instructions = assembleInstructions(input.standing);
+  let usage = sumUsage(committed.map(({ usage: turnUsage }) => turnUsage));
+  let turn = committed.length;
+  let lastStopReason: StopReason = "stop";
+
+  while (true) {
+    while (true) {
+      const steering = await input.store.drainSteering(input.runId);
+      messages.push(...steering.map(({ message }) => message));
+      const steeringEvents: RunEventData[] = steering.map(({ author, message }) => ({
+        type: "steering",
+        author,
+        text: messageText(message),
+      }));
+      await appendEvents(input, steeringEvents);
+
+      const baseline = {
+        model: input.model,
+        instructions,
+        messages: [...messages],
+        tools: [...input.tools],
+        turn,
+      };
+      let prepared = baseline;
+      const preparationEvents: RunEventData[] = [];
+      if (input.hooks?.prepareTurn !== undefined) {
+        try {
+          const hookResult = await input.hooks.prepareTurn(baseline);
+          prepared = {
+            model: hookResult.model,
+            instructions: hookResult.instructions,
+            messages: hookResult.messages,
+            tools: hookResult.tools,
+            turn,
+          };
+          preparationEvents.push(...(hookResult.events ?? []));
+        } catch (error) {
+          preparationEvents.push(hookErrorEvent("prepareTurn", error));
+        }
+      }
+      await appendEvents(input, preparationEvents);
+
+      const stream = input.modelPort.streamTurn({
+        model: prepared.model,
+        instructions: prepared.instructions,
+        messages: [...prepared.messages],
+        tools: [...prepared.tools],
+        ...(input.thinking === undefined ? {} : { thinking: input.thinking }),
+        ...(input.budget === undefined ? {} : { budget: input.budget }),
+        abort: input.abort,
+      });
+      const streamEvents: RunEventData[] = [];
+      for await (const event of stream) {
+        streamEvents.push(event);
+        await input.store.appendEvent(input.runId, event);
+      }
+      const result = await stream.result;
+      lastStopReason = result.stopReason;
+      usage = addUsage(usage, result.usage);
+
+      let toolResults: TranscriptMessage[] = [];
+      let pause = blockingElicitation(streamEvents);
+      let pendingToolCall: TurnRecord["pendingToolCall"];
+
+      if (result.stopReason === "paused" && pause === undefined) {
+        // A port reporting paused must have emitted the blocking elicitation;
+        // without one the run could never be resumed, so fail as data.
+        await input.store.appendEvent(input.runId, {
+          type: "error",
+          message: "model port reported paused without a blocking elicitation",
+          recoverable: false,
+        });
+        await commit(input, turn, prepared.model, result, toolResults);
+        observeCommit(input, turn, result, toolResults);
+        return {
+          status: "finished",
+          outcome: "failed",
+          stopReason: "error",
+          turns: turn + 1,
+          usage,
+        };
+      }
+
+      if (result.stopReason === "error" || result.stopReason === "aborted") {
+        await commit(input, turn, prepared.model, result, toolResults);
+        observeCommit(input, turn, result, toolResults);
+        return {
+          status: "finished",
+          outcome: result.stopReason === "error" ? "failed" : "cancelled",
+          stopReason: result.stopReason,
+          turns: turn + 1,
+          usage,
+        };
+      }
+
+      if (result.stopReason === "length" && result.toolCalls.length > 0) {
+        const failed = result.toolCalls.map(truncatedToolResult);
+        toolResults = failed.map(toolResultMessage);
+        await appendEvents(input, failed.map(toolResultEvent));
+      } else if (result.toolCalls.length > 0) {
+        const streamGate = pause === undefined ? undefined : gatedStreamCall(result.toolCalls, pause);
+        const batch = await executeToolBatch({
+          calls: result.toolCalls,
+          tools: prepared.tools,
+          executor: input.toolExecutor,
+          ...(streamGate === undefined
+            ? {}
+            : { gate: { callId: streamGate.callId, elicitation: pause! } }),
+          onEvent: async (event) => {
+            await input.store.appendEvent(input.runId, event);
+          },
+          ...(input.hooks?.beforeToolCall === undefined
+            ? {}
+            : { beforeToolCall: input.hooks.beforeToolCall }),
+          ...(input.hooks?.afterToolCall === undefined
+            ? {}
+            : { afterToolCall: input.hooks.afterToolCall }),
+        });
+        toolResults = batch.messages;
+        pause = batch.pendingElicitation ?? pause;
+        pendingToolCall = batch.pendingToolCall;
+      }
+
+      if (pause !== undefined) {
+        await input.store.appendEvent(input.runId, { type: "segment-end", reason: "paused" });
+        const pausedResult: TurnResult = { ...result, stopReason: "paused" };
+        await commit(input, turn, prepared.model, pausedResult, toolResults, pendingToolCall);
+        observeCommit(input, turn, pausedResult, toolResults);
+        return { status: "paused", stopReason: "paused", turn, elicitation: pause, usage };
+      }
+
+      const contextAfterTurn = [...messages, result.message, ...toolResults];
+      const stop = await shouldStop(input, turn, result, contextAfterTurn);
+      await commit(input, turn, prepared.model, result, toolResults);
+      observeCommit(input, turn, result, toolResults);
+      messages.push(result.message, ...toolResults);
+      turn += 1;
+
+      if (stop || turn >= (input.maxTurns ?? DEFAULT_MAX_TURNS)) {
+        return {
+          status: "finished",
+          outcome: "completed",
+          stopReason: result.stopReason,
+          turns: turn,
+          usage,
+        };
+      }
+      if (result.toolCalls.length > 0 || (await input.store.hasSteering(input.runId))) {
+        continue;
+      }
+      break;
+    }
+
+    const followUps = await input.store.drainFollowUps(input.threadRef);
+    if (followUps.length > 0) {
+      messages.push(...followUps.map(({ message }) => message));
+      continue;
+    }
+
+    return {
+      status: "finished",
+      outcome: "completed",
+      stopReason: lastStopReason,
+      turns: turn,
+      usage,
+    };
+  }
+}
+
+async function commit(
+  input: LoopInput,
+  turn: number,
+  model: ModelRef,
+  result: TurnResult,
+  toolResults: TranscriptMessage[],
+  pendingToolCall?: TurnRecord["pendingToolCall"],
+): Promise<void> {
+  await input.store.commitTurn({
+    turn: {
+      runId: input.runId,
+      index: turn,
+      model,
+      message: result.message,
+      toolResults,
+      ...(pendingToolCall === undefined ? {} : { pendingToolCall }),
+      stopReason: result.stopReason,
+      usage: result.usage,
+    },
+  });
+}
+
+async function shouldStop(
+  input: LoopInput,
+  turn: number,
+  result: TurnResult,
+  messages: TranscriptMessage[],
+): Promise<boolean> {
+  if (input.hooks?.shouldStop === undefined) return false;
+  try {
+    return await input.hooks.shouldStop({ turn, result, messages });
+  } catch (error) {
+    await input.store.appendEvent(input.runId, hookErrorEvent("shouldStop", error));
+    return false;
+  }
+}
+
+async function appendEvents(input: LoopInput, events: RunEventData[]): Promise<void> {
+  for (const event of events) {
+    await input.store.appendEvent(input.runId, event);
+  }
+}
+
+function observeCommit(
+  input: LoopInput,
+  turn: number,
+  result: TurnResult,
+  toolResults: TranscriptMessage[],
+): void {
+  if (input.hooks?.onTurnCommitted === undefined) return;
+  const record = (error: unknown): void => {
+    void input.store
+      .appendEvent(input.runId, hookErrorEvent("onTurnCommitted", error))
+      .catch(() => undefined);
+  };
+  try {
+    void Promise.resolve(input.hooks.onTurnCommitted({ turn, result, toolResults })).catch(record);
+  } catch (error) {
+    record(error);
+  }
+}
+
+function assembleCommittedMessages(
+  threadMessages: TranscriptMessage[],
+  turns: TurnRecord[],
+): TranscriptMessage[] {
+  return [
+    ...threadMessages,
+    ...turns.flatMap(({ message, toolResults }) => [message, ...toolResults]),
+  ];
+}
+
+function assembleInstructions(standing: SessionStanding): string {
+  const sections = [standing.instructions];
+  if (standing.rules.length > 0) {
+    sections.push(
+      ["Rules:", ...standing.rules.map((rule) => `[${rule.type}:${rule.id}] ${rule.content}`)].join(
+        "\n",
+      ),
+    );
+  }
+  if (standing.skillIndex.length > 0) {
+    sections.push(
+      [
+        "Skills:",
+        ...standing.skillIndex.map((skill) => `- ${skill.name}: ${skill.description}`),
+      ].join("\n"),
+    );
+  }
+  return sections.filter((section) => section.length > 0).join("\n\n");
+}
+
+function blockingElicitation(
+  events: RunEventData[],
+): Extract<RunEventData, { type: "elicitation" }> | undefined {
+  return events.find(
+    (event): event is Extract<RunEventData, { type: "elicitation" }> =>
+      event.type === "elicitation" && event.blocking,
+  );
+}
+
+function gatedStreamCall(
+  calls: ToolCall[],
+  elicitation: Extract<RunEventData, { type: "elicitation" }>,
+): ToolCall | undefined {
+  const referenced = calls.find(({ callId }) => callId === elicitation.reference?.callId);
+  if (referenced !== undefined) return referenced;
+
+  // SDK approval events are expected to identify their call. If an adapter
+  // omits or supplies an unknown callId, gate the first call so no later call
+  // can leapfrog an unresolved approval.
+  return calls[0];
+}
+
+function truncatedToolResult(call: ToolCall): ToolExecutionResult {
+  const summary = "tool call was not executed because its input may have been truncated";
+  return {
+    callId: call.callId,
+    status: "error",
+    summary,
+    output: { error: summary },
+  };
+}
+
+function toolResultMessage(result: ToolExecutionResult): TranscriptMessage {
+  return {
+    role: "toolResult",
+    toolCallId: result.callId,
+    blocks: [{ type: "text", text: result.summary }],
+    providerMeta: { status: result.status, output: result.output },
+  };
+}
+
+function toolResultEvent(result: ToolExecutionResult): RunEventData {
+  return {
+    type: "tool-result",
+    callId: result.callId,
+    status: result.status,
+    summary: result.summary,
+  };
+}
+
+function hookErrorEvent(name: string, error: unknown): RunEventData {
+  return {
+    type: "error",
+    message: `${name} hook failed: ${error instanceof Error ? error.message : String(error)}`,
+    recoverable: true,
+  };
+}
+
+function messageText(message: TranscriptMessage): string {
+  return message.blocks
+    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+    .join("\n");
+}
+
+function sumUsage(usages: Usage[]): Usage {
+  return usages.reduce(addUsage, emptyUsage());
+}
+
+function addUsage(left: Usage, right: Usage): Usage {
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
+    cacheReadTokens: left.cacheReadTokens + right.cacheReadTokens,
+    cacheWriteTokens: left.cacheWriteTokens + right.cacheWriteTokens,
+    costUsd: left.costUsd + right.costUsd,
+  };
+}
+
+function emptyUsage(): Usage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  };
+}
