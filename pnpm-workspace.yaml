@@ -8,7 +8,10 @@ catalog:
   typescript: ^7.0.2
 
 # Lifecycle scripts are blocked by default; allow them per package.
-allowBuilds: {}
+allowBuilds:
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
 
 # Fail on a lockfile that does not match package.json (CI is stricter still).
 strictPeerDependencies: true
