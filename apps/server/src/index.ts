@@ -1,11 +1,13 @@
 import { serve } from "@hono/node-server";
 
 import { createApp } from "./app.js";
-import { createPrismaClient } from "./db.js";
+import { createAuth } from "./lib/auth/index.js";
+import { createPrismaClient } from "./lib/db/index.js";
 import { env } from "./lib/env/index.js";
 
 const db = createPrismaClient(env.DATABASE_URL);
-const app = createApp({ db });
+const auth = createAuth({ db, env });
+const app = createApp({ db, auth, webOrigins: env.TREMA_WEB_ORIGINS });
 const server = serve(
   {
     fetch: app.fetch,

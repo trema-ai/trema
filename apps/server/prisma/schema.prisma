@@ -6,3 +6,230 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+model User {
+  id            String      @id
+  name          String
+  email         String
+  emailVerified Boolean     @default(false)
+  image         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  principals    Principal[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id          String   @id
+  expiresAt   DateTime
+  token       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  ipAddress   String?
+  userAgent   String?
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrgId String?
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+enum PrincipalKind {
+  human
+  agent
+}
+
+enum ScopeKind {
+  org
+  space
+  personal
+}
+
+enum Role {
+  owner
+  admin
+  member
+  viewer
+}
+
+model Org {
+  id                 String              @id @default(uuid(7))
+  name               String
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  principals         Principal[]
+  identityLinks      IdentityLink[]
+  scopes             Scope[]
+  grants             Grant[]
+  invites            Invite[]
+  serviceCredentials ServiceCredential[]
+  auditLogs          AuditLog[]
+}
+
+model Principal {
+  id                        String              @id @default(uuid(7))
+  orgId                     String
+  kind                      PrincipalKind
+  displayName               String
+  authId                    String?
+  email                     String?
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+  org                       Org                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  auth                      User?               @relation(fields: [authId], references: [id], onDelete: SetNull)
+  identityLinks             IdentityLink[]
+  ownedScopes               Scope[]             @relation("ScopeOwner")
+  grants                    Grant[]
+  createdInvites            Invite[]            @relation("InviteCreator")
+  redeemedInvites           Invite[]            @relation("InviteRedeemer")
+  serviceCredentials        ServiceCredential[] @relation("CredentialPrincipal")
+  createdServiceCredentials ServiceCredential[] @relation("CredentialCreator")
+  auditLogs                 AuditLog[]          @relation("AuditActor")
+
+  @@unique([orgId, authId])
+  @@unique([orgId, id])
+  @@index([authId])
+  @@index([orgId, email])
+}
+
+model IdentityLink {
+  id             String    @id @default(uuid(7))
+  orgId          String
+  surface        String
+  externalUserId String
+  principalId    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  org            Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  principal      Principal @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, surface, externalUserId])
+  @@index([orgId, principalId])
+}
+
+model Scope {
+  id        String     @id @default(uuid(7))
+  orgId     String
+  kind      ScopeKind
+  name      String
+  ownerId   String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner     Principal? @relation("ScopeOwner", fields: [orgId, ownerId], references: [orgId, id], onDelete: Restrict)
+  grants    Grant[]
+  invites   Invite[]
+
+  @@unique([orgId, id])
+  @@index([orgId, ownerId])
+}
+
+model Grant {
+  id          String    @id @default(uuid(7))
+  orgId       String
+  principalId String
+  role        Role
+  scopeId     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  org         Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  principal   Principal @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  scope       Scope     @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, principalId, scopeId])
+  @@index([orgId, principalId])
+  @@index([orgId, scopeId])
+  @@map("grants")
+}
+
+model Invite {
+  id           String     @id @default(uuid(7))
+  orgId        String
+  role         Role
+  scopeId      String
+  tokenHash    String     @unique
+  expiresAt    DateTime
+  redeemedAt   DateTime?
+  redeemedById String?
+  createdById  String
+  createdAt    DateTime   @default(now())
+  org          Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope        Scope      @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  redeemedBy   Principal? @relation("InviteRedeemer", fields: [orgId, redeemedById], references: [orgId, id], onDelete: Restrict)
+  createdBy    Principal  @relation("InviteCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
+
+  @@index([orgId, scopeId])
+  @@index([orgId, redeemedById])
+  @@index([orgId, createdById])
+  @@index([orgId, expiresAt])
+}
+
+model ServiceCredential {
+  id          String    @id @default(uuid(7))
+  orgId       String
+  principalId String
+  name        String
+  tokenHash   String    @unique
+  revokedAt   DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+  org         Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  principal   Principal @relation("CredentialPrincipal", fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  createdBy   Principal @relation("CredentialCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
+
+  @@index([orgId, principalId])
+  @@index([orgId, createdById])
+}
+
+model AuditLog {
+  id               String     @id @default(uuid(7))
+  orgId            String
+  actorPrincipalId String?
+  action           String
+  subject          String
+  payload          Json
+  createdAt        DateTime   @default(now())
+  org              Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actor            Principal? @relation("AuditActor", fields: [orgId, actorPrincipalId], references: [orgId, id], onDelete: Restrict)
+
+  @@index([orgId, actorPrincipalId])
+  @@index([orgId, createdAt])
+}
