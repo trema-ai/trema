@@ -4,6 +4,7 @@ import type {
   AfterToolCallHook,
   BeforeToolCallHook,
   BeforeToolCallResult,
+  ToolExecutionOptions,
   ToolExecutionResult,
   ToolExecutor,
 } from "../ports/index.js";
@@ -12,6 +13,7 @@ export interface ToolBatchInput {
   calls: ToolCall[];
   tools: ToolDef[];
   executor: ToolExecutor;
+  executionOptions?: Readonly<Record<string, ToolExecutionOptions>>;
   beforeToolCall?: BeforeToolCallHook;
   afterToolCall?: AfterToolCallHook;
   gate?: {
@@ -194,7 +196,11 @@ async function executePreparedCall(
 
   let result: ToolExecutionResult;
   try {
-    result = await input.executor.execute(prepared.call, prepared.definition);
+    result = await input.executor.execute(
+      prepared.call,
+      prepared.definition,
+      input.executionOptions?.[prepared.original.callId],
+    );
   } catch (error) {
     result = errorResult(prepared.original, `tool execution failed: ${errorMessage(error)}`);
   }

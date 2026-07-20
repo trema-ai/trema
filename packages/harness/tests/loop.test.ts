@@ -171,21 +171,42 @@ describe("runLoop", () => {
   });
 
   it("finishes model errors as data", async () => {
+    const error = { message: "provider failed", retryable: true, retryAfterMs: 2500 };
     const fixture = await setup([
       {
         events: [{ type: "error", message: "provider failed", recoverable: true }],
-        result: result("", "error"),
+        result: { ...result("", "error"), error },
       },
     ]);
 
     const loopResult = await runLoop(loopInput(fixture));
 
-    expect(loopResult).toMatchObject({ status: "finished", outcome: "failed", stopReason: "error" });
+    expect(loopResult).toMatchObject({
+      status: "finished",
+      outcome: "failed",
+      stopReason: "error",
+      error,
+    });
     expect((await fixture.store.listEvents("run-1"))[0]?.event).toEqual({
       type: "error",
       message: "provider failed",
       recoverable: true,
     });
+  });
+
+  it("discards an aborted turn and its partial events", async () => {
+    const fixture = await setup([
+      {
+        events: [{ type: "text-delta", blockId: "text-1", delta: "partial" }],
+        result: result("partial", "aborted"),
+      },
+    ]);
+
+    const loopResult = await runLoop(loopInput(fixture));
+
+    expect(loopResult).toMatchObject({ outcome: "cancelled", turns: 0 });
+    expect(await fixture.store.listTurns("run-1")).toEqual([]);
+    expect(await fixture.store.listEvents("run-1")).toEqual([]);
   });
 
   it("returns paused on a pending blocking elicitation", async () => {

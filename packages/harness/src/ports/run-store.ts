@@ -14,6 +14,12 @@ export interface RunRecord {
   state: RunState;
   trigger: Trigger;
   turnCount: number;
+  sessionId?: string;
+  retryOfRunId?: string;
+  retryAttempt?: number;
+  usage?: Usage;
+  error?: string;
+  runGrants?: string[];
 }
 
 export interface TurnRecord {
@@ -29,6 +35,9 @@ export interface TurnRecord {
 
 export interface CommitTurnInput {
   turn: TurnRecord;
+  events?: RunEventData[];
+  state?: RunState;
+  elicitation?: ElicitationRecord;
 }
 
 export interface CommitTurnResult {
@@ -41,17 +50,67 @@ export interface QueuedInput {
   author: PrincipalRef;
 }
 
+export interface StopRecord {
+  intentId: string;
+  runId: string;
+  by: PrincipalRef;
+  at: string;
+}
+
+export type ResolutionScope = "once" | "run" | "always";
+
+export interface ElicitationResolution {
+  optionId: string;
+  decision: "approved" | "denied" | "answered" | "expired";
+  scope: ResolutionScope;
+  by: PrincipalRef;
+  at: string;
+  reason?: string;
+}
+
+export interface ElicitationRecord {
+  runId: string;
+  event: Extract<RunEventData, { type: "elicitation" }>;
+  expiresAt?: string;
+  resolution?: ElicitationResolution;
+}
+
+export interface RunTransitionInput {
+  runId: string;
+  state: RunState;
+  event?: RunEventData;
+  usage?: Usage;
+  error?: string;
+}
+
+export type RecordIntentResult = "recorded" | "duplicate";
+export type ResolveElicitationResult = "resolved" | "already-resolved";
+
 export interface RunStore {
   createRun(run: RunRecord): Promise<void>;
   getRun(runId: string): Promise<RunRecord | undefined>;
+  findActiveRun(threadRef: string): Promise<RunRecord | undefined>;
   updateRunState(runId: string, state: RunState): Promise<void>;
+  transitionRun(input: RunTransitionInput): Promise<void>;
   listTurns(runId: string): Promise<TurnRecord[]>;
   commitTurn(input: CommitTurnInput): Promise<CommitTurnResult>;
+  completePendingTurn(runId: string, turnIndex: number, toolResults: TranscriptMessage[]): Promise<void>;
   appendEvent(runId: string, event: RunEventData): Promise<RunEvent>;
   listEvents(runId: string): Promise<RunEvent[]>;
+  eventCursor(runId: string): Promise<number>;
+  discardEventsAfter(runId: string, cursor: number): Promise<void>;
   enqueueSteering(runId: string, input: QueuedInput): Promise<void>;
   drainSteering(runId: string): Promise<QueuedInput[]>;
   hasSteering(runId: string): Promise<boolean>;
   enqueueFollowUp(threadRef: string, input: QueuedInput): Promise<void>;
   drainFollowUps(threadRef: string): Promise<QueuedInput[]>;
+  recordIntent(intentId: string): Promise<RecordIntentResult>;
+  recordStop(stop: StopRecord): Promise<void>;
+  getStop(runId: string): Promise<StopRecord | undefined>;
+  getElicitation(elicitationId: string): Promise<ElicitationRecord | undefined>;
+  resolveElicitation(
+    elicitationId: string,
+    resolution: ElicitationResolution,
+  ): Promise<ResolveElicitationResult>;
+  expireElicitation(elicitationId: string, by: PrincipalRef, at: string): Promise<ResolveElicitationResult>;
 }

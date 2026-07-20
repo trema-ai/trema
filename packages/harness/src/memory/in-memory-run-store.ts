@@ -5,9 +5,13 @@ import type {
   Clock,
   CommitTurnInput,
   CommitTurnResult,
+  ElicitationRecord,
+  ElicitationResolution,
   QueuedInput,
   RunRecord,
   RunStore,
+  RunTransitionInput,
+  StopRecord,
   TurnRecord,
 } from "../ports/index.js";
 
@@ -18,6 +22,9 @@ export class InMemoryRunStore implements RunStore {
   readonly #events = new Map<string, RunEvent[]>();
   readonly #steering = new Map<string, QueuedInput[]>();
   readonly #followUps = new Map<string, QueuedInput[]>();
+  readonly #intents = new Set<string>();
+  readonly #stops = new Map<string, StopRecord>();
+  readonly #elicitations = new Map<string, ElicitationRecord>();
 
   constructor(clock: Clock) {
     this.#clock = clock;
@@ -38,12 +45,37 @@ export class InMemoryRunStore implements RunStore {
     return run === undefined ? undefined : { ...run };
   }
 
+  async findActiveRun(threadRef: string): Promise<RunRecord | undefined> {
+    const active = [...this.#runs.values()]
+      .filter(
+        (run) =>
+          run.threadRef === threadRef &&
+          ["queued", "running", "awaiting_approval", "awaiting_input"].includes(run.state),
+      )
+      .at(-1);
+    return active === undefined ? undefined : { ...active };
+  }
+
   async updateRunState(runId: string, state: RunState): Promise<void> {
     const run = this.#requireRun(runId);
     if (!canTransition(run.state, state)) {
       throw new Error(`illegal run state transition: ${run.state} -> ${state}`);
     }
     this.#runs.set(runId, { ...run, state });
+  }
+
+  async transitionRun(input: RunTransitionInput): Promise<void> {
+    const run = this.#requireRun(input.runId);
+    if (!canTransition(run.state, input.state)) {
+      throw new Error(`illegal run state transition: ${run.state} -> ${input.state}`);
+    }
+    this.#runs.set(input.runId, {
+      ...run,
+      state: input.state,
+      ...(input.usage === undefined ? {} : { usage: input.usage }),
+      ...(input.error === undefined ? {} : { error: input.error }),
+    });
+    if (input.event !== undefined) this.#append(input.runId, input.event);
   }
 
   async listTurns(runId: string): Promise<TurnRecord[]> {
@@ -57,9 +89,33 @@ export class InMemoryRunStore implements RunStore {
       throw new Error(`turn index ${input.turn.index} is not next for run ${input.turn.runId}`);
     }
 
+    if (input.state !== undefined && !canTransition(run.state, input.state)) {
+      throw new Error(`illegal run state transition: ${run.state} -> ${input.state}`);
+    }
+
     turns.push(input.turn);
-    this.#runs.set(run.id, { ...run, turnCount: turns.length });
+    this.#runs.set(run.id, {
+      ...run,
+      turnCount: turns.length,
+      ...(input.state === undefined ? {} : { state: input.state }),
+    });
+    for (const event of input.events ?? []) this.#append(run.id, event);
+    if (input.elicitation !== undefined) {
+      this.#elicitations.set(input.elicitation.event.elicitationId, input.elicitation);
+    }
     return { turn: input.turn };
+  }
+
+  async completePendingTurn(
+    runId: string,
+    turnIndex: number,
+    toolResults: TurnRecord["toolResults"],
+  ): Promise<void> {
+    const turns = this.#requireTurns(runId);
+    const turn = turns[turnIndex];
+    if (turn === undefined) throw new Error(`unknown turn: ${runId}/${turnIndex}`);
+    const { pendingToolCall: _pendingToolCall, ...completed } = turn;
+    turns[turnIndex] = { ...completed, toolResults: [...toolResults], stopReason: "toolUse" };
   }
 
   async appendEvent(runId: string, event: RunEventData): Promise<RunEvent> {
@@ -69,6 +125,16 @@ export class InMemoryRunStore implements RunStore {
 
   async listEvents(runId: string): Promise<RunEvent[]> {
     return [...this.#requireEvents(runId)];
+  }
+
+  async eventCursor(runId: string): Promise<number> {
+    return this.#requireEvents(runId).length;
+  }
+
+  async discardEventsAfter(runId: string, cursor: number): Promise<void> {
+    const events = this.#requireEvents(runId);
+    if (cursor < 0 || cursor > events.length) throw new Error(`invalid event cursor: ${cursor}`);
+    events.splice(cursor);
   }
 
   async enqueueSteering(runId: string, input: QueuedInput): Promise<void> {
@@ -108,6 +174,86 @@ export class InMemoryRunStore implements RunStore {
     return [...queue];
   }
 
+  async recordIntent(intentId: string): Promise<"recorded" | "duplicate"> {
+    if (this.#intents.has(intentId)) return "duplicate";
+    this.#intents.add(intentId);
+    return "recorded";
+  }
+
+  async recordStop(stop: StopRecord): Promise<void> {
+    if (!this.#stops.has(stop.runId)) this.#stops.set(stop.runId, stop);
+  }
+
+  async getStop(runId: string): Promise<StopRecord | undefined> {
+    const stop = this.#stops.get(runId);
+    return stop === undefined ? undefined : { ...stop };
+  }
+
+  async getElicitation(elicitationId: string): Promise<ElicitationRecord | undefined> {
+    const record = this.#elicitations.get(elicitationId);
+    return record === undefined ? undefined : structuredClone(record);
+  }
+
+  async resolveElicitation(
+    elicitationId: string,
+    resolution: ElicitationResolution,
+  ): Promise<"resolved" | "already-resolved"> {
+    const record = this.#elicitations.get(elicitationId);
+    if (record === undefined) throw new Error(`unknown elicitation: ${elicitationId}`);
+    if (record.resolution !== undefined) return "already-resolved";
+    const run = this.#requireRun(record.runId);
+    const event = {
+      type: "elicitation-resolved" as const,
+      elicitationId,
+      optionId: resolution.optionId,
+      by: resolution.by,
+      at: resolution.at,
+    };
+    this.#elicitations.set(elicitationId, { ...record, resolution });
+    this.#append(record.runId, event);
+    if (resolution.scope === "run") {
+      const toolKey = pendingToolName(this.#requireTurns(record.runId), record.event);
+      if (toolKey !== undefined) {
+        this.#runs.set(run.id, {
+          ...run,
+          runGrants: [...new Set([...(run.runGrants ?? []), toolKey])],
+        });
+      }
+    }
+    return "resolved";
+  }
+
+  async expireElicitation(
+    elicitationId: string,
+    by: { principalId: string; displayName?: string },
+    at: string,
+  ): Promise<"resolved" | "already-resolved"> {
+    const record = this.#elicitations.get(elicitationId);
+    if (record === undefined) throw new Error(`unknown elicitation: ${elicitationId}`);
+    if (record.resolution !== undefined) return "already-resolved";
+    const run = this.#requireRun(record.runId);
+    if (!["awaiting_approval", "awaiting_input"].includes(run.state)) {
+      throw new Error(`run is not parked: ${run.id}`);
+    }
+    const resolution: ElicitationResolution = {
+      optionId: "expired",
+      decision: "expired",
+      scope: "once",
+      by,
+      at,
+    };
+    this.#elicitations.set(elicitationId, { ...record, resolution });
+    this.#runs.set(run.id, { ...run, state: "stale" });
+    this.#append(run.id, {
+      type: "elicitation-resolved",
+      elicitationId,
+      optionId: "expired",
+      by,
+      at,
+    });
+    return "resolved";
+  }
+
   #append(runId: string, event: RunEventData): RunEvent {
     const events = this.#requireEvents(runId);
     const envelope: RunEvent = {
@@ -144,4 +290,19 @@ export class InMemoryRunStore implements RunStore {
     }
     return events;
   }
+}
+
+function pendingToolName(
+  turns: TurnRecord[],
+  event: ElicitationRecord["event"],
+): string | undefined {
+  const callId = event.reference?.callId;
+  if (callId === undefined) return undefined;
+  for (const turn of turns) {
+    const block = turn.message.blocks.find(
+      (candidate) => candidate.type === "toolCall" && candidate.callId === callId,
+    );
+    if (block?.type === "toolCall") return block.name;
+  }
+  return undefined;
 }
