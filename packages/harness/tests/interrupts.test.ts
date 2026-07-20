@@ -196,18 +196,13 @@ describe("interrupts", () => {
     expect(model.turnRequests[0]?.messages.at(-1)).toMatchObject({
       role: "toolResult",
       toolCallId: "call-1",
+      status: "denied",
       blocks: [
         {
           type: "text",
           text: "denied by Nelson: production changes require a maintenance window",
         },
       ],
-      providerMeta: {
-        status: "denied",
-        output: {
-          error: "denied by Nelson: production changes require a maintenance window",
-        },
-      },
     });
     expect((await fixture.store.listEvents("run-1")).map(({ event }) => event)).toContainEqual({
       type: "tool-result",
@@ -217,6 +212,55 @@ describe("interrupts", () => {
     });
     expect((await fixture.store.listTurns("run-1"))[0]).toMatchObject({
       stopReason: "toolUse",
+    });
+  });
+
+  it("feeds an answered choice back as text", async () => {
+    const fixture = await parked(
+      createBlockingElicitation("elicit-1", {
+        type: "ask_user",
+        callId: "call-1",
+        prompt: "Which environment?",
+        options: [{ id: "staging", label: "Staging" }],
+      }),
+    );
+    await fixture.store.resolveElicitation("elicit-1", {
+      optionId: "staging",
+      decision: "answered",
+      scope: "once",
+      by,
+      at: now,
+    });
+    const model = new FauxModelPort([
+      {
+        events: [] as RunEventData[],
+        result: {
+          message: { role: "assistant", blocks: [{ type: "text", text: "Checking staging." }] },
+          toolCalls: [],
+          stopReason: "stop",
+          usage,
+        },
+      },
+    ]);
+
+    await runLoop({
+      runId: "run-1",
+      threadRef: "thread-1",
+      model: { id: "test/model" },
+      standing: { instructions: "", rules: [], skillIndex: [] },
+      threadMessages: [],
+      tools: [],
+      modelPort: model,
+      store: fixture.store,
+      toolExecutor: { execute: vi.fn() },
+      abort: new AbortController().signal,
+    });
+
+    expect(model.turnRequests[0]?.messages.at(-1)).toEqual({
+      role: "toolResult",
+      toolCallId: "call-1",
+      status: "ok",
+      blocks: [{ type: "text", text: "staging" }],
     });
   });
 

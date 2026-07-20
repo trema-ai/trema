@@ -103,7 +103,7 @@ describe("in-memory harness", () => {
       callId: approvedCall.callId,
       status: "ok" as const,
       summary: "deployment is healthy",
-      output: { status: "healthy" },
+      output: "deployment status: healthy",
     }));
     const initial: TranscriptMessage[] = [
       { role: "user", blocks: [{ type: "text", text: "Check staging." }] },

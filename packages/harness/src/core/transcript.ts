@@ -1,6 +1,7 @@
 export type TranscriptRole = "user" | "assistant" | "toolResult";
 
 interface TranscriptBlockBase {
+  /** Opaque provider echo data only. */
   providerMeta?: unknown;
 }
 
@@ -33,5 +34,7 @@ export interface TranscriptMessage {
   role: TranscriptRole;
   blocks: TranscriptBlock[];
   toolCallId?: string;
+  status?: "ok" | "error" | "denied";
+  /** Opaque provider echo data only. */
   providerMeta?: unknown;
 }

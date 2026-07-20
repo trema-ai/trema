@@ -232,16 +232,16 @@ async function executePreparedCall(
   }
 }
 
-function toToolResultMessage(result: ToolExecutionResult): TranscriptMessage {
+export function toToolResultMessage(result: ToolExecutionResult): TranscriptMessage {
   return {
     role: "toolResult",
     toolCallId: result.callId,
-    blocks: [{ type: "text", text: result.summary }],
-    providerMeta: { status: result.status, output: result.output },
+    blocks: typeof result.output === "string" ? [{ type: "text", text: result.output }] : result.output,
+    status: result.status,
   };
 }
 
-function toToolResultEvent(result: ToolExecutionResult): RunEventData {
+export function toToolResultEvent(result: ToolExecutionResult): RunEventData {
   const base = {
     type: "tool-result" as const,
     callId: result.callId,
@@ -256,7 +256,7 @@ function errorResult(call: ToolCall, summary: string): ToolExecutionResult {
     callId: call.callId,
     status: "error",
     summary,
-    output: { error: summary },
+    output: summary,
   };
 }
 
