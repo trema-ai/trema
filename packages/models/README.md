@@ -2,6 +2,16 @@
 
 `@trema/models` implements the harness `ModelPort` with AI SDK v7. The package reads no environment variables. Callers pass named endpoints to `createSdkModelPort`.
 
+## The model port
+
+The harness never calls a model provider directly. Every model request goes through `ModelPort`, a narrow interface that `@trema/harness` defines. The interface has two methods: `streamTurn` runs one tool-using turn, and `complete` generates plain text.
+
+The port exists to keep provider details out of the run loop. Authentication, wire formats, stream chunks, and finish reasons stay behind the port. The port accepts the durable transcript and tool definitions, and returns provider-neutral run events, a stop reason, and usage.
+
+This boundary makes the model a replaceable part. Stored runs, transcripts, and events use a provider-neutral format, so a provider change is a configuration change. No stored data needs a migration.
+
+`@trema/models` is the default implementation of this port. It maps harness requests onto AI SDK v7 calls and maps stream chunks back to run events. A host that needs a provider this package does not cover can implement `ModelPort` against the same contract.
+
 ## Usage
 
 Create a model port with an endpoint map:
