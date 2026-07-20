@@ -49,7 +49,7 @@ async function setup(turns: FauxTurnScript[]): Promise<{
     callId: call.callId,
     status: "ok" as const,
     summary: `${call.name} completed`,
-    output: { received: call.input },
+    output: JSON.stringify({ received: call.input }),
   }));
   return { store, model: new FauxModelPort(turns), executor: { execute }, execute };
 }
@@ -142,8 +142,8 @@ describe("runLoop", () => {
       {
         role: "toolResult",
         toolCallId: "call-1",
-        blocks: [{ type: "text", text: "lookup completed" }],
-        providerMeta: { status: "ok", output: { received: { q: "trema" } } },
+        status: "ok",
+        blocks: [{ type: "text", text: '{"received":{"q":"trema"}}' }],
       },
     ]);
   });
@@ -161,6 +161,7 @@ describe("runLoop", () => {
     expect(fixture.model.turnRequests[1]?.messages.at(-1)).toMatchObject({
       role: "toolResult",
       toolCallId: "call-1",
+      status: "error",
       blocks: [
         {
           type: "text",

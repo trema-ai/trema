@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ToolCall, ToolDef } from "../src/core/index.js";
+import type { ImageBlock, TextBlock, ToolCall, ToolDef } from "../src/core/index.js";
 import type { ToolExecutionResult, ToolExecutor } from "../src/ports/index.js";
 import { executeToolBatch } from "../src/loop/tool-batch.js";
 
@@ -18,7 +18,7 @@ const tools: ToolDef[] = calls.map(({ name }) => ({
 }));
 
 function ok(callId: string, summary = callId): ToolExecutionResult {
-  return { callId, status: "ok", summary, output: { callId } };
+  return { callId, status: "ok", summary, output: `full output for ${callId}` };
 }
 
 describe("executeToolBatch", () => {
@@ -42,6 +42,12 @@ describe("executeToolBatch", () => {
     expect(completionOrder).toEqual(["call-2", "call-1"]);
     expect(batch.results.map(({ callId }) => callId)).toEqual(["call-1", "call-2"]);
     expect(batch.messages.map(({ toolCallId }) => toolCallId)).toEqual(["call-1", "call-2"]);
+    expect(batch.messages[0]).toEqual({
+      role: "toolResult",
+      toolCallId: "call-1",
+      status: "ok",
+      blocks: [{ type: "text", text: "full output for call-1" }],
+    });
     expect(
       batch.events.flatMap((event) => (event.type === "tool-result" ? [event.callId] : [])),
     ).toEqual(["call-1", "call-2"]);
@@ -61,6 +67,35 @@ describe("executeToolBatch", () => {
 
     await executeToolBatch({ calls, tools: sequentialTools, executor });
     expect(order).toEqual(["call-1:start", "call-1:end", "call-2:start", "call-2:end"]);
+  });
+
+  it("keeps block output in the transcript but out of the run event", async () => {
+    const output: Array<TextBlock | ImageBlock> = [
+      { type: "text", text: "full text" },
+      { type: "image", data: "base64-data", mediaType: "image/png" },
+    ];
+    const batch = await executeToolBatch({
+      calls: [calls[0]!],
+      tools,
+      executor: {
+        execute: async (call) => ({
+          callId: call.callId,
+          status: "ok",
+          summary: "short summary",
+          output,
+          outputRef: "output-1",
+        }),
+      },
+    });
+
+    expect(batch.messages[0]?.blocks).toBe(output);
+    expect(batch.events).toContainEqual({
+      type: "tool-result",
+      callId: "call-1",
+      status: "ok",
+      summary: "short summary",
+      outputRef: "output-1",
+    });
   });
 
   it("turns blocks into error results and executes rewritten calls", async () => {
@@ -138,6 +173,7 @@ describe("executeToolBatch", () => {
     expect(batch.results[0]).toMatchObject({
       status: "error",
       summary: "tool execution failed: executor boom",
+      output: "tool execution failed: executor boom",
     });
   });
 

@@ -318,6 +318,158 @@ describe("routing, conversion, and controls", () => {
     });
   });
 
+  it("maps an ok tool result with images to content output", () => {
+    const converted = toModelMessages("System", [
+      {
+        role: "assistant",
+        blocks: [{ type: "toolCall", callId: "call-1", name: "lookup", input: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        status: "ok",
+        blocks: [
+          { type: "text", text: "chart" },
+          { type: "image", data: "base64-data", mediaType: "image/png" },
+        ],
+      },
+    ]);
+
+    expect(converted[2]).toEqual({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "lookup",
+          output: {
+            type: "content",
+            value: [
+              { type: "text", text: "chart" },
+              {
+                type: "file",
+                data: { type: "data", data: "base64-data" },
+                mediaType: "image/png",
+              },
+            ],
+          },
+        },
+      ],
+    });
+  });
+
+  it("maps an error tool result to error text", () => {
+    const converted = toModelMessages("System", [
+      {
+        role: "assistant",
+        blocks: [{ type: "toolCall", callId: "call-1", name: "lookup", input: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        status: "error",
+        blocks: [{ type: "text", text: "lookup failed" }],
+      },
+    ]);
+
+    expect(converted[2]).toMatchObject({
+      role: "tool",
+      content: [{ output: { type: "error-text", value: "lookup failed" } }],
+    });
+  });
+
+  it("maps a denied tool result to execution denied with its reason", () => {
+    const converted = toModelMessages("System", [
+      {
+        role: "assistant",
+        blocks: [{ type: "toolCall", callId: "call-1", name: "lookup", input: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        status: "denied",
+        blocks: [{ type: "text", text: "denied by policy" }],
+      },
+    ]);
+
+    expect(converted[2]).toMatchObject({
+      role: "tool",
+      content: [{ output: { type: "execution-denied", reason: "denied by policy" } }],
+    });
+
+    const withoutReason = toModelMessages("System", [
+      {
+        role: "assistant",
+        blocks: [{ type: "toolCall", callId: "call-2", name: "lookup", input: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-2",
+        status: "denied",
+        blocks: [],
+      },
+    ]);
+    expect(withoutReason[2]).toMatchObject({
+      content: [{ output: { type: "execution-denied" } }],
+    });
+    expect((withoutReason[2] as { content: Array<{ output: unknown }> }).content[0]?.output)
+      .not.toHaveProperty("reason");
+  });
+
+  it("forwards only genuine message-level metadata on tool results", () => {
+    const providerMeta = { primary: { responseId: "response-1" } };
+    const converted = toModelMessages("System", [
+      {
+        role: "assistant",
+        blocks: [{ type: "toolCall", callId: "call-1", name: "lookup", input: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        status: "ok",
+        providerMeta,
+        blocks: [{ type: "text", text: "full output", providerMeta: { ignored: true } }],
+      },
+    ]);
+
+    expect(converted[2]).toEqual({
+      role: "tool",
+      providerOptions: providerMeta,
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "lookup",
+          output: { type: "text", value: "full output" },
+        },
+      ],
+    });
+  });
+
+  it("rejects thinking and tool-call blocks in tool results", () => {
+    const assistant = {
+      role: "assistant" as const,
+      blocks: [{ type: "toolCall" as const, callId: "call-1", name: "lookup", input: {} }],
+    };
+
+    expect(() => toModelMessages("System", [
+      assistant,
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        blocks: [{ type: "thinking", text: "invalid" }],
+      },
+    ])).toThrow("Invalid thinking block in toolResult message");
+    expect(() => toModelMessages("System", [
+      assistant,
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        blocks: [{ type: "toolCall", callId: "nested", name: "lookup", input: {} }],
+      },
+    ])).toThrow("Invalid toolCall block in toolResult message");
+  });
+
   it("sends thinking options only for explicitly mapped model levels", async () => {
     const mapped = operations([finish()]);
     const port = createSdkModelPortWithOperations({

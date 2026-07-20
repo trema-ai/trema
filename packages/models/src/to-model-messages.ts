@@ -5,16 +5,47 @@ import type { SdkProviderOptions } from "./sdk-operations.js";
 
 type UserParts = Exclude<Extract<ModelMessage, { role: "user" }>["content"], string>;
 type AssistantParts = Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
+type ToolParts = Extract<ModelMessage, { role: "tool" }>["content"];
+type ToolResultOutput = Extract<ToolParts[number], { type: "tool-result" }>["output"];
 
 function providerOptions(value: unknown): SdkProviderOptions | undefined {
   return value === undefined ? undefined : (value as SdkProviderOptions);
 }
 
 function textFromBlocks(message: TranscriptMessage): string {
-  return message.blocks
-    .filter((block): block is Extract<(typeof message.blocks)[number], { type: "text" }> => block.type === "text")
-    .map((block) => block.text)
-    .join("");
+  let text = "";
+  for (const block of message.blocks) {
+    if (block.type === "text") text += block.text;
+    else if (block.type !== "image") throw new Error(`Invalid ${block.type} block in toolResult message`);
+  }
+  return text;
+}
+
+function toolResultOutput(message: TranscriptMessage): ToolResultOutput {
+  const text = textFromBlocks(message);
+  if (message.status === "error") return { type: "error-text", value: text };
+  if (message.status === "denied") {
+    return text.length === 0
+      ? { type: "execution-denied" }
+      : { type: "execution-denied", reason: text };
+  }
+  if (message.blocks.some((block) => block.type === "image")) {
+    return {
+      type: "content",
+      value: message.blocks.map((block) => {
+        if (block.type === "text") return { type: "text", text: block.text };
+        if (block.type === "image") {
+          return {
+            type: "file",
+            data: { type: "data", data: block.data },
+            mediaType: block.mediaType,
+          };
+        }
+        throw new Error(`Invalid ${block.type} block in toolResult message`);
+      }),
+    };
+  }
+  return { type: "text", value: text };
 }
 
 export function toModelMessages(
@@ -97,15 +128,13 @@ export function toModelMessages(
       if (toolCallId === undefined) throw new Error("Tool result message is missing toolCallId");
       const toolName = toolNames.get(toolCallId);
       if (toolName === undefined) throw new Error(`Tool result references unknown call: ${toolCallId}`);
-      const blockOptions = providerOptions(message.blocks.find((block) => block.providerMeta !== undefined)?.providerMeta);
       return {
         role: "tool",
         content: [{
           type: "tool-result",
           toolCallId,
           toolName,
-          output: { type: "text", value: textFromBlocks(message) },
-          ...(blockOptions ? { providerOptions: blockOptions } : {}),
+          output: toolResultOutput(message),
         }],
         ...(messageOptions ? { providerOptions: messageOptions } : {}),
       };

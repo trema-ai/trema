@@ -18,7 +18,11 @@ import type {
   TurnRecord,
   TurnResult,
 } from "../ports/index.js";
-import { executeToolBatch } from "./tool-batch.js";
+import {
+  executeToolBatch,
+  toToolResultEvent,
+  toToolResultMessage,
+} from "./tool-batch.js";
 
 export interface LoopInput {
   runId: string;
@@ -177,8 +181,8 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
 
       if (result.stopReason === "length" && result.toolCalls.length > 0) {
         const failed = result.toolCalls.map(truncatedToolResult);
-        toolResults = failed.map(toolResultMessage);
-        await appendEvents(input, failed.map(toolResultEvent));
+        toolResults = failed.map(toToolResultMessage);
+        await appendEvents(input, failed.map(toToolResultEvent));
       } else if (result.toolCalls.length > 0) {
         const streamGate = pause === undefined ? undefined : gatedStreamCall(result.toolCalls, pause);
         const batch = await executeToolBatch({
@@ -302,20 +306,20 @@ async function resumePendingTurn(
       callId: pending.callId,
       status: "denied",
       summary,
-      output: { error: summary },
+      output: summary,
     };
-    await input.store.appendEvent(input.runId, toolResultEvent(denied));
-    resumed.push(toolResultMessage(denied));
+    await input.store.appendEvent(input.runId, toToolResultEvent(denied));
+    resumed.push(toToolResultMessage(denied));
     remaining.shift();
   } else if (elicitation.resolution.decision === "answered") {
     const answered: ToolExecutionResult = {
       callId: pending.callId,
       status: "ok",
       summary: elicitation.resolution.optionId,
-      output: { answer: elicitation.resolution.optionId },
+      output: elicitation.resolution.optionId,
     };
-    await input.store.appendEvent(input.runId, toolResultEvent(answered));
-    resumed.push(toolResultMessage(answered));
+    await input.store.appendEvent(input.runId, toToolResultEvent(answered));
+    resumed.push(toToolResultMessage(answered));
     remaining.shift();
   }
 
@@ -476,25 +480,7 @@ function truncatedToolResult(call: ToolCall): ToolExecutionResult {
     callId: call.callId,
     status: "error",
     summary,
-    output: { error: summary },
-  };
-}
-
-function toolResultMessage(result: ToolExecutionResult): TranscriptMessage {
-  return {
-    role: "toolResult",
-    toolCallId: result.callId,
-    blocks: [{ type: "text", text: result.summary }],
-    providerMeta: { status: result.status, output: result.output },
-  };
-}
-
-function toolResultEvent(result: ToolExecutionResult): RunEventData {
-  return {
-    type: "tool-result",
-    callId: result.callId,
-    status: result.status,
-    summary: result.summary,
+    output: summary,
   };
 }
 
