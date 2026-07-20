@@ -1,0 +1,7 @@
+extends: substitution
+message: "Use '%s' instead of '%s'. 'Trema' is a proper noun in prose; lowercase 'trema' belongs only inside code."
+level: error
+ignorecase: false
+swap:
+  '\btrema\b': Trema
+  '\bTREMA\b': Trema

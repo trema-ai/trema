@@ -1,0 +1,6 @@
+extends: existence
+message: "Do not start a sentence with inline code. Lead with prose words."
+level: error
+scope: raw
+raw:
+  - '[.!?]\s+`[^`\n]+`'
