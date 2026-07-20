@@ -2,6 +2,7 @@ import type { ThinkingLevel } from "@trema/harness";
 import type { ModelEndpoint } from "./endpoints.js";
 import type { SdkProviderOptions } from "./sdk-operations.js";
 
+/** Thinking levels that one model pattern explicitly allows. */
 export interface ThinkingSupport {
   /** Levels this model is explicitly configured to accept. */
   supportedLevels: readonly ThinkingLevel[];

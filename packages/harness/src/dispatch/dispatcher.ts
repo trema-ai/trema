@@ -7,6 +7,7 @@ interface IntentBase {
   intentId: string;
 }
 
+/** New user input or an explicit steering request for a thread. */
 export interface MessageIntent extends IntentBase {
   type: "message" | "steer";
   threadRef: string;
@@ -14,6 +15,7 @@ export interface MessageIntent extends IntentBase {
   message: TranscriptMessage;
 }
 
+/** Decision that resolves a run's blocking elicitation. */
 export interface ResolveIntent extends IntentBase {
   type: "resolve";
   threadRef: string;
@@ -25,6 +27,7 @@ export interface ResolveIntent extends IntentBase {
   by: PrincipalRef;
 }
 
+/** Request to stop an active run. */
 export interface StopIntent extends IntentBase {
   type: "stop";
   threadRef: string;
@@ -32,6 +35,7 @@ export interface StopIntent extends IntentBase {
   by: PrincipalRef;
 }
 
+/** Request to retry a failed or stale run. */
 export interface RetryIntent extends IntentBase {
   type: "retry";
   threadRef: string;
@@ -39,6 +43,7 @@ export interface RetryIntent extends IntentBase {
   by: PrincipalRef;
 }
 
+/** Feedback associated with a run. */
 export interface FeedbackIntent extends IntentBase {
   type: "feedback";
   threadRef: string;
@@ -47,6 +52,7 @@ export interface FeedbackIntent extends IntentBase {
   by: PrincipalRef;
 }
 
+/** Intent accepted by the input dispatcher. */
 export type DispatchIntent =
   | MessageIntent
   | ResolveIntent
@@ -54,6 +60,7 @@ export type DispatchIntent =
   | RetryIntent
   | FeedbackIntent;
 
+/** Routing decision or delegated operation completed by dispatch. */
 export type DispatchResult =
   | { outcome: "duplicate" }
   | { outcome: "resolve"; runId: string }
@@ -63,6 +70,7 @@ export type DispatchResult =
   | { outcome: "retry"; run: RunRecord }
   | { outcome: "feedback"; runId: string };
 
+/** Persistence, locking, and delegated operations used during dispatch. */
 export interface InputDispatcherOptions {
   store: RunStore;
   lock: ThreadDispatchLock;
@@ -71,12 +79,14 @@ export interface InputDispatcherOptions {
   stop(intent: StopIntent): Promise<void>;
   retry(intent: RetryIntent): Promise<RunRecord>;
   feedback(intent: FeedbackIntent): Promise<void>;
+  /** Optionally interprets a message as a response to an active elicitation. */
   classifyResolution?: (
     intent: MessageIntent,
     active: RunRecord,
   ) => Promise<ResolveIntent | undefined> | ResolveIntent | undefined;
 }
 
+/** Routes idempotent intents while serializing decisions for each thread. */
 export class InputDispatcher {
   readonly #options: InputDispatcherOptions;
 
@@ -84,6 +94,11 @@ export class InputDispatcher {
     this.#options = options;
   }
 
+  /**
+   * Claims `intentId` once, then routes the intent under the thread lock.
+   * A message steers the active run or creates a run when none is active.
+   * Resolution classification takes precedence over steering.
+   */
   async dispatch(intent: DispatchIntent): Promise<DispatchResult> {
     return this.#options.lock.run(intent.threadRef, async () => {
       if ((await this.#options.store.recordIntent(intent.intentId)) === "duplicate") {

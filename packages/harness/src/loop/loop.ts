@@ -24,6 +24,7 @@ import {
   toToolResultMessage,
 } from "./tool-batch.js";
 
+/** Dependencies and durable context for one loop execution. */
 export interface LoopInput {
   runId: string;
   threadRef: string;
@@ -36,15 +37,22 @@ export interface LoopInput {
   toolExecutor: ToolExecutor;
   abort: AbortSignal;
   thinking?: ThinkingLevel;
+  /** Maximum generated tokens for each model turn. */
   budget?: { maxOutputTokens?: number };
   /** Hard cap on turns per run; the shouldStop hook can only stop earlier. */
   maxTurns?: number;
+  /** Expiry stored with a blocking elicitation created during this execution. */
   elicitationExpiresAt?: string;
   hooks?: HarnessHooks;
 }
 
+/**
+ * Default hard cap on turns per run.
+ * @defaultValue 50
+ */
 export const DEFAULT_MAX_TURNS = 50;
 
+/** Terminal loop result for a completed, failed, or cancelled run. */
 export interface FinishedLoopResult {
   status: "finished";
   outcome: "completed" | "failed" | "cancelled";
@@ -54,6 +62,10 @@ export interface FinishedLoopResult {
   error?: TurnResult["error"];
 }
 
+/**
+ * Result from a turn that committed a blocking elicitation.
+ * Execution has ended; resume requires a new `runLoop` call that reads the stored turn.
+ */
 export interface PausedLoopResult {
   status: "paused";
   stopReason: "paused";
@@ -62,8 +74,13 @@ export interface PausedLoopResult {
   usage: Usage;
 }
 
+/** Terminal or paused result from one loop execution. */
 export type LoopResult = FinishedLoopResult | PausedLoopResult;
 
+/**
+ * Executes model turns from committed state and checkpoints each turn in the run store.
+ * Model, tool, and hook failures become run data after streaming starts.
+ */
 export async function runLoop(input: LoopInput): Promise<LoopResult> {
   const committed = await input.store.listTurns(input.runId);
   const messages = assembleCommittedMessages(input.threadMessages, committed);

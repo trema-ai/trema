@@ -1,6 +1,8 @@
+/** Serializes dispatch operations per thread while allowing different threads to proceed independently. */
 export class ThreadDispatchLock {
   readonly #tails = new Map<string, Promise<void>>();
 
+  /** Runs one operation after earlier operations for the same thread settle. */
   async run<T>(threadRef: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.#tails.get(threadRef) ?? Promise.resolve();
     let release!: () => void;

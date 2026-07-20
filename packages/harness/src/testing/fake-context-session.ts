@@ -6,6 +6,7 @@ import type {
   SessionSnapshot,
 } from "../ports/index.js";
 
+/** Deterministic context-session fake that records calls and returns configured results. */
 export class FakeContextSession implements ContextSession {
   readonly calls: Array<{ method: string; args: unknown[] }> = [];
   readonly #snapshot: SessionSnapshot;
@@ -15,6 +16,7 @@ export class FakeContextSession implements ContextSession {
     this.#snapshot = snapshot;
   }
 
+  /** Sets the value returned by a named context-session method. */
   setResult(method: string, result: unknown): void {
     this.#results.set(method, result);
   }

@@ -8,6 +8,7 @@ import type {
   TurnStream,
 } from "../ports/index.js";
 
+/** Events and final result consumed by one scripted model turn. */
 export interface FauxTurnScript {
   events: readonly RunEventData[] | AsyncIterable<RunEventData>;
   result: TurnResult | Promise<TurnResult>;
@@ -17,6 +18,7 @@ function isAsyncIterable(value: readonly RunEventData[] | AsyncIterable<RunEvent
   return Symbol.asyncIterator in value;
 }
 
+/** Deterministic model-port fake that consumes scripted turns and completions in order. */
 export class FauxModelPort implements ModelPort {
   readonly turnRequests: TurnRequest[] = [];
   readonly completeRequests: CompleteRequest[] = [];

@@ -8,31 +8,41 @@ import type {
 } from "../core/index.js";
 import type { PrincipalRef, RunEvent, RunEventData } from "../events/index.js";
 
+/** Durable metadata and aggregate outcome for one run. */
 export interface RunRecord {
   id: string;
   threadRef: string;
   state: RunState;
   trigger: Trigger;
+  /** Number of committed turns. */
   turnCount: number;
   sessionId?: string;
+  /** Run that this retry follows. */
   retryOfRunId?: string;
+  /** One-based retry attempt across a retry chain. */
   retryAttempt?: number;
   usage?: Usage;
   error?: string;
+  /** Tool names approved for the remainder of this run. */
   runGrants?: string[];
 }
 
+/** Durable checkpoint for one completed or paused turn. */
 export interface TurnRecord {
   runId: string;
+  /** Zero-based index that must follow the prior committed turn. */
   index: number;
   model: ModelRef;
   message: TranscriptMessage;
+  /** Tool results already completed for this turn. */
   toolResults: TranscriptMessage[];
+  /** Tool call awaiting resolution before this turn can finish. */
   pendingToolCall?: { callId: string; elicitationId: string };
   stopReason: StopReason;
   usage: Usage;
 }
 
+/** Values committed atomically with a turn checkpoint. */
 export interface CommitTurnInput {
   turn: TurnRecord;
   events?: RunEventData[];
@@ -40,16 +50,19 @@ export interface CommitTurnInput {
   elicitation?: ElicitationRecord;
 }
 
+/** Turn checkpoint returned after a successful commit. */
 export interface CommitTurnResult {
   turn: TurnRecord;
 }
 
+/** User input queued for an active run or its thread. */
 export interface QueuedInput {
   id: string;
   message: TranscriptMessage;
   author: PrincipalRef;
 }
 
+/** Durable fact that a principal requested a run to stop. */
 export interface StopRecord {
   intentId: string;
   runId: string;
@@ -57,8 +70,10 @@ export interface StopRecord {
   at: string;
 }
 
+/** Lifetime requested for an elicitation resolution. */
 export type ResolutionScope = "once" | "run" | "always";
 
+/** Durable decision for one elicitation. */
 export interface ElicitationResolution {
   optionId: string;
   decision: "approved" | "denied" | "answered" | "expired";
@@ -68,13 +83,16 @@ export interface ElicitationResolution {
   reason?: string;
 }
 
+/** Blocking elicitation and its optional terminal resolution. */
 export interface ElicitationRecord {
   runId: string;
   event: Extract<RunEventData, { type: "elicitation" }>;
+  /** Standard date-time string after which the elicitation can expire. */
   expiresAt?: string;
   resolution?: ElicitationResolution;
 }
 
+/** State transition and optional outcome data committed together. */
 export interface RunTransitionInput {
   runId: string;
   state: RunState;
@@ -83,34 +101,60 @@ export interface RunTransitionInput {
   error?: string;
 }
 
+/** Result of atomically claiming an intent identifier. */
 export type RecordIntentResult = "recorded" | "duplicate";
+/** Result of the first or a later elicitation resolution attempt. */
 export type ResolveElicitationResult = "resolved" | "already-resolved";
 
+/** Durable persistence contract for runs, turns, events, queues, and elicitations. */
 export interface RunStore {
+  /** Creates a run with empty turn, event, and steering collections. */
   createRun(run: RunRecord): Promise<void>;
+  /** Returns the run or `undefined` when it does not exist. */
   getRun(runId: string): Promise<RunRecord | undefined>;
+  /** Returns the latest nonterminal run for a thread. */
   findActiveRun(threadRef: string): Promise<RunRecord | undefined>;
+  /** Applies one legal state transition. */
   updateRunState(runId: string, state: RunState): Promise<void>;
+  /** Atomically applies a legal state transition, event, usage, and error. */
   transitionRun(input: RunTransitionInput): Promise<void>;
+  /** Lists committed turns in ascending index order. */
   listTurns(runId: string): Promise<TurnRecord[]>;
+  /** Atomically commits the next turn with its events, state, and elicitation. */
   commitTurn(input: CommitTurnInput): Promise<CommitTurnResult>;
+  /** Adds resumed tool results and clears the pending call from a paused turn. */
   completePendingTurn(runId: string, turnIndex: number, toolResults: TranscriptMessage[]): Promise<void>;
+  /** Appends one event with the next dense sequence number for its run. */
   appendEvent(runId: string, event: RunEventData): Promise<RunEvent>;
+  /** Lists event envelopes in ascending sequence order. */
   listEvents(runId: string): Promise<RunEvent[]>;
+  /** Returns a cursor immediately after the run's last event. */
   eventCursor(runId: string): Promise<number>;
+  /** Removes events appended after the cursor, preserving events through that boundary. */
   discardEventsAfter(runId: string, cursor: number): Promise<void>;
+  /** Queues input for the identified active run's next turn boundary. */
   enqueueSteering(runId: string, input: QueuedInput): Promise<void>;
+  /** Removes and returns steering queued for one run. */
   drainSteering(runId: string): Promise<QueuedInput[]>;
+  /** Reports whether one run has queued steering. */
   hasSteering(runId: string): Promise<boolean>;
+  /** Queues input for a thread after its active run would otherwise end. */
   enqueueFollowUp(threadRef: string, input: QueuedInput): Promise<void>;
+  /** Removes and returns follow-ups queued for one thread. */
   drainFollowUps(threadRef: string): Promise<QueuedInput[]>;
+  /** Atomically claims an intent identifier; only one concurrent caller receives `recorded`. */
   recordIntent(intentId: string): Promise<RecordIntentResult>;
+  /** Records the first stop fact for a run without replacing it. */
   recordStop(stop: StopRecord): Promise<void>;
+  /** Returns the recorded stop fact, if any. */
   getStop(runId: string): Promise<StopRecord | undefined>;
+  /** Returns an elicitation and its resolution, if present. */
   getElicitation(elicitationId: string): Promise<ElicitationRecord | undefined>;
+  /** Atomically records the first resolution and its event. */
   resolveElicitation(
     elicitationId: string,
     resolution: ElicitationResolution,
   ): Promise<ResolveElicitationResult>;
+  /** Atomically resolves an expired elicitation and marks its parked run stale. */
   expireElicitation(elicitationId: string, by: PrincipalRef, at: string): Promise<ResolveElicitationResult>;
 }

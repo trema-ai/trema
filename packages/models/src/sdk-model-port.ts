@@ -22,8 +22,11 @@ import type { ThinkingLevelMap } from "./thinking.js";
 import { toModelMessages } from "./to-model-messages.js";
 import { toUsage } from "./usage.js";
 
+/** Configuration for the AI SDK model port. */
 export interface SdkModelPortOptions {
+  /** Named endpoints selected by `ModelRef.provider`. */
   endpoints: ModelEndpoints;
+  /** Model-pattern allowlist for requested thinking levels. */
   thinkingLevelMap?: ThinkingLevelMap;
   /** Optional fetch implementation for hosts that mediate outbound model traffic. */
   fetch?: typeof globalThis.fetch;
@@ -172,6 +175,7 @@ class SdkModelPort implements ModelPort {
   }
 }
 
+/** Creates a harness `ModelPort` backed by AI SDK v7. */
 export function createSdkModelPort(options: SdkModelPortOptions): ModelPort {
   return new SdkModelPort({ ...options, operations: defaultSdkOperations });
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+/** Runtime schema for token counts and cost in United States dollars. */
 export const UsageSchema = z.object({
   inputTokens: z.number().nonnegative(),
   outputTokens: z.number().nonnegative(),
@@ -9,6 +10,7 @@ export const UsageSchema = z.object({
   costUsd: z.number().nonnegative(),
 });
 
+/** Runtime schema for a principal recorded in run events. */
 export const PrincipalRefSchema = z.object({
   principalId: z.string(),
   displayName: z.string().optional(),
@@ -145,6 +147,7 @@ const DataEventSchema = z.object({
   transient: z.boolean().optional(),
 });
 
+/** Runtime schema for every known run event payload. */
 export const RunEventDataSchema = z.discriminatedUnion("type", [
   RunStartedEventSchema,
   RunFinishedEventSchema,
@@ -169,10 +172,13 @@ export const RunEventDataSchema = z.discriminatedUnion("type", [
   DataEventSchema,
 ]);
 
+/** Runtime schema for a version-one known event envelope. */
 export const RunEventSchema = z.object({
   runId: z.string(),
+  /** One-based sequence number, dense within a run. */
   seq: z.number().int().positive(),
   at: z.iso.datetime(),
+  /** Event envelope schema version. */
   v: z.literal(1),
   event: RunEventDataSchema,
 });
@@ -185,15 +191,25 @@ const UnknownRunEventSchema = z.object({
   event: z.object({ type: z.string() }).loose(),
 });
 
+/** Payload for a known event in the run log. */
 export type RunEventData = z.infer<typeof RunEventDataSchema>;
+/** Versioned envelope for a known event in the run log. */
 export type RunEvent = z.infer<typeof RunEventSchema>;
+/** Principal identity recorded with an event or intent. */
 export type PrincipalRef = z.infer<typeof PrincipalRefSchema>;
+/** Versioned envelope whose event type this package does not recognize. */
 export type UnknownRunEvent = z.infer<typeof UnknownRunEventSchema>;
 
+/** Known events are validated fully; unknown event types retain their loose payload for forward compatibility. */
 export type ReadRunEventResult =
   | { kind: "known"; value: RunEvent }
   | { kind: "unknown"; value: UnknownRunEvent };
 
+/**
+ * Parses a version-one event envelope and separates known event types from unknown types.
+ * Unknown events remain available so older readers can retain or skip newer log entries.
+ * Malformed known events fail validation instead of becoming unknown events.
+ */
 export function parseRunEvent(input: unknown): ReadRunEventResult {
   const candidate = UnknownRunEventSchema.parse(input);
   const knownType = RunEventDataSchema.options.some(
