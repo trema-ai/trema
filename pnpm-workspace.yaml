@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Shared dependency versions. Reference as `"typescript": "catalog:"`.
+catalog:
+  "@types/node": ^24.10.1
+  typescript: ^7.0.2
+
+# Lifecycle scripts are blocked by default; allow them per package.
+allowBuilds: {}
+
+# Fail on a lockfile that does not match package.json (CI is stricter still).
+strictPeerDependencies: true
