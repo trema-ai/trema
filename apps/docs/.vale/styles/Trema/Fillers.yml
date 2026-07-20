@@ -1,0 +1,24 @@
+extends: existence
+message: "Remove '%s'. State the fact without filler or marketing language."
+level: error
+ignorecase: true
+tokens:
+  - simply
+  - easily
+  - seamless(?:ly)?
+  - effortless(?:ly)?
+  - blazing(?:ly)?
+  - powerful
+  - robust
+  - elegant(?:ly)?
+  - leverages?
+  - utilizes?
+  - best-in-class
+  - world-class
+  - cutting-edge
+  - next-generation
+  - state-of-the-art
+  - revolutionary
+  - game-changing
+  - supercharges?
+  - empowers?

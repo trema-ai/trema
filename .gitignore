@@ -1,6 +1,9 @@
 node_modules/
 dist/
 build/
+.blume/
+.cloudflare/
+.wrangler/
 coverage/
 *.tsbuildinfo
 apps/server/src/generated/prisma/

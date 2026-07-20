@@ -1,0 +1,24 @@
+// Cloudflare Workers deployment (static assets).
+// Deploy with: pnpm --filter docs deploy
+//
+// Blume builds with the /docs base in every URL, but writes pages to the
+// dist/ root — the host mounts them at /docs. Workers static assets map the
+// request path straight onto the asset directory, so the deploy script
+// stages dist/ under .cloudflare/docs/ first, with _headers lifted to the
+// staging root where Cloudflare reads it.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trema-docs",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./.cloudflare",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    // The exact pattern catches trema.so/docs (no trailing slash); asset
+    // handling then redirects it to /docs/. Everything else on trema.so
+    // stays with the trema-website worker.
+    { "pattern": "trema.so/docs", "zone_name": "trema.so" },
+    { "pattern": "trema.so/docs/*", "zone_name": "trema.so" }
+  ]
+}
