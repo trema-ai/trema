@@ -12,6 +12,7 @@
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
     "test": "pnpm -r test",
+    "lint:prose": "pnpm -r lint:prose",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r exec rm -rf dist .tsbuildinfo *.tsbuildinfo node_modules/.cache"
   },

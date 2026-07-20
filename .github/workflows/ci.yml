@@ -65,6 +65,24 @@ jobs:
       - name: Test
         run: pnpm test
 
+  prose:
+    name: Prose
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up mise
+        uses: jdx/mise-action@v2
+        with:
+          install_args: vale
+
+      - name: Lint docs prose
+        working-directory: apps/docs
+        run: vale docs
+
   build:
     name: Build
     runs-on: ubuntu-latest
