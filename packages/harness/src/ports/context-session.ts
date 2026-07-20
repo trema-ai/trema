@@ -43,4 +43,12 @@ export interface ContextSession {
   useConnector(sessionId: string, toolKey: string, args: unknown, approvalId?: string): Promise<unknown>;
   proposeSkill(sessionId: string, name: string, description: string, body: string): Promise<unknown>;
   fetchTranscript(sessionId: string, conversationId: string, aroundSeq?: number, window?: number): Promise<unknown>;
+  resolveApproval(
+    sessionId: string,
+    approvalId: string,
+    decision: "approved" | "denied",
+    scope: "once" | "run" | "always",
+  ): Promise<void>;
+  proposePolicyEdit(sessionId: string, toolKey: string): Promise<void>;
+  reportFeedback(sessionId: string, runId: string, value: string): Promise<void>;
 }

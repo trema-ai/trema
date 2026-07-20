@@ -18,6 +18,11 @@ export interface TurnResult {
   toolCalls: ToolCall[];
   stopReason: StopReason;
   usage: Usage;
+  error?: {
+    message: string;
+    retryable: boolean;
+    retryAfterMs?: number;
+  };
 }
 
 export interface TurnStream extends AsyncIterable<RunEventData> {

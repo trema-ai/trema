@@ -35,6 +35,7 @@ export interface LoopInput {
   budget?: { maxOutputTokens?: number };
   /** Hard cap on turns per run; the shouldStop hook can only stop earlier. */
   maxTurns?: number;
+  elicitationExpiresAt?: string;
   hooks?: HarnessHooks;
 }
 
@@ -46,6 +47,7 @@ export interface FinishedLoopResult {
   stopReason: StopReason;
   turns: number;
   usage: Usage;
+  error?: TurnResult["error"];
 }
 
 export interface PausedLoopResult {
@@ -61,6 +63,7 @@ export type LoopResult = FinishedLoopResult | PausedLoopResult;
 export async function runLoop(input: LoopInput): Promise<LoopResult> {
   const committed = await input.store.listTurns(input.runId);
   const messages = assembleCommittedMessages(input.threadMessages, committed);
+  await resumePendingTurn(input, committed, messages);
   const instructions = assembleInstructions(input.standing);
   let usage = sumUsage(committed.map(({ usage: turnUsage }) => turnUsage));
   let turn = committed.length;
@@ -68,6 +71,8 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
 
   while (true) {
     while (true) {
+      const eventCursor = await input.store.eventCursor(input.runId);
+      const usageBeforeTurn = usage;
       const steering = await input.store.drainSteering(input.runId);
       messages.push(...steering.map(({ message }) => message));
       const steeringEvents: RunEventData[] = steering.map(({ author, message }) => ({
@@ -115,7 +120,9 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
       const streamEvents: RunEventData[] = [];
       for await (const event of stream) {
         streamEvents.push(event);
-        await input.store.appendEvent(input.runId, event);
+        if (event.type !== "elicitation" || !event.blocking) {
+          await input.store.appendEvent(input.runId, event);
+        }
       }
       const result = await stream.result;
       lastStopReason = result.stopReason;
@@ -145,6 +152,17 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
       }
 
       if (result.stopReason === "error" || result.stopReason === "aborted") {
+        if (result.stopReason === "aborted") {
+          await input.store.discardEventsAfter(input.runId, eventCursor);
+          for (const queued of steering) await input.store.enqueueSteering(input.runId, queued);
+          return {
+            status: "finished",
+            outcome: "cancelled",
+            stopReason: "aborted",
+            turns: turn,
+            usage: usageBeforeTurn,
+          };
+        }
         await commit(input, turn, prepared.model, result, toolResults);
         observeCommit(input, turn, result, toolResults);
         return {
@@ -153,6 +171,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
           stopReason: result.stopReason,
           turns: turn + 1,
           usage,
+          ...(result.error === undefined ? {} : { error: result.error }),
         };
       }
 
@@ -170,7 +189,9 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
             ? {}
             : { gate: { callId: streamGate.callId, elicitation: pause! } }),
           onEvent: async (event) => {
-            await input.store.appendEvent(input.runId, event);
+            if (event.type !== "elicitation" || !event.blocking) {
+              await input.store.appendEvent(input.runId, event);
+            }
           },
           ...(input.hooks?.beforeToolCall === undefined
             ? {}
@@ -185,9 +206,25 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
       }
 
       if (pause !== undefined) {
-        await input.store.appendEvent(input.runId, { type: "segment-end", reason: "paused" });
         const pausedResult: TurnResult = { ...result, stopReason: "paused" };
-        await commit(input, turn, prepared.model, pausedResult, toolResults, pendingToolCall);
+        const run = await input.store.getRun(input.runId);
+        const state =
+          run?.state === "running"
+            ? pause.kind === "approval"
+              ? "awaiting_approval"
+              : "awaiting_input"
+            : undefined;
+        await commit(input, turn, prepared.model, pausedResult, toolResults, pendingToolCall, {
+          events: [pause, { type: "segment-end", reason: "paused" }],
+          ...(state === undefined ? {} : { state }),
+          elicitation: {
+            runId: input.runId,
+            event: pause,
+            ...(input.elicitationExpiresAt === undefined
+              ? {}
+              : { expiresAt: input.elicitationExpiresAt }),
+          },
+        });
         observeCommit(input, turn, pausedResult, toolResults);
         return { status: "paused", stopReason: "paused", turn, elicitation: pause, usage };
       }
@@ -230,6 +267,93 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   }
 }
 
+async function resumePendingTurn(
+  input: LoopInput,
+  turns: TurnRecord[],
+  messages: TranscriptMessage[],
+): Promise<void> {
+  const pendingTurn = turns.at(-1);
+  const pending = pendingTurn?.pendingToolCall;
+  if (pendingTurn === undefined || pending === undefined) return;
+  const elicitation = await input.store.getElicitation(pending.elicitationId);
+  if (elicitation?.resolution === undefined) {
+    throw new Error(`pending elicitation is unresolved: ${pending.elicitationId}`);
+  }
+  if (elicitation.resolution.decision === "expired") {
+    throw new Error(`expired elicitation cannot resume: ${pending.elicitationId}`);
+  }
+
+  const calls: ToolCall[] = pendingTurn.message.blocks.flatMap((block) =>
+    block.type === "toolCall"
+      ? [{ callId: block.callId, name: block.name, input: block.input, providerMeta: block.providerMeta }]
+      : [],
+  );
+  const pendingIndex = calls.findIndex(({ callId }) => callId === pending.callId);
+  if (pendingIndex < 0) throw new Error(`pending tool call is missing: ${pending.callId}`);
+  const remaining = calls.slice(pendingIndex);
+  const resumed: TranscriptMessage[] = [];
+
+  if (elicitation.resolution.decision === "denied") {
+    const deniedBy = elicitation.resolution.by.displayName ?? elicitation.resolution.by.principalId;
+    const summary = `denied by ${deniedBy}${
+      elicitation.resolution.reason === undefined ? "" : `: ${elicitation.resolution.reason}`
+    }`;
+    const denied: ToolExecutionResult = {
+      callId: pending.callId,
+      status: "denied",
+      summary,
+      output: { error: summary },
+    };
+    await input.store.appendEvent(input.runId, toolResultEvent(denied));
+    resumed.push(toolResultMessage(denied));
+    remaining.shift();
+  } else if (elicitation.resolution.decision === "answered") {
+    const answered: ToolExecutionResult = {
+      callId: pending.callId,
+      status: "ok",
+      summary: elicitation.resolution.optionId,
+      output: { answer: elicitation.resolution.optionId },
+    };
+    await input.store.appendEvent(input.runId, toolResultEvent(answered));
+    resumed.push(toolResultMessage(answered));
+    remaining.shift();
+  }
+
+  if (remaining.length > 0) {
+    const approvalId = elicitation.event.reference?.approvalId;
+    const batch = await executeToolBatch({
+      calls: remaining,
+      tools: input.tools,
+      executor: input.toolExecutor,
+      ...(approvalId === undefined
+        ? {}
+        : { executionOptions: { [pending.callId]: { approvalId } } }),
+      onEvent: async (event) => {
+        await input.store.appendEvent(input.runId, event);
+      },
+      ...(input.hooks?.beforeToolCall === undefined
+        ? {}
+        : {
+            beforeToolCall: async (hookInput) =>
+              hookInput.call.callId === pending.callId
+                ? { action: "execute" as const }
+                : input.hooks!.beforeToolCall!(hookInput),
+          }),
+      ...(input.hooks?.afterToolCall === undefined
+        ? {}
+        : { afterToolCall: input.hooks.afterToolCall }),
+    });
+    if (batch.pendingElicitation !== undefined) {
+      throw new Error("a resumed tool batch cannot park before the next model boundary");
+    }
+    resumed.push(...batch.messages);
+  }
+
+  const toolResults = [...pendingTurn.toolResults, ...resumed];
+  await input.store.completePendingTurn(input.runId, pendingTurn.index, toolResults);
+  messages.push(...resumed);
+}
+
 async function commit(
   input: LoopInput,
   turn: number,
@@ -237,6 +361,7 @@ async function commit(
   result: TurnResult,
   toolResults: TranscriptMessage[],
   pendingToolCall?: TurnRecord["pendingToolCall"],
+  transaction?: Pick<Parameters<RunStore["commitTurn"]>[0], "events" | "state" | "elicitation">,
 ): Promise<void> {
   await input.store.commitTurn({
     turn: {
@@ -249,6 +374,7 @@ async function commit(
       stopReason: result.stopReason,
       usage: result.usage,
     },
+    ...transaction,
   });
 }
 

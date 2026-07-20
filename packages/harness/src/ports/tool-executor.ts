@@ -8,6 +8,14 @@ export interface ToolExecutionResult {
   outputRef?: string;
 }
 
+export interface ToolExecutionOptions {
+  approvalId?: string;
+}
+
 export interface ToolExecutor {
-  execute(call: ToolCall, definition: ToolDef): Promise<ToolExecutionResult>;
+  execute(
+    call: ToolCall,
+    definition: ToolDef,
+    options?: ToolExecutionOptions,
+  ): Promise<ToolExecutionResult>;
 }

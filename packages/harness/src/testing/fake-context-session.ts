@@ -69,6 +69,23 @@ export class FakeContextSession implements ContextSession {
     return this.#result("fetchTranscript", sessionId, conversationId, aroundSeq, window);
   }
 
+  async resolveApproval(
+    sessionId: string,
+    approvalId: string,
+    decision: "approved" | "denied",
+    scope: "once" | "run" | "always",
+  ): Promise<void> {
+    this.#record("resolveApproval", sessionId, approvalId, decision, scope);
+  }
+
+  async proposePolicyEdit(sessionId: string, toolKey: string): Promise<void> {
+    this.#record("proposePolicyEdit", sessionId, toolKey);
+  }
+
+  async reportFeedback(sessionId: string, runId: string, value: string): Promise<void> {
+    this.#record("reportFeedback", sessionId, runId, value);
+  }
+
   #record(method: string, ...args: unknown[]): void {
     this.calls.push({ method, args });
   }

@@ -34,9 +34,19 @@ export type {
 export type {
   CommitTurnInput,
   CommitTurnResult,
+  ElicitationRecord,
+  ElicitationResolution,
   QueuedInput,
+  RecordIntentResult,
+  ResolutionScope,
   RunRecord,
   RunStore,
+  RunTransitionInput,
+  StopRecord,
   TurnRecord,
 } from "./run-store.js";
-export type { ToolExecutionResult, ToolExecutor } from "./tool-executor.js";
+export type {
+  ToolExecutionOptions,
+  ToolExecutionResult,
+  ToolExecutor,
+} from "./tool-executor.js";
