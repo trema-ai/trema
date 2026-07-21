@@ -31,6 +31,25 @@ function createConfiguredAuth({ db, env }: AuthDependencies) {
       enabled: env.TREMA_PASSWORD_AUTH_ENABLED,
     },
     socialProviders,
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (session) => {
+            const principals = await db.principal.findMany({
+              where: { authId: session.userId },
+              select: { orgId: true },
+              take: 2,
+            });
+
+            if (principals.length === 1) {
+              return {
+                data: { activeOrgId: principals[0]?.orgId },
+              };
+            }
+          },
+        },
+      },
+    },
     session: {
       additionalFields: {
         activeOrgId: {

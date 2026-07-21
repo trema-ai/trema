@@ -6,15 +6,16 @@ import { cors } from "hono/cors";
 
 import type { Auth } from "./lib/auth/index.js";
 import type { Database } from "./lib/db/index.js";
+import type { Environment } from "./lib/env/schema.js";
 import { router } from "./router.js";
 
 export interface AppDependencies {
   db: Database;
   auth: Auth;
-  webOrigins: string[];
+  env: Environment;
 }
 
-export function createApp({ db, auth, webOrigins }: AppDependencies): Hono {
+export function createApp({ db, auth, env }: AppDependencies): Hono {
   const app = new Hono();
   const rpcHandler = new RPCHandler(router, {
     interceptors: [
@@ -46,7 +47,7 @@ export function createApp({ db, auth, webOrigins }: AppDependencies): Hono {
   });
 
   const corsMiddleware = cors({
-    origin: webOrigins,
+    origin: env.TREMA_WEB_ORIGINS,
     credentials: true,
   });
 
@@ -64,6 +65,7 @@ export function createApp({ db, auth, webOrigins }: AppDependencies): Hono {
         db,
         headers: context.req.raw.headers,
         auth,
+        env,
       },
     });
 
@@ -81,6 +83,7 @@ export function createApp({ db, auth, webOrigins }: AppDependencies): Hono {
         db,
         headers: context.req.raw.headers,
         auth,
+        env,
       },
     });
 

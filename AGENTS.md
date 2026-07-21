@@ -5,9 +5,11 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
 
 ## Code layout
 
-- Server modules live under `src/lib/<module>/` with an `index.ts` entry
-  (see `lib/env`, `lib/auth`, `lib/db`); oRPC procedures live in
-  `src/rpc/` split per domain.
+- Server infrastructure modules live under `src/lib/<module>/` with an
+  `index.ts` entry (see `lib/env`, `lib/auth`, `lib/db`). Domain
+  operations live under `src/services/<module>/` with the same shape
+  (see `services/org`, `services/bootstrap`). oRPC procedures live in
+  `src/rpc/` split per domain and call into services.
 
 ## Tests
 

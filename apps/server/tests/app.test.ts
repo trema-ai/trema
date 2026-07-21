@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { Auth } from "../src/lib/auth/index.js";
 import type { Database } from "../src/lib/db/index.js";
+import { parseEnv } from "../src/lib/env/schema.js";
+
+const environment = parseEnv({
+  NODE_ENV: "test",
+  DATABASE_URL: "postgresql://localhost/trema_test",
+  TREMA_AUTH_SECRET: "app-test-auth-secret-at-least-32-characters",
+});
 
 function databaseMock(query: () => Promise<unknown>): Database {
   return {
@@ -20,7 +27,7 @@ function appDependencies(db: Database) {
   return {
     db,
     auth: authMock(),
-    webOrigins: ["http://127.0.0.1:5173"],
+    env: environment,
   };
 }
 
@@ -88,7 +95,7 @@ describe("server", () => {
     const app = createApp({
       db: databaseMock(vi.fn().mockResolvedValue([])),
       auth: authMock(handler),
-      webOrigins: ["http://127.0.0.1:5173"],
+      env: environment,
     });
 
     const response = await app.request("/api/auth/get-session", {
