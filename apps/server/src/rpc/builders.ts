@@ -1,3 +1,4 @@
+import { oo } from "@orpc/openapi";
 import { ORPCError, os } from "@orpc/server";
 
 import type { Auth } from "#/lib/auth/index.js";
@@ -18,50 +19,63 @@ export interface RpcContext {
 
 export const pub = os.$context<RpcContext>();
 
-export const authed = pub.use(async ({ context, next }) => {
-  const session = await context.auth.api.getSession({
-    headers: context.headers,
-  });
-
-  if (!session) {
-    throw new ORPCError("UNAUTHORIZED", {
-      message: "Authentication required",
-    });
-  }
-
-  return next({
-    context: {
-      session,
-    },
-  });
-});
-
-export const serviceAuthed = pub.use(async ({ context, next }) => {
-  const authorization = context.headers.get("authorization");
-  const match = authorization?.match(/^Bearer (\S+)$/);
-  if (!match) {
-    throw new ORPCError("UNAUTHORIZED", {
-      message: "Service credential required",
-    });
-  }
-
-  try {
-    const credential = await resolveServiceCredential(context.db, match[1]!);
-    return next({
-      context: {
-        org: credential.org,
-        principal: credential.principal,
-      },
-    });
-  } catch (error) {
-    if (error instanceof ServiceCredentialAuthenticationError) {
-      throw new ORPCError("UNAUTHORIZED", {
-        message: "Invalid service credential",
+// `oo.spec` attaches the OpenAPI security requirement to the middleware, so
+// every procedure built on the builder documents it. The scheme names must
+// match `components.securitySchemes` in openapi.ts.
+export const authed = pub.use(
+  oo.spec(
+    pub.middleware(async ({ context, next }) => {
+      const session = await context.auth.api.getSession({
+        headers: context.headers,
       });
-    }
-    throw error;
-  }
-});
+
+      if (!session) {
+        throw new ORPCError("UNAUTHORIZED", {
+          message: "Authentication required",
+        });
+      }
+
+      return next({
+        context: {
+          session,
+        },
+      });
+    }),
+    { security: [{ sessionCookie: [] }] },
+  ),
+);
+
+export const serviceAuthed = pub.use(
+  oo.spec(
+    pub.middleware(async ({ context, next }) => {
+      const authorization = context.headers.get("authorization");
+      const match = authorization?.match(/^Bearer (\S+)$/);
+      if (!match) {
+        throw new ORPCError("UNAUTHORIZED", {
+          message: "Service credential required",
+        });
+      }
+
+      try {
+        const credential = await resolveServiceCredential(context.db, match[1]!);
+        return next({
+          context: {
+            org: credential.org,
+            principal: credential.principal,
+          },
+        });
+      } catch (error) {
+        if (error instanceof ServiceCredentialAuthenticationError) {
+          throw new ORPCError("UNAUTHORIZED", {
+            message: "Invalid service credential",
+          });
+        }
+        throw error;
+      }
+    }),
+    { security: [{ serviceCredential: [] }] },
+  ),
+);
 
 export const orgScoped = authed.use(async ({ context, next }) => {
   const { activeOrgId } = context.session.session;

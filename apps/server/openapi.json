@@ -2,13 +2,29 @@
   "info": {
     "title": "Trema API",
     "version": "1.0.0",
-    "description": "The public REST API for Trema, the AI agent your company owns."
+    "description": "The public REST API for Trema, the AI agent your company owns.\n\n## Authentication\n\nThe API accepts two kinds of credentials:\n\n- **Session cookie** — for browsers and interactive clients. Sign in through the auth endpoints under `/api/auth/*` to receive the session cookie. Organization-scoped operations act as the signed-in member of the active organization.\n- **Service credential** — for machines. An administrator creates one with `POST /service-credentials` and receives the secret once. Send it as `Authorization: Bearer trema_sc_...`. The token acts as the principal it is bound to.\n\nEach operation lists the scheme it accepts. Operations that list no scheme are public."
   },
   "servers": [
     {
       "url": "/api/v1"
     }
   ],
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token",
+        "description": "The session cookie set by sign-in. Over HTTPS the cookie name carries the `__Secure-` prefix."
+      },
+      "serviceCredential": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "trema_sc_…",
+        "description": "An organization-scoped service credential. The secret is shown once at creation and acts as the principal the credential is bound to."
+      }
+    }
+  },
   "tags": [
     {
       "name": "System",
@@ -137,7 +153,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/config": {
@@ -270,7 +291,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/members/role": {
@@ -370,7 +396,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/invites": {
@@ -464,7 +495,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/invites/redeem": {
@@ -563,7 +599,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/orgs": {
@@ -660,7 +701,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       },
       "get": {
         "operationId": "org.list",
@@ -739,7 +785,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/orgs/current": {
@@ -816,7 +867,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/orgs/switch": {
@@ -913,7 +969,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/service-credentials": {
@@ -998,7 +1059,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       },
       "get": {
         "operationId": "serviceCredentials.list",
@@ -1059,7 +1125,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/service-credentials/revoke": {
@@ -1139,7 +1210,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/service-credentials/whoami": {
@@ -1199,7 +1275,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "serviceCredential": []
+          }
+        ]
       }
     },
     "/system/ping": {
