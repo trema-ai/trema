@@ -1,0 +1,74 @@
+---
+title: Host commands
+description: Recover access, manage bootstrap state, and maintain a Trema deployment from its host.
+---
+
+The `trema` command provides host-level recovery and maintenance tools. Run these commands on the server with `DATABASE_URL` set.
+
+The command runs `serve` when you omit a command name.
+
+## Serve Trema
+
+Run `trema serve` to start the server. You can also run `trema` with no arguments.
+
+## Reset a password
+
+Run this command when a person cannot use email-based recovery:
+
+```sh
+trema admin reset-password admin@example.com --password '<new-password>'
+```
+
+The command sets a better-auth credential password. It creates a credential account when the user only has social sign-in.
+
+The command records a host-actor audit entry in every organization the user belongs to.
+
+## Promote an owner
+
+Run this command when an organization has no available owner:
+
+```sh
+trema admin promote admin@example.com
+```
+
+In dedicated mode, the command selects the only organization. It fails if the database has zero or several organizations.
+
+If several organizations exist, select one explicitly:
+
+```sh
+trema admin promote admin@example.com --org <organization-id>
+```
+
+The command creates the human principal when needed. It then grants the owner role and records a host-actor audit entry.
+
+## Re-mint a bootstrap token
+
+If you lose the first token, generate a replacement:
+
+```sh
+trema bootstrap-token
+```
+
+The command prints the new token once. It stores only the token hash and invalidates the previous token.
+
+The command works only while zero organizations exist.
+
+## Apply migrations
+
+Run this command before first start and after every upgrade:
+
+```sh
+trema migrate
+```
+
+The command applies all pending database migrations. It exits with a nonzero status when migration fails.
+
+## Check deployment health
+
+Run this command when you diagnose a deployment:
+
+```sh
+trema doctor
+```
+
+The command checks environment values, database access, migration status, and the organization count. Any failed check returns a nonzero status.

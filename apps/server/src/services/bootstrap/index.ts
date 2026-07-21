@@ -50,6 +50,29 @@ export interface InitializeBootstrapResult {
   generatedToken?: string;
 }
 
+export interface MintBootstrapTokenDependencies {
+  db: Database;
+  generateToken?: () => string;
+}
+
+export async function mintBootstrapToken({
+  db,
+  generateToken = () => randomBytes(32).toString("base64url"),
+}: MintBootstrapTokenDependencies): Promise<string> {
+  return db.$transaction(async (transaction) => {
+    await takeBootstrapLock(transaction);
+    await requireNoOrganizations(transaction);
+
+    const token = generateToken();
+    await transaction.bootstrapToken.upsert({
+      where: { id: BOOTSTRAP_TOKEN_ID },
+      create: { id: BOOTSTRAP_TOKEN_ID, tokenHash: hashBootstrapToken(token) },
+      update: { tokenHash: hashBootstrapToken(token) },
+    });
+    return token;
+  });
+}
+
 export async function initializeBootstrap({
   db,
   env,
