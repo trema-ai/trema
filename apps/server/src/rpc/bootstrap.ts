@@ -7,34 +7,26 @@ import {
   requireNoOrganizations,
   takeBootstrapLock,
   verifyBootstrapToken,
-} from "../services/bootstrap/index.js";
-import { createOrgWithOwner } from "../services/org/index.js";
+} from "#/services/bootstrap/index.js";
+import { createOrgWithOwner } from "#/services/org/index.js";
 import { authed } from "./builders.js";
 
 const bootstrapResult = z
   .object({
     org: z
       .object({
-        id: z
-          .string()
-          .describe("The organization's unique ID. A UUID (version 7)."),
+        id: z.string().describe("The organization's unique ID. A UUID (version 7)."),
         name: z.string().describe("The organization's display name."),
       })
       .describe("The organization that was created."),
     principal: z
       .object({
-        id: z
-          .string()
-          .describe("The principal's unique ID. A UUID (version 7)."),
-        displayName: z
-          .string()
-          .describe("The name shown for the owner principal."),
+        id: z.string().describe("The principal's unique ID. A UUID (version 7)."),
+        displayName: z.string().describe("The name shown for the owner principal."),
         email: z
           .string()
           .nullable()
-          .describe(
-            "The owner's sign-in email. Null when no email is on file.",
-          ),
+          .describe("The owner's sign-in email. Null when no email is on file."),
       })
       .describe("The caller's owner principal in the new organization."),
   })
@@ -51,10 +43,7 @@ const redeem = authed
   })
   .input(
     z.object({
-      token: z
-        .string()
-        .min(1)
-        .describe("The bootstrap token for the dedicated deployment."),
+      token: z.string().min(1).describe("The bootstrap token for the dedicated deployment."),
       orgName: z
         .string()
         .trim()

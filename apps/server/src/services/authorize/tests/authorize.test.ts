@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "../../../lib/db/index.js";
+import type { Database } from "#/lib/db/index.js";
 import {
   authorize,
+  type Capability,
   capabilities,
   roleAllowsCapability,
   roles,
-  type Capability,
-} from "../index.js";
+} from "#/services/authorize/index.js";
 
 const expected: Record<Capability, Record<(typeof roles)[number], boolean>> = {
   read: { owner: true, admin: true, member: true, viewer: true },
@@ -23,9 +23,7 @@ describe("capability role table", () => {
   for (const capability of capabilities) {
     for (const role of roles) {
       it(`${role} ${expected[capability][role] ? "may" : "may not"} ${capability}`, () => {
-        expect(roleAllowsCapability(role, capability)).toBe(
-          expected[capability][role],
-        );
+        expect(roleAllowsCapability(role, capability)).toBe(expected[capability][role]);
       });
     }
   }
@@ -42,12 +40,7 @@ describe("capability role table", () => {
 
     for (const capability of capabilities) {
       await expect(
-        authorize(
-          { id: "agent", orgId: "org", kind: "agent" },
-          capability,
-          "scope",
-          db,
-        ),
+        authorize({ id: "agent", orgId: "org", kind: "agent" }, capability, "scope", db),
       ).resolves.toBe(false);
     }
   });

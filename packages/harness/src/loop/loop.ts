@@ -5,8 +5,8 @@ import type {
   ToolDef,
   TranscriptMessage,
   Usage,
-} from "../core/index.js";
-import type { RunEventData } from "../events/index.js";
+} from "#/core/index.js";
+import type { RunEventData } from "#/events/index.js";
 import type {
   HarnessHooks,
   ModelPort,
@@ -17,12 +17,8 @@ import type {
   ToolExecutor,
   TurnRecord,
   TurnResult,
-} from "../ports/index.js";
-import {
-  executeToolBatch,
-  toToolResultEvent,
-  toToolResultMessage,
-} from "./tool-batch.js";
+} from "#/ports/index.js";
+import { executeToolBatch, toToolResultEvent, toToolResultMessage } from "./tool-batch.js";
 
 /** Dependencies and durable context for one loop execution. */
 export interface LoopInput {
@@ -201,7 +197,8 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
         toolResults = failed.map(toToolResultMessage);
         await appendEvents(input, failed.map(toToolResultEvent));
       } else if (result.toolCalls.length > 0) {
-        const streamGate = pause === undefined ? undefined : gatedStreamCall(result.toolCalls, pause);
+        const streamGate =
+          pause === undefined ? undefined : gatedStreamCall(result.toolCalls, pause);
         const batch = await executeToolBatch({
           calls: result.toolCalls,
           tools: prepared.tools,
@@ -306,7 +303,14 @@ async function resumePendingTurn(
 
   const calls: ToolCall[] = pendingTurn.message.blocks.flatMap((block) =>
     block.type === "toolCall"
-      ? [{ callId: block.callId, name: block.name, input: block.input, providerMeta: block.providerMeta }]
+      ? [
+          {
+            callId: block.callId,
+            name: block.name,
+            input: block.input,
+            providerMeta: block.providerMeta,
+          },
+        ]
       : [],
   );
   const pendingIndex = calls.findIndex(({ callId }) => callId === pending.callId);
@@ -510,9 +514,7 @@ function hookErrorEvent(name: string, error: unknown): RunEventData {
 }
 
 function messageText(message: TranscriptMessage): string {
-  return message.blocks
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("\n");
+  return message.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 }
 
 function sumUsage(usages: Usage[]): Usage {

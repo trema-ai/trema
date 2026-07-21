@@ -5,8 +5,8 @@ import type {
   TranscriptMessage,
   Trigger,
   Usage,
-} from "../core/index.js";
-import type { PrincipalRef, RunEvent, RunEventData } from "../events/index.js";
+} from "#/core/index.js";
+import type { PrincipalRef, RunEvent, RunEventData } from "#/events/index.js";
 
 /** Durable metadata and aggregate outcome for one run. */
 export interface RunRecord {
@@ -123,7 +123,11 @@ export interface RunStore {
   /** Atomically commits the next turn with its events, state, and elicitation. */
   commitTurn(input: CommitTurnInput): Promise<CommitTurnResult>;
   /** Adds resumed tool results and clears the pending call from a paused turn. */
-  completePendingTurn(runId: string, turnIndex: number, toolResults: TranscriptMessage[]): Promise<void>;
+  completePendingTurn(
+    runId: string,
+    turnIndex: number,
+    toolResults: TranscriptMessage[],
+  ): Promise<void>;
   /** Appends one event with the next dense sequence number for its run. */
   appendEvent(runId: string, event: RunEventData): Promise<RunEvent>;
   /** Lists event envelopes in ascending sequence order. */
@@ -156,5 +160,9 @@ export interface RunStore {
     resolution: ElicitationResolution,
   ): Promise<ResolveElicitationResult>;
   /** Atomically resolves an expired elicitation and marks its parked run stale. */
-  expireElicitation(elicitationId: string, by: PrincipalRef, at: string): Promise<ResolveElicitationResult>;
+  expireElicitation(
+    elicitationId: string,
+    by: PrincipalRef,
+    at: string,
+  ): Promise<ResolveElicitationResult>;
 }

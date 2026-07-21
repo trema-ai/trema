@@ -1,6 +1,6 @@
-import { canTransition } from "../core/index.js";
-import type { RunState } from "../core/index.js";
-import type { RunEvent, RunEventData } from "../events/index.js";
+import type { RunState } from "#/core/index.js";
+import { canTransition } from "#/core/index.js";
+import type { RunEvent, RunEventData } from "#/events/index.js";
 import type {
   Clock,
   CommitTurnInput,
@@ -13,7 +13,7 @@ import type {
   RunTransitionInput,
   StopRecord,
   TurnRecord,
-} from "../ports/index.js";
+} from "#/ports/index.js";
 
 /** In-memory reference implementation of the complete `RunStore` contract. */
 export class InMemoryRunStore implements RunStore {

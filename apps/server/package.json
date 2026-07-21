@@ -3,8 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
   "scripts": {
-    "build": "prisma generate && tsc -b tsconfig.build.json",
+    "build": "prisma generate && tsc -b tsconfig.build.json && tsc-alias -p tsconfig.build.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "openapi": "tsx scripts/generate-openapi.ts",
@@ -31,6 +34,7 @@
     "@better-auth/cli": "^1.4.21",
     "@types/node": "catalog:",
     "prisma": "^7.8.0",
+    "tsc-alias": "1.9.1",
     "tsx": "^4.23.1",
     "typescript": "catalog:",
     "vitest": "^4.1.10"

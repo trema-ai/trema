@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Prisma, Role } from "../../generated/prisma/client.js";
-import type { Database } from "../../lib/db/index.js";
-import type { Environment } from "../../lib/env/schema.js";
+import type { Prisma, Role } from "#/generated/prisma/client.js";
+import type { Database } from "#/lib/db/index.js";
+import type { Environment } from "#/lib/env/schema.js";
 
 const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -20,10 +20,7 @@ export class MemberNotFoundError extends Error {
   }
 }
 
-async function findOrgScope(
-  db: Database | Prisma.TransactionClient,
-  orgId: string,
-) {
+async function findOrgScope(db: Database | Prisma.TransactionClient, orgId: string) {
   return db.scope.findFirstOrThrow({
     where: { orgId, kind: "org" },
   });
@@ -88,9 +85,7 @@ export async function setMemberRole(db: Database, input: SetMemberRoleInput) {
         },
       });
       if (owners <= 1) {
-        throw new MemberConflictError(
-          "The organization's last owner cannot be demoted",
-        );
+        throw new MemberConflictError("The organization's last owner cannot be demoted");
       }
     }
 
@@ -141,15 +136,10 @@ export interface CreateInviteInput {
   expiresAt?: Date;
 }
 
-export async function createInvite(
-  db: Database,
-  env: Environment,
-  input: CreateInviteInput,
-) {
+export async function createInvite(db: Database, env: Environment, input: CreateInviteInput) {
   const token = randomBytes(32).toString("base64url");
   const tokenHash = hashInviteToken(token);
-  const expiresAt =
-    input.expiresAt ?? new Date(Date.now() + DEFAULT_INVITE_TTL_MS);
+  const expiresAt = input.expiresAt ?? new Date(Date.now() + DEFAULT_INVITE_TTL_MS);
 
   const invite = await db.$transaction(async (transaction) => {
     const scope = input.scopeId
@@ -205,9 +195,7 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
     const invite = await transaction.invite.findUnique({ where: { tokenHash } });
     const now = new Date();
     if (!invite || invite.redeemedAt || invite.expiresAt <= now) {
-      throw new MemberConflictError(
-        "Invite is invalid, expired, or already redeemed",
-      );
+      throw new MemberConflictError("Invite is invalid, expired, or already redeemed");
     }
 
     const claimed = await transaction.invite.updateMany({
@@ -220,9 +208,7 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
       data: { redeemedAt: now },
     });
     if (claimed.count !== 1) {
-      throw new MemberConflictError(
-        "Invite is invalid, expired, or already redeemed",
-      );
+      throw new MemberConflictError("Invite is invalid, expired, or already redeemed");
     }
 
     const existingPrincipal = await transaction.principal.findUnique({

@@ -9,7 +9,8 @@
     "declaration": false,
     "declarationMap": false,
     "paths": {
-      "@trema/harness": ["../harness/src/index.ts"]
+      "@trema/harness": ["../harness/src/index.ts"],
+      "#/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

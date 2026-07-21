@@ -16,7 +16,8 @@ function textFromBlocks(message: TranscriptMessage): string {
   let text = "";
   for (const block of message.blocks) {
     if (block.type === "text") text += block.text;
-    else if (block.type !== "image") throw new Error(`Invalid ${block.type} block in toolResult message`);
+    else if (block.type !== "image")
+      throw new Error(`Invalid ${block.type} block in toolResult message`);
   }
   return text;
 }
@@ -68,7 +69,11 @@ export function toModelMessages(
         for (const block of message.blocks) {
           const options = providerOptions(block.providerMeta);
           if (block.type === "text") {
-            content.push({ type: "text", text: block.text, ...(options ? { providerOptions: options } : {}) });
+            content.push({
+              type: "text",
+              text: block.text,
+              ...(options ? { providerOptions: options } : {}),
+            });
           } else if (block.type === "image") {
             content.push({
               type: "image",
@@ -93,10 +98,18 @@ export function toModelMessages(
           const options = providerOptions(block.providerMeta);
           switch (block.type) {
             case "text":
-              content.push({ type: "text", text: block.text, ...(options ? { providerOptions: options } : {}) });
+              content.push({
+                type: "text",
+                text: block.text,
+                ...(options ? { providerOptions: options } : {}),
+              });
               break;
             case "thinking":
-              content.push({ type: "reasoning", text: block.text, ...(options ? { providerOptions: options } : {}) });
+              content.push({
+                type: "reasoning",
+                text: block.text,
+                ...(options ? { providerOptions: options } : {}),
+              });
               break;
             case "toolCall":
               content.push({
@@ -127,15 +140,18 @@ export function toModelMessages(
       const toolCallId = message.toolCallId;
       if (toolCallId === undefined) throw new Error("Tool result message is missing toolCallId");
       const toolName = toolNames.get(toolCallId);
-      if (toolName === undefined) throw new Error(`Tool result references unknown call: ${toolCallId}`);
+      if (toolName === undefined)
+        throw new Error(`Tool result references unknown call: ${toolCallId}`);
       return {
         role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId,
-          toolName,
-          output: toolResultOutput(message),
-        }],
+        content: [
+          {
+            type: "tool-result",
+            toolCallId,
+            toolName,
+            output: toolResultOutput(message),
+          },
+        ],
         ...(messageOptions ? { providerOptions: messageOptions } : {}),
       };
     }),

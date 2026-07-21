@@ -1,5 +1,4 @@
 export { ThreadDispatchLock } from "./dispatch-lock.js";
-export { InputDispatcher } from "./dispatcher.js";
 export type {
   DispatchIntent,
   DispatchResult,
@@ -10,3 +9,4 @@ export type {
   RetryIntent,
   StopIntent,
 } from "./dispatcher.js";
+export { InputDispatcher } from "./dispatcher.js";

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ImageBlock, TextBlock, ToolCall, ToolDef } from "../src/core/index.js";
-import type { ToolExecutionResult, ToolExecutor } from "../src/ports/index.js";
-import { executeToolBatch } from "../src/loop/tool-batch.js";
+import type { ImageBlock, TextBlock, ToolCall, ToolDef } from "#/core/index.js";
+import { executeToolBatch } from "#/loop/tool-batch.js";
+import type { ToolExecutionResult, ToolExecutor } from "#/ports/index.js";
 
 const calls: ToolCall[] = [
   { callId: "call-1", name: "first", input: { value: 1 } },
@@ -178,10 +178,7 @@ describe("executeToolBatch", () => {
   });
 
   it("executes only the assistant-ordered prefix before a policy elicitation", async () => {
-    const pauseCalls = [
-      ...calls,
-      { callId: "call-3", name: "third", input: { value: 3 } },
-    ];
+    const pauseCalls = [...calls, { callId: "call-3", name: "third", input: { value: 3 } }];
     const pauseTools = pauseCalls.map(({ name }) => ({
       name,
       title: name,
@@ -210,7 +207,9 @@ describe("executeToolBatch", () => {
       },
       beforeToolCall: ({ call }) => {
         checked.push(call.callId);
-        return call.callId === "call-2" ? { action: "elicit", event: elicitation } : { action: "execute" };
+        return call.callId === "call-2"
+          ? { action: "elicit", event: elicitation }
+          : { action: "execute" };
       },
     });
 

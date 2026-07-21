@@ -25,8 +25,7 @@ export function generateOpenApiDocument() {
     info: {
       title: "Trema API",
       version: OPENAPI_VERSION,
-      description:
-        "The public REST API for Trema, the AI agent your company owns.",
+      description: "The public REST API for Trema, the AI agent your company owns.",
     },
     servers: [{ url: OPENAPI_PREFIX }],
     // The tag order and descriptions drive the docs sidebar sections. Every

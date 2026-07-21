@@ -8,7 +8,7 @@ import {
   MemberNotFoundError,
   redeemInvite,
   setMemberRole,
-} from "../services/members/index.js";
+} from "#/services/members/index.js";
 import { authed, requireCapability } from "./builders.js";
 
 const roleSchema = z
@@ -18,9 +18,7 @@ const roleSchema = z
   );
 const principalSchema = z.object({
   id: z.string().describe("The principal's unique ID. A UUID (version 7)."),
-  displayName: z
-    .string()
-    .describe("The name shown for the principal (a person or an agent)."),
+  displayName: z.string().describe("The name shown for the principal (a person or an agent)."),
   email: z
     .string()
     .nullable()
@@ -31,9 +29,7 @@ const principalSchema = z.object({
 const memberSchema = z
   .object({
     principal: principalSchema.describe("The member's principal."),
-    role: roleSchema.describe(
-      "The member's role on the organization scope.",
-    ),
+    role: roleSchema.describe("The member's role on the organization scope."),
   })
   .describe("A member of the organization and the role they hold.");
 
@@ -45,11 +41,7 @@ const list = requireCapability("read")
     description: "List the human members of the active organization.",
     tags: ["Members"],
   })
-  .output(
-    z
-      .array(memberSchema)
-      .describe("The human members of the active organization."),
-  )
+  .output(z.array(memberSchema).describe("The human members of the active organization."))
   .handler(async ({ context }) =>
     (await listMembers(context.db, context.org.id)).map(({ principal, role }) => ({
       principal,
@@ -68,9 +60,7 @@ const setRole = requireCapability("manage_members")
   })
   .input(
     z.object({
-      principalId: z
-        .uuid()
-        .describe("The ID of the member's principal. A UUID."),
+      principalId: z.uuid().describe("The ID of the member's principal. A UUID."),
       role: roleSchema.describe("The role to assign to the member."),
     }),
   )
@@ -119,8 +109,7 @@ const inviteCreate = requireCapability("manage_members", {
     method: "POST",
     path: "/invites",
     summary: "Create an invite link",
-    description:
-      "Create an invite link that grants a role on a scope when someone redeems it.",
+    description: "Create an invite link that grants a role on a scope when someone redeems it.",
     tags: ["Members"],
   })
   .input(inviteCreateInput)
@@ -128,20 +117,10 @@ const inviteCreate = requireCapability("manage_members", {
     z
       .object({
         id: z.string().describe("The invite's unique ID. A UUID (version 7)."),
-        link: z
-          .url()
-          .describe(
-            "The join URL to share. It carries the single-use invite token.",
-          ),
+        link: z.url().describe("The join URL to share. It carries the single-use invite token."),
         role: roleSchema.describe("The role the invite grants when redeemed."),
-        scopeId: z
-          .string()
-          .describe(
-            "The ID of the scope the invite grants access to. A UUID.",
-          ),
-        expiresAt: z
-          .string()
-          .describe("When the invite expires. An ISO 8601 date-time."),
+        scopeId: z.string().describe("The ID of the scope the invite grants access to. A UUID."),
+        expiresAt: z.string().describe("When the invite expires. An ISO 8601 date-time."),
       })
       .describe("A created invite and the link to share."),
   )
@@ -179,31 +158,21 @@ const inviteRedeem = authed
     method: "POST",
     path: "/invites/redeem",
     summary: "Redeem an invite link",
-    description:
-      "Redeem an invite token to join the organization with the granted role.",
+    description: "Redeem an invite token to join the organization with the granted role.",
     tags: ["Members"],
   })
   .input(
     z.object({
-      token: z
-        .string()
-        .min(1)
-        .describe("The invite token from the join link."),
+      token: z.string().min(1).describe("The invite token from the join link."),
     }),
   )
   .output(
     z
       .object({
-        orgId: z
-          .string()
-          .describe("The ID of the organization the caller joined. A UUID."),
-        principal: principalSchema.describe(
-          "The caller's principal in the organization.",
-        ),
+        orgId: z.string().describe("The ID of the organization the caller joined. A UUID."),
+        principal: principalSchema.describe("The caller's principal in the organization."),
         role: roleSchema.describe("The role the caller received."),
-        scopeId: z
-          .string()
-          .describe("The ID of the scope the role applies to. A UUID."),
+        scopeId: z.string().describe("The ID of the scope the role applies to. A UUID."),
       })
       .describe("The result of redeeming an invite."),
   )

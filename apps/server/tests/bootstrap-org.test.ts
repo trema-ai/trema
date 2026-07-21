@@ -1,36 +1,23 @@
 import { randomUUID } from "node:crypto";
 
 import { call } from "@orpc/server";
-import {
-  afterAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "../src/lib/auth/index.js";
-import {
-  hashBootstrapToken,
-  initializeBootstrap,
-} from "../src/services/bootstrap/index.js";
-import { createPrismaClient } from "../src/lib/db/index.js";
-import { parseEnv, type Environment } from "../src/lib/env/schema.js";
-import { createOrgWithOwner } from "../src/services/org/index.js";
-import { bootstrapRouter } from "../src/rpc/bootstrap.js";
-import { configRouter } from "../src/rpc/config.js";
-import { orgRouter } from "../src/rpc/org.js";
+import { createAuth } from "#/lib/auth/index.js";
+import { createPrismaClient } from "#/lib/db/index.js";
+import { type Environment, parseEnv } from "#/lib/env/schema.js";
+import { bootstrapRouter } from "#/rpc/bootstrap.js";
+import { configRouter } from "#/rpc/config.js";
+import { orgRouter } from "#/rpc/org.js";
+import { hashBootstrapToken, initializeBootstrap } from "#/services/bootstrap/index.js";
+import { createOrgWithOwner } from "#/services/org/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const authSecret = "bootstrap-integration-secret-at-least-32-characters";
 
-function environment(
-  mode: "hosted" | "dedicated",
-  bootstrapToken?: string,
-): Environment {
+function environment(mode: "hosted" | "dedicated", bootstrapToken?: string): Environment {
   return parseEnv({
     NODE_ENV: "test",
     DATABASE_URL: databaseUrl,
@@ -120,9 +107,7 @@ integration("bootstrap and organizations", () => {
     if (!agent) {
       throw new Error("Agent principal was not created");
     }
-    await expect(
-      db.grant.count({ where: { principalId: agent.id } }),
-    ).resolves.toBe(0);
+    await expect(db.grant.count({ where: { principalId: agent.id } })).resolves.toBe(0);
   });
 
   it("allows exactly one winner in a concurrent dedicated bootstrap race", async () => {
@@ -145,9 +130,7 @@ integration("bootstrap and organizations", () => {
       ),
     ]);
 
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
-      1,
-    );
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const rejected = results.find((result) => result.status === "rejected");
     expect(rejected).toMatchObject({
       status: "rejected",
@@ -177,11 +160,7 @@ integration("bootstrap and organizations", () => {
     });
 
     await expect(
-      call(
-        bootstrapRouter.redeem,
-        { token, orgName: "Second Org" },
-        { context: owner.context },
-      ),
+      call(bootstrapRouter.redeem, { token, orgName: "Second Org" }, { context: owner.context }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
     await expect(db.org.count()).resolves.toBe(1);
   });
@@ -265,36 +244,17 @@ integration("bootstrap and organizations", () => {
     const env = environment("hosted");
     const owner = await signUp(env, "Two Org Owner");
     const outsider = await signUp(env, "Outsider");
-    const first = await call(
-      orgRouter.create,
-      { name: "First Org" },
-      { context: owner.context },
-    );
-    const second = await call(
-      orgRouter.create,
-      { name: "Second Org" },
-      { context: owner.context },
-    );
-    await call(
-      orgRouter.create,
-      { name: "Outsider Org" },
-      { context: outsider.context },
-    );
+    const first = await call(orgRouter.create, { name: "First Org" }, { context: owner.context });
+    const second = await call(orgRouter.create, { name: "Second Org" }, { context: owner.context });
+    await call(orgRouter.create, { name: "Outsider Org" }, { context: outsider.context });
 
     const memberships = await call(orgRouter.list, undefined, {
       context: owner.context,
     });
-    expect(memberships.map(({ org }) => org.id)).toEqual([
-      first.org.id,
-      second.org.id,
-    ]);
+    expect(memberships.map(({ org }) => org.id)).toEqual([first.org.id, second.org.id]);
 
     await expect(
-      call(
-        orgRouter.switch,
-        { orgId: first.org.id },
-        { context: owner.context },
-      ),
+      call(orgRouter.switch, { orgId: first.org.id }, { context: owner.context }),
     ).resolves.toMatchObject({
       org: { id: first.org.id },
       principal: { id: first.principal.id },

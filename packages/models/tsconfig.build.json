@@ -6,8 +6,14 @@
     "composite": true,
     "declaration": true,
     "declarationMap": true,
-    "paths": {}
+    "paths": {
+      "#/*": ["./src/*"]
+    }
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../harness/tsconfig.build.json" }]
+  "references": [
+    {
+      "path": "../harness/tsconfig.build.json"
+    }
+  ]
 }

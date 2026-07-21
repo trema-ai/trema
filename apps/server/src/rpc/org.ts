@@ -1,7 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { createOrgWithOwner } from "../services/org/index.js";
+import { createOrgWithOwner } from "#/services/org/index.js";
 import { authed, orgScoped } from "./builders.js";
 
 const orgSchema = z.object({
@@ -11,9 +11,7 @@ const orgSchema = z.object({
 
 const principalSchema = z.object({
   id: z.string().describe("The principal's unique ID. A UUID (version 7)."),
-  displayName: z
-    .string()
-    .describe("The name shown for the principal (a person or an agent)."),
+  displayName: z.string().describe("The name shown for the principal (a person or an agent)."),
   email: z
     .string()
     .nullable()
@@ -25,9 +23,7 @@ const principalSchema = z.object({
 const membershipSchema = z
   .object({
     org: orgSchema.describe("The organization."),
-    principal: principalSchema.describe(
-      "The caller's principal in the organization.",
-    ),
+    principal: principalSchema.describe("The caller's principal in the organization."),
   })
   .describe("An organization and the caller's principal in it.");
 
@@ -42,11 +38,7 @@ const create = authed
   })
   .input(
     z.object({
-      name: z
-        .string()
-        .trim()
-        .min(1)
-        .describe("A name for the new organization. Cannot be empty."),
+      name: z.string().trim().min(1).describe("A name for the new organization. Cannot be empty."),
     }),
   )
   .output(membershipSchema)
@@ -100,11 +92,7 @@ const list = authed
     description: "List the organizations the signed-in user belongs to.",
     tags: ["Organizations"],
   })
-  .output(
-    z
-      .array(membershipSchema)
-      .describe("The organizations the signed-in user belongs to."),
-  )
+  .output(z.array(membershipSchema).describe("The organizations the signed-in user belongs to."))
   .handler(async ({ context }) => {
     const principals = await context.db.principal.findMany({
       where: {
@@ -126,8 +114,7 @@ const current = orgScoped
     method: "GET",
     path: "/orgs/current",
     summary: "Get the active organization and principal",
-    description:
-      "Read the active organization and the caller's principal in it.",
+    description: "Read the active organization and the caller's principal in it.",
     tags: ["Organizations"],
   })
   .output(membershipSchema)
@@ -146,9 +133,7 @@ const switchOrg = authed
   })
   .input(
     z.object({
-      orgId: z
-        .uuid()
-        .describe("The ID of the organization to make active. A UUID."),
+      orgId: z.uuid().describe("The ID of the organization to make active. A UUID."),
     }),
   )
   .output(membershipSchema)
@@ -163,7 +148,7 @@ const switchOrg = authed
       include: { org: true },
     });
 
-    if (!principal || principal.kind !== "human") {
+    if (principal?.kind !== "human") {
       throw new ORPCError("FORBIDDEN", {
         message: "Principal not found in organization",
       });

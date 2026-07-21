@@ -7,8 +7,7 @@ const get = pub
     method: "GET",
     path: "/config",
     summary: "Get public deployment and sign-in configuration",
-    description:
-      "Read the public settings a sign-in page needs. No authentication required.",
+    description: "Read the public settings a sign-in page needs. No authentication required.",
     tags: ["Configuration"],
   })
   .output(
@@ -26,12 +25,8 @@ const get = pub
           ),
         providers: z
           .object({
-            password: z
-              .boolean()
-              .describe("True when password sign-in is enabled."),
-            google: z
-              .boolean()
-              .describe("True when Google sign-in is configured."),
+            password: z.boolean().describe("True when password sign-in is enabled."),
+            google: z.boolean().describe("True when Google sign-in is configured."),
           })
           .describe("The sign-in methods the deployment offers."),
       })
@@ -39,15 +34,10 @@ const get = pub
   )
   .handler(async ({ context }) => ({
     mode: context.env.TREMA_MODE,
-    needsBootstrap:
-      context.env.TREMA_MODE === "dedicated" &&
-      (await context.db.org.count()) === 0,
+    needsBootstrap: context.env.TREMA_MODE === "dedicated" && (await context.db.org.count()) === 0,
     providers: {
       password: context.env.TREMA_PASSWORD_AUTH_ENABLED,
-      google: Boolean(
-        context.env.TREMA_GOOGLE_CLIENT_ID &&
-          context.env.TREMA_GOOGLE_CLIENT_SECRET,
-      ),
+      google: Boolean(context.env.TREMA_GOOGLE_CLIENT_ID && context.env.TREMA_GOOGLE_CLIENT_SECRET),
     },
   }));
 

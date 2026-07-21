@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  hashBootstrapToken,
-  verifyBootstrapToken,
-} from "../index.js";
+import { hashBootstrapToken, verifyBootstrapToken } from "#/services/bootstrap/index.js";
 
 describe("bootstrap token hashing", () => {
   it("accepts only the token matching the persisted SHA-256 hash", () => {

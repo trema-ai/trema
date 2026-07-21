@@ -1,8 +1,8 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 
-import type { Database } from "../db/index.js";
-import type { Environment } from "../env/schema.js";
+import type { Database } from "#/lib/db/index.js";
+import type { Environment } from "#/lib/env/schema.js";
 
 export interface AuthDependencies {
   db: Database;

@@ -1,4 +1,4 @@
-import type { RunEventData } from "../events/index.js";
+import type { RunEventData } from "#/events/index.js";
 import type {
   CompleteRequest,
   CompleteResult,
@@ -6,7 +6,7 @@ import type {
   TurnRequest,
   TurnResult,
   TurnStream,
-} from "../ports/index.js";
+} from "#/ports/index.js";
 
 /** Events and final result consumed by one scripted model turn. */
 export interface FauxTurnScript {
@@ -14,7 +14,9 @@ export interface FauxTurnScript {
   result: TurnResult | Promise<TurnResult>;
 }
 
-function isAsyncIterable(value: readonly RunEventData[] | AsyncIterable<RunEventData>): value is AsyncIterable<RunEventData> {
+function isAsyncIterable(
+  value: readonly RunEventData[] | AsyncIterable<RunEventData>,
+): value is AsyncIterable<RunEventData> {
   return Symbol.asyncIterator in value;
 }
 

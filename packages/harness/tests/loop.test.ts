@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ToolCall, TranscriptMessage, Usage } from "../src/core/index.js";
-import type { RunEventData } from "../src/events/index.js";
-import { InMemoryRunStore } from "../src/memory/index.js";
-import { FauxModelPort } from "../src/testing/index.js";
-import type { FauxTurnScript } from "../src/testing/index.js";
-import type { Clock, ToolExecutor, TurnResult } from "../src/ports/index.js";
-import { runLoop } from "../src/loop/loop.js";
+import type { ToolCall, TranscriptMessage, Usage } from "#/core/index.js";
+import type { RunEventData } from "#/events/index.js";
+import { runLoop } from "#/loop/loop.js";
+import { InMemoryRunStore } from "#/memory/index.js";
+import type { Clock, ToolExecutor, TurnResult } from "#/ports/index.js";
+import type { FauxTurnScript } from "#/testing/index.js";
+import { FauxModelPort } from "#/testing/index.js";
 
 const usage: Usage = {
   inputTokens: 2,
@@ -266,7 +266,9 @@ describe("runLoop", () => {
       options: [{ id: "yes", label: "Yes" }],
       blocking: true,
     };
-    const fixture = await setup([{ events: [], result: result("Calling tools", "toolUse", calls) }]);
+    const fixture = await setup([
+      { events: [], result: result("Calling tools", "toolUse", calls) },
+    ]);
     const checked: string[] = [];
 
     const loopResult = await runLoop(
@@ -332,6 +334,7 @@ describe("runLoop", () => {
 
   it("drains and records steering queued during a turn before the next call", async () => {
     const fixture = await setup([]);
+    // biome-ignore lint/correctness/useYield: fixture is a deliberately empty event stream that only performs a side effect
     async function* firstEvents(): AsyncIterable<RunEventData> {
       await fixture.store.enqueueSteering("run-1", {
         id: "steer-1",
@@ -359,6 +362,7 @@ describe("runLoop", () => {
 
   it("drains follow-ups only after the run would otherwise end", async () => {
     const fixture = await setup([]);
+    // biome-ignore lint/correctness/useYield: fixture is a deliberately empty event stream that only performs a side effect
     async function* firstEvents(): AsyncIterable<RunEventData> {
       await fixture.store.enqueueFollowUp("thread-1", {
         id: "follow-1",
@@ -413,9 +417,7 @@ describe("runLoop", () => {
 
   it("honors a budget stop from shouldStop after the tool batch", async () => {
     const toolCall = { callId: "call-1", name: "lookup", input: {} };
-    const fixture = await setup([
-      { events: [], result: result("looked", "toolUse", [toolCall]) },
-    ]);
+    const fixture = await setup([{ events: [], result: result("looked", "toolUse", [toolCall]) }]);
     const shouldStop = vi.fn(() => true);
 
     const loopResult = await runLoop(loopInput(fixture, { shouldStop }));

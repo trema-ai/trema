@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { Role } from "../src/generated/prisma/client.js";
-import { createAuth } from "../src/lib/auth/index.js";
-import { createPrismaClient } from "../src/lib/db/index.js";
-import { parseEnv } from "../src/lib/env/schema.js";
-import { membersRouter } from "../src/rpc/members.js";
-import { orgRouter } from "../src/rpc/org.js";
-import { authorize, capabilities } from "../src/services/authorize/index.js";
+import type { Role } from "#/generated/prisma/client.js";
+import { createAuth } from "#/lib/auth/index.js";
+import { createPrismaClient } from "#/lib/db/index.js";
+import { parseEnv } from "#/lib/env/schema.js";
+import { membersRouter } from "#/rpc/members.js";
+import { orgRouter } from "#/rpc/org.js";
+import { authorize, capabilities } from "#/services/authorize/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
@@ -53,11 +53,7 @@ integration("authorization, members, and invites", () => {
 
   async function createOrg(name = "Authorization Org") {
     const signedUp = await signUp(`${name} Owner`);
-    const membership = await call(
-      orgRouter.create,
-      { name },
-      { context: signedUp.context },
-    );
+    const membership = await call(orgRouter.create, { name }, { context: signedUp.context });
     const scope = await db.scope.findFirstOrThrow({
       where: { orgId: membership.org.id, kind: "org" },
     });
@@ -67,12 +63,7 @@ integration("authorization, members, and invites", () => {
     return { ...signedUp, ...membership, principal, scope };
   }
 
-  async function addMember(
-    orgId: string,
-    scopeId: string,
-    role: Role,
-    name = `${role} member`,
-  ) {
+  async function addMember(orgId: string, scopeId: string, role: Role, name = `${role} member`) {
     const signedUp = await signUp(name);
     const principal = await db.principal.create({
       data: {
@@ -100,9 +91,7 @@ integration("authorization, members, and invites", () => {
       data: { orgId: org.org.id, kind: "space", name: "Engineering" },
     });
 
-    await expect(
-      authorize(admin.principal, "manage_members", space.id, db),
-    ).resolves.toBe(true);
+    await expect(authorize(admin.principal, "manage_members", space.id, db)).resolves.toBe(true);
   });
 
   it("does not leak a space grant upward or sideways", async () => {
@@ -134,31 +123,15 @@ integration("authorization, members, and invites", () => {
       },
     });
 
-    await expect(
-      authorize(principal, "manage_members", grantedSpace.id, db),
-    ).resolves.toBe(true);
-    await expect(
-      authorize(principal, "manage_members", org.scope.id, db),
-    ).resolves.toBe(false);
-    await expect(
-      authorize(principal, "manage_members", otherSpace.id, db),
-    ).resolves.toBe(false);
+    await expect(authorize(principal, "manage_members", grantedSpace.id, db)).resolves.toBe(true);
+    await expect(authorize(principal, "manage_members", org.scope.id, db)).resolves.toBe(false);
+    await expect(authorize(principal, "manage_members", otherSpace.id, db)).resolves.toBe(false);
   });
 
   it("gives a personal owner implicit admin without exposing it", async () => {
     const org = await createOrg();
-    const owner = await addMember(
-      org.org.id,
-      org.scope.id,
-      "member",
-      "Personal owner",
-    );
-    const other = await addMember(
-      org.org.id,
-      org.scope.id,
-      "member",
-      "Other member",
-    );
+    const owner = await addMember(org.org.id, org.scope.id, "member", "Personal owner");
+    const other = await addMember(org.org.id, org.scope.id, "member", "Other member");
     const personal = await db.scope.create({
       data: {
         orgId: org.org.id,
@@ -168,15 +141,9 @@ integration("authorization, members, and invites", () => {
       },
     });
 
-    await expect(
-      authorize(owner.principal, "manage_members", personal.id, db),
-    ).resolves.toBe(true);
-    await expect(
-      authorize(owner.principal, "manage_org", personal.id, db),
-    ).resolves.toBe(false);
-    await expect(
-      authorize(other.principal, "read", personal.id, db),
-    ).resolves.toBe(false);
+    await expect(authorize(owner.principal, "manage_members", personal.id, db)).resolves.toBe(true);
+    await expect(authorize(owner.principal, "manage_org", personal.id, db)).resolves.toBe(false);
+    await expect(authorize(other.principal, "read", personal.id, db)).resolves.toBe(false);
   });
 
   it("denies an agent every capability even with a forged owner grant", async () => {
@@ -194,18 +161,14 @@ integration("authorization, members, and invites", () => {
     });
 
     for (const capability of capabilities) {
-      await expect(
-        authorize(agent, capability, org.scope.id, db),
-      ).resolves.toBe(false);
+      await expect(authorize(agent, capability, org.scope.id, db)).resolves.toBe(false);
     }
   });
 
   it("never authorizes a scope id from another org", async () => {
     const first = await createOrg("First Org");
     const second = await createOrg("Second Org");
-    await expect(
-      authorize(first.principal, "read", second.scope.id, db),
-    ).resolves.toBe(false);
+    await expect(authorize(first.principal, "read", second.scope.id, db)).resolves.toBe(false);
   });
 
   it("creates and redeems a hash-only invite for a fresh user", async () => {
@@ -271,11 +234,7 @@ integration("authorization, members, and invites", () => {
     const expiredToken = new URL(expired.link).searchParams.get("token")!;
     const firstJoiner = await signUp("Expired Joiner");
     await expect(
-      call(
-        membersRouter.invites.redeem,
-        { token: expiredToken },
-        { context: firstJoiner.context },
-      ),
+      call(membersRouter.invites.redeem, { token: expiredToken }, { context: firstJoiner.context }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
 
     const valid = await call(
@@ -291,11 +250,7 @@ integration("authorization, members, and invites", () => {
     );
     const secondJoiner = await signUp("Second Joiner");
     await expect(
-      call(
-        membersRouter.invites.redeem,
-        { token: validToken },
-        { context: secondJoiner.context },
-      ),
+      call(membersRouter.invites.redeem, { token: validToken }, { context: secondJoiner.context }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
