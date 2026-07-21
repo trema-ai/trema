@@ -1,0 +1,347 @@
+import { randomUUID } from "node:crypto";
+
+import { call } from "@orpc/server";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+
+import type { Role } from "../src/generated/prisma/client.js";
+import { createAuth } from "../src/lib/auth/index.js";
+import { createPrismaClient } from "../src/lib/db/index.js";
+import { parseEnv } from "../src/lib/env/schema.js";
+import { membersRouter } from "../src/rpc/members.js";
+import { orgRouter } from "../src/rpc/org.js";
+import { authorize, capabilities } from "../src/services/authorize/index.js";
+
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+const integration = testDatabaseUrl ? describe : describe.skip;
+const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
+
+integration("authorization, members, and invites", () => {
+  const db = createPrismaClient(databaseUrl);
+  const env = parseEnv({
+    NODE_ENV: "test",
+    DATABASE_URL: databaseUrl,
+    TREMA_AUTH_SECRET: "authorization-integration-secret-at-least-32-chars",
+    TREMA_MODE: "hosted",
+    TREMA_WEB_ORIGINS: "https://trema.example",
+  });
+  const auth = createAuth({ db, env });
+
+  beforeEach(async () => {
+    await db.$executeRaw`TRUNCATE TABLE "Org", "user", "verification", "BootstrapToken" CASCADE`;
+  });
+
+  afterAll(async () => {
+    await db.$disconnect();
+  });
+
+  async function signUp(name: string) {
+    const email = `${randomUUID()}@example.com`;
+    const response = await auth.api.signUpEmail({
+      body: { name, email, password: "integration-password" },
+      asResponse: true,
+    });
+    const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+    const user = await db.user.findUniqueOrThrow({ where: { email } });
+    if (!cookie) {
+      throw new Error("Sign-up did not return a session cookie");
+    }
+    return {
+      user,
+      context: { db, auth, env, headers: new Headers({ cookie }) },
+    };
+  }
+
+  async function createOrg(name = "Authorization Org") {
+    const signedUp = await signUp(`${name} Owner`);
+    const membership = await call(
+      orgRouter.create,
+      { name },
+      { context: signedUp.context },
+    );
+    const scope = await db.scope.findFirstOrThrow({
+      where: { orgId: membership.org.id, kind: "org" },
+    });
+    const principal = await db.principal.findUniqueOrThrow({
+      where: { id: membership.principal.id },
+    });
+    return { ...signedUp, ...membership, principal, scope };
+  }
+
+  async function addMember(
+    orgId: string,
+    scopeId: string,
+    role: Role,
+    name = `${role} member`,
+  ) {
+    const signedUp = await signUp(name);
+    const principal = await db.principal.create({
+      data: {
+        orgId,
+        kind: "human",
+        authId: signedUp.user.id,
+        displayName: name,
+        email: signedUp.user.email,
+      },
+    });
+    await db.grant.create({
+      data: { orgId, principalId: principal.id, scopeId, role },
+    });
+    await db.session.updateMany({
+      where: { userId: signedUp.user.id },
+      data: { activeOrgId: orgId },
+    });
+    return { ...signedUp, principal };
+  }
+
+  it("inherits an org role down to a space", async () => {
+    const org = await createOrg();
+    const admin = await addMember(org.org.id, org.scope.id, "admin");
+    const space = await db.scope.create({
+      data: { orgId: org.org.id, kind: "space", name: "Engineering" },
+    });
+
+    await expect(
+      authorize(admin.principal, "manage_members", space.id, db),
+    ).resolves.toBe(true);
+  });
+
+  it("does not leak a space grant upward or sideways", async () => {
+    const org = await createOrg();
+    const user = await signUp("Space member");
+    const principal = await db.principal.create({
+      data: {
+        orgId: org.org.id,
+        kind: "human",
+        authId: user.user.id,
+        displayName: "Space member",
+        email: user.user.email,
+      },
+    });
+    const [grantedSpace, otherSpace] = await Promise.all([
+      db.scope.create({
+        data: { orgId: org.org.id, kind: "space", name: "One" },
+      }),
+      db.scope.create({
+        data: { orgId: org.org.id, kind: "space", name: "Two" },
+      }),
+    ]);
+    await db.grant.create({
+      data: {
+        orgId: org.org.id,
+        principalId: principal.id,
+        scopeId: grantedSpace.id,
+        role: "admin",
+      },
+    });
+
+    await expect(
+      authorize(principal, "manage_members", grantedSpace.id, db),
+    ).resolves.toBe(true);
+    await expect(
+      authorize(principal, "manage_members", org.scope.id, db),
+    ).resolves.toBe(false);
+    await expect(
+      authorize(principal, "manage_members", otherSpace.id, db),
+    ).resolves.toBe(false);
+  });
+
+  it("gives a personal owner implicit admin without exposing it", async () => {
+    const org = await createOrg();
+    const owner = await addMember(
+      org.org.id,
+      org.scope.id,
+      "member",
+      "Personal owner",
+    );
+    const other = await addMember(
+      org.org.id,
+      org.scope.id,
+      "member",
+      "Other member",
+    );
+    const personal = await db.scope.create({
+      data: {
+        orgId: org.org.id,
+        kind: "personal",
+        name: "Personal owner",
+        ownerId: owner.principal.id,
+      },
+    });
+
+    await expect(
+      authorize(owner.principal, "manage_members", personal.id, db),
+    ).resolves.toBe(true);
+    await expect(
+      authorize(owner.principal, "manage_org", personal.id, db),
+    ).resolves.toBe(false);
+    await expect(
+      authorize(other.principal, "read", personal.id, db),
+    ).resolves.toBe(false);
+  });
+
+  it("denies an agent every capability even with a forged owner grant", async () => {
+    const org = await createOrg();
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "agent" },
+    });
+    await db.grant.create({
+      data: {
+        orgId: org.org.id,
+        principalId: agent.id,
+        scopeId: org.scope.id,
+        role: "owner",
+      },
+    });
+
+    for (const capability of capabilities) {
+      await expect(
+        authorize(agent, capability, org.scope.id, db),
+      ).resolves.toBe(false);
+    }
+  });
+
+  it("never authorizes a scope id from another org", async () => {
+    const first = await createOrg("First Org");
+    const second = await createOrg("Second Org");
+    await expect(
+      authorize(first.principal, "read", second.scope.id, db),
+    ).resolves.toBe(false);
+  });
+
+  it("creates and redeems a hash-only invite for a fresh user", async () => {
+    const org = await createOrg();
+    const created = await call(
+      membersRouter.invites.create,
+      { role: "member" },
+      { context: org.context },
+    );
+    const token = new URL(created.link).searchParams.get("token");
+    if (!token) throw new Error("Invite link did not contain a token");
+    const persisted = await db.invite.findUniqueOrThrow({
+      where: { id: created.id },
+    });
+    expect(persisted.tokenHash).not.toBe(token);
+    expect(JSON.stringify(persisted)).not.toContain(token);
+    const createAudit = await db.auditLog.findFirstOrThrow({
+      where: { orgId: org.org.id, action: "invite.create" },
+    });
+    expect(JSON.stringify(createAudit.payload)).not.toContain(token);
+
+    const joiner = await signUp("Fresh Joiner");
+    const redeemed = await call(
+      membersRouter.invites.redeem,
+      { token },
+      { context: joiner.context },
+    );
+    expect(redeemed).toMatchObject({
+      orgId: org.org.id,
+      role: "member",
+      scopeId: org.scope.id,
+      principal: { email: joiner.user.email },
+    });
+    await expect(
+      db.grant.findUnique({
+        where: {
+          orgId_principalId_scopeId: {
+            orgId: org.org.id,
+            principalId: redeemed.principal.id,
+            scopeId: org.scope.id,
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ role: "member" });
+    await expect(
+      db.auditLog.findFirst({
+        where: { action: "invite.redeem", orgId: org.org.id },
+      }),
+    ).resolves.toMatchObject({ actorPrincipalId: redeemed.principal.id });
+  });
+
+  it("rejects expired and double-redeemed invites with conflicts", async () => {
+    const org = await createOrg();
+    const expired = await call(
+      membersRouter.invites.create,
+      { role: "viewer", expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      { context: org.context },
+    );
+    await db.invite.update({
+      where: { id: expired.id },
+      data: { expiresAt: new Date(Date.now() - 1_000) },
+    });
+    const expiredToken = new URL(expired.link).searchParams.get("token")!;
+    const firstJoiner = await signUp("Expired Joiner");
+    await expect(
+      call(
+        membersRouter.invites.redeem,
+        { token: expiredToken },
+        { context: firstJoiner.context },
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const valid = await call(
+      membersRouter.invites.create,
+      { role: "viewer" },
+      { context: org.context },
+    );
+    const validToken = new URL(valid.link).searchParams.get("token")!;
+    await call(
+      membersRouter.invites.redeem,
+      { token: validToken },
+      { context: firstJoiner.context },
+    );
+    const secondJoiner = await signUp("Second Joiner");
+    await expect(
+      call(
+        membersRouter.invites.redeem,
+        { token: validToken },
+        { context: secondJoiner.context },
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("sets roles, protects the last owner, and gates member management", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.scope.id, "member");
+    await expect(
+      call(
+        membersRouter.setRole,
+        { principalId: member.principal.id, role: "admin" },
+        { context: org.context },
+      ),
+    ).resolves.toMatchObject({
+      role: "admin",
+      principal: { id: member.principal.id },
+    });
+    await expect(
+      db.auditLog.findFirst({
+        where: { orgId: org.org.id, action: "grant.set_role" },
+      }),
+    ).resolves.toMatchObject({ actorPrincipalId: org.principal.id });
+
+    await expect(
+      call(
+        membersRouter.setRole,
+        { principalId: org.principal.id, role: "admin" },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    await db.grant.update({
+      where: {
+        orgId_principalId_scopeId: {
+          orgId: org.org.id,
+          principalId: member.principal.id,
+          scopeId: org.scope.id,
+        },
+      },
+      data: { role: "member" },
+    });
+    await expect(
+      call(
+        membersRouter.setRole,
+        { principalId: org.principal.id, role: "viewer" },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
