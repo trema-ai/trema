@@ -33,7 +33,8 @@ Rules:
 
 All tokens live in [src/styles/globals.css](src/styles/globals.css).
 
-- Neutrals: `background` (paper), `card` (raised white), `muted`
+- Neutrals: `background` and `card` (one white in light mode — the
+  border separates surfaces; dark mode keeps distinct steps), `muted`
   (sunken fill), `border`, `foreground`, `muted-foreground`.
 - Action: `primary` (ink fill), `secondary` (quiet fill),
   `destructive`.
