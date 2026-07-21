@@ -4,6 +4,8 @@ import type { Prisma, Role } from "../../generated/prisma/client.js";
 import type { Database } from "../../lib/db/index.js";
 import type { Environment } from "../../lib/env/schema.js";
 
+const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
+
 export class MemberConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -147,7 +149,7 @@ export async function createInvite(
   const token = randomBytes(32).toString("base64url");
   const tokenHash = hashInviteToken(token);
   const expiresAt =
-    input.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000);
+    input.expiresAt ?? new Date(Date.now() + DEFAULT_INVITE_TTL_MS);
 
   const invite = await db.$transaction(async (transaction) => {
     const scope = input.scopeId
