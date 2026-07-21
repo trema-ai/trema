@@ -11,28 +11,44 @@ import {
 import { createOrgWithOwner } from "#/services/org/index.js";
 import { authed } from "./builders.js";
 
-const bootstrapResult = z.object({
-  org: z.object({
-    id: z.string(),
-    name: z.string(),
-  }),
-  principal: z.object({
-    id: z.string(),
-    displayName: z.string(),
-    email: z.string().nullable(),
-  }),
-});
+const bootstrapResult = z
+  .object({
+    org: z
+      .object({
+        id: z.string().describe("The organization's unique ID. A UUID (version 7)."),
+        name: z.string().describe("The organization's display name."),
+      })
+      .describe("The organization that was created."),
+    principal: z
+      .object({
+        id: z.string().describe("The principal's unique ID. A UUID (version 7)."),
+        displayName: z.string().describe("The name shown for the owner principal."),
+        email: z
+          .string()
+          .nullable()
+          .describe("The owner's sign-in email. Null when no email is on file."),
+      })
+      .describe("The caller's owner principal in the new organization."),
+  })
+  .describe("The organization and owner principal created by bootstrap.");
 
 const redeem = authed
   .route({
     method: "POST",
     path: "/bootstrap/redeem",
     summary: "Redeem the dedicated-mode bootstrap token",
+    description:
+      "Create the first organization on a dedicated deployment by redeeming the bootstrap token. The caller becomes the owner. Available only in dedicated mode, and only while no organization exists.",
+    tags: ["Bootstrap"],
   })
   .input(
     z.object({
-      token: z.string().min(1),
-      orgName: z.string().trim().min(1),
+      token: z.string().min(1).describe("The bootstrap token for the dedicated deployment."),
+      orgName: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("A name for the first organization. Cannot be empty."),
     }),
   )
   .output(bootstrapResult)

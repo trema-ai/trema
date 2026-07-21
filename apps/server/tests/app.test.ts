@@ -76,11 +76,23 @@ describe("server", () => {
   it("serves the OpenAPI surface", async () => {
     const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
 
-    const response = await app.request("/api/system/ping");
+    const response = await app.request("/api/v1/system/ping");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
+    });
+  });
+
+  it("serves the OpenAPI document under the v1 prefix", async () => {
+    const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
+
+    const response = await app.request("/api/v1/spec.json");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      info: { title: "Trema API" },
+      servers: [{ url: "/api/v1" }],
     });
   });
 

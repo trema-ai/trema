@@ -5,28 +5,42 @@ import { createOrgWithOwner } from "#/services/org/index.js";
 import { authed, orgScoped } from "./builders.js";
 
 const orgSchema = z.object({
-  id: z.string(),
-  name: z.string(),
+  id: z.string().describe("The organization's unique ID. A UUID (version 7)."),
+  name: z.string().describe("The organization's display name."),
 });
 
 const principalSchema = z.object({
-  id: z.string(),
-  displayName: z.string(),
-  email: z.string().nullable(),
+  id: z.string().describe("The principal's unique ID. A UUID (version 7)."),
+  displayName: z.string().describe("The name shown for the principal (a person or an agent)."),
+  email: z
+    .string()
+    .nullable()
+    .describe(
+      "The principal's sign-in email. Null for an agent principal or when no email is on file.",
+    ),
 });
 
-const membershipSchema = z.object({
-  org: orgSchema,
-  principal: principalSchema,
-});
+const membershipSchema = z
+  .object({
+    org: orgSchema.describe("The organization."),
+    principal: principalSchema.describe("The caller's principal in the organization."),
+  })
+  .describe("An organization and the caller's principal in it.");
 
 const create = authed
   .route({
     method: "POST",
     path: "/orgs",
     summary: "Create a hosted-mode organization",
+    description:
+      "Create a new organization and make the caller its owner. Available only in hosted mode.",
+    tags: ["Organizations"],
   })
-  .input(z.object({ name: z.string().trim().min(1) }))
+  .input(
+    z.object({
+      name: z.string().trim().min(1).describe("A name for the new organization. Cannot be empty."),
+    }),
+  )
   .output(membershipSchema)
   .handler(async ({ context, input }) => {
     if (context.env.TREMA_MODE !== "hosted") {
@@ -75,8 +89,10 @@ const list = authed
     method: "GET",
     path: "/orgs",
     summary: "List the signed-in user's organizations",
+    description: "List the organizations the signed-in user belongs to.",
+    tags: ["Organizations"],
   })
-  .output(z.array(membershipSchema))
+  .output(z.array(membershipSchema).describe("The organizations the signed-in user belongs to."))
   .handler(async ({ context }) => {
     const principals = await context.db.principal.findMany({
       where: {
@@ -98,6 +114,8 @@ const current = orgScoped
     method: "GET",
     path: "/orgs/current",
     summary: "Get the active organization and principal",
+    description: "Read the active organization and the caller's principal in it.",
+    tags: ["Organizations"],
   })
   .output(membershipSchema)
   .handler(({ context }) => ({
@@ -110,8 +128,14 @@ const switchOrg = authed
     method: "POST",
     path: "/orgs/switch",
     summary: "Switch the session's active organization",
+    description: "Change which organization the session treats as active.",
+    tags: ["Organizations"],
   })
-  .input(z.object({ orgId: z.uuid() }))
+  .input(
+    z.object({
+      orgId: z.uuid().describe("The ID of the organization to make active. A UUID."),
+    }),
+  )
   .output(membershipSchema)
   .handler(async ({ context, input }) => {
     const principal = await context.db.principal.findUnique({

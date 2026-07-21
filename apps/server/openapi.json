@@ -1,0 +1,955 @@
+{
+  "info": {
+    "title": "Trema API",
+    "version": "1.0.0",
+    "description": "The public REST API for Trema, the AI agent your company owns."
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "Health and liveness checks for the API surface."
+    },
+    {
+      "name": "Configuration",
+      "description": "Public deployment and sign-in settings."
+    },
+    {
+      "name": "Bootstrap",
+      "description": "First-run setup for a dedicated deployment."
+    },
+    {
+      "name": "Organizations",
+      "description": "Create, list, and switch the active organization."
+    },
+    {
+      "name": "Members",
+      "description": "Organization membership, roles, and invites."
+    }
+  ],
+  "openapi": "3.1.1",
+  "paths": {
+    "/bootstrap/redeem": {
+      "post": {
+        "operationId": "bootstrap.redeem",
+        "summary": "Redeem the dedicated-mode bootstrap token",
+        "description": "Create the first organization on a dedicated deployment by redeeming the bootstrap token. The caller becomes the owner. Available only in dedicated mode, and only while no organization exists.",
+        "tags": [
+          "Bootstrap"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The bootstrap token for the dedicated deployment."
+                  },
+                  "orgName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "A name for the first organization. Cannot be empty."
+                  }
+                },
+                "required": [
+                  "token",
+                  "orgName"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The organization's unique ID. A UUID (version 7)."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "The organization's display name."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "description": "The organization that was created."
+                    },
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The principal's unique ID. A UUID (version 7)."
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "The name shown for the owner principal."
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The owner's sign-in email. Null when no email is on file."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "displayName",
+                        "email"
+                      ],
+                      "description": "The caller's owner principal in the new organization."
+                    }
+                  },
+                  "required": [
+                    "org",
+                    "principal"
+                  ],
+                  "description": "The organization and owner principal created by bootstrap."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "operationId": "config.get",
+        "summary": "Get public deployment and sign-in configuration",
+        "description": "Read the public settings a sign-in page needs. No authentication required.",
+        "tags": [
+          "Configuration"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "enum": [
+                        "hosted",
+                        "dedicated"
+                      ],
+                      "type": "string",
+                      "description": "The deployment mode. `hosted` serves many organizations; `dedicated` serves one."
+                    },
+                    "needsBootstrap": {
+                      "type": "boolean",
+                      "description": "True when the deployment is dedicated and has no organization yet. The first user must redeem the bootstrap token."
+                    },
+                    "providers": {
+                      "type": "object",
+                      "properties": {
+                        "password": {
+                          "type": "boolean",
+                          "description": "True when password sign-in is enabled."
+                        },
+                        "google": {
+                          "type": "boolean",
+                          "description": "True when Google sign-in is configured."
+                        }
+                      },
+                      "required": [
+                        "password",
+                        "google"
+                      ],
+                      "description": "The sign-in methods the deployment offers."
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "needsBootstrap",
+                    "providers"
+                  ],
+                  "description": "Public deployment and sign-in configuration."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/members": {
+      "get": {
+        "operationId": "members.list",
+        "summary": "List organization members",
+        "description": "List the human members of the active organization.",
+        "tags": [
+          "Members"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "principal": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The principal's unique ID. A UUID (version 7)."
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "description": "The name shown for the principal (a person or an agent)."
+                          },
+                          "email": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The principal's sign-in email. Null for an agent principal or when no email is on file."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "displayName",
+                          "email"
+                        ],
+                        "description": "The member's principal."
+                      },
+                      "role": {
+                        "enum": [
+                          "owner",
+                          "admin",
+                          "member",
+                          "viewer"
+                        ],
+                        "type": "string",
+                        "description": "The member's role on the organization scope."
+                      }
+                    },
+                    "required": [
+                      "principal",
+                      "role"
+                    ],
+                    "description": "A member of the organization and the role they hold."
+                  },
+                  "description": "The human members of the active organization."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/members/role": {
+      "post": {
+        "operationId": "members.setRole",
+        "summary": "Set an organization member's role",
+        "description": "Change a member's role in the active organization. The organization's last owner cannot be demoted.",
+        "tags": [
+          "Members"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "principalId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The ID of the member's principal. A UUID."
+                  },
+                  "role": {
+                    "enum": [
+                      "owner",
+                      "admin",
+                      "member",
+                      "viewer"
+                    ],
+                    "type": "string",
+                    "description": "The role to assign to the member."
+                  }
+                },
+                "required": [
+                  "principalId",
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The principal's unique ID. A UUID (version 7)."
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "The name shown for the principal (a person or an agent)."
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The principal's sign-in email. Null for an agent principal or when no email is on file."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "displayName",
+                        "email"
+                      ],
+                      "description": "The member's principal."
+                    },
+                    "role": {
+                      "enum": [
+                        "owner",
+                        "admin",
+                        "member",
+                        "viewer"
+                      ],
+                      "type": "string",
+                      "description": "The member's role on the organization scope."
+                    }
+                  },
+                  "required": [
+                    "principal",
+                    "role"
+                  ],
+                  "description": "A member of the organization and the role they hold."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invites": {
+      "post": {
+        "operationId": "members.invites.create",
+        "summary": "Create an invite link",
+        "description": "Create an invite link that grants a role on a scope when someone redeems it.",
+        "tags": [
+          "Members"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "owner",
+                      "admin",
+                      "member",
+                      "viewer"
+                    ],
+                    "type": "string",
+                    "description": "The role the invite grants when it is redeemed."
+                  },
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The ID of the scope the invite grants access to. A UUID. Defaults to the organization scope."
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the invite expires. An ISO 8601 date-time. Must be in the future. Defaults to seven days after creation."
+                  }
+                },
+                "required": [
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The invite's unique ID. A UUID (version 7)."
+                    },
+                    "link": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "The join URL to share. It carries the single-use invite token."
+                    },
+                    "role": {
+                      "enum": [
+                        "owner",
+                        "admin",
+                        "member",
+                        "viewer"
+                      ],
+                      "type": "string",
+                      "description": "The role the invite grants when redeemed."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the scope the invite grants access to. A UUID."
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "description": "When the invite expires. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "link",
+                    "role",
+                    "scopeId",
+                    "expiresAt"
+                  ],
+                  "description": "A created invite and the link to share."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invites/redeem": {
+      "post": {
+        "operationId": "members.invites.redeem",
+        "summary": "Redeem an invite link",
+        "description": "Redeem an invite token to join the organization with the granted role.",
+        "tags": [
+          "Members"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The invite token from the join link."
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "orgId": {
+                      "type": "string",
+                      "description": "The ID of the organization the caller joined. A UUID."
+                    },
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The principal's unique ID. A UUID (version 7)."
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "The name shown for the principal (a person or an agent)."
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The principal's sign-in email. Null for an agent principal or when no email is on file."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "displayName",
+                        "email"
+                      ],
+                      "description": "The caller's principal in the organization."
+                    },
+                    "role": {
+                      "enum": [
+                        "owner",
+                        "admin",
+                        "member",
+                        "viewer"
+                      ],
+                      "type": "string",
+                      "description": "The role the caller received."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the scope the role applies to. A UUID."
+                    }
+                  },
+                  "required": [
+                    "orgId",
+                    "principal",
+                    "role",
+                    "scopeId"
+                  ],
+                  "description": "The result of redeeming an invite."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs": {
+      "post": {
+        "operationId": "org.create",
+        "summary": "Create a hosted-mode organization",
+        "description": "Create a new organization and make the caller its owner. Available only in hosted mode.",
+        "tags": [
+          "Organizations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "A name for the new organization. Cannot be empty."
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The organization's unique ID. A UUID (version 7)."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "The organization's display name."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "description": "The organization."
+                    },
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The principal's unique ID. A UUID (version 7)."
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "The name shown for the principal (a person or an agent)."
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The principal's sign-in email. Null for an agent principal or when no email is on file."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "displayName",
+                        "email"
+                      ],
+                      "description": "The caller's principal in the organization."
+                    }
+                  },
+                  "required": [
+                    "org",
+                    "principal"
+                  ],
+                  "description": "An organization and the caller's principal in it."
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "org.list",
+        "summary": "List the signed-in user's organizations",
+        "description": "List the organizations the signed-in user belongs to.",
+        "tags": [
+          "Organizations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "org": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The organization's unique ID. A UUID (version 7)."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "The organization's display name."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "description": "The organization."
+                      },
+                      "principal": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The principal's unique ID. A UUID (version 7)."
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "description": "The name shown for the principal (a person or an agent)."
+                          },
+                          "email": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The principal's sign-in email. Null for an agent principal or when no email is on file."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "displayName",
+                          "email"
+                        ],
+                        "description": "The caller's principal in the organization."
+                      }
+                    },
+                    "required": [
+                      "org",
+                      "principal"
+                    ],
+                    "description": "An organization and the caller's principal in it."
+                  },
+                  "description": "The organizations the signed-in user belongs to."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/current": {
+      "get": {
+        "operationId": "org.current",
+        "summary": "Get the active organization and principal",
+        "description": "Read the active organization and the caller's principal in it.",
+        "tags": [
+          "Organizations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The organization's unique ID. A UUID (version 7)."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "The organization's display name."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "description": "The organization."
+                    },
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The principal's unique ID. A UUID (version 7)."
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "The name shown for the principal (a person or an agent)."
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The principal's sign-in email. Null for an agent principal or when no email is on file."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "displayName",
+                        "email"
+                      ],
+                      "description": "The caller's principal in the organization."
+                    }
+                  },
+                  "required": [
+                    "org",
+                    "principal"
+                  ],
+                  "description": "An organization and the caller's principal in it."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/switch": {
+      "post": {
+        "operationId": "org.switch",
+        "summary": "Switch the session's active organization",
+        "description": "Change which organization the session treats as active.",
+        "tags": [
+          "Organizations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "orgId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The ID of the organization to make active. A UUID."
+                  }
+                },
+                "required": [
+                  "orgId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The organization's unique ID. A UUID (version 7)."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "The organization's display name."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "description": "The organization."
+                    },
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The principal's unique ID. A UUID (version 7)."
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "The name shown for the principal (a person or an agent)."
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The principal's sign-in email. Null for an agent principal or when no email is on file."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "displayName",
+                        "email"
+                      ],
+                      "description": "The caller's principal in the organization."
+                    }
+                  },
+                  "required": [
+                    "org",
+                    "principal"
+                  ],
+                  "description": "An organization and the caller's principal in it."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/ping": {
+      "get": {
+        "operationId": "system.ping",
+        "summary": "Liveness check over the API surface",
+        "description": "Confirm the API is reachable and read the server's current time.",
+        "tags": [
+          "System"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "description": "Always true when the API is reachable."
+                    },
+                    "time": {
+                      "type": "string",
+                      "format": "date-time",
+                      "x-native-type": "date",
+                      "description": "The server's current time. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "time"
+                  ],
+                  "description": "The liveness status and the server's current time."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

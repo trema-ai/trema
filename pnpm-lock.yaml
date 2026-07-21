@@ -48,6 +48,9 @@ importers:
       '@orpc/server':
         specifier: ^1.14.8
         version: 1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)
+      '@orpc/zod':
+        specifier: ^1.14.8
+        version: 1.14.8(@opentelemetry/api@1.9.0)(@orpc/contract@1.14.8(@opentelemetry/api@1.9.0))(@orpc/server@1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0))(crossws@0.3.5)(ws@8.21.0)(zod@4.4.3)
       '@prisma/adapter-pg':
         specifier: ^7.8.0
         version: 7.8.0
@@ -1408,6 +1411,9 @@ packages:
   '@orpc/interop@1.14.8':
     resolution: {integrity: sha512-DgLjqMVMUEqtDWVgd3L3rScoAmO5uHumpwaxcCmQygAgGrCMiJ8S48ePOgkVajpxt5eC25tybd2veY4hnKRtUQ==}
 
+  '@orpc/json-schema@1.14.8':
+    resolution: {integrity: sha512-vUU95SiJe+AwRP/9y2xAKMhdYb86f6Jgf8GOqt4bpxhleS8ujpd9YHZXVkT9M7jNkL1Z2+ftykwmfvW2IdXs6A==}
+
   '@orpc/openapi-client@1.14.8':
     resolution: {integrity: sha512-d1eaL8H67Lz/OpNx02cWKu3w3zmqDwCCAZRVjerG4wC2MmbbBGliS1PYVPTvAeetAk81JnyD8i6w13Qf8SNpwA==}
 
@@ -1455,6 +1461,13 @@ packages:
 
   '@orpc/standard-server@1.14.8':
     resolution: {integrity: sha512-v0iqvzJ6NzoVRYhk/GJl3/SqC124hSwcDOjPotZbILvx8XwfBlG4V/uhyaZ8baj+l5h79afrhia6Dq9QzFomEQ==}
+
+  '@orpc/zod@1.14.8':
+    resolution: {integrity: sha512-Gf7oywZziLst/MS0WOC4GHi51QoI399OQrPYqjSle2ks7nrmQp4e9JOZq1HKcNVZJ87NWXz24KA7mFwkS1LrJA==}
+    peerDependencies:
+      '@orpc/contract': 1.14.8
+      '@orpc/server': 1.14.8
+      zod: '>=3.25.0'
 
   '@oslojs/encoding@1.1.0':
     resolution: {integrity: sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==}
@@ -5792,6 +5805,9 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
+  wildcard-match@5.1.4:
+    resolution: {integrity: sha512-wldeCaczs8XXq7hj+5d/F38JE2r7EXgb6WQDM84RVwxy81T/sxB5e9+uZLK9Q9oNz1mlvjut+QtvgaOQFPVq/g==}
+
   workerd@1.20260714.1:
     resolution: {integrity: sha512-oIbQzfdyl9UQUnG6XLegcSq0Mgt/7WKDbFOoqGgOWCS+/fhyGB460uKEgdAQQ9RHCO/ttcNCX/KiMIQzdoeu3Q==}
     engines: {node: '>=16'}
@@ -7228,6 +7244,20 @@ snapshots:
 
   '@orpc/interop@1.14.8': {}
 
+  '@orpc/json-schema@1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)':
+    dependencies:
+      '@orpc/contract': 1.14.8(@opentelemetry/api@1.9.0)
+      '@orpc/interop': 1.14.8
+      '@orpc/openapi': 1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)
+      '@orpc/server': 1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)
+      '@orpc/shared': 1.14.8(@opentelemetry/api@1.9.0)
+      json-schema-typed: 8.0.2
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
+      - crossws
+      - fastify
+      - ws
+
   '@orpc/openapi-client@1.14.8(@opentelemetry/api@1.9.0)':
     dependencies:
       '@orpc/client': 1.14.8(@opentelemetry/api@1.9.0)
@@ -7325,6 +7355,22 @@ snapshots:
       '@orpc/shared': 1.14.8(@opentelemetry/api@1.9.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
+
+  '@orpc/zod@1.14.8(@opentelemetry/api@1.9.0)(@orpc/contract@1.14.8(@opentelemetry/api@1.9.0))(@orpc/server@1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0))(crossws@0.3.5)(ws@8.21.0)(zod@4.4.3)':
+    dependencies:
+      '@orpc/contract': 1.14.8(@opentelemetry/api@1.9.0)
+      '@orpc/json-schema': 1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)
+      '@orpc/openapi': 1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)
+      '@orpc/server': 1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)
+      '@orpc/shared': 1.14.8(@opentelemetry/api@1.9.0)
+      escape-string-regexp: 5.0.0
+      wildcard-match: 5.1.4
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
+      - crossws
+      - fastify
+      - ws
 
   '@oslojs/encoding@1.1.0': {}
 
@@ -11954,6 +12000,8 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  wildcard-match@5.1.4: {}
 
   workerd@1.20260714.1:
     optionalDependencies:

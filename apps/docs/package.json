@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "blume dev",
+    "dev": "cp ../server/openapi.json ./openapi.json && blume dev",
     "lint:prose": "vale docs",
-    "build": "blume build",
+    "sync:spec": "cp ../server/openapi.json ./openapi.json",
+    "build": "cp ../server/openapi.json ./openapi.json && blume build",
     "stage:assets": "rm -rf .cloudflare && mkdir -p .cloudflare/docs && cp -R dist/. .cloudflare/docs/ && mv .cloudflare/docs/_headers .cloudflare/_headers",
-    "deploy": "blume build && pnpm run stage:assets && wrangler deploy"
+    "deploy": "cp ../server/openapi.json ./openapi.json && blume build && pnpm run stage:assets && wrangler deploy"
   },
   "dependencies": {
     "blume": "^1.1.0"
