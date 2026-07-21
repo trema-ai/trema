@@ -181,6 +181,17 @@ export async function createInvite(db: Database, env: Environment, input: Create
   return { invite, link: `${origin}/join?token=${encodeURIComponent(token)}` };
 }
 
+export async function previewInvite(db: Database, token: string) {
+  const invite = await db.invite.findUnique({
+    where: { tokenHash: hashInviteToken(token) },
+    include: { org: true, createdBy: true },
+  });
+  if (!invite || invite.redeemedAt || invite.expiresAt <= new Date()) {
+    throw new MemberNotFoundError("Invite is invalid, expired, or already redeemed");
+  }
+  return { orgName: invite.org.name, invitedBy: invite.createdBy.displayName };
+}
+
 export interface RedeemInviteInput {
   token: string;
   authId: string;

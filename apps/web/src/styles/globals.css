@@ -17,7 +17,7 @@
 
 :root {
   /* Neutrals — cool gray-blue paper + ink */
-  --background: #f6f6f7; /* paper: app chrome, page background */
+  --background: #fff; /* paper: app chrome, page background */
   --foreground: #18191c; /* ink */
   --card: #ffffff; /* raised surfaces: cards, thread, tables */
   --card-foreground: #18191c;

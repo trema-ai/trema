@@ -29,6 +29,18 @@ const get = pub
             google: z.boolean().describe("True when Google sign-in is configured."),
           })
           .describe("The sign-in methods the deployment offers."),
+        legal: z
+          .object({
+            termsUrl: z
+              .string()
+              .nullable()
+              .describe("The URL of the deployment's terms of service. Null when not configured."),
+            privacyUrl: z
+              .string()
+              .nullable()
+              .describe("The URL of the deployment's privacy policy. Null when not configured."),
+          })
+          .describe("The legal documents the sign-in page links to."),
       })
       .describe("Public deployment and sign-in configuration."),
   )
@@ -38,6 +50,10 @@ const get = pub
     providers: {
       password: context.env.TREMA_PASSWORD_AUTH_ENABLED,
       google: Boolean(context.env.TREMA_GOOGLE_CLIENT_ID && context.env.TREMA_GOOGLE_CLIENT_SECRET),
+    },
+    legal: {
+      termsUrl: context.env.TREMA_TERMS_URL ?? null,
+      privacyUrl: context.env.TREMA_PRIVACY_URL ?? null,
     },
   }));
 

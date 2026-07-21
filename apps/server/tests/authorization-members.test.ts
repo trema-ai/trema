@@ -254,6 +254,37 @@ integration("authorization, members, and invites", () => {
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
+  it("previews a valid invite and rejects consumed or unknown tokens", async () => {
+    const org = await createOrg("Preview Org");
+    const created = await call(
+      membersRouter.invites.create,
+      { role: "member" },
+      { context: org.context },
+    );
+    const token = new URL(created.link).searchParams.get("token")!;
+    const anonymousContext = { db, auth, env, headers: new Headers() };
+    await expect(
+      call(membersRouter.invites.preview, { token }, { context: anonymousContext }),
+    ).resolves.toEqual({
+      orgName: "Preview Org",
+      invitedBy: org.principal.displayName,
+    });
+
+    await expect(
+      call(
+        membersRouter.invites.preview,
+        { token: "unknown-token" },
+        { context: anonymousContext },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const joiner = await signUp("Preview Joiner");
+    await call(membersRouter.invites.redeem, { token }, { context: joiner.context });
+    await expect(
+      call(membersRouter.invites.preview, { token }, { context: anonymousContext }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("sets roles, protects the last owner, and gates member management", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.scope.id, "member");

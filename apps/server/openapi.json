@@ -206,12 +206,45 @@
                         "google"
                       ],
                       "description": "The sign-in methods the deployment offers."
+                    },
+                    "legal": {
+                      "type": "object",
+                      "properties": {
+                        "termsUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The URL of the deployment's terms of service. Null when not configured."
+                        },
+                        "privacyUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The URL of the deployment's privacy policy. Null when not configured."
+                        }
+                      },
+                      "required": [
+                        "termsUrl",
+                        "privacyUrl"
+                      ],
+                      "description": "The legal documents the sign-in page links to."
                     }
                   },
                   "required": [
                     "mode",
                     "needsBootstrap",
-                    "providers"
+                    "providers",
+                    "legal"
                   ],
                   "description": "Public deployment and sign-in configuration."
                 }
@@ -501,6 +534,63 @@
             "sessionCookie": []
           }
         ]
+      }
+    },
+    "/invites/preview": {
+      "post": {
+        "operationId": "members.invites.preview",
+        "summary": "Preview an invite link",
+        "description": "Look up the organization and inviter behind an invite token before redeeming it. Returns not-found when the invite is invalid, expired, or already redeemed.",
+        "tags": [
+          "Members"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The invite token from the join link."
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "orgName": {
+                      "type": "string",
+                      "description": "The name of the organization the invite joins."
+                    },
+                    "invitedBy": {
+                      "type": "string",
+                      "description": "The display name of the member who created the invite."
+                    }
+                  },
+                  "required": [
+                    "orgName",
+                    "invitedBy"
+                  ],
+                  "description": "The organization and inviter behind an invite link."
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/invites/redeem": {

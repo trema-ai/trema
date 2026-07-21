@@ -6,10 +6,11 @@ import {
   listMembers,
   MemberConflictError,
   MemberNotFoundError,
+  previewInvite,
   redeemInvite,
   setMemberRole,
 } from "#/services/members/index.js";
-import { authed, requireCapability } from "./builders.js";
+import { authed, pub, requireCapability } from "./builders.js";
 
 const roleSchema = z
   .enum(["owner", "admin", "member", "viewer"])
@@ -153,6 +154,39 @@ const inviteCreate = requireCapability("manage_members", {
     }
   });
 
+const invitePreview = pub
+  .route({
+    method: "POST",
+    path: "/invites/preview",
+    summary: "Preview an invite link",
+    description:
+      "Look up the organization and inviter behind an invite token before redeeming it. Returns not-found when the invite is invalid, expired, or already redeemed.",
+    tags: ["Members"],
+  })
+  .input(
+    z.object({
+      token: z.string().min(1).describe("The invite token from the join link."),
+    }),
+  )
+  .output(
+    z
+      .object({
+        orgName: z.string().describe("The name of the organization the invite joins."),
+        invitedBy: z.string().describe("The display name of the member who created the invite."),
+      })
+      .describe("The organization and inviter behind an invite link."),
+  )
+  .handler(async ({ context, input }) => {
+    try {
+      return await previewInvite(context.db, input.token);
+    } catch (error) {
+      if (error instanceof MemberNotFoundError) {
+        throw new ORPCError("NOT_FOUND", { message: error.message });
+      }
+      throw error;
+    }
+  });
+
 const inviteRedeem = authed
   .route({
     method: "POST",
@@ -201,5 +235,5 @@ const inviteRedeem = authed
 export const membersRouter = {
   list,
   setRole,
-  invites: { create: inviteCreate, redeem: inviteRedeem },
+  invites: { create: inviteCreate, preview: invitePreview, redeem: inviteRedeem },
 };

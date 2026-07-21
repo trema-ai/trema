@@ -39,6 +39,16 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   first-party transport (clients import the `Router` type); the public,
   versioned contract is the REST surface under `/api/v1`.
 
+## Local development
+
+- `mise run dev` brings up the full dev stack: it creates
+  `apps/server/.env` from the example on first run, starts the Postgres
+  container, applies migrations, and runs the server and the web app in
+  watch mode. The web app proxies `/api` and `/rpc` to the server, so
+  develop against `http://127.0.0.1:5173`.
+- The pieces are also individual tasks: `mise run db:up`,
+  `mise run db:migrate`, `mise run dev:server`, `mise run dev:web`.
+
 ## Verification
 
 Every change lands green on, from the repo root:

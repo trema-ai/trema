@@ -6,6 +6,11 @@
   "imports": {
     "#/*": "./src/*"
   },
+  "exports": {
+    "./types": {
+      "types": "./src/public-types.ts"
+    }
+  },
   "scripts": {
     "build": "prisma generate && tsc -b tsconfig.build.json && tsc-alias -p tsconfig.build.json",
     "dev": "tsx watch src/index.ts",

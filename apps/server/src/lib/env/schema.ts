@@ -25,6 +25,8 @@ const optionalString = z.preprocess(
 
 const url = z.string().trim().url();
 
+const optionalUrl = z.preprocess((value) => (value === "" ? undefined : value), url.optional());
+
 const webOrigins = z
   .string()
   .transform((value) => value.split(",").map((origin) => origin.trim()))
@@ -42,9 +44,12 @@ const environmentSchema = z
     TREMA_AUTH_SECRET: z.string().trim().min(32),
     TREMA_AUTH_BASE_URL: url.default("http://127.0.0.1:3000"),
     TREMA_WEB_ORIGINS: webOrigins.default(["http://127.0.0.1:5173"]),
+    TREMA_WEB_DIST: optionalString,
     TREMA_GOOGLE_CLIENT_ID: optionalString,
     TREMA_GOOGLE_CLIENT_SECRET: optionalString,
     TREMA_PASSWORD_AUTH_ENABLED: boolean.default(true),
+    TREMA_TERMS_URL: optionalUrl,
+    TREMA_PRIVACY_URL: optionalUrl,
     TREMA_BOOTSTRAP_TOKEN: optionalString,
     TREMA_OIDC_ISSUER: optionalString,
     TREMA_OIDC_CLIENT_ID: optionalString,

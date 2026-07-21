@@ -300,6 +300,7 @@ integration("bootstrap and organizations", () => {
       TREMA_PASSWORD_AUTH_ENABLED: "false",
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
+      TREMA_TERMS_URL: "https://trema.example/terms",
     });
     const auth = createAuth({ db, env });
 
@@ -311,6 +312,7 @@ integration("bootstrap and organizations", () => {
       mode: "dedicated",
       needsBootstrap: true,
       providers: { password: false, google: true },
+      legal: { termsUrl: "https://trema.example/terms", privacyUrl: null },
     });
   });
 });

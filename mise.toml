@@ -2,3 +2,43 @@
 node = "24.18.0"
 "npm:pnpm" = "11.15.1"
 vale = "3.15.1"
+
+[tasks."env:init"]
+description = "Create apps/server/.env from the example with a generated auth secret"
+run = '''
+if [ ! -f apps/server/.env ]; then
+  secret="$(openssl rand -base64 33)"
+  sed "s|replace-with-at-least-32-random-characters|$secret|" apps/server/.env.example > apps/server/.env
+  echo "Created apps/server/.env with a generated auth secret"
+fi
+'''
+
+[tasks."db:up"]
+description = "Start the local Postgres container"
+run = '''
+holder="$(docker ps --filter publish=5432 | awk 'NR>1 {print $NF}' | grep -v "^$(basename "$PWD")-postgres-1$" || true)"
+if [ -n "$holder" ]; then
+  echo "Port 5432 is held by another container: $holder" >&2
+  echo "Stop it first: docker stop $holder" >&2
+  exit 1
+fi
+docker compose up -d --wait postgres
+'''
+
+[tasks."db:migrate"]
+description = "Apply pending migrations to the local database"
+depends = ["env:init", "db:up"]
+run = "pnpm --filter @trema/server exec prisma migrate deploy"
+
+[tasks."dev:server"]
+description = "Run the API server in watch mode"
+depends = ["db:migrate"]
+run = "pnpm --filter @trema/server dev"
+
+[tasks."dev:web"]
+description = "Run the web app dev server"
+run = "pnpm --filter @trema/web dev"
+
+[tasks.dev]
+description = "Start Postgres, apply migrations, and run the server and web app in watch mode"
+depends = ["dev:server", "dev:web"]

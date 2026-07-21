@@ -27,6 +27,7 @@ import { SettingRow, SettingsSection } from "#/components/trema/settings-section
 import { StatusDot } from "#/components/trema/status-dot.tsx";
 import { SteeringNote } from "#/components/trema/steering-note.tsx";
 import { UnknownEventsLine } from "#/components/trema/unknown-events-line.tsx";
+import { LogoMark, Wordmark } from "#/components/trema/wordmark.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1003,6 +1004,28 @@ function ChatSection() {
   );
 }
 
+function BrandSection() {
+  return (
+    <Section title="Brand and auth layout">
+      <Row>
+        <Variant label="LogoMark">
+          <LogoMark className="size-7" />
+        </Variant>
+        <Variant label="Wordmark — auth pages">
+          <Wordmark className="h-6 w-auto" />
+        </Variant>
+        <Variant label="Auth layout — centered 360px column on card">
+          <div className="w-[360px] border-y bg-card py-10 text-center">
+            <Wordmark className="mx-auto h-6 w-auto" />
+            <p className="mt-3 text-lg font-semibold">Sign in to Trema</p>
+            <p className="mt-2 text-meta text-muted-foreground">Forms sit directly on the page.</p>
+          </div>
+        </Variant>
+      </Row>
+    </Section>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Page                                                               */
 /* ------------------------------------------------------------------ */
@@ -1017,6 +1040,7 @@ function Gallery() {
       <div className="space-y-10">
         <ColorTokensSection />
         <TypographySection />
+        <BrandSection />
         <ButtonsSection />
         <FormControlsSection />
         <BadgesSection />
