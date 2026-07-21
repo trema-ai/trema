@@ -60,12 +60,11 @@ export const defaultSdkOperations: SdkOperations = {
   },
   async generate(options) {
     const result = await generateText({ ...options, allowSystemInMessages: true, maxRetries: 0 });
+    const providerMetadata = result.finalStep.providerMetadata;
     return {
       text: result.text,
       usage: result.usage,
-      ...(result.providerMetadata === undefined
-        ? {}
-        : { providerMetadata: result.providerMetadata }),
+      ...(providerMetadata === undefined ? {} : { providerMetadata }),
     };
   },
 };
