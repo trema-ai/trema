@@ -19,9 +19,6 @@ export interface RpcContext {
 
 export const pub = os.$context<RpcContext>();
 
-// `oo.spec` attaches the OpenAPI security requirement to the middleware, so
-// every procedure built on the builder documents it. The scheme names must
-// match `components.securitySchemes` in openapi.ts.
 export const authed = pub.use(
   oo.spec(
     pub.middleware(async ({ context, next }) => {
