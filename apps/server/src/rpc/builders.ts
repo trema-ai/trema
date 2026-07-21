@@ -1,9 +1,14 @@
+import { oo } from "@orpc/openapi";
 import { ORPCError, os } from "@orpc/server";
 
 import type { Auth } from "#/lib/auth/index.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
 import { authorize, type Capability } from "#/services/authorize/index.js";
+import {
+  resolveServiceCredential,
+  ServiceCredentialAuthenticationError,
+} from "#/services/credentials/index.js";
 
 export interface RpcContext {
   db: Database;
@@ -14,23 +19,60 @@ export interface RpcContext {
 
 export const pub = os.$context<RpcContext>();
 
-export const authed = pub.use(async ({ context, next }) => {
-  const session = await context.auth.api.getSession({
-    headers: context.headers,
-  });
+export const authed = pub.use(
+  oo.spec(
+    pub.middleware(async ({ context, next }) => {
+      const session = await context.auth.api.getSession({
+        headers: context.headers,
+      });
 
-  if (!session) {
-    throw new ORPCError("UNAUTHORIZED", {
-      message: "Authentication required",
-    });
-  }
+      if (!session) {
+        throw new ORPCError("UNAUTHORIZED", {
+          message: "Authentication required",
+        });
+      }
 
-  return next({
-    context: {
-      session,
-    },
-  });
-});
+      return next({
+        context: {
+          session,
+        },
+      });
+    }),
+    { security: [{ sessionCookie: [] }] },
+  ),
+);
+
+export const serviceAuthed = pub.use(
+  oo.spec(
+    pub.middleware(async ({ context, next }) => {
+      const authorization = context.headers.get("authorization");
+      const match = authorization?.match(/^Bearer (\S+)$/);
+      if (!match) {
+        throw new ORPCError("UNAUTHORIZED", {
+          message: "Service credential required",
+        });
+      }
+
+      try {
+        const credential = await resolveServiceCredential(context.db, match[1]!);
+        return next({
+          context: {
+            org: credential.org,
+            principal: credential.principal,
+          },
+        });
+      } catch (error) {
+        if (error instanceof ServiceCredentialAuthenticationError) {
+          throw new ORPCError("UNAUTHORIZED", {
+            message: "Invalid service credential",
+          });
+        }
+        throw error;
+      }
+    }),
+    { security: [{ serviceCredential: [] }] },
+  ),
+);
 
 export const orgScoped = authed.use(async ({ context, next }) => {
   const { activeOrgId } = context.session.session;

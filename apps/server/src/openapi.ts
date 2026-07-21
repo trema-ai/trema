@@ -25,9 +25,38 @@ export function generateOpenApiDocument() {
     info: {
       title: "Trema API",
       version: OPENAPI_VERSION,
-      description: "The public REST API for Trema, the AI agent your company owns.",
+      description: [
+        "The public REST API for Trema, the AI agent your company owns.",
+        "",
+        "## Authentication",
+        "",
+        "The API accepts two kinds of credentials:",
+        "",
+        "- **Session cookie** — for browsers and interactive clients. Sign in through the auth endpoints under `/api/auth/*` to receive the session cookie. Organization-scoped operations act as the signed-in member of the active organization.",
+        "- **Service credential** — for machines. An administrator creates one with `POST /service-credentials` and receives the secret once. Send it as `Authorization: Bearer trema_sc_...`. The token acts as the principal it is bound to.",
+        "",
+        "Each operation lists the scheme it accepts. Operations that list no scheme are public.",
+      ].join("\n"),
     },
     servers: [{ url: OPENAPI_PREFIX }],
+    components: {
+      securitySchemes: {
+        sessionCookie: {
+          type: "apiKey",
+          in: "cookie",
+          name: "better-auth.session_token",
+          description:
+            "The session cookie set by sign-in. Over HTTPS the cookie name carries the `__Secure-` prefix.",
+        },
+        serviceCredential: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "trema_sc_…",
+          description:
+            "An organization-scoped service credential. The secret is shown once at creation and acts as the principal the credential is bound to.",
+        },
+      },
+    },
     // The tag order and descriptions drive the docs sidebar sections. Every
     // route's `tags` must name one of these.
     tags: [
@@ -50,6 +79,10 @@ export function generateOpenApiDocument() {
       {
         name: "Members",
         description: "Organization membership, roles, and invites.",
+      },
+      {
+        name: "Service credentials",
+        description: "Machine credentials for calling Trema as an organization principal.",
       },
     ],
   });

@@ -2,13 +2,29 @@
   "info": {
     "title": "Trema API",
     "version": "1.0.0",
-    "description": "The public REST API for Trema, the AI agent your company owns."
+    "description": "The public REST API for Trema, the AI agent your company owns.\n\n## Authentication\n\nThe API accepts two kinds of credentials:\n\n- **Session cookie** — for browsers and interactive clients. Sign in through the auth endpoints under `/api/auth/*` to receive the session cookie. Organization-scoped operations act as the signed-in member of the active organization.\n- **Service credential** — for machines. An administrator creates one with `POST /service-credentials` and receives the secret once. Send it as `Authorization: Bearer trema_sc_...`. The token acts as the principal it is bound to.\n\nEach operation lists the scheme it accepts. Operations that list no scheme are public."
   },
   "servers": [
     {
       "url": "/api/v1"
     }
   ],
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token",
+        "description": "The session cookie set by sign-in. Over HTTPS the cookie name carries the `__Secure-` prefix."
+      },
+      "serviceCredential": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "trema_sc_…",
+        "description": "An organization-scoped service credential. The secret is shown once at creation and acts as the principal the credential is bound to."
+      }
+    }
+  },
   "tags": [
     {
       "name": "System",
@@ -29,6 +45,10 @@
     {
       "name": "Members",
       "description": "Organization membership, roles, and invites."
+    },
+    {
+      "name": "Service credentials",
+      "description": "Machine credentials for calling Trema as an organization principal."
     }
   ],
   "openapi": "3.1.1",
@@ -133,7 +153,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/config": {
@@ -266,7 +291,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/members/role": {
@@ -366,7 +396,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/invites": {
@@ -460,7 +495,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/invites/redeem": {
@@ -559,7 +599,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/orgs": {
@@ -656,7 +701,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       },
       "get": {
         "operationId": "org.list",
@@ -735,7 +785,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/orgs/current": {
@@ -812,7 +867,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/orgs/switch": {
@@ -909,7 +969,318 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/service-credentials": {
+      "post": {
+        "operationId": "serviceCredentials.create",
+        "summary": "Create a service credential",
+        "description": "Create an agent-bound service credential and return its secret once.",
+        "tags": [
+          "Service credentials"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "A display name for the service credential. Cannot be empty."
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "description": "The service credential to create."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The service credential's unique ID. A UUID (version 7)."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The display name used to identify the service credential."
+                    },
+                    "principalId": {
+                      "type": "string",
+                      "description": "The ID of the principal the service credential acts as. A UUID."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the service credential was created. An ISO 8601 date-time."
+                    },
+                    "revokedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the service credential was revoked. Null while it remains active."
+                    },
+                    "secret": {
+                      "type": "string",
+                      "description": "The service credential secret. Store it now; it is returned only once."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "principalId",
+                    "createdAt",
+                    "revokedAt",
+                    "secret"
+                  ],
+                  "description": "The created service credential and its one-time secret."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "serviceCredentials.list",
+        "summary": "List service credentials",
+        "description": "List service credential metadata for the active organization.",
+        "tags": [
+          "Service credentials"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The service credential's unique ID. A UUID (version 7)."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "The display name used to identify the service credential."
+                      },
+                      "principalId": {
+                        "type": "string",
+                        "description": "The ID of the principal the service credential acts as. A UUID."
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "description": "When the service credential was created. An ISO 8601 date-time."
+                      },
+                      "revokedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "When the service credential was revoked. Null while it remains active."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "principalId",
+                      "createdAt",
+                      "revokedAt"
+                    ],
+                    "description": "Service credential metadata without secret material."
+                  },
+                  "description": "The active organization's service credentials."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/service-credentials/revoke": {
+      "post": {
+        "operationId": "serviceCredentials.revoke",
+        "summary": "Revoke a service credential",
+        "description": "Revoke a service credential in the active organization.",
+        "tags": [
+          "Service credentials"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "credentialId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The ID of the service credential to revoke. A UUID."
+                  }
+                },
+                "required": [
+                  "credentialId"
+                ],
+                "description": "The service credential to revoke."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The service credential's unique ID. A UUID (version 7)."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The display name used to identify the service credential."
+                    },
+                    "principalId": {
+                      "type": "string",
+                      "description": "The ID of the principal the service credential acts as. A UUID."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the service credential was created. An ISO 8601 date-time."
+                    },
+                    "revokedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the service credential was revoked. Null while it remains active."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "principalId",
+                    "createdAt",
+                    "revokedAt"
+                  ],
+                  "description": "Service credential metadata without secret material."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/service-credentials/whoami": {
+      "get": {
+        "operationId": "serviceCredentials.whoami",
+        "summary": "Resolve a service credential",
+        "description": "Return the organization and principal represented by a service credential.",
+        "tags": [
+          "Service credentials"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "orgId": {
+                      "type": "string",
+                      "description": "The ID of the service credential's organization. A UUID."
+                    },
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The represented principal's unique ID. A UUID (version 7)."
+                        },
+                        "kind": {
+                          "enum": [
+                            "human",
+                            "agent"
+                          ],
+                          "type": "string",
+                          "description": "The represented principal's kind: `human` or `agent`."
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "The represented principal's display name."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "displayName"
+                      ],
+                      "description": "The principal represented by the service credential."
+                    }
+                  },
+                  "required": [
+                    "orgId",
+                    "principal"
+                  ],
+                  "description": "The identity represented by the service credential."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "serviceCredential": []
+          }
+        ]
       }
     },
     "/system/ping": {
