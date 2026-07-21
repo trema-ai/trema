@@ -1,0 +1,105 @@
+import { SearchIcon } from "lucide-react";
+import type { ReactNode } from "react";
+
+import { Input } from "#/components/ui/input.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "#/components/ui/select.tsx";
+import { cn } from "#/lib/utils.ts";
+
+type FilterBarProps = {
+  children: ReactNode;
+  className?: string;
+};
+
+function FilterBar({ children, className }: FilterBarProps) {
+  return (
+    <div data-slot="filter-bar" className={cn("flex flex-wrap items-center gap-2", className)}>
+      {children}
+    </div>
+  );
+}
+
+type FilterOption = {
+  value: string;
+  label: string;
+};
+
+type FilterSelectProps = {
+  label: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  /* Include the "All ..." entry in the options; allValue marks it. */
+  options: FilterOption[];
+  allValue?: string;
+};
+
+function FilterSelect({
+  label,
+  value,
+  onValueChange,
+  options,
+  allValue = "all",
+}: FilterSelectProps) {
+  const active = value !== allValue;
+
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger
+        size="sm"
+        aria-label={label}
+        data-slot="filter-select"
+        className={cn(
+          "h-8 gap-1.5 rounded-md border bg-card px-2.5 text-(length:--text-chrome) shadow-none dark:bg-card dark:hover:bg-card",
+          active &&
+            "border-moss/40 bg-moss-soft text-foreground dark:bg-moss-soft dark:hover:bg-moss-soft",
+        )}
+      >
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent align="start" position="popper">
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+type FilterSearchProps = {
+  value: string;
+  onValueChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+};
+
+function FilterSearch({
+  value,
+  onValueChange,
+  placeholder = "Search…",
+  className,
+}: FilterSearchProps) {
+  return (
+    <div data-slot="filter-search" className={cn("relative", className)}>
+      <SearchIcon
+        aria-hidden="true"
+        className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 size-3.5 text-muted-foreground"
+      />
+      <Input
+        type="search"
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+        placeholder={placeholder}
+        className="h-8 w-56 bg-card pl-8 text-(length:--text-chrome) shadow-none md:text-(length:--text-chrome) dark:bg-card"
+      />
+    </div>
+  );
+}
+
+export { FilterBar, FilterSearch, FilterSelect };
