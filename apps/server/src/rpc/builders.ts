@@ -1,8 +1,8 @@
 import { ORPCError, os } from "@orpc/server";
 
-import type { Auth } from "../lib/auth/index.js";
-import type { Database } from "../lib/db/index.js";
-import type { Environment } from "../lib/env/schema.js";
+import type { Auth } from "#/lib/auth/index.js";
+import type { Database } from "#/lib/db/index.js";
+import type { Environment } from "#/lib/env/schema.js";
 
 export interface RpcContext {
   db: Database;

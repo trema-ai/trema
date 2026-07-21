@@ -7,8 +7,8 @@ import {
   requireNoOrganizations,
   takeBootstrapLock,
   verifyBootstrapToken,
-} from "../services/bootstrap/index.js";
-import { createOrgWithOwner } from "../services/org/index.js";
+} from "#/services/bootstrap/index.js";
+import { createOrgWithOwner } from "#/services/org/index.js";
 import { authed } from "./builders.js";
 
 const bootstrapResult = z.object({

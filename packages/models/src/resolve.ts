@@ -49,5 +49,7 @@ export function resolveModel(
       };
   }
 
-  throw new Error(`Unsupported model endpoint protocol: ${(endpoint as { protocol: string }).protocol}`);
+  throw new Error(
+    `Unsupported model endpoint protocol: ${(endpoint as { protocol: string }).protocol}`,
+  );
 }

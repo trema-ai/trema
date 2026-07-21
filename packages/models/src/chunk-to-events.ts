@@ -5,7 +5,7 @@ import type {
   TranscriptBlock,
   TranscriptMessage,
 } from "@trema/harness";
-import type { ProviderMetadata, TextStreamPart } from "ai";
+import type { ProviderMetadata, TextStreamPart, ToolSet } from "ai";
 
 import { modelErrorData } from "./errors.js";
 
@@ -54,7 +54,7 @@ function toolStart(callId: string, name: string, tools: readonly ToolDef[]): Run
  * and intentionally emit nothing.
  */
 export function chunkToEvents(
-  part: TextStreamPart<any>,
+  part: TextStreamPart<ToolSet>,
   tools: readonly ToolDef[],
   state: ChunkState,
 ): RunEventData[] {
@@ -146,7 +146,9 @@ export function chunkToEvents(
       return [{ type: "error", message: error.message, recoverable: error.retryable }];
     }
     case "abort":
-      return [{ type: "error", message: part.reason ?? "Model request aborted", recoverable: false }];
+      return [
+        { type: "error", message: part.reason ?? "Model request aborted", recoverable: false },
+      ];
     case "start":
     case "start-step":
     case "finish-step":

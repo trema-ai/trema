@@ -1,8 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
-import type { Prisma } from "../../generated/prisma/client.js";
-import type { Database } from "../../lib/db/index.js";
-import type { Environment } from "../../lib/env/schema.js";
+import type { Prisma } from "#/generated/prisma/client.js";
+import type { Database } from "#/lib/db/index.js";
+import type { Environment } from "#/lib/env/schema.js";
 
 const BOOTSTRAP_TOKEN_ID = "bootstrap";
 const BOOTSTRAP_ADVISORY_LOCK = 8_451_772_003;
@@ -29,15 +29,11 @@ export function verifyBootstrapToken(token: string, persistedHash: string): bool
   return timingSafeEqual(candidate, expected) && validPersistedHash;
 }
 
-export async function takeBootstrapLock(
-  transaction: Prisma.TransactionClient,
-): Promise<void> {
+export async function takeBootstrapLock(transaction: Prisma.TransactionClient): Promise<void> {
   await transaction.$executeRaw`SELECT pg_advisory_xact_lock(${BOOTSTRAP_ADVISORY_LOCK})`;
 }
 
-export async function requireNoOrganizations(
-  transaction: Prisma.TransactionClient,
-): Promise<void> {
+export async function requireNoOrganizations(transaction: Prisma.TransactionClient): Promise<void> {
   if ((await transaction.org.count()) !== 0) {
     throw new BootstrapConflictError();
   }

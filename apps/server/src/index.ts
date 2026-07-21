@@ -2,9 +2,9 @@ import { serve } from "@hono/node-server";
 
 import { createApp } from "./app.js";
 import { createAuth } from "./lib/auth/index.js";
-import { initializeBootstrap } from "./services/bootstrap/index.js";
 import { createPrismaClient } from "./lib/db/index.js";
 import { env } from "./lib/env/index.js";
+import { initializeBootstrap } from "./services/bootstrap/index.js";
 
 const db = createPrismaClient(env.DATABASE_URL);
 await initializeBootstrap({ db, env });

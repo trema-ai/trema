@@ -1,14 +1,14 @@
-import { RunEventDataSchema } from "@trema/harness";
 import type { RunEventData, ToolDef, TurnRequest, Usage } from "@trema/harness";
-import type { LanguageModelUsage, TextStreamPart } from "ai";
+import { RunEventDataSchema } from "@trema/harness";
+import type { LanguageModelUsage, TextStreamPart, ToolSet } from "ai";
 import { describe, expect, it, vi } from "vitest";
 
-import { createSdkModelPort } from "../src/index.js";
-import { createSdkModelPortWithOperations } from "../src/sdk-model-port.js";
-import type { SdkCallOptions, SdkOperations } from "../src/sdk-operations.js";
-import { toModelMessages } from "../src/to-model-messages.js";
+import { createSdkModelPort } from "#/index.js";
+import { createSdkModelPortWithOperations } from "#/sdk-model-port.js";
+import type { SdkCallOptions, SdkOperations } from "#/sdk-operations.js";
+import { toModelMessages } from "#/to-model-messages.js";
 
-type Part = TextStreamPart<any>;
+type Part = TextStreamPart<ToolSet>;
 
 const sdkUsage: LanguageModelUsage = {
   inputTokens: 11,
@@ -70,9 +70,12 @@ function operations(parts: readonly Part[] | AsyncIterable<Part>): {
       stream(options) {
         calls.push(options);
         return {
-          fullStream: Symbol.asyncIterator in parts
-            ? parts
-            : (async function* () { yield* parts; })(),
+          fullStream:
+            Symbol.asyncIterator in parts
+              ? parts
+              : (async function* () {
+                  yield* parts;
+                })(),
         };
       },
       async generate(options) {
@@ -132,8 +135,12 @@ describe("SDK full-stream golden transcripts", () => {
     ]);
 
     expect(actual.events.map((event) => event.type)).toEqual([
-      "reasoning-start", "reasoning-delta", "reasoning-end",
-      "text-start", "text-delta", "text-end",
+      "reasoning-start",
+      "reasoning-delta",
+      "reasoning-end",
+      "text-start",
+      "text-delta",
+      "text-end",
     ]);
     expect(actual.result.message.blocks).toEqual([
       { type: "thinking", text: "Consider", providerMeta: signature },
@@ -143,41 +150,61 @@ describe("SDK full-stream golden transcripts", () => {
   });
 
   it("maps a validated tool call using the request registry", async () => {
-    const actual = await collect([
-      { type: "tool-input-start", id: "call-1", toolName: "lookup" },
-      { type: "tool-input-delta", id: "call-1", delta: "{\"q\":" },
-      { type: "tool-input-delta", id: "call-1", delta: "\"trema\"}" },
-      { type: "tool-call", toolCallId: "call-1", toolName: "lookup", input: { q: "trema" } },
-      finish("tool-calls"),
-    ], { tools: [lookup] });
+    const actual = await collect(
+      [
+        { type: "tool-input-start", id: "call-1", toolName: "lookup" },
+        { type: "tool-input-delta", id: "call-1", delta: '{"q":' },
+        { type: "tool-input-delta", id: "call-1", delta: '"trema"}' },
+        { type: "tool-call", toolCallId: "call-1", toolName: "lookup", input: { q: "trema" } },
+        finish("tool-calls"),
+      ],
+      { tools: [lookup] },
+    );
 
     expect(actual.events).toEqual([
-      { type: "tool-start", callId: "call-1", name: "lookup", title: "Knowledge lookup", kind: "search" },
-      { type: "tool-input-delta", callId: "call-1", delta: "{\"q\":" },
-      { type: "tool-input-delta", callId: "call-1", delta: "\"trema\"}" },
+      {
+        type: "tool-start",
+        callId: "call-1",
+        name: "lookup",
+        title: "Knowledge lookup",
+        kind: "search",
+      },
+      { type: "tool-input-delta", callId: "call-1", delta: '{"q":' },
+      { type: "tool-input-delta", callId: "call-1", delta: '"trema"}' },
       { type: "tool-input", callId: "call-1", input: { q: "trema" } },
     ]);
     expect(actual.result.stopReason).toBe("toolUse");
-    expect(actual.result.toolCalls).toEqual([{ callId: "call-1", name: "lookup", input: { q: "trema" } }]);
+    expect(actual.result.toolCalls).toEqual([
+      { callId: "call-1", name: "lookup", input: { q: "trema" } },
+    ]);
     expectValid(actual.events);
   });
 
   it("keeps parallel tool streams distinct and interleaved", async () => {
-    const actual = await collect([
-      { type: "tool-input-start", id: "a", toolName: "lookup" },
-      { type: "tool-input-start", id: "b", toolName: "missing" },
-      { type: "tool-input-delta", id: "a", delta: "{\"q\":\"a\"}" },
-      { type: "tool-input-delta", id: "b", delta: "{\"q\":\"b\"}" },
-      { type: "tool-call", toolCallId: "b", toolName: "missing", input: { q: "b" } },
-      { type: "tool-call", toolCallId: "a", toolName: "lookup", input: { q: "a" } },
-      finish("tool-calls"),
-    ], { tools: [lookup] });
+    const actual = await collect(
+      [
+        { type: "tool-input-start", id: "a", toolName: "lookup" },
+        { type: "tool-input-start", id: "b", toolName: "missing" },
+        { type: "tool-input-delta", id: "a", delta: '{"q":"a"}' },
+        { type: "tool-input-delta", id: "b", delta: '{"q":"b"}' },
+        { type: "tool-call", toolCallId: "b", toolName: "missing", input: { q: "b" } },
+        { type: "tool-call", toolCallId: "a", toolName: "lookup", input: { q: "a" } },
+        finish("tool-calls"),
+      ],
+      { tools: [lookup] },
+    );
 
     expect(actual.events).toEqual([
-      { type: "tool-start", callId: "a", name: "lookup", title: "Knowledge lookup", kind: "search" },
+      {
+        type: "tool-start",
+        callId: "a",
+        name: "lookup",
+        title: "Knowledge lookup",
+        kind: "search",
+      },
       { type: "tool-start", callId: "b", name: "missing", title: "missing", kind: "other" },
-      { type: "tool-input-delta", callId: "a", delta: "{\"q\":\"a\"}" },
-      { type: "tool-input-delta", callId: "b", delta: "{\"q\":\"b\"}" },
+      { type: "tool-input-delta", callId: "a", delta: '{"q":"a"}' },
+      { type: "tool-input-delta", callId: "b", delta: '{"q":"b"}' },
       { type: "tool-input", callId: "b", input: { q: "b" } },
       { type: "tool-input", callId: "a", input: { q: "a" } },
     ]);
@@ -192,7 +219,11 @@ describe("SDK full-stream golden transcripts", () => {
       { type: "error", error: new Error("connection lost") },
     ]);
 
-    expect(actual.events.at(-1)).toEqual({ type: "error", message: "connection lost", recoverable: false });
+    expect(actual.events.at(-1)).toEqual({
+      type: "error",
+      message: "connection lost",
+      recoverable: false,
+    });
     expect(actual.result).toMatchObject({
       message: { role: "assistant", blocks: [{ type: "text", text: "partial" }] },
       stopReason: "error",
@@ -207,11 +238,13 @@ describe("SDK full-stream golden transcripts", () => {
       finish(),
     ]);
 
-    expect(actual.events).toEqual([{
-      type: "data",
-      name: "vendor.trace",
-      data: { primary: { phase: "decode" } },
-    }]);
+    expect(actual.events).toEqual([
+      {
+        type: "data",
+        name: "vendor.trace",
+        data: { primary: { phase: "decode" } },
+      },
+    ]);
     expectValid(actual.events);
   });
 
@@ -230,22 +263,31 @@ describe("SDK full-stream golden transcripts", () => {
     for await (const event of stream) events.push(event);
 
     expect(events.at(-1)).toEqual({ type: "error", message: "cancelled", recoverable: false });
-    expect(await stream.result).toMatchObject({ stopReason: "aborted", message: { blocks: [{ text: "partial" }] } });
+    expect(await stream.result).toMatchObject({
+      stopReason: "aborted",
+      message: { blocks: [{ text: "partial" }] },
+    });
     expectValid(events);
   });
 
   it("throws and rejects result when the SDK fails before its first part", async () => {
     const failure = new Error("unauthorized");
     const sdk: SdkOperations = {
-      stream() { throw failure; },
-      async generate() { throw failure; },
+      stream() {
+        throw failure;
+      },
+      async generate() {
+        throw failure;
+      },
     };
     const port = createSdkModelPortWithOperations({ endpoints }, sdk);
     const stream = port.streamTurn(request());
     const resultRejection = expect(stream.result).rejects.toThrow("unauthorized");
 
     await expect(async () => {
-      for await (const _event of stream) { /* no events */ }
+      for await (const _event of stream) {
+        /* no events */
+      }
     }).rejects.toThrow("unauthorized");
     await resultRejection;
   });
@@ -253,17 +295,37 @@ describe("SDK full-stream golden transcripts", () => {
 
 describe("routing, conversion, and controls", () => {
   it("selects a named endpoint and sends its URL and API key through fake fetch", async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({
-      id: "response-1",
-      created: 1,
-      model: "native-model",
-      choices: [{ index: 0, message: { role: "assistant", content: "selected" }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
-    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "response-1",
+            created: 1,
+            model: "native-model",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "selected" },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
     const port = createSdkModelPort({
       endpoints: {
-        first: { protocol: "openai-compatible", baseUrl: "https://first.example/v1", apiKey: "first-key" },
-        second: { protocol: "openai-compatible", baseUrl: "https://second.example/v1", apiKey: "second-key" },
+        first: {
+          protocol: "openai-compatible",
+          baseUrl: "https://first.example/v1",
+          apiKey: "first-key",
+        },
+        second: {
+          protocol: "openai-compatible",
+          baseUrl: "https://second.example/v1",
+          apiKey: "second-key",
+        },
       },
       fetch,
     });
@@ -284,14 +346,19 @@ describe("routing, conversion, and controls", () => {
 
   it("throws for unknown or ambiguous endpoint selection", () => {
     const fixture = operations([]);
-    const port = createSdkModelPortWithOperations({
-      endpoints: {
-        one: endpoints.primary,
-        two: { ...endpoints.primary, baseUrl: "https://two.example/v1" },
+    const port = createSdkModelPortWithOperations(
+      {
+        endpoints: {
+          one: endpoints.primary,
+          two: { ...endpoints.primary, baseUrl: "https://two.example/v1" },
+        },
       },
-    }, fixture.sdk);
+      fixture.sdk,
+    );
 
-    expect(() => port.streamTurn(request({ model: { id: "m", provider: "missing" } }))).toThrow("Unknown model endpoint");
+    expect(() => port.streamTurn(request({ model: { id: "m", provider: "missing" } }))).toThrow(
+      "Unknown model endpoint",
+    );
     expect(() => port.streamTurn(request({ model: { id: "m" } }))).toThrow("multiple endpoints");
   });
 
@@ -299,21 +366,35 @@ describe("routing, conversion, and controls", () => {
     const messageMeta = { primary: { responseId: "response-1" } };
     const reasoningMeta = { primary: { signature: "sig-1" } };
     const toolMeta = { primary: { itemId: "item-1" } };
-    const converted = toModelMessages("System", [{
-      role: "assistant",
-      providerMeta: messageMeta,
-      blocks: [
-        { type: "thinking", text: "thought", providerMeta: reasoningMeta },
-        { type: "toolCall", callId: "call-1", name: "lookup", input: { q: "x" }, providerMeta: toolMeta },
-      ],
-    }]);
+    const converted = toModelMessages("System", [
+      {
+        role: "assistant",
+        providerMeta: messageMeta,
+        blocks: [
+          { type: "thinking", text: "thought", providerMeta: reasoningMeta },
+          {
+            type: "toolCall",
+            callId: "call-1",
+            name: "lookup",
+            input: { q: "x" },
+            providerMeta: toolMeta,
+          },
+        ],
+      },
+    ]);
 
     expect(converted[1]).toEqual({
       role: "assistant",
       providerOptions: messageMeta,
       content: [
         { type: "reasoning", text: "thought", providerOptions: reasoningMeta },
-        { type: "tool-call", toolCallId: "call-1", toolName: "lookup", input: { q: "x" }, providerOptions: toolMeta },
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "lookup",
+          input: { q: "x" },
+          providerOptions: toolMeta,
+        },
       ],
     });
   });
@@ -412,8 +493,9 @@ describe("routing, conversion, and controls", () => {
     expect(withoutReason[2]).toMatchObject({
       content: [{ output: { type: "execution-denied" } }],
     });
-    expect((withoutReason[2] as { content: Array<{ output: unknown }> }).content[0]?.output)
-      .not.toHaveProperty("reason");
+    expect(
+      (withoutReason[2] as { content: Array<{ output: unknown }> }).content[0]?.output,
+    ).not.toHaveProperty("reason");
   });
 
   it("forwards only genuine message-level metadata on tool results", () => {
@@ -452,35 +534,46 @@ describe("routing, conversion, and controls", () => {
       blocks: [{ type: "toolCall" as const, callId: "call-1", name: "lookup", input: {} }],
     };
 
-    expect(() => toModelMessages("System", [
-      assistant,
-      {
-        role: "toolResult",
-        toolCallId: "call-1",
-        blocks: [{ type: "thinking", text: "invalid" }],
-      },
-    ])).toThrow("Invalid thinking block in toolResult message");
-    expect(() => toModelMessages("System", [
-      assistant,
-      {
-        role: "toolResult",
-        toolCallId: "call-1",
-        blocks: [{ type: "toolCall", callId: "nested", name: "lookup", input: {} }],
-      },
-    ])).toThrow("Invalid toolCall block in toolResult message");
+    expect(() =>
+      toModelMessages("System", [
+        assistant,
+        {
+          role: "toolResult",
+          toolCallId: "call-1",
+          blocks: [{ type: "thinking", text: "invalid" }],
+        },
+      ]),
+    ).toThrow("Invalid thinking block in toolResult message");
+    expect(() =>
+      toModelMessages("System", [
+        assistant,
+        {
+          role: "toolResult",
+          toolCallId: "call-1",
+          blocks: [{ type: "toolCall", callId: "nested", name: "lookup", input: {} }],
+        },
+      ]),
+    ).toThrow("Invalid toolCall block in toolResult message");
   });
 
   it("sends thinking options only for explicitly mapped model levels", async () => {
     const mapped = operations([finish()]);
-    const port = createSdkModelPortWithOperations({
-      endpoints,
-      thinkingLevelMap: { "reasoning-*": { supportedLevels: ["low", "high"] } },
-    }, mapped.sdk);
+    const port = createSdkModelPortWithOperations(
+      {
+        endpoints,
+        thinkingLevelMap: { "reasoning-*": { supportedLevels: ["low", "high"] } },
+      },
+      mapped.sdk,
+    );
     const first = port.streamTurn(request({ thinking: "high" }));
-    for await (const _event of first) { /* drain */ }
+    for await (const _event of first) {
+      /* drain */
+    }
     await first.result;
     const second = port.streamTurn(request({ model: { id: "plain-model" }, thinking: "high" }));
-    for await (const _event of second) { /* drain */ }
+    for await (const _event of second) {
+      /* drain */
+    }
     await second.result;
 
     expect(mapped.calls[0]?.providerOptions).toEqual({ primary: { reasoningEffort: "high" } });

@@ -14,11 +14,11 @@ import { chunkToEvents, createChunkState } from "./chunk-to-events.js";
 import type { ModelEndpoints } from "./endpoints.js";
 import { isAbortFailure, modelErrorData } from "./errors.js";
 import { resolveModel } from "./resolve.js";
-import { defaultSdkOperations, toSdkTools } from "./sdk-operations.js";
 import type { SdkCallOptions, SdkOperations } from "./sdk-operations.js";
+import { defaultSdkOperations, toSdkTools } from "./sdk-operations.js";
 import { toStopReason } from "./stop-reason.js";
-import { thinkingProviderOptions } from "./thinking.js";
 import type { ThinkingLevelMap } from "./thinking.js";
+import { thinkingProviderOptions } from "./thinking.js";
 import { toModelMessages } from "./to-model-messages.js";
 import { toUsage } from "./usage.js";
 
@@ -55,15 +55,16 @@ function callOptions(
   request: TurnRequest | CompleteRequest,
 ): SdkCallOptions {
   const resolved = resolveModel(options.endpoints, request.model, options.fetch);
-  const providerOptions = "thinking" in request
-    ? thinkingProviderOptions({
-        endpointName: resolved.endpointName,
-        endpoint: resolved.endpoint,
-        modelId: request.model.id,
-        ...(request.thinking === undefined ? {} : { requested: request.thinking }),
-        ...(options.thinkingLevelMap === undefined ? {} : { map: options.thinkingLevelMap }),
-      })
-    : undefined;
+  const providerOptions =
+    "thinking" in request
+      ? thinkingProviderOptions({
+          endpointName: resolved.endpointName,
+          endpoint: resolved.endpoint,
+          modelId: request.model.id,
+          ...(request.thinking === undefined ? {} : { requested: request.thinking }),
+          ...(options.thinkingLevelMap === undefined ? {} : { map: options.thinkingLevelMap }),
+        })
+      : undefined;
   return {
     model: resolved.model,
     messages: toModelMessages(request.instructions, request.messages),
@@ -135,13 +136,17 @@ class SdkModelPort implements ModelPort {
           if (stopReason === undefined && finishReason !== undefined) {
             const mapped = toStopReason(finishReason);
             if (mapped === "error") {
-              failure = { message: `Model stopped with finish reason: ${finishReason}`, retryable: false };
+              failure = {
+                message: `Model stopped with finish reason: ${finishReason}`,
+                retryable: false,
+              };
               yield { type: "error", message: failure.message, recoverable: false };
             }
           }
 
           if (providerMetadata !== undefined) state.message.providerMeta = providerMetadata;
-          const finalStopReason = stopReason ?? (finishReason === undefined ? "error" : toStopReason(finishReason));
+          const finalStopReason =
+            stopReason ?? (finishReason === undefined ? "error" : toStopReason(finishReason));
           completion.resolve({
             message: state.message,
             toolCalls: state.toolCalls,
@@ -156,7 +161,11 @@ class SdkModelPort implements ModelPort {
           }
           const aborted = isAbortFailure(error, request.abort);
           failure = modelErrorData(error);
-          yield { type: "error", message: failure.message, recoverable: aborted ? false : failure.retryable };
+          yield {
+            type: "error",
+            message: failure.message,
+            recoverable: aborted ? false : failure.retryable,
+          };
           completion.resolve({
             message: state.message,
             toolCalls: state.toolCalls,

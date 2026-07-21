@@ -1,10 +1,10 @@
-import type { TranscriptMessage, Usage } from "../core/index.js";
+import type { TranscriptMessage, Usage } from "#/core/index.js";
 import type {
   ContextSession,
   OpenSessionRequest,
   SearchContextResult,
   SessionSnapshot,
-} from "../ports/index.js";
+} from "#/ports/index.js";
 
 /** Deterministic context-session fake that records calls and returns configured results. */
 export class FakeContextSession implements ContextSession {
@@ -38,7 +38,12 @@ export class FakeContextSession implements ContextSession {
     this.#record("reportMessages", sessionId, messages);
   }
 
-  async searchContext(sessionId: string, query: string, kinds?: string[], limit?: number): Promise<SearchContextResult[]> {
+  async searchContext(
+    sessionId: string,
+    query: string,
+    kinds?: string[],
+    limit?: number,
+  ): Promise<SearchContextResult[]> {
     this.#record("searchContext", sessionId, query, kinds, limit);
     return (this.#results.get("searchContext") as SearchContextResult[] | undefined) ?? [];
   }
@@ -47,7 +52,12 @@ export class FakeContextSession implements ContextSession {
     return this.#result("getItem", sessionId, id);
   }
 
-  async saveMemory(sessionId: string, type: string, title: string, content: string): Promise<unknown> {
+  async saveMemory(
+    sessionId: string,
+    type: string,
+    title: string,
+    content: string,
+  ): Promise<unknown> {
     return this.#result("saveMemory", sessionId, type, title, content);
   }
 
@@ -59,15 +69,30 @@ export class FakeContextSession implements ContextSession {
     return this.#result("loadSkill", sessionId, name);
   }
 
-  async useConnector(sessionId: string, toolKey: string, args: unknown, approvalId?: string): Promise<unknown> {
+  async useConnector(
+    sessionId: string,
+    toolKey: string,
+    args: unknown,
+    approvalId?: string,
+  ): Promise<unknown> {
     return this.#result("useConnector", sessionId, toolKey, args, approvalId);
   }
 
-  async proposeSkill(sessionId: string, name: string, description: string, body: string): Promise<unknown> {
+  async proposeSkill(
+    sessionId: string,
+    name: string,
+    description: string,
+    body: string,
+  ): Promise<unknown> {
     return this.#result("proposeSkill", sessionId, name, description, body);
   }
 
-  async fetchTranscript(sessionId: string, conversationId: string, aroundSeq?: number, window?: number): Promise<unknown> {
+  async fetchTranscript(
+    sessionId: string,
+    conversationId: string,
+    aroundSeq?: number,
+    window?: number,
+  ): Promise<unknown> {
     return this.#result("fetchTranscript", sessionId, conversationId, aroundSeq, window);
   }
 

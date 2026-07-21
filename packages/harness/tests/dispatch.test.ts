@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-
-import type { RunRecord, RunStore } from "../src/ports/index.js";
-import type { MessageIntent } from "../src/dispatch/index.js";
-import { InputDispatcher, ThreadDispatchLock } from "../src/dispatch/index.js";
-import { InMemoryRunStore } from "../src/memory/index.js";
+import type { MessageIntent } from "#/dispatch/index.js";
+import { InputDispatcher, ThreadDispatchLock } from "#/dispatch/index.js";
+import { InMemoryRunStore } from "#/memory/index.js";
+import type { RunRecord, RunStore } from "#/ports/index.js";
 
 const clock = { now: () => "2026-07-19T12:00:00.000Z" };
 const author = { principalId: "principal-1", displayName: "Nelson" };

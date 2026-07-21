@@ -9,9 +9,7 @@ export default function setup(): void {
   }
 
   const serverDirectory = fileURLToPath(new URL("../", import.meta.url));
-  const prisma = fileURLToPath(
-    new URL("../node_modules/.bin/prisma", import.meta.url),
-  );
+  const prisma = fileURLToPath(new URL("../node_modules/.bin/prisma", import.meta.url));
 
   execFileSync(prisma, ["migrate", "deploy", "--config", "prisma.config.ts"], {
     cwd: serverDirectory,

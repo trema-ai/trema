@@ -1,5 +1,5 @@
-import type { ToolCall, ToolDef, TranscriptMessage } from "../core/index.js";
-import type { RunEventData } from "../events/index.js";
+import type { ToolCall, ToolDef, TranscriptMessage } from "#/core/index.js";
+import type { RunEventData } from "#/events/index.js";
 import type {
   AfterToolCallHook,
   BeforeToolCallHook,
@@ -7,7 +7,7 @@ import type {
   ToolExecutionOptions,
   ToolExecutionResult,
   ToolExecutor,
-} from "../ports/index.js";
+} from "#/ports/index.js";
 
 /** Calls, definitions, executor, and hooks for one assistant-ordered tool batch. */
 export interface ToolBatchInput {
@@ -246,7 +246,8 @@ export function toToolResultMessage(result: ToolExecutionResult): TranscriptMess
   return {
     role: "toolResult",
     toolCallId: result.callId,
-    blocks: typeof result.output === "string" ? [{ type: "text", text: result.output }] : result.output,
+    blocks:
+      typeof result.output === "string" ? [{ type: "text", text: result.output }] : result.output,
     status: result.status,
   };
 }

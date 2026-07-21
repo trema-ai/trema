@@ -1,5 +1,5 @@
-import type { ModelRef, ToolCall, ToolDef, TranscriptMessage } from "../core/index.js";
-import type { RunEventData } from "../events/index.js";
+import type { ModelRef, ToolCall, ToolDef, TranscriptMessage } from "#/core/index.js";
+import type { RunEventData } from "#/events/index.js";
 import type { TurnResult } from "./model-port.js";
 import type { ToolExecutionResult } from "./tool-executor.js";
 
@@ -26,7 +26,9 @@ export interface PrepareTurnResult {
  * Returned events are recorded before streaming starts.
  * Errors become recoverable run events, and the baseline request continues.
  */
-export type PrepareTurnHook = (input: PrepareTurnInput) => Promise<PrepareTurnResult> | PrepareTurnResult;
+export type PrepareTurnHook = (
+  input: PrepareTurnInput,
+) => Promise<PrepareTurnResult> | PrepareTurnResult;
 
 /** Tool call and matched definition passed to `beforeToolCall`. */
 export interface BeforeToolCallInput {

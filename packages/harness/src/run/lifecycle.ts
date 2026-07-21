@@ -1,7 +1,7 @@
-import type { TranscriptMessage, Trigger, Usage } from "../core/index.js";
-import type { LoopResult } from "../loop/index.js";
-import type { ContextSession, Engine, RunRecord, RunStore } from "../ports/index.js";
-import type { ThreadDispatchLock } from "../dispatch/index.js";
+import type { TranscriptMessage, Trigger, Usage } from "#/core/index.js";
+import type { ThreadDispatchLock } from "#/dispatch/index.js";
+import type { LoopResult } from "#/loop/index.js";
+import type { ContextSession, Engine, RunRecord, RunStore } from "#/ports/index.js";
 
 /** Metadata and optional execution task for a new run. */
 export interface CreateRunInput {
@@ -158,7 +158,10 @@ export class RunLifecycle {
       return result;
     }
 
-    if (result.stopReason === "aborted" && (await this.#options.store.getStop(runId)) === undefined) {
+    if (
+      result.stopReason === "aborted" &&
+      (await this.#options.store.getStop(runId)) === undefined
+    ) {
       this.#aborts.delete(runId);
       throw new InfrastructureAbortError(runId);
     }
@@ -189,7 +192,11 @@ export class RunLifecycle {
   }
 
   /** Records a stop intent before aborting active execution. */
-  async stop(intentId: string, runId: string, by: { principalId: string; displayName?: string }): Promise<void> {
+  async stop(
+    intentId: string,
+    runId: string,
+    by: { principalId: string; displayName?: string },
+  ): Promise<void> {
     await this.#options.store.recordStop({
       intentId,
       runId,

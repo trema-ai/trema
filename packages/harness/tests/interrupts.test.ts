@@ -1,14 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { RunEventData } from "../src/events/index.js";
-import type { TurnRecord } from "../src/ports/index.js";
-import { runLoop } from "../src/loop/index.js";
-import { InMemoryRunStore } from "../src/memory/index.js";
-import {
-  InterruptManager,
-  createBlockingElicitation,
-} from "../src/run/index.js";
-import { FakeContextSession, FauxModelPort } from "../src/testing/index.js";
+import type { RunEventData } from "#/events/index.js";
+import { runLoop } from "#/loop/index.js";
+import { InMemoryRunStore } from "#/memory/index.js";
+import type { TurnRecord } from "#/ports/index.js";
+import { createBlockingElicitation, InterruptManager } from "#/run/index.js";
+import { FakeContextSession, FauxModelPort } from "#/testing/index.js";
 
 const usage = {
   inputTokens: 1,
