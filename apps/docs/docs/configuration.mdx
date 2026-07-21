@@ -1,0 +1,50 @@
+---
+title: Configuration
+description: Every environment variable the Trema server reads, with types, defaults, and behavior.
+---
+
+The server validates its environment at startup and refuses to start on an invalid value, naming the failing variable. Variables come from the process environment and from `apps/server/.env`.
+
+## Core
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DATABASE_URL` | required | PostgreSQL connection URL. |
+| `HOST` | `127.0.0.1` | Address the server binds. Set `0.0.0.0` in a container. |
+| `PORT` | `3000` | Port the server listens on. |
+| `NODE_ENV` | `development` | One of `development`, `test`, or `production`. |
+| `TREMA_MODE` | `dedicated` | Deployment mode: `dedicated` runs a single organization created through the [bootstrap flow](/first-boot), while `hosted` leaves organization creation open to any signed-in account. |
+
+## Authentication
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TREMA_AUTH_SECRET` | required | Signs sessions. At least 32 characters; generate with `openssl rand -base64 33`. |
+| `TREMA_AUTH_BASE_URL` | `http://127.0.0.1:3000` | Public base URL of the server. OAuth callback URLs derive from it. |
+| `TREMA_PASSWORD_AUTH_ENABLED` | `true` | Sign-in with email and password. |
+| `TREMA_GOOGLE_CLIENT_ID` | unset | Google OAuth client ID. Set together with the secret. |
+| `TREMA_GOOGLE_CLIENT_SECRET` | unset | Google OAuth client secret. Set together with the ID. |
+| `TREMA_BOOTSTRAP_TOKEN` | unset | Dedicated mode only: the [first-boot](/first-boot) token. When unset, one is generated at first start and logged once. |
+
+### Google sign-in
+
+Create an OAuth client in the GCP console and register the callback as an authorized redirect URI:
+
+```
+<TREMA_AUTH_BASE_URL>/api/auth/callback/google
+```
+
+Set both variables; the sign-in screen shows the Google button whenever they are configured. Setting only one of the pair fails validation at startup.
+
+### Disabling password sign-in
+
+Set `TREMA_PASSWORD_AUTH_ENABLED=false` to remove the email-and-password form. Configure another sign-in method first—with every method off, nobody can sign in.
+
+## Web app
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TREMA_WEB_ORIGINS` | `http://127.0.0.1:5173` | Comma-separated origins allowed to call the API from a browser. The first origin is also where [invite links](/members-and-invites) point. |
+| `TREMA_WEB_DIST` | unset | Path to the web app's static build, relative to the server's working directory. When set, the server serves it with a single-page-app fallback. |
+| `TREMA_TERMS_URL` | unset | Terms-of-service link shown in the sign-in footer. Hidden when unset. |
+| `TREMA_PRIVACY_URL` | unset | Privacy-policy link shown in the sign-in footer. Hidden when unset. |
