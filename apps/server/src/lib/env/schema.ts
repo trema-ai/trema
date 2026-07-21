@@ -30,15 +30,11 @@ const webOrigins = z
   .transform((value) => value.split(",").map((origin) => origin.trim()))
   .pipe(z.array(url).min(1));
 
-const boolean = z
-  .enum(["true", "false"])
-  .transform((value) => value === "true");
+const boolean = z.enum(["true", "false"]).transform((value) => value === "true");
 
 const environmentSchema = z
   .object({
-    NODE_ENV: z
-      .enum(["development", "test", "production"])
-      .default("development"),
+    NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     DATABASE_URL: postgresUrl,
     HOST: z.string().trim().min(1).default("127.0.0.1"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
@@ -55,10 +51,7 @@ const environmentSchema = z
     TREMA_OIDC_CLIENT_SECRET: optionalString,
   })
   .superRefine((value, context) => {
-    const google = [
-      value.TREMA_GOOGLE_CLIENT_ID,
-      value.TREMA_GOOGLE_CLIENT_SECRET,
-    ];
+    const google = [value.TREMA_GOOGLE_CLIENT_ID, value.TREMA_GOOGLE_CLIENT_SECRET];
     if (google.some(Boolean) && !google.every(Boolean)) {
       context.addIssue({
         code: "custom",
@@ -85,16 +78,13 @@ const environmentSchema = z
 
 export type Environment = Readonly<z.infer<typeof environmentSchema>>;
 
-export function parseEnv(
-  input: Record<string, string | undefined>,
-): Environment {
+export function parseEnv(input: Record<string, string | undefined>): Environment {
   const result = environmentSchema.safeParse(input);
 
   if (!result.success) {
-    throw new Error(
-      `Invalid environment variables:\n${z.prettifyError(result.error)}`,
-      { cause: result.error },
-    );
+    throw new Error(`Invalid environment variables:\n${z.prettifyError(result.error)}`, {
+      cause: result.error,
+    });
   }
 
   return Object.freeze(result.data);

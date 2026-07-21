@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-
-import type { LoopResult } from "../src/loop/index.js";
-import { ThreadDispatchLock } from "../src/dispatch/index.js";
-import { InMemoryEngine, InMemoryRunStore } from "../src/memory/index.js";
-import { InfrastructureAbortError, RunLifecycle } from "../src/run/index.js";
-import { FakeContextSession } from "../src/testing/index.js";
+import { ThreadDispatchLock } from "#/dispatch/index.js";
+import type { LoopResult } from "#/loop/index.js";
+import { InMemoryEngine, InMemoryRunStore } from "#/memory/index.js";
+import { InfrastructureAbortError, RunLifecycle } from "#/run/index.js";
+import { FakeContextSession } from "#/testing/index.js";
 
 const usage = {
   inputTokens: 2,
@@ -80,9 +79,7 @@ describe("RunLifecycle", () => {
     await subject.lifecycle.finish({ runId: run.id, outcome: "completed", usage });
 
     expect(await subject.store.drainSteering(run.id)).toEqual([]);
-    expect(await subject.store.drainFollowUps("thread-1")).toMatchObject([
-      { id: "intent-late" },
-    ]);
+    expect(await subject.store.drainFollowUps("thread-1")).toMatchObject([{ id: "intent-late" }]);
   });
 
   it("treats abort as cancellation only when a stop fact exists", async () => {
@@ -203,14 +200,16 @@ describe("RunLifecycle", () => {
   it("bounds successive automatic retries", async () => {
     const subject = fixture();
     const run = await subject.lifecycle.create({ threadRef: "thread-1", trigger: "message" });
-    const loop = vi.fn(async (): Promise<LoopResult> => ({
-      status: "finished",
-      outcome: "failed",
-      stopReason: "error",
-      turns: 1,
-      usage,
-      error: { message: "overloaded", retryable: true },
-    }));
+    const loop = vi.fn(
+      async (): Promise<LoopResult> => ({
+        status: "finished",
+        outcome: "failed",
+        stopReason: "error",
+        turns: 1,
+        usage,
+        error: { message: "overloaded", retryable: true },
+      }),
+    );
 
     await subject.lifecycle.execute(run.id, loop);
     await subject.engine.idle();

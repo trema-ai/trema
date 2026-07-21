@@ -1,16 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ToolCall, ToolDef, TranscriptMessage } from "../src/core/index.js";
-import { ThreadDispatchLock } from "../src/dispatch/index.js";
-import { runLoop } from "../src/loop/index.js";
-import { InMemoryEngine, InMemoryRunStore } from "../src/memory/index.js";
-import type { ToolExecutionOptions } from "../src/ports/index.js";
-import {
-  InterruptManager,
-  RunLifecycle,
-  createBlockingElicitation,
-} from "../src/run/index.js";
-import { FakeContextSession, FauxModelPort } from "../src/testing/index.js";
+import type { ToolCall, ToolDef, TranscriptMessage } from "#/core/index.js";
+import { ThreadDispatchLock } from "#/dispatch/index.js";
+import { runLoop } from "#/loop/index.js";
+import { InMemoryEngine, InMemoryRunStore } from "#/memory/index.js";
+import type { ToolExecutionOptions } from "#/ports/index.js";
+import { createBlockingElicitation, InterruptManager, RunLifecycle } from "#/run/index.js";
+import { FakeContextSession, FauxModelPort } from "#/testing/index.js";
 
 const usage = {
   inputTokens: 2,
@@ -95,16 +91,14 @@ describe("in-memory harness", () => {
         },
       },
     ]);
-    const execute = vi.fn(async (
-      approvedCall: ToolCall,
-      _definition: ToolDef,
-      _options?: ToolExecutionOptions,
-    ) => ({
-      callId: approvedCall.callId,
-      status: "ok" as const,
-      summary: "deployment is healthy",
-      output: "deployment status: healthy",
-    }));
+    const execute = vi.fn(
+      async (approvedCall: ToolCall, _definition: ToolDef, _options?: ToolExecutionOptions) => ({
+        callId: approvedCall.callId,
+        status: "ok" as const,
+        summary: "deployment is healthy",
+        output: "deployment status: healthy",
+      }),
+    );
     const initial: TranscriptMessage[] = [
       { role: "user", blocks: [{ type: "text", text: "Check staging." }] },
     ];

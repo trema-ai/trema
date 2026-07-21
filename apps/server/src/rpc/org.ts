@@ -1,7 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { createOrgWithOwner } from "../services/org/index.js";
+import { createOrgWithOwner } from "#/services/org/index.js";
 import { authed, orgScoped } from "./builders.js";
 
 const orgSchema = z.object({
@@ -124,7 +124,7 @@ const switchOrg = authed
       include: { org: true },
     });
 
-    if (!principal || principal.kind !== "human") {
+    if (principal?.kind !== "human") {
       throw new ORPCError("FORBIDDEN", {
         message: "Principal not found in organization",
       });

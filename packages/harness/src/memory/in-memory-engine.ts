@@ -1,4 +1,4 @@
-import type { Engine, EngineTask } from "../ports/index.js";
+import type { Engine, EngineTask } from "#/ports/index.js";
 
 /** In-memory reference engine with serial execution per thread and concurrent execution across threads. */
 export class InMemoryEngine implements Engine {
@@ -10,7 +10,10 @@ export class InMemoryEngine implements Engine {
     const previous = this.#tails.get(task.threadRef) ?? Promise.resolve();
     const current = previous.then(task.run);
     // A failed task must not block its thread's queue, but idle() still reports it.
-    this.#tails.set(task.threadRef, current.catch(() => undefined));
+    this.#tails.set(
+      task.threadRef,
+      current.catch(() => undefined),
+    );
     this.#pending.push(current);
   }
 
@@ -24,9 +27,7 @@ export class InMemoryEngine implements Engine {
         (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
       );
       if (failure !== undefined) {
-        throw failure.reason instanceof Error
-          ? failure.reason
-          : new Error(String(failure.reason));
+        throw failure.reason instanceof Error ? failure.reason : new Error(String(failure.reason));
       }
     }
   }

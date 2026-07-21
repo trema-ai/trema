@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { createAuth } from "../src/lib/auth/index.js";
-import { createPrismaClient } from "../src/lib/db/index.js";
-import { parseEnv } from "../src/lib/env/schema.js";
-import { orgScoped } from "../src/rpc/builders.js";
+import { createAuth } from "#/lib/auth/index.js";
+import { createPrismaClient } from "#/lib/db/index.js";
+import { parseEnv } from "#/lib/env/schema.js";
+import { orgScoped } from "#/rpc/builders.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

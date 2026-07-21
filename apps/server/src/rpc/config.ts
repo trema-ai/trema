@@ -20,15 +20,10 @@ const get = pub
   )
   .handler(async ({ context }) => ({
     mode: context.env.TREMA_MODE,
-    needsBootstrap:
-      context.env.TREMA_MODE === "dedicated" &&
-      (await context.db.org.count()) === 0,
+    needsBootstrap: context.env.TREMA_MODE === "dedicated" && (await context.db.org.count()) === 0,
     providers: {
       password: context.env.TREMA_PASSWORD_AUTH_ENABLED,
-      google: Boolean(
-        context.env.TREMA_GOOGLE_CLIENT_ID &&
-          context.env.TREMA_GOOGLE_CLIENT_SECRET,
-      ),
+      google: Boolean(context.env.TREMA_GOOGLE_CLIENT_ID && context.env.TREMA_GOOGLE_CLIENT_SECRET),
     },
   }));
 

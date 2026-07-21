@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
-import type { Auth } from "../src/lib/auth/index.js";
-import type { Database } from "../src/lib/db/index.js";
-import { parseEnv } from "../src/lib/env/schema.js";
+import { createApp } from "#/app.js";
+import type { Auth } from "#/lib/auth/index.js";
+import type { Database } from "#/lib/db/index.js";
+import { parseEnv } from "#/lib/env/schema.js";
 
 const environment = parseEnv({
   NODE_ENV: "test",
@@ -34,9 +34,7 @@ function appDependencies(db: Database) {
 describe("server", () => {
   it("reports liveness", async () => {
     const app = createApp(
-      appDependencies(
-        databaseMock(vi.fn().mockResolvedValue([{ "?column?": 1 }])),
-      ),
+      appDependencies(databaseMock(vi.fn().mockResolvedValue([{ "?column?": 1 }]))),
     );
 
     const response = await app.request("/health");
@@ -57,9 +55,7 @@ describe("server", () => {
   });
 
   it("serves the oRPC router", async () => {
-    const app = createApp(
-      appDependencies(databaseMock(vi.fn().mockResolvedValue([]))),
-    );
+    const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
 
     const response = await app.request("/rpc/system/ping", {
       method: "POST",
@@ -78,9 +74,7 @@ describe("server", () => {
   });
 
   it("serves the OpenAPI surface", async () => {
-    const app = createApp(
-      appDependencies(databaseMock(vi.fn().mockResolvedValue([]))),
-    );
+    const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
 
     const response = await app.request("/api/system/ping");
 
@@ -106,17 +100,13 @@ describe("server", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ session: null });
-    expect(response.headers.get("access-control-allow-credentials")).toBe(
-      "true",
-    );
+    expect(response.headers.get("access-control-allow-credentials")).toBe("true");
     expect(handler).toHaveBeenCalledOnce();
   });
 
   it("reports unavailable when the database is unreachable", async () => {
     const app = createApp(
-      appDependencies(
-        databaseMock(vi.fn().mockRejectedValue(new Error("offline"))),
-      ),
+      appDependencies(databaseMock(vi.fn().mockRejectedValue(new Error("offline")))),
     );
 
     const response = await app.request("/ready");
@@ -126,9 +116,7 @@ describe("server", () => {
   });
 
   it("returns a JSON response for unknown routes", async () => {
-    const app = createApp(
-      appDependencies(databaseMock(vi.fn().mockResolvedValue([]))),
-    );
+    const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
 
     const response = await app.request("/missing");
 

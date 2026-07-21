@@ -12,11 +12,18 @@
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
     "test": "pnpm -r test",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
     "lint:prose": "pnpm -r lint:prose",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r exec rm -rf dist .tsbuildinfo *.tsbuildinfo node_modules/.cache"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.4",
     "@types/node": "catalog:",
     "typescript": "catalog:"
   }

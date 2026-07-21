@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-
-import type { Clock, TurnRecord } from "../src/ports/index.js";
-import { InMemoryEngine } from "../src/memory/in-memory-engine.js";
-import { InMemoryRunStore } from "../src/memory/in-memory-run-store.js";
+import { InMemoryEngine } from "#/memory/in-memory-engine.js";
+import { InMemoryRunStore } from "#/memory/in-memory-run-store.js";
+import type { Clock, TurnRecord } from "#/ports/index.js";
 
 const clock: Clock = { now: () => "2026-07-19T12:00:00.000Z" };
 
@@ -23,7 +22,9 @@ describe("InMemoryRunStore", () => {
       ),
     );
 
-    expect(appended.map(({ seq }) => seq)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1));
+    expect(appended.map(({ seq }) => seq)).toEqual(
+      Array.from({ length: 50 }, (_, index) => index + 1),
+    );
     expect((await store.listEvents("run-1")).map(({ seq }) => seq)).toEqual(
       Array.from({ length: 50 }, (_, index) => index + 1),
     );

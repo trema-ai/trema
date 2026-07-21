@@ -1,5 +1,12 @@
-import type { ModelRef, StopReason, ToolCall, ToolDef, TranscriptMessage, Usage } from "../core/index.js";
-import type { RunEventData } from "../events/index.js";
+import type {
+  ModelRef,
+  StopReason,
+  ToolCall,
+  ToolDef,
+  TranscriptMessage,
+  Usage,
+} from "#/core/index.js";
+import type { RunEventData } from "#/events/index.js";
 
 /** Requested provider reasoning level. */
 export type ThinkingLevel = "off" | "low" | "medium" | "high";

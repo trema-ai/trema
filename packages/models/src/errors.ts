@@ -20,9 +20,10 @@ export function modelErrorData(error: unknown): ModelErrorData {
     const delay = retryAfterMs(error.responseHeaders);
     return {
       message: error.message,
-      retryable: error.statusCode === undefined
-        ? error.isRetryable
-        : error.statusCode === 429 || error.statusCode >= 500,
+      retryable:
+        error.statusCode === undefined
+          ? error.isRetryable
+          : error.statusCode === 429 || error.statusCode >= 500,
       ...(delay === undefined ? {} : { retryAfterMs: delay }),
     };
   }

@@ -1,9 +1,4 @@
-import {
-  generateText,
-  jsonSchema,
-  streamText,
-  tool,
-} from "ai";
+import type { ToolDef } from "@trema/harness";
 import type {
   LanguageModel,
   LanguageModelUsage,
@@ -12,7 +7,7 @@ import type {
   TextStreamPart,
   ToolSet,
 } from "ai";
-import type { ToolDef } from "@trema/harness";
+import { generateText, jsonSchema, streamText, tool } from "ai";
 
 export interface SdkCallOptions {
   model: LanguageModel;
@@ -27,7 +22,7 @@ export interface SdkCallOptions {
 export type SdkProviderOptions = NonNullable<Parameters<typeof streamText>[0]["providerOptions"]>;
 
 export interface SdkStreamResult {
-  fullStream: AsyncIterable<TextStreamPart<any>>;
+  fullStream: AsyncIterable<TextStreamPart<ToolSet>>;
 }
 
 export interface SdkGenerateResult {
@@ -41,7 +36,10 @@ export interface SdkOperations {
   generate(options: SdkCallOptions): Promise<SdkGenerateResult>;
 }
 
-export function toSdkTools(definitions: readonly ToolDef[]): { tools?: ToolSet; toolOrder?: string[] } {
+export function toSdkTools(definitions: readonly ToolDef[]): {
+  tools?: ToolSet;
+  toolOrder?: string[];
+} {
   if (definitions.length === 0) return {};
   const names = definitions.map((definition) => definition.name);
   if (new Set(names).size !== names.length) throw new Error("Tool names must be unique");

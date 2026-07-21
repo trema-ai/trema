@@ -1,7 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
-import type { OpenAICompatibleEndpoint } from "../endpoints.js";
+import type { OpenAICompatibleEndpoint } from "#/endpoints.js";
 
 export function resolveOpenAICompatible(input: {
   endpointName: string;

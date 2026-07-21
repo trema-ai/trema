@@ -8,7 +8,7 @@ import {
   MemberNotFoundError,
   redeemInvite,
   setMemberRole,
-} from "../services/members/index.js";
+} from "#/services/members/index.js";
 import { authed, requireCapability } from "./builders.js";
 
 const roleSchema = z.enum(["owner", "admin", "member", "viewer"]);
@@ -64,7 +64,10 @@ const setRole = requireCapability("manage_members")
 const inviteCreateInput = z.object({
   role: roleSchema,
   scopeId: z.uuid().optional(),
-  expiresAt: z.iso.datetime().transform((value) => new Date(value)).optional(),
+  expiresAt: z.iso
+    .datetime()
+    .transform((value) => new Date(value))
+    .optional(),
 });
 
 const inviteCreate = requireCapability("manage_members", {

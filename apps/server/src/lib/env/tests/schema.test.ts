@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseEnv } from "../schema.js";
+import { parseEnv } from "#/lib/env/schema.js";
 
 describe("parseEnv", () => {
   const authSecret = "a-development-auth-secret-with-32-characters";
@@ -53,8 +53,7 @@ describe("parseEnv", () => {
       TREMA_MODE: "hosted",
       TREMA_AUTH_SECRET: authSecret,
       TREMA_AUTH_BASE_URL: "https://api.example.com",
-      TREMA_WEB_ORIGINS:
-        "https://app.example.com, https://admin.example.com",
+      TREMA_WEB_ORIGINS: "https://app.example.com, https://admin.example.com",
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: "false",
@@ -67,10 +66,7 @@ describe("parseEnv", () => {
     expect(result).toMatchObject({
       TREMA_MODE: "hosted",
       TREMA_AUTH_BASE_URL: "https://api.example.com",
-      TREMA_WEB_ORIGINS: [
-        "https://app.example.com",
-        "https://admin.example.com",
-      ],
+      TREMA_WEB_ORIGINS: ["https://app.example.com", "https://admin.example.com"],
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: false,

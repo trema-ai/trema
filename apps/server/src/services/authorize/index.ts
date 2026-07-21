@@ -1,5 +1,5 @@
-import type { Principal, Role } from "../../generated/prisma/client.js";
-import type { Database } from "../../lib/db/index.js";
+import type { Principal, Role } from "#/generated/prisma/client.js";
+import type { Database } from "#/lib/db/index.js";
 
 export const capabilities = [
   "read",
@@ -41,10 +41,7 @@ const capabilityRoleTable: Record<Capability, Record<Role, boolean>> = {
   manage_org: { owner: true, admin: false, member: false, viewer: false },
 };
 
-export function roleAllowsCapability(
-  role: Role,
-  capability: Capability,
-): boolean {
+export function roleAllowsCapability(role: Role, capability: Capability): boolean {
   return capabilityRoleTable[capability][role];
 }
 

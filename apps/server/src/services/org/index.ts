@@ -1,5 +1,5 @@
-import type { Prisma } from "../../generated/prisma/client.js";
-import type { Database } from "../../lib/db/index.js";
+import type { Prisma } from "#/generated/prisma/client.js";
+import type { Database } from "#/lib/db/index.js";
 
 export interface OrgOwner {
   authId: string;
@@ -22,9 +22,7 @@ export interface CreateOrgWithOwnerHooks {
 
 export interface CreateOrgWithOwnerResult {
   org: Awaited<ReturnType<Prisma.TransactionClient["org"]["create"]>>;
-  ownerPrincipal: Awaited<
-    ReturnType<Prisma.TransactionClient["principal"]["create"]>
-  >;
+  ownerPrincipal: Awaited<ReturnType<Prisma.TransactionClient["principal"]["create"]>>;
 }
 
 export async function createOrgWithOwner(
