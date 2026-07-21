@@ -3,6 +3,7 @@ import { ORPCError, os } from "@orpc/server";
 import type { Auth } from "#/lib/auth/index.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
+import { authorize, type Capability } from "#/services/authorize/index.js";
 
 export interface RpcContext {
   db: Database;
@@ -73,3 +74,33 @@ export const orgScoped = authed.use(async ({ context, next }) => {
     },
   });
 });
+
+export interface CapabilityOptions {
+  scopeId?: (input: unknown) => string | undefined;
+}
+
+export function requireCapability(capability: Capability, options: CapabilityOptions = {}) {
+  return orgScoped.use(async ({ context, next }, input) => {
+    let scopeId = options.scopeId?.(input);
+    if (!scopeId) {
+      const orgScope = await context.db.scope.findFirst({
+        where: { orgId: context.org.id, kind: "org" },
+        select: { id: true },
+      });
+      if (!orgScope) {
+        throw new ORPCError("FORBIDDEN", {
+          message: "Organization scope not found",
+        });
+      }
+      scopeId = orgScope.id;
+    }
+
+    if (!(await authorize(context.principal, capability, scopeId, context.db))) {
+      throw new ORPCError("FORBIDDEN", {
+        message: `Capability required: ${capability}`,
+      });
+    }
+
+    return next({ context: { authorizedScopeId: scopeId } });
+  });
+}
