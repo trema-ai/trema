@@ -26,10 +26,18 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
 
 - Every oRPC procedure declares OpenAPI route metadata
   (`.route({ method, path })`) and is served through the `OpenAPIHandler`
-  mount at `/api/*`, unless the endpoint is deliberately UI-only.
+  mount at `/api/v1/*`, unless the endpoint is deliberately UI-only.
   The stance: anything the UI can do, a script can do through the same
   API — the CLI consumes the OpenAPI surface, so an RPC-only procedure
   silently breaks that parity.
+- Route `path` values in `.route(...)` are relative to the handler mount.
+  The `/api/v1` prefix lives on the mount and in the OpenAPI `servers`
+  entry, so route paths stay unversioned (e.g. `/system/ping`).
+- The generated OpenAPI document is served at `GET /api/v1/spec.json`
+  and written to `apps/server/openapi.json` by `pnpm openapi`.
+- The RPC transport stays unversioned at `/rpc`. It is the typed,
+  first-party transport (clients import the `Router` type); the public,
+  versioned contract is the REST surface under `/api/v1`.
 
 ## Verification
 

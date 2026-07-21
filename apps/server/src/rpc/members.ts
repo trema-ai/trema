@@ -11,21 +11,45 @@ import {
 } from "../services/members/index.js";
 import { authed, requireCapability } from "./builders.js";
 
-const roleSchema = z.enum(["owner", "admin", "member", "viewer"]);
+const roleSchema = z
+  .enum(["owner", "admin", "member", "viewer"])
+  .describe(
+    "The role granted on a scope. It sets the member's capabilities. One of `owner`, `admin`, `member`, or `viewer`.",
+  );
 const principalSchema = z.object({
-  id: z.string(),
-  displayName: z.string(),
-  email: z.string().nullable(),
+  id: z.string().describe("The principal's unique ID. A UUID (version 7)."),
+  displayName: z
+    .string()
+    .describe("The name shown for the principal (a person or an agent)."),
+  email: z
+    .string()
+    .nullable()
+    .describe(
+      "The principal's sign-in email. Null for an agent principal or when no email is on file.",
+    ),
 });
-const memberSchema = z.object({ principal: principalSchema, role: roleSchema });
+const memberSchema = z
+  .object({
+    principal: principalSchema.describe("The member's principal."),
+    role: roleSchema.describe(
+      "The member's role on the organization scope.",
+    ),
+  })
+  .describe("A member of the organization and the role they hold.");
 
 const list = requireCapability("read")
   .route({
     method: "GET",
     path: "/members",
     summary: "List organization members",
+    description: "List the human members of the active organization.",
+    tags: ["Members"],
   })
-  .output(z.array(memberSchema))
+  .output(
+    z
+      .array(memberSchema)
+      .describe("The human members of the active organization."),
+  )
   .handler(async ({ context }) =>
     (await listMembers(context.db, context.org.id)).map(({ principal, role }) => ({
       principal,
@@ -38,8 +62,18 @@ const setRole = requireCapability("manage_members")
     method: "POST",
     path: "/members/role",
     summary: "Set an organization member's role",
+    description:
+      "Change a member's role in the active organization. The organization's last owner cannot be demoted.",
+    tags: ["Members"],
   })
-  .input(z.object({ principalId: z.uuid(), role: roleSchema }))
+  .input(
+    z.object({
+      principalId: z
+        .uuid()
+        .describe("The ID of the member's principal. A UUID."),
+      role: roleSchema.describe("The role to assign to the member."),
+    }),
+  )
   .output(memberSchema)
   .handler(async ({ context, input }) => {
     try {
@@ -62,24 +96,54 @@ const setRole = requireCapability("manage_members")
   });
 
 const inviteCreateInput = z.object({
-  role: roleSchema,
-  scopeId: z.uuid().optional(),
-  expiresAt: z.iso.datetime().transform((value) => new Date(value)).optional(),
+  role: roleSchema.describe("The role the invite grants when it is redeemed."),
+  scopeId: z
+    .uuid()
+    .optional()
+    .describe(
+      "The ID of the scope the invite grants access to. A UUID. Defaults to the organization scope.",
+    ),
+  expiresAt: z.iso
+    .datetime()
+    .transform((value) => new Date(value))
+    .optional()
+    .describe(
+      "When the invite expires. An ISO 8601 date-time. Must be in the future. Defaults to seven days after creation.",
+    ),
 });
 
 const inviteCreate = requireCapability("manage_members", {
   scopeId: (input) => inviteCreateInput.safeParse(input).data?.scopeId,
 })
-  .route({ method: "POST", path: "/invites", summary: "Create an invite link" })
+  .route({
+    method: "POST",
+    path: "/invites",
+    summary: "Create an invite link",
+    description:
+      "Create an invite link that grants a role on a scope when someone redeems it.",
+    tags: ["Members"],
+  })
   .input(inviteCreateInput)
   .output(
-    z.object({
-      id: z.string(),
-      link: z.url(),
-      role: roleSchema,
-      scopeId: z.string(),
-      expiresAt: z.string(),
-    }),
+    z
+      .object({
+        id: z.string().describe("The invite's unique ID. A UUID (version 7)."),
+        link: z
+          .url()
+          .describe(
+            "The join URL to share. It carries the single-use invite token.",
+          ),
+        role: roleSchema.describe("The role the invite grants when redeemed."),
+        scopeId: z
+          .string()
+          .describe(
+            "The ID of the scope the invite grants access to. A UUID.",
+          ),
+        expiresAt: z
+          .string()
+          .describe("When the invite expires. An ISO 8601 date-time."),
+      })
+      .describe("A created invite and the link to share."),
   )
   .handler(async ({ context, input }) => {
     if (input.expiresAt && input.expiresAt <= new Date()) {
@@ -115,15 +179,33 @@ const inviteRedeem = authed
     method: "POST",
     path: "/invites/redeem",
     summary: "Redeem an invite link",
+    description:
+      "Redeem an invite token to join the organization with the granted role.",
+    tags: ["Members"],
   })
-  .input(z.object({ token: z.string().min(1) }))
-  .output(
+  .input(
     z.object({
-      orgId: z.string(),
-      principal: principalSchema,
-      role: roleSchema,
-      scopeId: z.string(),
+      token: z
+        .string()
+        .min(1)
+        .describe("The invite token from the join link."),
     }),
+  )
+  .output(
+    z
+      .object({
+        orgId: z
+          .string()
+          .describe("The ID of the organization the caller joined. A UUID."),
+        principal: principalSchema.describe(
+          "The caller's principal in the organization.",
+        ),
+        role: roleSchema.describe("The role the caller received."),
+        scopeId: z
+          .string()
+          .describe("The ID of the scope the role applies to. A UUID."),
+      })
+      .describe("The result of redeeming an invite."),
   )
   .handler(async ({ context, input }) => {
     try {

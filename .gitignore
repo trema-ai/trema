@@ -2,11 +2,15 @@ node_modules/
 dist/
 build/
 .blume/
+.blume-verify/
 .cloudflare/
 .wrangler/
 coverage/
 *.tsbuildinfo
 apps/server/src/generated/prisma/
+
+# Synced from apps/server/openapi.json by the docs `sync:spec` script.
+apps/docs/openapi.json
 
 .env
 .env.*

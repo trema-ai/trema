@@ -7,6 +7,7 @@ import { cors } from "hono/cors";
 import type { Auth } from "./lib/auth/index.js";
 import type { Database } from "./lib/db/index.js";
 import type { Environment } from "./lib/env/schema.js";
+import { generateOpenApiDocument, OPENAPI_PREFIX } from "./openapi.js";
 import { router } from "./router.js";
 
 export interface AppDependencies {
@@ -46,21 +47,30 @@ export function createApp({ db, auth, env }: AppDependencies): Hono {
     }
   });
 
+  // Generate the OpenAPI document once at startup. The route below serves this
+  // resolved value, so no request pays the generation cost.
+  const openApiDocument = generateOpenApiDocument();
+
   const corsMiddleware = cors({
     origin: env.TREMA_WEB_ORIGINS,
     credentials: true,
   });
 
   app.use("/api/auth/*", corsMiddleware);
+  app.use(`${OPENAPI_PREFIX}/*`, corsMiddleware);
   app.use("/rpc/*", corsMiddleware);
 
   app.on(["GET", "POST"], "/api/auth/*", (context) => {
     return auth.handler(context.req.raw);
   });
 
-  app.use("/api/*", async (context, next) => {
+  app.get(`${OPENAPI_PREFIX}/spec.json`, async (context) => {
+    return context.json(await openApiDocument);
+  });
+
+  app.use(`${OPENAPI_PREFIX}/*`, async (context, next) => {
     const { matched, response } = await openApiHandler.handle(context.req.raw, {
-      prefix: "/api",
+      prefix: OPENAPI_PREFIX,
       context: {
         db,
         headers: context.req.raw.headers,
