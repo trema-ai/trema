@@ -14,13 +14,14 @@ const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 
 integration("orgScoped", () => {
   const db = createPrismaClient(databaseUrl);
+  const env = parseEnv({
+    NODE_ENV: "test",
+    DATABASE_URL: databaseUrl,
+    TREMA_AUTH_SECRET: "integration-test-auth-secret-at-least-32-characters",
+  });
   const auth = createAuth({
     db,
-    env: parseEnv({
-      NODE_ENV: "test",
-      DATABASE_URL: databaseUrl,
-      TREMA_AUTH_SECRET: "integration-test-auth-secret-at-least-32-characters",
-    }),
+    env,
   });
   const currentContext = orgScoped.handler(({ context }) => ({
     orgId: context.org.id,
@@ -88,6 +89,7 @@ integration("orgScoped", () => {
         context: {
           db,
           auth,
+          env,
           headers: new Headers({ cookie }),
         },
       }),
@@ -106,6 +108,7 @@ integration("orgScoped", () => {
         context: {
           db,
           auth,
+          env,
           headers: new Headers({ cookie }),
         },
       }),
@@ -127,6 +130,7 @@ integration("orgScoped", () => {
         context: {
           db,
           auth,
+          env,
           headers: new Headers({ cookie }),
         },
       }),
