@@ -6,8 +6,9 @@ The app is one shell with three areas: chat, the run view, and admin.
 ## Direction
 
 The app reads as a precision instrument. The register is calm, dense,
-and flat. The references are: ChatGPT for the chat thread, Cursor for
-the settings grammar, and Vercel for the chrome, tables, and logs.
+and flat. The chat thread is a quiet reading column; settings are
+cards of label-and-control rows; the chrome, tables, and logs are
+flat, bordered, and information-dense.
 
 Rules:
 
