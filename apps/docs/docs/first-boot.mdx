@@ -1,0 +1,42 @@
+---
+title: First boot
+description: Redeem the bootstrap token to create the first organization on a dedicated deployment.
+---
+
+A dedicated deployment starts with no organization and no accounts. The bootstrap token is the operator's proof of control: whoever redeems it creates the first organization and becomes its owner.
+
+## The token
+
+The token comes from one of two places:
+
+- `TREMA_BOOTSTRAP_TOKEN`, when you set it
+- generated at first start, otherwise
+
+A generated token is printed to the server log exactly once:
+
+```
+Bootstrap token: <token>
+```
+
+Only a hash of the token is stored, so the log line is the only place a generated token ever appears. If you lose it before redeeming, set `TREMA_BOOTSTRAP_TOKEN` and restart—while no organization exists, the supplied token replaces the stored one.
+
+## Redeem it
+
+While no organization exists, the web app serves only the setup screen—every route leads there.
+
+1. Open the server's URL in a browser and create an account.
+2. Enter an organization name and paste the token.
+3. Submit. You land in the app as the organization's owner.
+
+## What exists afterward
+
+Redeeming the token creates everything in one transaction:
+
+- the organization and its org scope
+- your principal, holding the owner role
+- the organization's agent principal, which holds no role
+- an audit-log entry recording the bootstrap
+
+## After setup
+
+The token is accepted only while zero organizations exist. Once the first organization is created, redeeming it returns a conflict, and no new token is generated. From then on, people sign in normally and join through [invite links](/members-and-invites).

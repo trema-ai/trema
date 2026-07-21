@@ -1,0 +1,76 @@
+---
+title: Self-hosting
+description: Run Trema on your own infrastructure with PostgreSQL and Node.js.
+---
+
+Trema runs as one server process backed by PostgreSQL. The server hosts the API and serves the web app's static build from the same origin.
+
+## Requirements
+
+- Node.js 24
+- pnpm 11
+- PostgreSQL 16
+- Git
+
+The repository pins the Node.js and pnpm versions in `mise.toml`, so [mise](https://mise.jdx.dev) installs both with `mise install`.
+
+## Install
+
+Clone the repository and install dependencies:
+
+```sh
+git clone https://github.com/trema-ai/trema.git
+cd trema
+pnpm install
+```
+
+## Configure
+
+The server reads its environment from the process and from `apps/server/.env`. A dedicated deployment needs four values:
+
+```sh
+# apps/server/.env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trema
+TREMA_AUTH_SECRET=<at least 32 random characters>
+TREMA_AUTH_BASE_URL=https://trema.example.com
+TREMA_WEB_ORIGINS=https://trema.example.com
+```
+
+Generate the secret with `openssl rand -base64 33`. Every variable, with its default and behavior, is in the [configuration reference](/configuration).
+
+## Database
+
+Point `DATABASE_URL` at any PostgreSQL 16 instance. For a local one, the repository bundles a compose file:
+
+```sh
+docker compose up -d postgres
+```
+
+Apply migrations before the first start and after every upgrade:
+
+```sh
+pnpm --filter @trema/server exec prisma migrate deploy
+```
+
+## Build and start
+
+Build the server and the web app, then start the server with the web build's path:
+
+```sh
+pnpm --filter @trema/server build
+pnpm --filter @trema/web build
+cd apps/server
+TREMA_WEB_DIST=../web/dist node dist/index.js
+```
+
+The log confirms the address:
+
+```
+Server listening on http://127.0.0.1:3000
+```
+
+The server binds `127.0.0.1` by default; in a container or behind a reverse proxy, set `HOST` and `PORT` to match. Two endpoints support probes: `/health` answers when the process is up, and `/ready` answers when the database is reachable.
+
+## First start
+
+A first start on an empty database prints a bootstrap token to the log. Redeeming it creates the first organization—continue with [First boot](/first-boot).

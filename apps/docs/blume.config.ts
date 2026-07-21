@@ -24,7 +24,12 @@ export default defineConfig({
     spec: "openapi.json",
   },
   navigation: {
-    tabs: [{ label: "API", path: "/api" }],
+    // The root tab is the fallback: Guides is active on every route that no
+    // more specific tab (API) claims.
+    tabs: [
+      { label: "Guides", path: "/" },
+      { label: "API", path: "/api" },
+    ],
   },
   deployment: {
     // `site` is the origin; `base` layers the /docs subdirectory onto every
