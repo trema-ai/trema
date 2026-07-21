@@ -51,6 +51,10 @@ export function generateOpenApiDocument() {
         name: "Members",
         description: "Organization membership, roles, and invites.",
       },
+      {
+        name: "Service credentials",
+        description: "Machine credentials for calling Trema as an organization principal.",
+      },
     ],
   });
 }
