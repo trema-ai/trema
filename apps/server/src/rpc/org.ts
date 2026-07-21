@@ -1,7 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { createOrgWithOwner } from "../lib/org/index.js";
+import { createOrgWithOwner } from "../services/org/index.js";
 import { authed, orgScoped } from "./builders.js";
 
 const orgSchema = z.object({

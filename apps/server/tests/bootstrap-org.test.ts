@@ -14,10 +14,10 @@ import { createAuth } from "../src/lib/auth/index.js";
 import {
   hashBootstrapToken,
   initializeBootstrap,
-} from "../src/lib/bootstrap/index.js";
+} from "../src/services/bootstrap/index.js";
 import { createPrismaClient } from "../src/lib/db/index.js";
 import { parseEnv, type Environment } from "../src/lib/env/schema.js";
-import { createOrgWithOwner } from "../src/lib/org/index.js";
+import { createOrgWithOwner } from "../src/services/org/index.js";
 import { bootstrapRouter } from "../src/rpc/bootstrap.js";
 import { configRouter } from "../src/rpc/config.js";
 import { orgRouter } from "../src/rpc/org.js";
