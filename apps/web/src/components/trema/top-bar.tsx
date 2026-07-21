@@ -14,7 +14,7 @@ import { Separator } from "#/components/ui/separator.tsx";
 import { SidebarTrigger } from "#/components/ui/sidebar.tsx";
 
 /* Slim bar above the content: sidebar toggle, breadcrumb, and actions. */
-function TopBar() {
+function TopBar({ orgName }: { orgName: string }) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
       <SidebarTrigger className="-ml-1" />
@@ -22,7 +22,7 @@ function TopBar() {
       <Breadcrumb>
         <BreadcrumbList className="text-(length:--text-chrome)">
           <BreadcrumbItem>
-            <BreadcrumbLink href="#">Acme</BreadcrumbLink>
+            <BreadcrumbLink href="/">{orgName}</BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>

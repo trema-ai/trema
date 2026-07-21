@@ -1,3 +1,4 @@
+import { serveStatic } from "@hono/node-server/serve-static";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
@@ -103,6 +104,24 @@ export function createApp({ db, auth, env }: AppDependencies): Hono {
 
     await next();
   });
+
+  const webDist = env.TREMA_WEB_DIST;
+  if (webDist) {
+    app.use("*", serveStatic({ root: webDist }));
+    app.use("*", async (context, next) => {
+      if (context.req.method !== "GET" && context.req.method !== "HEAD") return next();
+      const path = context.req.path;
+      if (
+        path === "/health" ||
+        path === "/ready" ||
+        path.startsWith("/api/") ||
+        path.startsWith("/rpc/")
+      ) {
+        return next();
+      }
+      return serveStatic({ root: webDist, path: "index.html" })(context, next);
+    });
+  }
 
   app.notFound((context) => {
     return context.json({ error: "Not found" }, 404);

@@ -54,6 +54,7 @@ describe("parseEnv", () => {
       TREMA_AUTH_SECRET: authSecret,
       TREMA_AUTH_BASE_URL: "https://api.example.com",
       TREMA_WEB_ORIGINS: "https://app.example.com, https://admin.example.com",
+      TREMA_WEB_DIST: "/srv/trema/web",
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: "false",
@@ -67,6 +68,7 @@ describe("parseEnv", () => {
       TREMA_MODE: "hosted",
       TREMA_AUTH_BASE_URL: "https://api.example.com",
       TREMA_WEB_ORIGINS: ["https://app.example.com", "https://admin.example.com"],
+      TREMA_WEB_DIST: "/srv/trema/web",
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: false,
@@ -84,6 +86,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_ID: "",
       TREMA_GOOGLE_CLIENT_SECRET: "",
       TREMA_BOOTSTRAP_TOKEN: "",
+      TREMA_WEB_DIST: "",
       TREMA_OIDC_ISSUER: "",
       TREMA_OIDC_CLIENT_ID: "",
       TREMA_OIDC_CLIENT_SECRET: "",
@@ -91,6 +94,7 @@ describe("parseEnv", () => {
 
     expect(result.TREMA_GOOGLE_CLIENT_ID).toBeUndefined();
     expect(result.TREMA_BOOTSTRAP_TOKEN).toBeUndefined();
+    expect(result.TREMA_WEB_DIST).toBeUndefined();
     expect(result.TREMA_OIDC_ISSUER).toBeUndefined();
   });
 

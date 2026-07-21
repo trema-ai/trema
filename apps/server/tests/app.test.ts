@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "#/app.js";
@@ -134,5 +137,34 @@ describe("server", () => {
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: "Not found" });
+  });
+
+  it("serves web assets and falls back to the SPA without masking server routes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "trema-web-"));
+    await mkdir(join(root, "assets"));
+    await writeFile(join(root, "index.html"), "<main>Trema app</main>");
+    await writeFile(join(root, "assets", "app.js"), "console.log('trema')");
+    const env = parseEnv({
+      NODE_ENV: "test",
+      DATABASE_URL: "postgresql://localhost/trema_test",
+      TREMA_AUTH_SECRET: "app-test-auth-secret-at-least-32-characters",
+      TREMA_WEB_DIST: root,
+    });
+    const app = createApp({ ...appDependencies(databaseMock(vi.fn().mockResolvedValue([]))), env });
+
+    const asset = await app.request("/assets/app.js");
+    expect(asset.status).toBe(200);
+    await expect(asset.text()).resolves.toBe("console.log('trema')");
+    const fallback = await app.request("/settings/members");
+    expect(fallback.status).toBe(200);
+    await expect(fallback.text()).resolves.toBe("<main>Trema app</main>");
+    expect((await app.request("/health")).headers.get("content-type")).toContain(
+      "application/json",
+    );
+    expect((await app.request("/rpc/missing")).status).toBe(404);
+    expect((await app.request("/../package.json")).status).toBe(200);
+    await expect((await app.request("/../package.json")).text()).resolves.toBe(
+      "<main>Trema app</main>",
+    );
   });
 });
