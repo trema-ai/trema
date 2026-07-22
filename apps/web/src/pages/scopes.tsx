@@ -118,7 +118,7 @@ export function ScopesPage() {
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
       <PageHeader
         title="Scopes"
-        description="Organize shared context and map surface locations to it."
+        description="Organize shared context and choose where the agent uses it."
         actions={
           canManage && !scopes.isPending && !scopes.error ? (
             <>
@@ -274,7 +274,7 @@ function ScopeDetail({
   const columns: DataTableColumn<Binding>[] = [
     {
       key: "surface",
-      header: "Surface",
+      header: "Connector",
       render: (binding) => <span className="capitalize">{binding.surface}</span>,
     },
     {
@@ -319,7 +319,7 @@ function ScopeDetail({
         <div>
           <h3 className="text-chrome font-medium text-muted-foreground">Bindings</h3>
           <p className="mt-1 text-meta text-muted-foreground">
-            Surface locations that resolve to this scope.
+            Locations that resolve to this scope.
           </p>
         </div>
         {bindings.error ? (
@@ -336,7 +336,7 @@ function ScopeDetail({
               <EmptyState
                 icon={Inbox}
                 title="No bindings yet"
-                description="Bindings map locations in connected integrations, such as Slack channels, to this scope."
+                description="Bindings connect places the agent is reachable — a Slack channel, a Linear team — to this scope."
                 action={
                   canManage ? (
                     <Button size="sm" onClick={onNewBinding}>
@@ -567,7 +567,7 @@ function NewBindingDialog({
         <DialogHeader>
           <DialogTitle>New binding</DialogTitle>
           <DialogDescription>
-            Map a surface location to an organization or shared scope.
+            Bind a place the agent is reachable — a Slack channel, a Linear team — to a scope.
           </DialogDescription>
         </DialogHeader>
         {surfaces.isPending ? (
@@ -578,16 +578,16 @@ function NewBindingDialog({
           </Alert>
         ) : availableSurfaces.length === 0 ? (
           <p className="text-chrome text-muted-foreground">
-            No surfaces are available yet. A surface arrives with an integration that provides one,
-            such as Slack.
+            Nothing can be bound yet. Locations appear here once a connector that provides them —
+            such as Slack — is connected.
           </p>
         ) : (
           <form onSubmit={submit} className="contents">
             <div className="space-y-2">
-              <Label htmlFor="binding-surface">Surface</Label>
+              <Label htmlFor="binding-surface">Connector</Label>
               <Select value={surfaceId} onValueChange={setSurfaceId} required>
                 <SelectTrigger id="binding-surface" className="w-full" autoFocus>
-                  <SelectValue placeholder="Select a surface" />
+                  <SelectValue placeholder="Select a connector" />
                 </SelectTrigger>
                 <SelectContent>
                   {availableSurfaces.map((surface) => (
@@ -695,7 +695,7 @@ function DetailSkeleton() {
         <Skeleton className="h-3 w-20" />
         <DataTable
           columns={[
-            { key: "surface", header: "Surface", render: () => null },
+            { key: "surface", header: "Connector", render: () => null },
             { key: "location", header: "Location", render: () => null },
             { key: "created", header: "Created", render: () => null },
           ]}

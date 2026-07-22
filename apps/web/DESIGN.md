@@ -30,6 +30,10 @@ Rules:
 6. **Light and dark ship together.** Never hardcode a color. Use the
    semantic tokens; both themes derive from them. Dark mode is the
    `.dark` class on the root element.
+7. **"Surface" is an implementer term.** It never appears in UI copy.
+   Users see the concrete pair instead: the connector (Slack, Linear)
+   and the location (a channel, a team, a repository). The word lives
+   in the specs, the API, and adapter code only.
 
 ## Tokens
 
