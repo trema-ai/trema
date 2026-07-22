@@ -2,18 +2,20 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import {
-  createSpace,
+  createSharedScope,
+  getPersonalPolicy,
   getScope,
   listScopes,
-  renameSpace,
+  renameSharedScope,
   ScopeNotFoundError,
   ScopeNotRenameableError,
+  setPersonalPolicy,
 } from "#/services/scopes/index.js";
 import { requireCapability } from "./builders.js";
 
 const scopeKindSchema = z
-  .enum(["org", "space", "personal"])
-  .describe("The scope kind: `org`, `space`, or `personal`.");
+  .enum(["org", "shared", "personal"])
+  .describe("The scope kind: `org`, `shared`, or `personal`.");
 
 const scopeSchema = z
   .object({
@@ -27,24 +29,24 @@ const scopeSchema = z
   })
   .describe("A context scope in the active organization.");
 
-const create = requireCapability("manage_spaces")
+const create = requireCapability("manage_scopes")
   .route({
     method: "POST",
     path: "/scopes",
-    summary: "Create a space",
-    description: "Create a shared space scope in the active organization.",
+    summary: "Create a shared scope",
+    description: "Create a shared scope in the active organization.",
     tags: ["Scopes"],
   })
   .input(
     z
       .object({
-        name: z.string().trim().min(1).describe("A display name for the space. Cannot be empty."),
+        name: z.string().trim().min(1).describe("A display name for the scope. Cannot be empty."),
       })
-      .describe("The space to create."),
+      .describe("The shared scope to create."),
   )
   .output(scopeSchema)
   .handler(({ context, input }) =>
-    createSpace(context.db, {
+    createSharedScope(context.db, {
       orgId: context.org.id,
       actorPrincipalId: context.principal.id,
       name: input.name,
@@ -96,26 +98,26 @@ const get = requireCapability("read")
     }
   });
 
-const rename = requireCapability("manage_spaces")
+const rename = requireCapability("manage_scopes")
   .route({
     method: "PATCH",
     path: "/scopes/{id}",
-    summary: "Rename a space",
-    description: "Rename a space scope. Organization and personal scopes cannot be renamed.",
+    summary: "Rename a shared scope",
+    description: "Rename a shared scope. Organization and personal scopes cannot be renamed.",
     tags: ["Scopes"],
   })
   .input(
     z
       .object({
-        id: z.uuid().describe("The ID of the space to rename. A UUID."),
-        name: z.string().trim().min(1).describe("The space's new name. Cannot be empty."),
+        id: z.uuid().describe("The ID of the shared scope to rename. A UUID."),
+        name: z.string().trim().min(1).describe("The scope's new name. Cannot be empty."),
       })
-      .describe("The space rename."),
+      .describe("The shared scope rename."),
   )
   .output(scopeSchema)
   .handler(async ({ context, input }) => {
     try {
-      return await renameSpace(context.db, {
+      return await renameSharedScope(context.db, {
         orgId: context.org.id,
         actorPrincipalId: context.principal.id,
         scopeId: input.id,
@@ -132,5 +134,50 @@ const rename = requireCapability("manage_spaces")
     }
   });
 
+const personalPolicySchema = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe("Whether direct messages create and resolve personal scopes in this organization."),
+  })
+  .describe("The organization's personal-scope policy.");
+
+const personalPolicy = requireCapability("read")
+  .route({
+    method: "GET",
+    path: "/scopes/personal-policy",
+    summary: "Get the personal-scope policy",
+    description: "Whether direct messages create and resolve personal scopes.",
+    tags: ["Scopes"],
+  })
+  .output(personalPolicySchema)
+  .handler(({ context }) => getPersonalPolicy(context.db, context.org.id));
+
+const setPersonalPolicyRoute = requireCapability("manage_scopes")
+  .route({
+    method: "PATCH",
+    path: "/scopes/personal-policy",
+    summary: "Set the personal-scope policy",
+    description:
+      "Enable or disable personal scopes for the organization. Disabling stops direct messages from creating or resolving personal scopes; existing scopes and their items are kept and become reachable again when re-enabled.",
+    tags: ["Scopes"],
+  })
+  .input(personalPolicySchema)
+  .output(personalPolicySchema)
+  .handler(({ context, input }) =>
+    setPersonalPolicy(context.db, {
+      orgId: context.org.id,
+      actorPrincipalId: context.principal.id,
+      enabled: input.enabled,
+    }),
+  );
+
 // Scope lifecycle, including deletion, belongs to a later implementation phase.
-export const scopesRouter = { create, list, get, rename };
+export const scopesRouter = {
+  create,
+  list,
+  get,
+  rename,
+  personalPolicy,
+  setPersonalPolicy: setPersonalPolicyRoute,
+};

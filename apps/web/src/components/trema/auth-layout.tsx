@@ -33,7 +33,7 @@ export function OrDivider() {
   return (
     <div className="flex items-center gap-3">
       <span className="h-px flex-1 bg-border" />
-      <span className="mono-label text-muted-foreground">OR</span>
+      <span className="text-chrome font-medium text-muted-foreground">or</span>
       <span className="h-px flex-1 bg-border" />
     </div>
   );

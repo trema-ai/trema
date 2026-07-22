@@ -1,5 +1,6 @@
 import type { Scope } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { isKnownSurface } from "#/services/surfaces/index.js";
 
 export class BindingConflictError extends Error {
   constructor(message: string) {
@@ -19,6 +20,13 @@ export class BindingTargetError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "BindingTargetError";
+  }
+}
+
+export class UnknownSurfaceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnknownSurfaceError";
   }
 }
 
@@ -53,6 +61,10 @@ async function existingBindingMessage(
 }
 
 export async function createBinding(db: Database, input: CreateBindingInput) {
+  if (!isKnownSurface(input.surface)) {
+    throw new UnknownSurfaceError(`Unknown surface: ${input.surface}`);
+  }
+
   const target = await db.scope.findFirst({
     where: { id: input.scopeId, orgId: input.orgId },
   });
@@ -170,7 +182,16 @@ export interface ResolveLocationInput {
 export type ResolveLocationResult =
   | { kind: "scope"; scope: Scope }
   | { kind: "unlinked"; surface: string; externalUserId: string }
+  | { kind: "personal_disabled" }
   | { kind: "unbound" };
+
+async function personalScopesEnabled(db: Database, orgId: string): Promise<boolean> {
+  const org = await db.org.findUnique({
+    where: { id: orgId },
+    select: { personalScopesEnabled: true },
+  });
+  return org?.personalScopesEnabled ?? false;
+}
 
 async function getOrCreatePersonalScope(
   db: Database,
@@ -221,10 +242,18 @@ export async function resolveLocation(
     include: { scope: true },
   });
   if (binding) {
+    // Off means off: an existing DM binding stops resolving too. Nothing
+    // is destroyed; re-enabling restores it.
+    if (binding.scope.kind === "personal" && !(await personalScopesEnabled(db, input.orgId))) {
+      return { kind: "personal_disabled" };
+    }
     return { kind: "scope", scope: binding.scope };
   }
   if (!input.dm) {
     return { kind: "unbound" };
+  }
+  if (!(await personalScopesEnabled(db, input.orgId))) {
+    return { kind: "personal_disabled" };
   }
 
   const identity = await db.identityLink.findUnique({
@@ -250,5 +279,19 @@ export async function resolveLocation(
     principalId: identity.principal.id,
     displayName: identity.principal.displayName,
   });
+  // The DM binding persists so admins can see where personal scopes are
+  // reachable; a concurrent first DM loses the unique race harmlessly.
+  try {
+    await db.binding.create({
+      data: {
+        orgId: input.orgId,
+        surface: input.surface,
+        locationRef: input.locationRef,
+        scopeId: scope.id,
+      },
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
   return { kind: "scope", scope };
 }

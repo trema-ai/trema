@@ -5,6 +5,7 @@ import {
   Check,
   ChevronsUpDown,
   Gauge,
+  ListTree,
   LogOut,
   MessageSquarePlus,
   Play,
@@ -18,6 +19,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
+import { Link, useLocation } from "react-router";
 import { Avatar, AvatarFallback } from "#/components/ui/avatar.tsx";
 import {
   DropdownMenu,
@@ -68,6 +70,7 @@ const navGroups: NavGroup[] = [
   {
     label: "Organization",
     items: [
+      { label: "Scopes", icon: ListTree, href: "/scopes" },
       { label: "Members", icon: Users },
       { label: "Policies", icon: Shield },
       { label: "Automations", icon: Zap },
@@ -90,6 +93,7 @@ export type AppSidebarProps = {
 };
 
 export function AppSidebar(props: AppSidebarProps) {
+  const location = useLocation();
   const active =
     props.organizations.find((org) => org.id === props.activeOrgId) ?? props.organizations[0];
   return (
@@ -129,14 +133,24 @@ export function AppSidebar(props: AppSidebarProps) {
               <SidebarMenu>
                 {group.items.map((item) => (
                   <SidebarMenuItem key={item.label}>
-                    <SidebarMenuButton asChild>
-                      <a
-                        href={item.href ?? `#${item.label.toLowerCase().replace(/\s+/g, "-")}`}
-                        className="text-(length:--text-chrome)"
-                      >
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </a>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={item.href !== undefined && location.pathname === item.href}
+                    >
+                      {item.href ? (
+                        <Link to={item.href} className="text-(length:--text-chrome)">
+                          <item.icon />
+                          <span>{item.label}</span>
+                        </Link>
+                      ) : (
+                        <a
+                          href={`#${item.label.toLowerCase().replace(/\s+/g, "-")}`}
+                          className="text-(length:--text-chrome)"
+                        >
+                          <item.icon />
+                          <span>{item.label}</span>
+                        </a>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}

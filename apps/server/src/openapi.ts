@@ -82,7 +82,11 @@ export function generateOpenApiDocument() {
       },
       {
         name: "Scopes",
-        description: "Organization, shared-space, and personal context scopes.",
+        description: "Organization, shared, and personal context scopes.",
+      },
+      {
+        name: "Surfaces",
+        description: "Integration-backed locations that can bind to context scopes.",
       },
       {
         name: "Bindings",

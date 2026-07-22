@@ -15,16 +15,16 @@ export class ScopeNotRenameableError extends Error {
   }
 }
 
-export interface CreateSpaceInput {
+export interface CreateSharedScopeInput {
   orgId: string;
   actorPrincipalId: string;
   name: string;
 }
 
-export async function createSpace(db: Database, input: CreateSpaceInput) {
+export async function createSharedScope(db: Database, input: CreateSharedScopeInput) {
   return db.$transaction(async (transaction) => {
     const scope = await transaction.scope.create({
-      data: { orgId: input.orgId, kind: "space", name: input.name },
+      data: { orgId: input.orgId, kind: "shared", name: input.name },
     });
     await transaction.auditLog.create({
       data: {
@@ -58,14 +58,48 @@ export async function getScope(db: Database, orgId: string, scopeId: string) {
   return scope;
 }
 
-export interface RenameSpaceInput {
+export async function getPersonalPolicy(db: Database, orgId: string) {
+  const org = await db.org.findUniqueOrThrow({
+    where: { id: orgId },
+    select: { personalScopesEnabled: true },
+  });
+  return { enabled: org.personalScopesEnabled };
+}
+
+export interface SetPersonalPolicyInput {
+  orgId: string;
+  actorPrincipalId: string;
+  enabled: boolean;
+}
+
+export async function setPersonalPolicy(db: Database, input: SetPersonalPolicyInput) {
+  return db.$transaction(async (transaction) => {
+    const org = await transaction.org.update({
+      where: { id: input.orgId },
+      data: { personalScopesEnabled: input.enabled },
+      select: { personalScopesEnabled: true },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: input.actorPrincipalId,
+        action: "scope.personal_policy",
+        subject: input.orgId,
+        payload: { enabled: input.enabled },
+      },
+    });
+    return { enabled: org.personalScopesEnabled };
+  });
+}
+
+export interface RenameSharedScopeInput {
   orgId: string;
   actorPrincipalId: string;
   scopeId: string;
   name: string;
 }
 
-export async function renameSpace(db: Database, input: RenameSpaceInput) {
+export async function renameSharedScope(db: Database, input: RenameSharedScopeInput) {
   return db.$transaction(async (transaction) => {
     const existing = await transaction.scope.findFirst({
       where: { id: input.scopeId, orgId: input.orgId },
@@ -73,8 +107,8 @@ export async function renameSpace(db: Database, input: RenameSpaceInput) {
     if (!existing) {
       throw new ScopeNotFoundError("Scope not found");
     }
-    if (existing.kind !== "space") {
-      throw new ScopeNotRenameableError("Only space scopes can be renamed");
+    if (existing.kind !== "shared") {
+      throw new ScopeNotRenameableError("Only shared scopes can be renamed");
     }
 
     const scope = await transaction.scope.update({

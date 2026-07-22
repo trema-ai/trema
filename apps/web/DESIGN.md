@@ -15,10 +15,16 @@ Rules:
 1. **Borders do the work.** Surfaces are flat with 1px borders. Do not
    put shadows on cards. One shadow token (`shadow-overlay`) exists for
    menus, dialogs, and popovers only.
-2. **One accent.** Moss blue (`moss`) marks links, focus, selection,
-   and the running state. Primary buttons are ink-filled, never blue.
+2. **One accent.** Moss blue (`moss`) marks links, focus, and the
+   running state. Primary buttons are ink-filled, never blue.
+   Selection is neutral: selected rows get the `muted` fill plus
+   `font-medium`, matching the sidebar's active state. Selection is
+   structural, not semantic; keeping moss out of it keeps the accent
+   meaningful.
 3. **Mono is the spec register.** Set ids, event seqs, scope paths,
    tool args, timestamps, log lines, and policy lines in `font-mono`.
+   Uppercase mono labels are banned. Use sentence-case sans labels for
+   section headings and other UI labels.
 4. **Status is a dot plus a word.** Color carries state information
    only. Do not use status colors as decoration.
 5. **Chat is calm.** Agent messages are plain text on the surface — no
@@ -28,6 +34,13 @@ Rules:
 6. **Light and dark ship together.** Never hardcode a color. Use the
    semantic tokens; both themes derive from them. Dark mode is the
    `.dark` class on the root element.
+7. **"Surface" is an implementer term.** It never appears in UI copy.
+   Users see the concrete pair instead: the connector (Slack, Linear)
+   and the location (a channel, a team, a repository). The word lives
+   in the specs, the API, and adapter code only.
+8. **No em dashes in UI copy.** Rewrite with commas, "such as", or
+   separate sentences. Docs and marketing prose keep their own style;
+   this rule is for interface chrome.
 
 ## Tokens
 
@@ -39,13 +52,13 @@ All tokens live in [src/styles/globals.css](src/styles/globals.css).
 - Action: `primary` (ink fill), `secondary` (quiet fill),
   `destructive`.
 - Accent: `moss`, `moss-strong`, `moss-soft`. Use `moss-soft` for
-  selected rows, active filter pills, and the selection tint.
+  active filter pills and the running-state soft fill. Not for
+  selected rows; selection uses `muted` (rule 2).
 - Status pairs: `go`/`go-soft` (success), `wait`/`wait-soft`
   (pending, paused), `destructive`/`destructive-soft` (failed),
   `moss`/`moss-soft` (running). Neutral states use `muted`.
 - Type: `text-chrome` (13px UI), `text-meta` (12px descriptions),
-  `text-chat` (15px chat prose), `text-log` (12.5px log lines),
-  `mono-label` utility (11px uppercase mono section labels).
+  `text-chat` (15px chat prose), `text-log` (12.5px log lines).
 - Fonts: Inter (`font-sans`) for UI, JetBrains Mono (`font-mono`) for
   the spec register. Do not add other fonts.
 - Radius: `rounded-sm` badges and inputs, `rounded-md` buttons and
