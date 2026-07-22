@@ -213,9 +213,9 @@ integration("scopes and surface bindings", () => {
     ).resolves.toEqual({ enabled: false });
 
     await expect(resolveLocation(db, dmInput)).resolves.toEqual({ kind: "personal_disabled" });
-    await expect(
-      resolveLocation(db, { ...dmInput, locationRef: "T1:D10" }),
-    ).resolves.toEqual({ kind: "personal_disabled" });
+    await expect(resolveLocation(db, { ...dmInput, locationRef: "T1:D10" })).resolves.toEqual({
+      kind: "personal_disabled",
+    });
 
     await call(scopesRouter.setPersonalPolicy, { enabled: true }, { context: org.context });
     await expect(resolveLocation(db, dmInput)).resolves.toMatchObject({ kind: "scope" });

@@ -244,10 +244,7 @@ export async function resolveLocation(
   if (binding) {
     // Off means off: an existing DM binding stops resolving too. Nothing
     // is destroyed; re-enabling restores it.
-    if (
-      binding.scope.kind === "personal" &&
-      !(await personalScopesEnabled(db, input.orgId))
-    ) {
+    if (binding.scope.kind === "personal" && !(await personalScopesEnabled(db, input.orgId))) {
       return { kind: "personal_disabled" };
     }
     return { kind: "scope", scope: binding.scope };
