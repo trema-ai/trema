@@ -1,4 +1,5 @@
 import { Search } from "lucide-react";
+import { useLocation } from "react-router";
 
 import { ThemeToggle } from "#/components/trema/theme-toggle.tsx";
 import {
@@ -13,8 +14,16 @@ import { Kbd } from "#/components/ui/kbd.tsx";
 import { Separator } from "#/components/ui/separator.tsx";
 import { SidebarTrigger } from "#/components/ui/sidebar.tsx";
 
+const pageNames: Record<string, string> = {
+  "/": "Runs",
+  "/scopes": "Scopes",
+  "/gallery": "Gallery",
+};
+
 /* Slim bar above the content: sidebar toggle, breadcrumb, and actions. */
 function TopBar({ orgName }: { orgName: string }) {
+  const location = useLocation();
+  const pageName = pageNames[location.pathname] ?? "Runs";
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
       <SidebarTrigger className="-ml-1" />
@@ -26,7 +35,7 @@ function TopBar({ orgName }: { orgName: string }) {
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbPage>Runs</BreadcrumbPage>
+            <BreadcrumbPage>{pageName}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

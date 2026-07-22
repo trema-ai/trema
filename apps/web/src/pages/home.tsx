@@ -1,5 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import {
+  createContext,
+  type FormEvent,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import { Navigate, useNavigate } from "react-router";
 import { AppShell } from "#/components/trema/app-shell.tsx";
 import { AuthLayout } from "#/components/trema/auth-layout.tsx";
@@ -8,6 +15,14 @@ import { Button } from "#/components/ui/button.tsx";
 import { Input } from "#/components/ui/input.tsx";
 import { Label } from "#/components/ui/label.tsx";
 import { authClient, orpc, rpcClient } from "#/lib/api.ts";
+
+type ViewerRole = "owner" | "admin" | "member" | "viewer";
+
+const ViewerRoleContext = createContext<ViewerRole>("member");
+
+export function useViewerRole() {
+  return useContext(ViewerRoleContext);
+}
 
 export function AuthenticatedShell({
   mode,
@@ -66,7 +81,7 @@ export function AuthenticatedShell({
         onSignOut: signOut,
       }}
     >
-      {children}
+      <ViewerRoleContext.Provider value={role}>{children}</ViewerRoleContext.Provider>
     </AppShell>
   );
 }

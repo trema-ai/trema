@@ -8,6 +8,7 @@ import { BootstrapPage } from "#/pages/bootstrap.tsx";
 import { Gallery } from "#/pages/gallery.tsx";
 import { AuthenticatedShell, HomePage, Loading } from "#/pages/home.tsx";
 import { JoinPage } from "#/pages/join.tsx";
+import { ScopesPage } from "#/pages/scopes.tsx";
 import { SignInPage } from "#/pages/sign-in.tsx";
 
 const queryClient = new QueryClient({
@@ -48,6 +49,7 @@ function AppRoutes() {
       />
       <Route path="/join" element={<JoinPage />} />
       <Route path="/gallery" element={shell(<Gallery />)} />
+      <Route path="/scopes" element={shell(<ScopesPage />)} />
       <Route path="/" element={shell(<HomePage />)} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
