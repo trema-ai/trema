@@ -241,13 +241,8 @@ integration("scopes and surface bindings", () => {
       ),
     ).rejects.toMatchObject({ code: "CONFLICT", message: expect.stringContaining(existing.id) });
 
-    const personal = await db.scope.create({
-      data: {
-        orgId: org.org.id,
-        kind: "personal",
-        name: "Owner personal",
-        ownerId: org.principal.id,
-      },
+    const personal = await db.scope.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "personal", ownerId: org.principal.id },
     });
     await expect(
       call(
@@ -285,7 +280,11 @@ integration("scopes and surface bindings", () => {
       { context: admin.context },
     );
 
-    for (const context of [org.context, admin.context, member.context, viewer.context]) {
+    for (const context of [org.context, admin.context]) {
+      await expect(call(scopesRouter.list, {}, { context })).resolves.toHaveLength(3);
+      await expect(call(bindingsRouter.list, {}, { context })).resolves.toHaveLength(1);
+    }
+    for (const context of [member.context, viewer.context]) {
       await expect(call(scopesRouter.list, {}, { context })).resolves.toHaveLength(2);
       await expect(call(bindingsRouter.list, {}, { context })).resolves.toHaveLength(1);
     }
@@ -311,17 +310,83 @@ integration("scopes and surface bindings", () => {
       call(scopesRouter.rename, { id: org.orgScope.id, name: "No" }, { context: org.context }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
-    const personal = await db.scope.create({
-      data: {
-        orgId: org.org.id,
-        kind: "personal",
-        name: "Personal",
-        ownerId: org.principal.id,
-      },
+    const personal = await db.scope.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "personal", ownerId: org.principal.id },
     });
     await expect(
       call(scopesRouter.rename, { id: personal.id, name: "No" }, { context: org.context }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("lists readable scopes without exposing another member's personal scope", async () => {
+    const org = await createOrg();
+    const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Scope Admin");
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Scope Member");
+    const other = await addMember(org.org.id, org.orgScope.id, "member", "Other Member");
+    const shared = await call(
+      scopesRouter.create,
+      { name: "Readable Shared" },
+      { context: org.context },
+    );
+    const [adminPersonal, memberPersonal, otherPersonal] = await Promise.all([
+      db.scope.create({
+        data: {
+          orgId: org.org.id,
+          kind: "personal",
+          name: admin.principal.displayName,
+          ownerId: admin.principal.id,
+        },
+      }),
+      db.scope.create({
+        data: {
+          orgId: org.org.id,
+          kind: "personal",
+          name: member.principal.displayName,
+          ownerId: member.principal.id,
+        },
+      }),
+      db.scope.create({
+        data: {
+          orgId: org.org.id,
+          kind: "personal",
+          name: other.principal.displayName,
+          ownerId: other.principal.id,
+        },
+      }),
+    ]);
+    const ownerPersonal = await db.scope.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "personal", ownerId: org.principal.id },
+    });
+
+    const memberScopes = await call(scopesRouter.list, {}, { context: member.context });
+    expect(memberScopes.map(({ id }) => id)).toEqual([
+      org.orgScope.id,
+      shared.id,
+      memberPersonal.id,
+    ]);
+    expect(memberScopes.map(({ id }) => id)).not.toContain(otherPersonal.id);
+
+    for (const context of [org.context, admin.context]) {
+      const scopes = await call(scopesRouter.list, {}, { context });
+      expect(scopes.map(({ id }) => id)).toEqual(
+        expect.arrayContaining([
+          org.orgScope.id,
+          shared.id,
+          ownerPersonal.id,
+          adminPersonal.id,
+          memberPersonal.id,
+          otherPersonal.id,
+        ]),
+      );
+      expect(scopes).toHaveLength(6);
+    }
+
+    await expect(
+      call(scopesRouter.list, { kind: "personal" }, { context: member.context }),
+    ).resolves.toEqual([expect.objectContaining({ id: memberPersonal.id })]);
+    await expect(
+      call(scopesRouter.list, { kind: "shared" }, { context: member.context }),
+    ).resolves.toEqual([expect.objectContaining({ id: shared.id })]);
   });
 
   it("lists the surface catalog and rejects an unknown binding surface", async () => {

@@ -148,21 +148,45 @@ integration("item envelope", () => {
 
     expect(bodyUpdated.version).toBe(2);
     expect(titleUpdated.version).toBe(3);
-    const versions = await db.itemVersion.findMany({
-      where: { itemId: created.id },
-      orderBy: { version: "asc" },
-    });
+    const versions = await call(itemsRouter.versions, { id: created.id }, { context: org.context });
     expect(versions).toHaveLength(2);
     expect(versions[0]).toMatchObject({
-      version: 1,
-      title: "Staging URL",
-      body: { type: "fact", content: "The staging URL is stage.one.example" },
-    });
-    expect(versions[1]).toMatchObject({
       version: 2,
       title: "Staging URL",
       body: { type: "fact", content: "The staging URL is stage.two.example" },
     });
+    expect(versions[1]).toMatchObject({
+      version: 1,
+      title: "Staging URL",
+      body: { type: "fact", content: "The staging URL is stage.one.example" },
+    });
+    expect(versions.every(({ createdAt }) => !Number.isNaN(Date.parse(createdAt)))).toBe(true);
+  });
+
+  it("authorizes version history at the item's scope and reports missing items", async () => {
+    const org = await createOrg();
+    const item = await createMemory(org, { title: "Private history" });
+    const outsider = await signUp("History Outsider");
+    await db.principal.create({
+      data: {
+        orgId: org.org.id,
+        kind: "human",
+        authId: outsider.user.id,
+        displayName: outsider.user.name,
+        email: outsider.user.email,
+      },
+    });
+    await db.session.updateMany({
+      where: { userId: outsider.user.id },
+      data: { activeOrgId: org.org.id },
+    });
+
+    await expect(
+      call(itemsRouter.versions, { id: item.id }, { context: outsider.context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      call(itemsRouter.versions, { id: randomUUID() }, { context: org.context }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("enforces the exported writer policy for agents and activates human writes", async () => {

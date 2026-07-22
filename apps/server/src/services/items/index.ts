@@ -189,6 +189,19 @@ export async function getItem(db: Database, orgId: string, itemId: string) {
   return item;
 }
 
+export async function listItemVersions(db: Database, orgId: string, itemId: string) {
+  const item = await db.item.findFirst({
+    where: { id: itemId, orgId },
+    select: { id: true },
+  });
+  if (!item) throw new ItemNotFoundError();
+
+  return db.itemVersion.findMany({
+    where: { orgId, itemId: item.id },
+    orderBy: { version: "desc" },
+  });
+}
+
 export interface ListItemsInput {
   orgId: string;
   kind?: ItemKind;

@@ -1,6 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
+import { authorize } from "#/services/authorize/index.js";
 import {
   createSharedScope,
   getPersonalPolicy,
@@ -58,7 +59,8 @@ const list = requireCapability("read")
     method: "GET",
     path: "/scopes",
     summary: "List scopes",
-    description: "List scopes in the active organization, optionally filtered by kind.",
+    description:
+      "List scopes in the active organization filtered to what the caller may see, optionally filtered by kind.",
     tags: ["Scopes"],
   })
   .input(
@@ -69,7 +71,30 @@ const list = requireCapability("read")
       .describe("Optional scope-list filters."),
   )
   .output(z.array(scopeSchema).describe("The active organization's scopes."))
-  .handler(({ context, input }) => listScopes(context.db, context.org.id, input.kind));
+  .handler(async ({ context, input }) => {
+    const scopes = await listScopes(context.db, context.org.id, input.kind);
+    const orgScope = await context.db.scope.findFirstOrThrow({
+      where: { orgId: context.org.id, kind: "org" },
+      select: { id: true },
+    });
+    const canManageScopes = await authorize(
+      context.principal,
+      "manage_scopes",
+      orgScope.id,
+      context.db,
+    );
+
+    const visible = [];
+    for (const scope of scopes) {
+      if (
+        (scope.kind === "personal" && canManageScopes) ||
+        (await authorize(context.principal, "read", scope.id, context.db))
+      ) {
+        visible.push(scope);
+      }
+    }
+    return visible;
+  });
 
 const get = requireCapability("read")
   .route({

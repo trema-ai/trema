@@ -9,6 +9,7 @@ import { createPrismaClient } from "#/lib/db/index.js";
 import { parseEnv } from "#/lib/env/schema.js";
 import { membersRouter } from "#/rpc/members.js";
 import { orgRouter } from "#/rpc/org.js";
+import { scopesRouter } from "#/rpc/scopes.js";
 import { authorize, capabilities } from "#/services/authorize/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -266,6 +267,92 @@ integration("authorization, members, and invites", () => {
         where: { action: "invite.redeem", orgId: org.org.id },
       }),
     ).resolves.toMatchObject({ actorPrincipalId: redeemed.principal.id });
+    await expect(
+      db.scope.findMany({
+        where: { orgId: org.org.id, kind: "personal", ownerId: redeemed.principal.id },
+      }),
+    ).resolves.toEqual([expect.objectContaining({ name: redeemed.principal.displayName })]);
+  });
+
+  it("keeps invite personal-scope creation idempotent for an existing principal", async () => {
+    const org = await createOrg();
+    const invite = await call(
+      membersRouter.invites.create,
+      { role: "member" },
+      { context: org.context },
+    );
+    const token = new URL(invite.link).searchParams.get("token")!;
+    const joiner = await signUp("Existing Joiner");
+    const principal = await db.principal.create({
+      data: {
+        orgId: org.org.id,
+        kind: "human",
+        authId: joiner.user.id,
+        displayName: joiner.user.name,
+        email: joiner.user.email,
+      },
+    });
+    const existingScope = await db.scope.create({
+      data: {
+        orgId: org.org.id,
+        kind: "personal",
+        ownerId: principal.id,
+        name: principal.displayName,
+      },
+    });
+
+    await call(membersRouter.invites.redeem, { token }, { context: joiner.context });
+
+    await expect(
+      db.scope.findMany({
+        where: { orgId: org.org.id, kind: "personal", ownerId: principal.id },
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: existingScope.id })]);
+  });
+
+  it("gates invite scopes while disabled and backfills every human exactly once when enabled", async () => {
+    const org = await createOrg();
+    await call(scopesRouter.setPersonalPolicy, { enabled: false }, { context: org.context });
+    await expect(
+      db.scope.count({
+        where: { orgId: org.org.id, kind: "personal", ownerId: org.principal.id },
+      }),
+    ).resolves.toBe(1);
+    const invite = await call(
+      membersRouter.invites.create,
+      { role: "member" },
+      { context: org.context },
+    );
+    const token = new URL(invite.link).searchParams.get("token")!;
+    const joiner = await signUp("Policy Joiner");
+    const redeemed = await call(
+      membersRouter.invites.redeem,
+      { token },
+      { context: joiner.context },
+    );
+
+    await expect(
+      db.scope.count({
+        where: { orgId: org.org.id, kind: "personal", ownerId: redeemed.principal.id },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      db.scope.count({
+        where: { orgId: org.org.id, kind: "personal", ownerId: org.principal.id },
+      }),
+    ).resolves.toBe(1);
+
+    await call(scopesRouter.setPersonalPolicy, { enabled: true }, { context: org.context });
+    await call(scopesRouter.setPersonalPolicy, { enabled: true }, { context: org.context });
+
+    const personalScopes = await db.scope.findMany({
+      where: { orgId: org.org.id, kind: "personal" },
+      orderBy: { ownerId: "asc" },
+    });
+    expect(personalScopes).toHaveLength(2);
+    expect(personalScopes.map(({ ownerId }) => ownerId)).toEqual(
+      [org.principal.id, redeemed.principal.id].sort(),
+    );
   });
 
   it("rejects expired and double-redeemed invites with conflicts", async () => {

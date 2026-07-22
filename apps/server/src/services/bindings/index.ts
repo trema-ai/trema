@@ -1,5 +1,6 @@
 import type { Scope } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { ensurePersonalScope } from "#/services/scopes/index.js";
 import { isKnownSurface } from "#/services/surfaces/index.js";
 
 export class BindingConflictError extends Error {
@@ -193,40 +194,6 @@ async function personalScopesEnabled(db: Database, orgId: string): Promise<boole
   return org?.personalScopesEnabled ?? false;
 }
 
-async function getOrCreatePersonalScope(
-  db: Database,
-  input: { orgId: string; principalId: string; displayName: string },
-): Promise<Scope> {
-  const existing = await db.scope.findFirst({
-    where: {
-      orgId: input.orgId,
-      kind: "personal",
-      ownerId: input.principalId,
-    },
-  });
-  if (existing) return existing;
-
-  try {
-    return await db.scope.create({
-      data: {
-        orgId: input.orgId,
-        kind: "personal",
-        ownerId: input.principalId,
-        name: input.displayName,
-      },
-    });
-  } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
-    return db.scope.findFirstOrThrow({
-      where: {
-        orgId: input.orgId,
-        kind: "personal",
-        ownerId: input.principalId,
-      },
-    });
-  }
-}
-
 export async function resolveLocation(
   db: Database,
   input: ResolveLocationInput,
@@ -274,7 +241,7 @@ export async function resolveLocation(
     };
   }
 
-  const scope = await getOrCreatePersonalScope(db, {
+  const scope = await ensurePersonalScope(db, {
     orgId: input.orgId,
     principalId: identity.principal.id,
     displayName: identity.principal.displayName,

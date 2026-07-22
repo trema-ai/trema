@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Prisma, Role } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
+import { ensurePersonalScope } from "#/services/scopes/index.js";
 
 const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -433,6 +434,17 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
           email: input.email,
         },
       }));
+    const org = await transaction.org.findUniqueOrThrow({
+      where: { id: invite.orgId },
+      select: { personalScopesEnabled: true },
+    });
+    if (org.personalScopesEnabled) {
+      await ensurePersonalScope(transaction, {
+        orgId: invite.orgId,
+        principalId: principal.id,
+        displayName: principal.displayName,
+      });
+    }
     const grant = await transaction.grant.upsert({
       where: {
         orgId_principalId_scopeId: {

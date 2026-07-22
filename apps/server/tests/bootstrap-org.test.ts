@@ -70,7 +70,7 @@ integration("bootstrap and organizations", () => {
     };
   }
 
-  it("creates the org, scope, owner grant, and grantless agent atomically", async () => {
+  it("creates org and personal scopes, the owner grant, and a scope-less agent atomically", async () => {
     const env = environment("hosted");
     const { user } = await signUp(env, "Atomic Owner");
 
@@ -90,8 +90,15 @@ integration("bootstrap and organizations", () => {
     ]);
     const agent = principals.find((principal) => principal.kind === "agent");
 
-    expect(scopes).toHaveLength(1);
-    expect(scopes[0]).toMatchObject({ kind: "org", name: "Atomic Org" });
+    expect(scopes).toHaveLength(2);
+    const orgScope = scopes.find((scope) => scope.kind === "org");
+    const personalScope = scopes.find((scope) => scope.kind === "personal");
+    expect(orgScope).toMatchObject({ kind: "org", name: "Atomic Org", ownerId: null });
+    expect(personalScope).toMatchObject({
+      kind: "personal",
+      name: "Atomic Owner",
+      ownerId: result.ownerPrincipal.id,
+    });
     expect(principals).toHaveLength(2);
     expect(result.ownerPrincipal).toMatchObject({
       kind: "human",
@@ -100,7 +107,7 @@ integration("bootstrap and organizations", () => {
     expect(grants).toHaveLength(1);
     expect(grants[0]).toMatchObject({
       principalId: result.ownerPrincipal.id,
-      scopeId: scopes[0]?.id,
+      scopeId: orgScope?.id,
       role: "owner",
     });
     expect(agent).toBeDefined();
@@ -108,6 +115,26 @@ integration("bootstrap and organizations", () => {
       throw new Error("Agent principal was not created");
     }
     await expect(db.grant.count({ where: { principalId: agent.id } })).resolves.toBe(0);
+    await expect(db.scope.count({ where: { ownerId: agent.id } })).resolves.toBe(0);
+  });
+
+  it("does not create bootstrap personal scopes when the new org disables them", async () => {
+    const env = environment("hosted");
+    const { user } = await signUp(env, "Policy-disabled Owner");
+
+    const result = await createOrgWithOwner(db, {
+      name: "Policy-disabled Org",
+      personalScopesEnabled: false,
+      owner: {
+        authId: user.id,
+        displayName: user.name,
+        email: user.email,
+      },
+    });
+
+    await expect(
+      db.scope.findMany({ where: { orgId: result.org.id }, select: { kind: true } }),
+    ).resolves.toEqual([{ kind: "org" }]);
   });
 
   it("allows exactly one winner in a concurrent dedicated bootstrap race", async () => {

@@ -1,5 +1,6 @@
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { ensurePersonalScope } from "#/services/scopes/index.js";
 
 export class OrganizationNameError extends Error {
   constructor(message: string) {
@@ -17,6 +18,7 @@ export interface OrgOwner {
 export interface CreateOrgWithOwnerInput {
   name: string;
   owner: OrgOwner;
+  personalScopesEnabled?: boolean;
 }
 
 export interface CreateOrgWithOwnerHooks {
@@ -41,7 +43,12 @@ export async function createOrgWithOwner(
     await hooks.beforeCreate?.(transaction);
 
     const org = await transaction.org.create({
-      data: { name: input.name },
+      data: {
+        name: input.name,
+        ...(input.personalScopesEnabled !== undefined
+          ? { personalScopesEnabled: input.personalScopesEnabled }
+          : {}),
+      },
     });
     const orgScope = await transaction.scope.create({
       data: {
@@ -59,6 +66,13 @@ export async function createOrgWithOwner(
         email: input.owner.email,
       },
     });
+    if (org.personalScopesEnabled) {
+      await ensurePersonalScope(transaction, {
+        orgId: org.id,
+        principalId: ownerPrincipal.id,
+        displayName: ownerPrincipal.displayName,
+      });
+    }
     await transaction.grant.create({
       data: {
         orgId: org.id,
