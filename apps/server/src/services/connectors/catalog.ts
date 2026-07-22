@@ -28,10 +28,17 @@ interface NamedTemplate {
 
 function providerTemplates(provider: ProviderDef): NamedTemplate[] {
   const templates: NamedTemplate[] = [];
+  for (const field of ["authorizationUrl", "tokenUrl", "refreshUrl"] as const) {
+    const value = provider.auth[field];
+    if (value) templates.push({ field: `auth.${field}`, value });
+  }
   if (provider.transport.type === "rest") {
     templates.push({ field: "transport.baseUrl", value: provider.transport.baseUrl });
     if (provider.transport.authHeader) {
       templates.push({ field: "transport.authHeader", value: provider.transport.authHeader });
+    }
+    for (const [index, endpoint] of (provider.transport.verification?.endpoints ?? []).entries()) {
+      templates.push({ field: `transport.verification.endpoints[${index}]`, value: endpoint });
     }
   } else {
     templates.push({ field: "transport.serverUrl", value: provider.transport.serverUrl });

@@ -59,6 +59,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: "false",
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
+      TREMA_CREDENTIAL_MASTER_KEY: "credential-master-key",
       TREMA_OIDC_ISSUER: "https://idp.example.com",
       TREMA_OIDC_CLIENT_ID: "oidc-client",
       TREMA_OIDC_CLIENT_SECRET: "oidc-secret",
@@ -73,6 +74,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: false,
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
+      TREMA_CREDENTIAL_MASTER_KEY: "credential-master-key",
       TREMA_OIDC_ISSUER: "https://idp.example.com",
       TREMA_OIDC_CLIENT_ID: "oidc-client",
       TREMA_OIDC_CLIENT_SECRET: "oidc-secret",
@@ -86,6 +88,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_ID: "",
       TREMA_GOOGLE_CLIENT_SECRET: "",
       TREMA_BOOTSTRAP_TOKEN: "",
+      TREMA_CREDENTIAL_MASTER_KEY: "",
       TREMA_WEB_DIST: "",
       TREMA_OIDC_ISSUER: "",
       TREMA_OIDC_CLIENT_ID: "",
@@ -94,6 +97,7 @@ describe("parseEnv", () => {
 
     expect(result.TREMA_GOOGLE_CLIENT_ID).toBeUndefined();
     expect(result.TREMA_BOOTSTRAP_TOKEN).toBeUndefined();
+    expect(result.TREMA_CREDENTIAL_MASTER_KEY).toBeUndefined();
     expect(result.TREMA_WEB_DIST).toBeUndefined();
     expect(result.TREMA_OIDC_ISSUER).toBeUndefined();
   });
