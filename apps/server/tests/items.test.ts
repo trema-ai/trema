@@ -236,7 +236,7 @@ integration("item envelope", () => {
 
   it("rejects later-phase kinds and malformed memory bodies", async () => {
     const org = await createOrg();
-    for (const kind of ["skill", "connector", "conversation"] as const) {
+    for (const kind of ["skill", "conversation"] as const) {
       await expect(
         call(
           itemsRouter.create,
@@ -253,6 +253,21 @@ integration("item envelope", () => {
         message: expect.stringContaining("arrives in a later phase"),
       });
     }
+    await expect(
+      call(
+        itemsRouter.create,
+        {
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          title: "Direct connector",
+          body: { catalogKey: "github", enabledTools: [] },
+        },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("connector"),
+    });
     await expect(
       call(
         itemsRouter.create,

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ItemDisclosure, ItemKind, ItemStatus, Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import {
+  type ConnectorInstallationBody,
+  connectorInstallationBodySchema,
+} from "#/services/connectors/installations.js";
 
 export const memoryTypes = ["fact", "preference", "rule", "procedure"] as const;
 export type MemoryType = (typeof memoryTypes)[number];
@@ -48,7 +52,7 @@ export const instructionBodySchema = z
 
 export type MemoryBody = z.infer<typeof memoryBodySchema>;
 export type InstructionBody = z.infer<typeof instructionBodySchema>;
-export type CreatableItemBody = MemoryBody | InstructionBody;
+export type CreatableItemBody = MemoryBody | InstructionBody | ConnectorInstallationBody;
 
 export class ItemNotFoundError extends Error {
   constructor(message = "Item not found") {
@@ -68,6 +72,12 @@ function laterPhaseError(kind: ItemKind): ItemValidationError {
   return new ItemValidationError(`Item kind '${kind}' arrives in a later phase`);
 }
 
+function connectorRouteError(): ItemValidationError {
+  return new ItemValidationError(
+    "Connector items must be created or updated through the connector installation routes",
+  );
+}
+
 function parseBody(kind: ItemKind, body: unknown): CreatableItemBody {
   if (kind === "memory") {
     const parsed = memoryBodySchema.safeParse(body);
@@ -80,6 +90,13 @@ function parseBody(kind: ItemKind, body: unknown): CreatableItemBody {
     const parsed = instructionBodySchema.safeParse(body);
     if (!parsed.success) {
       throw new ItemValidationError(`Invalid instruction body: ${z.prettifyError(parsed.error)}`);
+    }
+    return parsed.data;
+  }
+  if (kind === "connector") {
+    const parsed = connectorInstallationBodySchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ItemValidationError(`Invalid connector body: ${z.prettifyError(parsed.error)}`);
     }
     return parsed.data;
   }
@@ -125,6 +142,7 @@ export interface CreateItemInput {
 }
 
 export async function createItem(db: Database, input: CreateItemInput) {
+  if (input.kind === "connector") throw connectorRouteError();
   if (input.kind !== "memory" && input.kind !== "instruction") {
     throw laterPhaseError(input.kind);
   }
@@ -240,6 +258,7 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
       where: { id: input.itemId, orgId: input.orgId },
     });
     if (!existing) throw new ItemNotFoundError();
+    if (existing.kind === "connector") throw connectorRouteError();
 
     const title = input.title === undefined ? existing.title : input.title.trim();
     if (!title) throw new ItemValidationError("Item title cannot be empty");

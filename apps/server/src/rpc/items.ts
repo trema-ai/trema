@@ -129,7 +129,7 @@ const create = requireCapability("write_items", {
     path: "/items",
     summary: "Create an item",
     description:
-      "Create a memory or instruction in one scope. Other item kinds arrive in later phases.",
+      "Create a memory or instruction in one scope. Connector installations use the dedicated connector routes; other item kinds arrive in later phases.",
     tags: ["Items"],
   })
   .input(
@@ -276,7 +276,7 @@ const update = itemScoped("write_items")
     path: "/items/{id}",
     summary: "Update an item",
     description:
-      "Update an item's title, body, or disclosure. Content changes retain the prior version.",
+      "Update a memory or instruction's title, body, or disclosure. Connector installations use the dedicated connector routes. Content changes retain the prior version.",
     tags: ["Items"],
   })
   .input(updateInput)

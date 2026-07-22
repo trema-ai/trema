@@ -523,6 +523,801 @@
         }
       }
     },
+    "/connector-catalog": {
+      "get": {
+        "operationId": "connectors.catalog.list",
+        "summary": "List connector providers",
+        "description": "List member-safe connector catalog metadata without auth recipes or URLs.",
+        "tags": [
+          "Connectors"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      },
+                      "categories": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "docsUrl": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "authMode": {
+                        "type": "string"
+                      },
+                      "transport": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "mcp",
+                              "rest"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ]
+                      },
+                      "memberConnectable": {
+                        "type": "boolean"
+                      },
+                      "toolManifest": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "sensitivity": {
+                              "enum": [
+                                "read",
+                                "write",
+                                "destructive"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "sensitivity"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "displayName",
+                      "categories",
+                      "docsUrl",
+                      "authMode",
+                      "transport",
+                      "memberConnectable"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/connector-installations": {
+      "post": {
+        "operationId": "connectors.installations.create",
+        "summary": "Create a connector installation",
+        "description": "Install a catalog provider into an authorized context scope.",
+        "tags": [
+          "Connectors"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "catalogKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "enabledTools": {
+                    "anyOf": [
+                      {
+                        "const": "all"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    ]
+                  },
+                  "sensitivityOverrides": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "additionalProperties": {
+                      "enum": [
+                        "read",
+                        "write",
+                        "destructive"
+                      ],
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "scopeId",
+                  "catalogKey",
+                  "enabledTools"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kind": {
+                      "const": "connector"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string"
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string"
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "createdAt",
+                    "updatedAt",
+                    "version"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/connector-installations/{installationItemId}": {
+      "patch": {
+        "operationId": "connectors.installations.update",
+        "summary": "Update a connector installation",
+        "description": "Update only tool intent and sensitivity overrides for an installation.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "installationItemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabledTools": {
+                    "anyOf": [
+                      {
+                        "const": "all"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    ]
+                  },
+                  "sensitivityOverrides": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "additionalProperties": {
+                      "enum": [
+                        "read",
+                        "write",
+                        "destructive"
+                      ],
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kind": {
+                      "const": "connector"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string"
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string"
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "createdAt",
+                    "updatedAt",
+                    "version"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/connector-installations/{installationItemId}/sync": {
+      "post": {
+        "operationId": "connectors.installations.sync",
+        "summary": "Sync MCP connector tools",
+        "description": "Refresh an MCP installation's tool list and apply tool drift rules.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "installationItemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "installation": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "scopeId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "const": "connector"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "body": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "proposed",
+                            "active",
+                            "archived"
+                          ],
+                          "type": "string"
+                        },
+                        "disclosure": {
+                          "enum": [
+                            "standing",
+                            "retrieved"
+                          ],
+                          "type": "string"
+                        },
+                        "createdById": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "updatedAt": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "exclusiveMinimum": 0
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "scopeId",
+                        "kind",
+                        "title",
+                        "body",
+                        "status",
+                        "disclosure",
+                        "createdById",
+                        "createdAt",
+                        "updatedAt",
+                        "version"
+                      ]
+                    },
+                    "report": {
+                      "type": "object",
+                      "properties": {
+                        "added": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "removed": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "changed": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "added",
+                        "removed",
+                        "changed"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "installation",
+                    "report"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/connector-registrations": {
       "post": {
         "operationId": "connectors.registrations.create",
@@ -2012,7 +2807,7 @@
       "post": {
         "operationId": "items.create",
         "summary": "Create an item",
-        "description": "Create a memory or instruction in one scope. Other item kinds arrive in later phases.",
+        "description": "Create a memory or instruction in one scope. Connector installations use the dedicated connector routes; other item kinds arrive in later phases.",
         "tags": [
           "Items"
         ],
@@ -2907,7 +3702,7 @@
       "patch": {
         "operationId": "items.update",
         "summary": "Update an item",
-        "description": "Update an item's title, body, or disclosure. Content changes retain the prior version.",
+        "description": "Update a memory or instruction's title, body, or disclosure. Connector installations use the dedicated connector routes. Content changes retain the prior version.",
         "tags": [
           "Items"
         ],
