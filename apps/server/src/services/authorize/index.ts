@@ -6,7 +6,7 @@ export const capabilities = [
   "write_items",
   "install_skills",
   "manage_connectors",
-  "manage_spaces",
+  "manage_scopes",
   "edit_policies",
   "manage_members",
   "manage_org",
@@ -19,7 +19,7 @@ export const roles = ["owner", "admin", "member", "viewer"] as const;
 const capabilityRoleTable: Record<Capability, Record<Role, boolean>> = {
   read: { owner: true, admin: true, member: true, viewer: true },
   write_items: { owner: true, admin: true, member: true, viewer: false },
-  // The per-space toggle is not represented in the schema yet; default-on applies.
+  // The per-scope toggle is not represented in the schema yet; default-on applies.
   install_skills: { owner: true, admin: true, member: true, viewer: false },
   manage_connectors: {
     owner: true,
@@ -27,7 +27,7 @@ const capabilityRoleTable: Record<Capability, Record<Role, boolean>> = {
     member: false,
     viewer: false,
   },
-  manage_spaces: { owner: true, admin: true, member: false, viewer: false },
+  manage_scopes: { owner: true, admin: true, member: false, viewer: false },
   edit_policies: {
     owner: true,
     admin: true,

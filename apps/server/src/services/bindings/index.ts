@@ -1,5 +1,6 @@
 import type { Scope } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { isKnownSurface } from "#/services/surfaces/index.js";
 
 export class BindingConflictError extends Error {
   constructor(message: string) {
@@ -19,6 +20,13 @@ export class BindingTargetError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "BindingTargetError";
+  }
+}
+
+export class UnknownSurfaceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnknownSurfaceError";
   }
 }
 
@@ -53,6 +61,10 @@ async function existingBindingMessage(
 }
 
 export async function createBinding(db: Database, input: CreateBindingInput) {
+  if (!isKnownSurface(input.surface)) {
+    throw new UnknownSurfaceError(`Unknown surface: ${input.surface}`);
+  }
+
   const target = await db.scope.findFirst({
     where: { id: input.scopeId, orgId: input.orgId },
   });

@@ -8,15 +8,18 @@ import {
   createBinding,
   deleteBinding,
   listBindings,
+  UnknownSurfaceError,
 } from "#/services/bindings/index.js";
 import { requireCapability } from "./builders.js";
 
 const bindingSchema = z
   .object({
     id: z.string().describe("The binding's unique ID. A UUID (version 7)."),
-    surface: z.string().describe("The interface surface, such as `slack`, `web`, or `email`."),
+    surface: z.string().describe("The integration surface, such as `slack` or `email`."),
     locationRef: z.string().describe("The surface-specific location identifier."),
-    scopeId: z.string().describe("The ID of the org or space scope this location resolves to."),
+    scopeId: z
+      .string()
+      .describe("The ID of the organization or shared scope this location resolves to."),
     createdAt: z.string().describe("When the binding was created. An ISO 8601 date-time."),
     updatedAt: z.string().describe("When the binding was last updated. An ISO 8601 date-time."),
   })
@@ -40,12 +43,12 @@ function serializeBinding(binding: {
   };
 }
 
-const create = requireCapability("manage_spaces")
+const create = requireCapability("manage_scopes")
   .route({
     method: "POST",
     path: "/bindings",
     summary: "Create a surface binding",
-    description: "Bind a surface location to an organization or space scope.",
+    description: "Bind a surface location to an organization or shared scope.",
     tags: ["Bindings"],
   })
   .input(
@@ -57,7 +60,7 @@ const create = requireCapability("manage_spaces")
           .trim()
           .min(1)
           .describe("The surface-specific location identifier. Cannot be empty."),
-        scopeId: z.uuid().describe("The ID of the org or space scope to bind. A UUID."),
+        scopeId: z.uuid().describe("The ID of the organization or shared scope to bind. A UUID."),
       })
       .describe("The surface binding to create."),
   )
@@ -79,6 +82,9 @@ const create = requireCapability("manage_spaces")
         throw new ORPCError("NOT_FOUND", { message: error.message });
       }
       if (error instanceof BindingTargetError) {
+        throw new ORPCError("BAD_REQUEST", { message: error.message });
+      }
+      if (error instanceof UnknownSurfaceError) {
         throw new ORPCError("BAD_REQUEST", { message: error.message });
       }
       throw error;
@@ -113,7 +119,7 @@ const list = requireCapability("read")
     ).map(serializeBinding),
   );
 
-const remove = requireCapability("manage_spaces")
+const remove = requireCapability("manage_scopes")
   .route({
     method: "DELETE",
     path: "/bindings/{id}",

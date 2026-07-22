@@ -14,7 +14,6 @@ import { FilterBar, FilterSearch, FilterSelect } from "#/components/trema/filter
 import { IdChip } from "#/components/trema/id-chip.tsx";
 import { KeyValueList } from "#/components/trema/key-value-list.tsx";
 import { LogLine } from "#/components/trema/log-line.tsx";
-import { MonoLabel } from "#/components/trema/mono-label.tsx";
 import { OutputViewer } from "#/components/trema/output-viewer.tsx";
 import { PageHeader } from "#/components/trema/page-header.tsx";
 import { ReasoningBlock } from "#/components/trema/reasoning-block.tsx";
@@ -111,13 +110,11 @@ type SectionProps = {
   children: ReactNode;
 };
 
-/* A gallery section: mono heading plus a card area (or open layout). */
+/* A gallery section heading plus a card area (or open layout). */
 function Section({ title, bare = false, children }: SectionProps) {
   return (
     <section className="space-y-3">
-      <h2>
-        <MonoLabel>{title}</MonoLabel>
-      </h2>
+      <h2 className="text-chrome font-medium text-muted-foreground">{title}</h2>
       {bare ? children : <div className="rounded-lg border bg-card p-6">{children}</div>}
     </section>
   );
@@ -270,8 +267,8 @@ function TypographySection() {
         <Variant label="text-log — 12.5px mono log lines">
           <p className="font-mono text-log">12:04:11.352 worker checkpoint saved seq=418</p>
         </Variant>
-        <Variant label="mono-label — 11px uppercase section label">
-          <span className="mono-label">Section label</span>
+        <Variant label="13px sentence-case section label">
+          <span className="text-chrome font-medium text-muted-foreground">Section label</span>
         </Variant>
         <Variant label="font-mono — the spec register">
           <p className="font-mono text-chrome">run_66a2 · org/support · 2026-07-21T09:14:02Z</p>

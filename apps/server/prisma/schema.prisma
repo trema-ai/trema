@@ -86,7 +86,7 @@ enum PrincipalKind {
 
 enum ScopeKind {
   org
-  space
+  shared
   personal
 }
 

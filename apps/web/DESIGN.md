@@ -19,6 +19,8 @@ Rules:
    and the running state. Primary buttons are ink-filled, never blue.
 3. **Mono is the spec register.** Set ids, event seqs, scope paths,
    tool args, timestamps, log lines, and policy lines in `font-mono`.
+   Uppercase mono labels are banned. Use sentence-case sans labels for
+   section headings and other UI labels.
 4. **Status is a dot plus a word.** Color carries state information
    only. Do not use status colors as decoration.
 5. **Chat is calm.** Agent messages are plain text on the surface — no
@@ -44,8 +46,7 @@ All tokens live in [src/styles/globals.css](src/styles/globals.css).
   (pending, paused), `destructive`/`destructive-soft` (failed),
   `moss`/`moss-soft` (running). Neutral states use `muted`.
 - Type: `text-chrome` (13px UI), `text-meta` (12px descriptions),
-  `text-chat` (15px chat prose), `text-log` (12.5px log lines),
-  `mono-label` utility (11px uppercase mono section labels).
+  `text-chat` (15px chat prose), `text-log` (12.5px log lines).
 - Fonts: Inter (`font-sans`) for UI, JetBrains Mono (`font-mono`) for
   the spec register. Do not add other fonts.
 - Radius: `rounded-sm` badges and inputs, `rounded-md` buttons and

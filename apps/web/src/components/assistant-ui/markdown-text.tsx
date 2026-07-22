@@ -21,7 +21,7 @@ function CodeHeader({ language, code }: CodeHeaderProps) {
       data-slot="code-header"
       className="flex items-center justify-between rounded-t-md border-b bg-muted px-3 py-1"
     >
-      <span className="mono-label">{language ?? "code"}</span>
+      <span className="text-chrome font-medium text-muted-foreground">{language ?? "code"}</span>
       <CopyButton value={code} aria-label="Copy code" />
     </div>
   );

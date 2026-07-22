@@ -84,34 +84,36 @@ integration("authorization, members, and invites", () => {
     return { ...signedUp, principal };
   }
 
-  it("inherits an org role down to a space", async () => {
+  it("inherits an org role down to a shared scope", async () => {
     const org = await createOrg();
     const admin = await addMember(org.org.id, org.scope.id, "admin");
-    const space = await db.scope.create({
-      data: { orgId: org.org.id, kind: "space", name: "Engineering" },
+    const sharedScope = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Engineering" },
     });
 
-    await expect(authorize(admin.principal, "manage_members", space.id, db)).resolves.toBe(true);
+    await expect(authorize(admin.principal, "manage_members", sharedScope.id, db)).resolves.toBe(
+      true,
+    );
   });
 
-  it("does not leak a space grant upward or sideways", async () => {
+  it("does not leak a shared-scope grant upward or sideways", async () => {
     const org = await createOrg();
-    const user = await signUp("Space member");
+    const user = await signUp("Shared scope member");
     const principal = await db.principal.create({
       data: {
         orgId: org.org.id,
         kind: "human",
         authId: user.user.id,
-        displayName: "Space member",
+        displayName: "Shared scope member",
         email: user.user.email,
       },
     });
     const [grantedSpace, otherSpace] = await Promise.all([
       db.scope.create({
-        data: { orgId: org.org.id, kind: "space", name: "One" },
+        data: { orgId: org.org.id, kind: "shared", name: "One" },
       }),
       db.scope.create({
-        data: { orgId: org.org.id, kind: "space", name: "Two" },
+        data: { orgId: org.org.id, kind: "shared", name: "Two" },
       }),
     ]);
     await db.grant.create({

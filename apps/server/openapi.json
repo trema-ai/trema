@@ -48,7 +48,11 @@
     },
     {
       "name": "Scopes",
-      "description": "Organization, shared-space, and personal context scopes."
+      "description": "Organization, shared, and personal context scopes."
+    },
+    {
+      "name": "Surfaces",
+      "description": "Integration-backed locations that can bind to context scopes."
     },
     {
       "name": "Bindings",
@@ -173,7 +177,7 @@
       "post": {
         "operationId": "bindings.create",
         "summary": "Create a surface binding",
-        "description": "Bind a surface location to an organization or space scope.",
+        "description": "Bind a surface location to an organization or shared scope.",
         "tags": [
           "Bindings"
         ],
@@ -197,7 +201,7 @@
                   "scopeId": {
                     "type": "string",
                     "format": "uuid",
-                    "description": "The ID of the org or space scope to bind. A UUID."
+                    "description": "The ID of the organization or shared scope to bind. A UUID."
                   }
                 },
                 "required": [
@@ -224,7 +228,7 @@
                     },
                     "surface": {
                       "type": "string",
-                      "description": "The interface surface, such as `slack`, `web`, or `email`."
+                      "description": "The integration surface, such as `slack` or `email`."
                     },
                     "locationRef": {
                       "type": "string",
@@ -232,7 +236,7 @@
                     },
                     "scopeId": {
                       "type": "string",
-                      "description": "The ID of the org or space scope this location resolves to."
+                      "description": "The ID of the organization or shared scope this location resolves to."
                     },
                     "createdAt": {
                       "type": "string",
@@ -310,7 +314,7 @@
                       },
                       "surface": {
                         "type": "string",
-                        "description": "The interface surface, such as `slack`, `web`, or `email`."
+                        "description": "The integration surface, such as `slack` or `email`."
                       },
                       "locationRef": {
                         "type": "string",
@@ -318,7 +322,7 @@
                       },
                       "scopeId": {
                         "type": "string",
-                        "description": "The ID of the org or space scope this location resolves to."
+                        "description": "The ID of the organization or shared scope this location resolves to."
                       },
                       "createdAt": {
                         "type": "string",
@@ -386,7 +390,7 @@
                     },
                     "surface": {
                       "type": "string",
-                      "description": "The interface surface, such as `slack`, `web`, or `email`."
+                      "description": "The integration surface, such as `slack` or `email`."
                     },
                     "locationRef": {
                       "type": "string",
@@ -394,7 +398,7 @@
                     },
                     "scopeId": {
                       "type": "string",
-                      "description": "The ID of the org or space scope this location resolves to."
+                      "description": "The ID of the organization or shared scope this location resolves to."
                     },
                     "createdAt": {
                       "type": "string",
@@ -1335,8 +1339,8 @@
     "/scopes": {
       "post": {
         "operationId": "scopes.create",
-        "summary": "Create a space",
-        "description": "Create a shared space scope in the active organization.",
+        "summary": "Create a shared scope",
+        "description": "Create a shared scope in the active organization.",
         "tags": [
           "Scopes"
         ],
@@ -1350,13 +1354,13 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "A display name for the space. Cannot be empty."
+                    "description": "A display name for the scope. Cannot be empty."
                   }
                 },
                 "required": [
                   "name"
                 ],
-                "description": "The space to create."
+                "description": "The shared scope to create."
               }
             }
           }
@@ -1376,7 +1380,7 @@
                     "kind": {
                       "enum": [
                         "org",
-                        "space",
+                        "shared",
                         "personal"
                       ],
                       "type": "string",
@@ -1430,7 +1434,7 @@
             "schema": {
               "enum": [
                 "org",
-                "space",
+                "shared",
                 "personal"
               ],
               "type": "string",
@@ -1457,7 +1461,7 @@
                       "kind": {
                         "enum": [
                           "org",
-                          "space",
+                          "shared",
                           "personal"
                         ],
                         "type": "string",
@@ -1535,7 +1539,7 @@
                     "kind": {
                       "enum": [
                         "org",
-                        "space",
+                        "shared",
                         "personal"
                       ],
                       "type": "string",
@@ -1577,8 +1581,8 @@
       },
       "patch": {
         "operationId": "scopes.rename",
-        "summary": "Rename a space",
-        "description": "Rename a space scope. Organization and personal scopes cannot be renamed.",
+        "summary": "Rename a shared scope",
+        "description": "Rename a shared scope. Organization and personal scopes cannot be renamed.",
         "tags": [
           "Scopes"
         ],
@@ -1590,7 +1594,7 @@
             "schema": {
               "type": "string",
               "format": "uuid",
-              "description": "The ID of the space to rename. A UUID."
+              "description": "The ID of the shared scope to rename. A UUID."
             }
           }
         ],
@@ -1604,13 +1608,13 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The space's new name. Cannot be empty."
+                    "description": "The scope's new name. Cannot be empty."
                   }
                 },
                 "required": [
                   "name"
                 ],
-                "description": "The space rename."
+                "description": "The shared scope rename."
               }
             }
           }
@@ -1630,7 +1634,7 @@
                     "kind": {
                       "enum": [
                         "org",
-                        "space",
+                        "shared",
                         "personal"
                       ],
                       "type": "string",
@@ -2014,6 +2018,61 @@
             }
           }
         }
+      }
+    },
+    "/surfaces": {
+      "get": {
+        "operationId": "surfaces.list",
+        "summary": "List surfaces",
+        "description": "List the catalog of integration-backed surfaces and their availability.",
+        "tags": [
+          "Surfaces"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The surface's stable identifier."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "The surface's display name."
+                      },
+                      "status": {
+                        "enum": [
+                          "planned",
+                          "available"
+                        ],
+                        "type": "string",
+                        "description": "Whether the surface is planned or available through an installed integration."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "status"
+                    ],
+                    "description": "An integration-backed surface that can provide bindable locations."
+                  },
+                  "description": "The surface catalog."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     }
   }

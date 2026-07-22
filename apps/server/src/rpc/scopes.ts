@@ -2,18 +2,18 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import {
-  createSpace,
+  createSharedScope,
   getScope,
   listScopes,
-  renameSpace,
+  renameSharedScope,
   ScopeNotFoundError,
   ScopeNotRenameableError,
 } from "#/services/scopes/index.js";
 import { requireCapability } from "./builders.js";
 
 const scopeKindSchema = z
-  .enum(["org", "space", "personal"])
-  .describe("The scope kind: `org`, `space`, or `personal`.");
+  .enum(["org", "shared", "personal"])
+  .describe("The scope kind: `org`, `shared`, or `personal`.");
 
 const scopeSchema = z
   .object({
@@ -27,24 +27,24 @@ const scopeSchema = z
   })
   .describe("A context scope in the active organization.");
 
-const create = requireCapability("manage_spaces")
+const create = requireCapability("manage_scopes")
   .route({
     method: "POST",
     path: "/scopes",
-    summary: "Create a space",
-    description: "Create a shared space scope in the active organization.",
+    summary: "Create a shared scope",
+    description: "Create a shared scope in the active organization.",
     tags: ["Scopes"],
   })
   .input(
     z
       .object({
-        name: z.string().trim().min(1).describe("A display name for the space. Cannot be empty."),
+        name: z.string().trim().min(1).describe("A display name for the scope. Cannot be empty."),
       })
-      .describe("The space to create."),
+      .describe("The shared scope to create."),
   )
   .output(scopeSchema)
   .handler(({ context, input }) =>
-    createSpace(context.db, {
+    createSharedScope(context.db, {
       orgId: context.org.id,
       actorPrincipalId: context.principal.id,
       name: input.name,
@@ -96,26 +96,26 @@ const get = requireCapability("read")
     }
   });
 
-const rename = requireCapability("manage_spaces")
+const rename = requireCapability("manage_scopes")
   .route({
     method: "PATCH",
     path: "/scopes/{id}",
-    summary: "Rename a space",
-    description: "Rename a space scope. Organization and personal scopes cannot be renamed.",
+    summary: "Rename a shared scope",
+    description: "Rename a shared scope. Organization and personal scopes cannot be renamed.",
     tags: ["Scopes"],
   })
   .input(
     z
       .object({
-        id: z.uuid().describe("The ID of the space to rename. A UUID."),
-        name: z.string().trim().min(1).describe("The space's new name. Cannot be empty."),
+        id: z.uuid().describe("The ID of the shared scope to rename. A UUID."),
+        name: z.string().trim().min(1).describe("The scope's new name. Cannot be empty."),
       })
-      .describe("The space rename."),
+      .describe("The shared scope rename."),
   )
   .output(scopeSchema)
   .handler(async ({ context, input }) => {
     try {
-      return await renameSpace(context.db, {
+      return await renameSharedScope(context.db, {
         orgId: context.org.id,
         actorPrincipalId: context.principal.id,
         scopeId: input.id,

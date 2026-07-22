@@ -10,6 +10,7 @@ import { parseEnv } from "#/lib/env/schema.js";
 import { bindingsRouter } from "#/rpc/bindings.js";
 import { orgRouter } from "#/rpc/org.js";
 import { scopesRouter } from "#/rpc/scopes.js";
+import { surfacesRouter } from "#/rpc/surfaces.js";
 import { resolveLocation } from "#/services/bindings/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -83,26 +84,26 @@ integration("scopes and surface bindings", () => {
 
   it("resolves explicit bindings, linked DMs, unlinked DMs, and unbound locations", async () => {
     const org = await createOrg();
-    const space = await call(
+    const sharedScope = await call(
       scopesRouter.create,
       { name: "Engineering" },
       { context: org.context },
     );
     const first = await call(
       bindingsRouter.create,
-      { surface: "slack", locationRef: "T1:C1", scopeId: space.id },
+      { surface: "slack", locationRef: "T1:C1", scopeId: sharedScope.id },
       { context: org.context },
     );
     await call(
       bindingsRouter.create,
-      { surface: "slack", locationRef: "T1:C2", scopeId: space.id },
+      { surface: "slack", locationRef: "T1:C2", scopeId: sharedScope.id },
       { context: org.context },
     );
 
     for (const locationRef of ["T1:C1", "T1:C2"]) {
       await expect(
         resolveLocation(db, { orgId: org.org.id, surface: "slack", locationRef }),
-      ).resolves.toMatchObject({ kind: "scope", scope: { id: space.id } });
+      ).resolves.toMatchObject({ kind: "scope", scope: { id: sharedScope.id } });
     }
 
     const human = await addMember(org.org.id, org.orgScope.id, "member", "Linked Human");
@@ -173,16 +174,20 @@ integration("scopes and surface bindings", () => {
         locationRef: "T1:C1",
         dm: { externalUserId: "U-UNKNOWN" },
       }),
-    ).resolves.toMatchObject({ kind: "scope", scope: { id: space.id } });
-    expect(first.scopeId).toBe(space.id);
+    ).resolves.toMatchObject({ kind: "scope", scope: { id: sharedScope.id } });
+    expect(first.scopeId).toBe(sharedScope.id);
   });
 
   it("rejects duplicate locations and personal-scope binding targets", async () => {
     const org = await createOrg();
-    const space = await call(scopesRouter.create, { name: "Support" }, { context: org.context });
+    const sharedScope = await call(
+      scopesRouter.create,
+      { name: "Support" },
+      { context: org.context },
+    );
     const existing = await call(
       bindingsRouter.create,
-      { surface: "slack", locationRef: "T1:C1", scopeId: space.id },
+      { surface: "slack", locationRef: "T1:C1", scopeId: sharedScope.id },
       { context: org.context },
     );
     await expect(
@@ -204,13 +209,13 @@ integration("scopes and surface bindings", () => {
     await expect(
       call(
         bindingsRouter.create,
-        { surface: "web", locationRef: "solo", scopeId: personal.id },
+        { surface: "email", locationRef: "solo", scopeId: personal.id },
         { context: org.context },
       ),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
-  it("enforces manage_spaces mutations while allowing read-capable members to list", async () => {
+  it("enforces manage_scopes mutations while allowing read-capable members to list", async () => {
     const org = await createOrg();
     const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Admin");
     const member = await addMember(org.org.id, org.orgScope.id, "member", "Member");
@@ -219,21 +224,21 @@ integration("scopes and surface bindings", () => {
     await expect(
       call(scopesRouter.create, { name: "Denied" }, { context: member.context }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    const space = await call(
+    const sharedScope = await call(
       scopesRouter.create,
-      { name: "Admin Space" },
+      { name: "Admin shared scope" },
       { context: admin.context },
     );
     await expect(
       call(
         bindingsRouter.create,
-        { surface: "web", locationRef: "member-room", scopeId: space.id },
+        { surface: "email", locationRef: "member-inbox", scopeId: sharedScope.id },
         { context: member.context },
       ),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     const binding = await call(
       bindingsRouter.create,
-      { surface: "web", locationRef: "admin-room", scopeId: space.id },
+      { surface: "email", locationRef: "admin-inbox", scopeId: sharedScope.id },
       { context: admin.context },
     );
 
@@ -242,19 +247,23 @@ integration("scopes and surface bindings", () => {
       await expect(call(bindingsRouter.list, {}, { context })).resolves.toHaveLength(1);
     }
     await expect(
-      call(scopesRouter.get, { id: space.id }, { context: viewer.context }),
-    ).resolves.toMatchObject({ id: space.id, kind: "space" });
+      call(scopesRouter.get, { id: sharedScope.id }, { context: viewer.context }),
+    ).resolves.toMatchObject({ id: sharedScope.id, kind: "shared" });
     await expect(
       call(bindingsRouter.delete, { id: binding.id }, { context: admin.context }),
     ).resolves.toMatchObject({ id: binding.id });
   });
 
-  it("renames spaces but rejects organization and personal scopes", async () => {
+  it("renames shared scopes but rejects organization and personal scopes", async () => {
     const org = await createOrg();
-    const space = await call(scopesRouter.create, { name: "Before" }, { context: org.context });
+    const sharedScope = await call(
+      scopesRouter.create,
+      { name: "Before" },
+      { context: org.context },
+    );
     await expect(
-      call(scopesRouter.rename, { id: space.id, name: "After" }, { context: org.context }),
-    ).resolves.toMatchObject({ id: space.id, name: "After" });
+      call(scopesRouter.rename, { id: sharedScope.id, name: "After" }, { context: org.context }),
+    ).resolves.toMatchObject({ id: sharedScope.id, name: "After" });
     await expect(
       call(scopesRouter.rename, { id: org.orgScope.id, name: "No" }, { context: org.context }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
@@ -270,5 +279,22 @@ integration("scopes and surface bindings", () => {
     await expect(
       call(scopesRouter.rename, { id: personal.id, name: "No" }, { context: org.context }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("lists the surface catalog and rejects an unknown binding surface", async () => {
+    const org = await createOrg();
+    await expect(call(surfacesRouter.list, undefined, { context: org.context })).resolves.toEqual([
+      { id: "slack", name: "Slack", status: "planned" },
+      { id: "linear", name: "Linear", status: "planned" },
+      { id: "github", name: "GitHub", status: "planned" },
+      { id: "email", name: "Email", status: "planned" },
+    ]);
+    await expect(
+      call(
+        bindingsRouter.create,
+        { surface: "discord", locationRef: "server:channel", scopeId: org.orgScope.id },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Unknown surface: discord" });
   });
 });

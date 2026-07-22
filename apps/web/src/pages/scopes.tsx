@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
 import { EmptyState } from "#/components/trema/empty-state.tsx";
 import { IdChip } from "#/components/trema/id-chip.tsx";
-import { MonoLabel } from "#/components/trema/mono-label.tsx";
 import { PageHeader } from "#/components/trema/page-header.tsx";
 import { RelativeTime } from "#/components/trema/relative-time.tsx";
 import { ScopeBadge } from "#/components/trema/scope-badge.tsx";
@@ -49,7 +48,7 @@ import { useViewerRole } from "#/pages/home.tsx";
 
 type Scope = {
   id: string;
-  kind: "org" | "space" | "personal";
+  kind: "org" | "shared" | "personal";
   name: string;
   ownerId: string | null;
 };
@@ -61,6 +60,12 @@ type Binding = {
   scopeId: string;
   createdAt: string;
   updatedAt: string;
+};
+
+type Surface = {
+  id: string;
+  name: string;
+  status: "planned" | "available";
 };
 
 function messageFrom(error: unknown) {
@@ -78,13 +83,15 @@ export function ScopesPage() {
     const all = (scopes.data ?? []) as Scope[];
     return {
       org: all.find((scope) => scope.kind === "org"),
-      spaces: all
-        .filter((scope) => scope.kind === "space")
+      sharedScopes: all
+        .filter((scope) => scope.kind === "shared")
         .sort((left, right) => left.name.localeCompare(right.name)),
       personalCount: all.filter((scope) => scope.kind === "personal").length,
     };
   }, [scopes.data]);
-  const selectable = organized.org ? [organized.org, ...organized.spaces] : organized.spaces;
+  const selectable = organized.org
+    ? [organized.org, ...organized.sharedScopes]
+    : organized.sharedScopes;
   const selectedScope = selectable.find((scope) => scope.id === scopeParam) ?? organized.org;
 
   useEffect(() => {
@@ -115,7 +122,7 @@ export function ScopesPage() {
         actions={
           canManage && !scopes.isPending && !scopes.error ? (
             <>
-              <NewSpaceDialog />
+              <NewScopeDialog />
               <Button onClick={() => setBindingOpen(true)}>
                 <Plus />
                 New binding
@@ -134,7 +141,7 @@ export function ScopesPage() {
           <ScopeTree
             loading={scopes.isPending}
             org={organized.org}
-            spaces={organized.spaces}
+            sharedScopes={organized.sharedScopes}
             personalCount={organized.personalCount}
             selectedId={selectedScope?.id}
             onSelect={selectScope}
@@ -170,14 +177,14 @@ export function ScopesPage() {
 function ScopeTree({
   loading,
   org,
-  spaces,
+  sharedScopes,
   personalCount,
   selectedId,
   onSelect,
 }: {
   loading: boolean;
   org: Scope | undefined;
-  spaces: Scope[];
+  sharedScopes: Scope[];
   personalCount: number;
   selectedId: string | undefined;
   onSelect: (scope: Scope) => void;
@@ -185,7 +192,7 @@ function ScopeTree({
   return (
     <aside className="self-start overflow-hidden rounded-lg border bg-card">
       <div className="border-b px-4 py-3">
-        <MonoLabel>Scope tree</MonoLabel>
+        <h2 className="text-chrome font-medium text-muted-foreground">Scope tree</h2>
       </div>
       <div className="p-2">
         {loading ? (
@@ -200,11 +207,11 @@ function ScopeTree({
             {org ? (
               <ScopeTreeRow scope={org} selected={org.id === selectedId} onSelect={onSelect} />
             ) : null}
-            {spaces.map((space) => (
+            {sharedScopes.map((sharedScope) => (
               <ScopeTreeRow
-                key={space.id}
-                scope={space}
-                selected={space.id === selectedId}
+                key={sharedScope.id}
+                scope={sharedScope}
+                selected={sharedScope.id === selectedId}
                 onSelect={onSelect}
                 nested
               />
@@ -305,12 +312,12 @@ function ScopeDetail({
           </div>
           <p className="mt-1 font-mono text-meta text-muted-foreground">{scope.id}</p>
         </div>
-        {canManage && scope.kind === "space" ? <RenameSpaceDialog scope={scope} /> : null}
+        {canManage && scope.kind === "shared" ? <RenameScopeDialog scope={scope} /> : null}
       </div>
 
       <div className="space-y-3">
         <div>
-          <MonoLabel>Bindings</MonoLabel>
+          <h3 className="text-chrome font-medium text-muted-foreground">Bindings</h3>
           <p className="mt-1 text-meta text-muted-foreground">
             Surface locations that resolve to this scope.
           </p>
@@ -329,7 +336,7 @@ function ScopeDetail({
               <EmptyState
                 icon={Inbox}
                 title="No bindings yet"
-                description="Bindings map surface locations, such as Slack channels and web rooms, to this scope."
+                description="Bindings map locations in connected integrations, such as Slack channels, to this scope."
                 action={
                   canManage ? (
                     <Button size="sm" onClick={onNewBinding}>
@@ -347,7 +354,7 @@ function ScopeDetail({
   );
 }
 
-function NewSpaceDialog() {
+function NewScopeDialog() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>();
@@ -357,7 +364,7 @@ function NewSpaceDialog() {
       await queryClient.invalidateQueries({
         queryKey: orpc.scopes.list.queryOptions({ input: {} }).queryKey,
       });
-      toast.success("Space created");
+      toast.success("Scope created");
       setOpen(false);
     },
   });
@@ -377,7 +384,7 @@ function NewSpaceDialog() {
     <>
       <Button variant="outline" onClick={() => setOpen(true)}>
         <Plus />
-        New space
+        New scope
       </Button>
       <Dialog
         open={open}
@@ -389,12 +396,12 @@ function NewSpaceDialog() {
         <DialogContent>
           <form onSubmit={submit} className="contents">
             <DialogHeader>
-              <DialogTitle>New space</DialogTitle>
+              <DialogTitle>New scope</DialogTitle>
               <DialogDescription>Create a shared scope under the organization.</DialogDescription>
             </DialogHeader>
             <div className="space-y-2">
-              <Label htmlFor="new-space-name">Name</Label>
-              <Input id="new-space-name" name="name" autoFocus required />
+              <Label htmlFor="new-scope-name">Name</Label>
+              <Input id="new-scope-name" name="name" autoFocus required />
             </div>
             {error ? <p className="text-meta text-destructive">{error}</p> : null}
             <DialogFooter>
@@ -404,7 +411,7 @@ function NewSpaceDialog() {
                 </Button>
               </DialogClose>
               <Button type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? "Creating…" : "Create space"}
+                {mutation.isPending ? "Creating…" : "Create scope"}
               </Button>
             </DialogFooter>
           </form>
@@ -414,7 +421,7 @@ function NewSpaceDialog() {
   );
 }
 
-function RenameSpaceDialog({ scope }: { scope: Scope }) {
+function RenameScopeDialog({ scope }: { scope: Scope }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>();
@@ -424,7 +431,7 @@ function RenameSpaceDialog({ scope }: { scope: Scope }) {
       await queryClient.invalidateQueries({
         queryKey: orpc.scopes.list.queryOptions({ input: {} }).queryKey,
       });
-      toast.success("Space renamed");
+      toast.success("Scope renamed");
       setOpen(false);
     },
   });
@@ -460,7 +467,7 @@ function RenameSpaceDialog({ scope }: { scope: Scope }) {
         <DialogContent>
           <form onSubmit={submit} className="contents">
             <DialogHeader>
-              <DialogTitle>Rename space</DialogTitle>
+              <DialogTitle>Rename scope</DialogTitle>
               <DialogDescription>Change the display name for this shared scope.</DialogDescription>
             </DialogHeader>
             <div className="space-y-2">
@@ -503,11 +510,20 @@ function NewBindingDialog({
   defaultScopeId: string;
 }) {
   const queryClient = useQueryClient();
+  const surfaces = useQuery(orpc.surfaces.list.queryOptions());
+  const availableSurfaces = useMemo(
+    () => ((surfaces.data ?? []) as Surface[]).filter((surface) => surface.status === "available"),
+    [surfaces.data],
+  );
+  const [surfaceId, setSurfaceId] = useState("");
   const [scopeId, setScopeId] = useState(defaultScopeId);
   const [error, setError] = useState<string>();
   useEffect(() => {
-    if (open) setScopeId(defaultScopeId);
-  }, [defaultScopeId, open]);
+    if (open) {
+      setScopeId(defaultScopeId);
+      setSurfaceId(availableSurfaces[0]?.id ?? "");
+    }
+  }, [availableSurfaces, defaultScopeId, open]);
   const mutation = useMutation({
     mutationFn: (input: { surface: string; locationRef: string; scopeId: string }) =>
       rpcClient.bindings.create(input),
@@ -526,7 +542,7 @@ function NewBindingDialog({
     const data = new FormData(event.currentTarget);
     try {
       await mutation.mutateAsync({
-        surface: String(data.get("surface")),
+        surface: surfaceId,
         locationRef: String(data.get("locationRef")),
         scopeId,
       });
@@ -539,63 +555,87 @@ function NewBindingDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (next) setScopeId(defaultScopeId);
+        if (next) {
+          setScopeId(defaultScopeId);
+          setSurfaceId(availableSurfaces[0]?.id ?? "");
+        }
         if (!next) setError(undefined);
         onOpenChange(next);
       }}
     >
       <DialogContent>
-        <form onSubmit={submit} className="contents">
-          <DialogHeader>
-            <DialogTitle>New binding</DialogTitle>
-            <DialogDescription>
-              Map a surface location to an organization or space scope.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="binding-surface">Surface</Label>
-            <Input id="binding-surface" name="surface" placeholder="slack" autoFocus required />
-            <p className="text-meta text-muted-foreground">
-              Examples include slack, web, and email.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="binding-location">Location ref</Label>
-            <Input
-              id="binding-location"
-              name="locationRef"
-              className="font-mono"
-              placeholder="workspace:channel"
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="binding-scope">Scope</Label>
-            <Select value={scopeId} onValueChange={setScopeId}>
-              <SelectTrigger id="binding-scope" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {scopes.map((scope) => (
-                  <SelectItem key={scope.id} value={scope.id}>
-                    {scope.name} ({scope.kind})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {error ? <p className="text-meta text-destructive">{error}</p> : null}
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button type="button" variant="outline">
-                Cancel
+        <DialogHeader>
+          <DialogTitle>New binding</DialogTitle>
+          <DialogDescription>
+            Map a surface location to an organization or shared scope.
+          </DialogDescription>
+        </DialogHeader>
+        {surfaces.isPending ? (
+          <Skeleton className="h-24 w-full" />
+        ) : surfaces.error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{surfaces.error.message}</AlertDescription>
+          </Alert>
+        ) : availableSurfaces.length === 0 ? (
+          <p className="text-chrome text-muted-foreground">
+            No surfaces are available yet. A surface arrives with an integration that provides one,
+            such as Slack.
+          </p>
+        ) : (
+          <form onSubmit={submit} className="contents">
+            <div className="space-y-2">
+              <Label htmlFor="binding-surface">Surface</Label>
+              <Select value={surfaceId} onValueChange={setSurfaceId} required>
+                <SelectTrigger id="binding-surface" className="w-full" autoFocus>
+                  <SelectValue placeholder="Select a surface" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableSurfaces.map((surface) => (
+                    <SelectItem key={surface.id} value={surface.id}>
+                      {surface.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="binding-location">Location ref</Label>
+              <Input
+                id="binding-location"
+                name="locationRef"
+                className="font-mono"
+                placeholder="workspace:channel"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="binding-scope">Scope</Label>
+              <Select value={scopeId} onValueChange={setScopeId}>
+                <SelectTrigger id="binding-scope" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {scopes.map((scope) => (
+                    <SelectItem key={scope.id} value={scope.id}>
+                      {scope.name} ({scope.kind})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {error ? <p className="text-meta text-destructive">{error}</p> : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={mutation.isPending}>
+                {mutation.isPending ? "Creating…" : "Create binding"}
               </Button>
-            </DialogClose>
-            <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? "Creating…" : "Create binding"}
-            </Button>
-          </DialogFooter>
-        </form>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );
