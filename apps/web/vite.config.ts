@@ -16,8 +16,8 @@ export default defineConfig({
     // fail instead of silently drifting to the next free port.
     strictPort: true,
     proxy: {
-      "/api": `http://127.0.0.1:${serverPort}`,
-      "/rpc": `http://127.0.0.1:${serverPort}`,
+      "/api": `http://localhost:${serverPort}`,
+      "/rpc": `http://localhost:${serverPort}`,
     },
   },
   resolve: {

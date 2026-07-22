@@ -1,22 +1,13 @@
-import type { LucideIcon } from "lucide-react";
 import {
   BookOpen,
   Brain,
   Check,
   ChevronsUpDown,
-  Gauge,
-  ListTree,
   LogOut,
   MessageSquarePlus,
-  Play,
-  Plug,
-  ScrollText,
   Search,
   Settings,
-  Shield,
-  ShieldCheck,
-  Sparkles,
-  Users,
+  UserRound,
   Zap,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
@@ -42,45 +33,14 @@ import {
 } from "#/components/ui/sidebar.tsx";
 
 type Organization = { id: string; name: string };
-type NavGroup = { label: string; items: { label: string; icon: LucideIcon; href?: string }[] };
-const navGroups: NavGroup[] = [
-  {
-    label: "Chat",
-    items: [
-      { label: "New chat", icon: MessageSquarePlus },
-      { label: "Search", icon: Search },
-    ],
-  },
-  {
-    label: "Runs",
-    items: [
-      { label: "Runs", icon: Play },
-      { label: "Approvals", icon: ShieldCheck },
-    ],
-  },
-  {
-    label: "Context",
-    items: [
-      { label: "Memory", icon: Brain },
-      { label: "Skills", icon: Sparkles },
-      { label: "Instructions", icon: BookOpen },
-      { label: "Connectors", icon: Plug },
-    ],
-  },
-  {
-    label: "Organization",
-    items: [
-      { label: "Scopes", icon: ListTree, href: "/scopes" },
-      { label: "Members", icon: Users },
-      { label: "Policies", icon: Shield },
-      { label: "Automations", icon: Zap },
-      { label: "Audit", icon: ScrollText },
-      { label: "Usage", icon: Gauge },
-      { label: "Settings", icon: Settings },
-      { label: "Gallery", icon: Sparkles, href: "/gallery" },
-    ],
-  },
-];
+type SessionSummary = { id: string; title: string };
+
+const navItems = [
+  { label: "New session", icon: MessageSquarePlus, href: "/" },
+  { label: "Search", icon: Search },
+  { label: "Automations", icon: Zap, href: "/automations" },
+  { label: "Context", icon: Brain, href: "/context" },
+] as const;
 
 export type AppSidebarProps = {
   organizations: Organization[];
@@ -88,11 +48,13 @@ export type AppSidebarProps = {
   name: string;
   email: string;
   role: string;
+  sessions?: SessionSummary[];
+  onSearch: () => void;
   onSwitch: (id: string) => void;
   onSignOut: () => void;
 };
 
-export function AppSidebar(props: AppSidebarProps) {
+export function AppSidebar({ sessions = [], ...props }: AppSidebarProps) {
   const location = useLocation();
   const active =
     props.organizations.find((org) => org.id === props.activeOrgId) ?? props.organizations[0];
@@ -126,38 +88,57 @@ export function AppSidebar(props: AppSidebarProps) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        {navGroups.map((group) => (
-          <SidebarGroup key={group.label}>
-            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {group.items.map((item) => (
-                  <SidebarMenuItem key={item.label}>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navItems.map((item) => (
+                <SidebarMenuItem key={item.label}>
+                  {"href" in item ? (
+                    <SidebarMenuButton asChild isActive={location.pathname === item.href}>
+                      <Link to={item.href} className="text-(length:--text-chrome)">
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  ) : (
                     <SidebarMenuButton
-                      asChild
-                      isActive={item.href !== undefined && location.pathname === item.href}
+                      type="button"
+                      onClick={props.onSearch}
+                      className="text-(length:--text-chrome)"
                     >
-                      {item.href ? (
-                        <Link to={item.href} className="text-(length:--text-chrome)">
-                          <item.icon />
-                          <span>{item.label}</span>
-                        </Link>
-                      ) : (
-                        <a
-                          href={`#${item.label.toLowerCase().replace(/\s+/g, "-")}`}
-                          className="text-(length:--text-chrome)"
-                        >
-                          <item.icon />
-                          <span>{item.label}</span>
-                        </a>
-                      )}
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </SidebarMenuButton>
+                  )}
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Recents</SidebarGroupLabel>
+          <SidebarGroupContent>
+            {sessions.length === 0 ? (
+              <p className="px-2 py-1.5 text-meta text-muted-foreground">No sessions yet</p>
+            ) : (
+              <SidebarMenu>
+                {sessions.map((session) => (
+                  <SidebarMenuItem key={session.id}>
+                    <SidebarMenuButton asChild>
+                      <Link
+                        to={`/sessions/${session.id}`}
+                        className="text-(length:--text-chrome)"
+                        title={session.title}
+                      >
+                        <span className="truncate">{session.title}</span>
+                      </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ))}
+            )}
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -178,7 +159,29 @@ export function AppSidebar(props: AppSidebarProps) {
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="top" className="w-56">
-                <DropdownMenuItem disabled>{props.name}</DropdownMenuItem>
+                <div className="px-2 py-1.5">
+                  <p className="truncate text-chrome font-medium">{props.name}</p>
+                  <p className="truncate text-meta text-muted-foreground">{props.email}</p>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link to="/settings/profile">
+                    <UserRound />
+                    Profile
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link to="/settings">
+                    <Settings />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a href="https://trema.so/docs" target="_blank" rel="noreferrer">
+                    <BookOpen />
+                    Docs
+                  </a>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={props.onSignOut}>
                   <LogOut />
@@ -192,3 +195,5 @@ export function AppSidebar(props: AppSidebarProps) {
     </Sidebar>
   );
 }
+
+export type { SessionSummary };

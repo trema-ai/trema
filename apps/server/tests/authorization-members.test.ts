@@ -173,6 +173,52 @@ integration("authorization, members, and invites", () => {
     await expect(authorize(first.principal, "read", second.scope.id, db)).resolves.toBe(false);
   });
 
+  it("renames an organization as its owner and rejects an admin", async () => {
+    const org = await createOrg("Before Rename");
+    const admin = await addMember(org.org.id, org.scope.id, "admin", "Rename Admin");
+
+    await expect(
+      call(orgRouter.update, { name: "  After Rename  " }, { context: org.context }),
+    ).resolves.toMatchObject({ id: org.org.id, name: "After Rename" });
+    await expect(
+      db.scope.findUniqueOrThrow({ where: { id: org.scope.id } }),
+    ).resolves.toMatchObject({ name: "After Rename" });
+    await expect(
+      db.auditLog.findFirst({ where: { orgId: org.org.id, action: "org.rename" } }),
+    ).resolves.toMatchObject({
+      actorPrincipalId: org.principal.id,
+      subject: org.org.id,
+      payload: { previousName: "Before Rename", name: "After Rename" },
+    });
+
+    await expect(
+      call(orgRouter.update, { name: "Admin Rename" }, { context: admin.context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(db.org.findUniqueOrThrow({ where: { id: org.org.id } })).resolves.toMatchObject({
+      name: "After Rename",
+    });
+  });
+
+  it("lists the grant creation time as the member join date", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.scope.id, "member", "Joined Member");
+    const grant = await db.grant.findUniqueOrThrow({
+      where: {
+        orgId_principalId_scopeId: {
+          orgId: org.org.id,
+          principalId: member.principal.id,
+          scopeId: org.scope.id,
+        },
+      },
+    });
+
+    const members = await call(membersRouter.list, undefined, { context: org.context });
+
+    expect(members.find(({ principal }) => principal.id === member.principal.id)).toMatchObject({
+      joinedAt: grant.createdAt.toISOString(),
+    });
+  });
+
   it("creates and redeems a hash-only invite for a fresh user", async () => {
     const org = await createOrg();
     const created = await call(

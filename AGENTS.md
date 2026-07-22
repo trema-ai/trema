@@ -45,7 +45,7 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   `apps/server/.env` from the example on first run, starts the Postgres
   container, applies migrations, and runs the server and the web app in
   watch mode. The web app proxies `/api` and `/rpc` to the server, so
-  develop against `http://127.0.0.1:5173`.
+  develop against `http://localhost:5173`.
 - The pieces are also individual tasks: `mise run db:up`,
   `mise run db:migrate`, `mise run dev:server`, `mise run dev:web`.
 - Parallel worktrees just work: `scripts/dev-env.sh` (sourced by mise's

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { Navigate, useNavigate } from "react-router";
 import { AppShell } from "#/components/trema/app-shell.tsx";
+import type { SessionSummary } from "#/components/trema/app-sidebar.tsx";
 import { AuthLayout } from "#/components/trema/auth-layout.tsx";
 import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
 import { Button } from "#/components/ui/button.tsx";
@@ -18,13 +19,36 @@ import { authClient, orpc, rpcClient } from "#/lib/api.ts";
 
 type ViewerRole = "owner" | "admin" | "member" | "viewer";
 
+type Organization = { id: string; name: string };
+type Principal = { id: string; displayName: string; email: string | null };
+type Membership = { org: Organization; principal: Principal };
+
+type AuthenticatedSessionValue = {
+  activeOrgId: string;
+  membership: Membership;
+  memberships: Membership[];
+  role: ViewerRole;
+  user: { name: string; email: string };
+  refreshSession: () => Promise<void>;
+  switchOrg: (orgId: string) => Promise<void>;
+  signOut: () => Promise<void>;
+};
+
 const ViewerRoleContext = createContext<ViewerRole>("member");
+const AuthenticatedSessionContext = createContext<AuthenticatedSessionValue | null>(null);
 
 export function useViewerRole() {
   return useContext(ViewerRoleContext);
 }
 
-export function AuthenticatedShell({
+export function useAuthenticatedSession() {
+  const context = useContext(AuthenticatedSessionContext);
+  if (!context)
+    throw new Error("useAuthenticatedSession must be used within AuthenticatedProvider");
+  return context;
+}
+
+export function AuthenticatedProvider({
   mode,
   children,
 }: {
@@ -69,19 +93,48 @@ export function AuthenticatedShell({
     navigate("/sign-in", { replace: true });
   }
   return (
-    <AppShell
-      orgName={membership.org.name}
-      sidebar={{
-        organizations: memberships.data.map(({ org }) => org),
+    <AuthenticatedSessionContext.Provider
+      value={{
         activeOrgId,
-        name: membership.principal.displayName,
-        email: membership.principal.email ?? session.data.user.email,
+        membership,
+        memberships: memberships.data,
         role,
-        onSwitch: switchOrg,
-        onSignOut: signOut,
+        user: { name: session.data.user.name, email: session.data.user.email },
+        refreshSession: async () => {
+          await session.refetch();
+        },
+        switchOrg,
+        signOut,
       }}
     >
       <ViewerRoleContext.Provider value={role}>{children}</ViewerRoleContext.Provider>
+    </AuthenticatedSessionContext.Provider>
+  );
+}
+
+export function AuthenticatedAppShell({
+  children,
+  sessions = [],
+}: {
+  children: ReactNode;
+  sessions?: SessionSummary[];
+}) {
+  const session = useAuthenticatedSession();
+  return (
+    <AppShell
+      orgName={session.membership.org.name}
+      sessions={sessions}
+      sidebar={{
+        organizations: session.memberships.map(({ org }) => org),
+        activeOrgId: session.activeOrgId,
+        name: session.membership.principal.displayName,
+        email: session.membership.principal.email ?? session.user.email,
+        role: session.role,
+        onSwitch: session.switchOrg,
+        onSignOut: session.signOut,
+      }}
+    >
+      {children}
     </AppShell>
   );
 }
