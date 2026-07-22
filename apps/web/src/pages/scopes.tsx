@@ -267,7 +267,8 @@ function PersonalPolicyRow() {
         )}
       </div>
       <p className="text-meta text-muted-foreground">
-        When enabled, direct messages get a private scope per member.
+        When enabled, members can message the agent privately. What it learns there is visible
+        only to them.
       </p>
     </div>
   );
