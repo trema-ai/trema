@@ -194,9 +194,6 @@ function ScopeTree({
 }) {
   return (
     <aside className="self-start overflow-hidden rounded-lg border bg-card">
-      <div className="border-b px-4 py-3">
-        <h2 className="text-chrome font-medium text-muted-foreground">Scope tree</h2>
-      </div>
       <div className="p-2">
         {loading ? (
           <div className="space-y-2 p-2">
