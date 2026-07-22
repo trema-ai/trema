@@ -580,11 +580,16 @@
                         ],
                         "type": "string",
                         "description": "The member's role on the organization scope."
+                      },
+                      "joinedAt": {
+                        "type": "string",
+                        "description": "When the member joined the organization. An ISO 8601 date-time."
                       }
                     },
                     "required": [
                       "principal",
-                      "role"
+                      "role",
+                      "joinedAt"
                     ],
                     "description": "A member of the organization and the role they hold."
                   },
@@ -687,11 +692,16 @@
                       ],
                       "type": "string",
                       "description": "The member's role on the organization scope."
+                    },
+                    "joinedAt": {
+                      "type": "string",
+                      "description": "When the member joined the organization. An ISO 8601 date-time."
                     }
                   },
                   "required": [
                     "principal",
-                    "role"
+                    "role",
+                    "joinedAt"
                   ],
                   "description": "A member of the organization and the role they hold."
                 }
@@ -1222,6 +1232,66 @@
                     "principal"
                   ],
                   "description": "An organization and the caller's principal in it."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "org.update",
+        "summary": "Rename the active organization",
+        "description": "Change the active organization's display name.",
+        "tags": [
+          "Organizations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The organization's new display name. Cannot be empty."
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The organization's unique ID. A UUID (version 7)."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The organization's display name."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "description": "The renamed organization."
                 }
               }
             }

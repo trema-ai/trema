@@ -32,6 +32,16 @@ function createConfiguredAuth({ db, env }: AuthDependencies) {
     },
     socialProviders,
     databaseHooks: {
+      user: {
+        update: {
+          after: async (user) => {
+            await db.principal.updateMany({
+              where: { authId: user.id, kind: "human" },
+              data: { displayName: user.name },
+            });
+          },
+        },
+      },
       session: {
         create: {
           before: async (session) => {
