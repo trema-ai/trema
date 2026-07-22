@@ -1,8 +1,8 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { createOrgWithOwner } from "#/services/org/index.js";
-import { authed, orgScoped } from "./builders.js";
+import { createOrgWithOwner, OrganizationNameError, renameOrg } from "#/services/org/index.js";
+import { authed, orgScoped, requireCapability } from "./builders.js";
 
 const orgSchema = z.object({
   id: z.string().describe("The organization's unique ID. A UUID (version 7)."),
@@ -123,6 +123,39 @@ const current = orgScoped
     principal: context.principal,
   }));
 
+const update = requireCapability("manage_org")
+  .route({
+    method: "PATCH",
+    path: "/orgs/current",
+    summary: "Rename the active organization",
+    description: "Change the active organization's display name.",
+    tags: ["Organizations"],
+  })
+  .input(
+    z.object({
+      name: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("The organization's new display name. Cannot be empty."),
+    }),
+  )
+  .output(orgSchema.describe("The renamed organization."))
+  .handler(async ({ context, input }) => {
+    try {
+      return await renameOrg(context.db, {
+        orgId: context.org.id,
+        actorPrincipalId: context.principal.id,
+        name: input.name,
+      });
+    } catch (error) {
+      if (error instanceof OrganizationNameError) {
+        throw new ORPCError("BAD_REQUEST", { message: error.message });
+      }
+      throw error;
+    }
+  });
+
 const switchOrg = authed
   .route({
     method: "POST",
@@ -169,5 +202,6 @@ export const orgRouter = {
   create,
   list,
   current,
+  update,
   switch: switchOrg,
 };

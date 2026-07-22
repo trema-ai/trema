@@ -31,6 +31,9 @@ const memberSchema = z
   .object({
     principal: principalSchema.describe("The member's principal."),
     role: roleSchema.describe("The member's role on the organization scope."),
+    joinedAt: z
+      .string()
+      .describe("When the member joined the organization. An ISO 8601 date-time."),
   })
   .describe("A member of the organization and the role they hold.");
 
@@ -44,9 +47,10 @@ const list = requireCapability("read")
   })
   .output(z.array(memberSchema).describe("The human members of the active organization."))
   .handler(async ({ context }) =>
-    (await listMembers(context.db, context.org.id)).map(({ principal, role }) => ({
+    (await listMembers(context.db, context.org.id)).map(({ principal, role, createdAt }) => ({
       principal,
       role,
+      joinedAt: createdAt.toISOString(),
     })),
   );
 
@@ -74,7 +78,11 @@ const setRole = requireCapability("manage_members")
         principalId: input.principalId,
         role: input.role,
       });
-      return { principal: result.principal, role: result.grant.role };
+      return {
+        principal: result.principal,
+        role: result.grant.role,
+        joinedAt: result.grant.createdAt.toISOString(),
+      };
     } catch (error) {
       if (error instanceof MemberConflictError) {
         throw new ORPCError("CONFLICT", { message: error.message });

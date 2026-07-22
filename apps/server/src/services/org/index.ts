@@ -1,6 +1,13 @@
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
 
+export class OrganizationNameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OrganizationNameError";
+  }
+}
+
 export interface OrgOwner {
   authId: string;
   displayName: string;
@@ -71,5 +78,42 @@ export async function createOrgWithOwner(
     const result = { org, ownerPrincipal };
     await hooks.afterCreate?.(transaction, result);
     return result;
+  });
+}
+
+export interface RenameOrgInput {
+  orgId: string;
+  actorPrincipalId: string;
+  name: string;
+}
+
+export async function renameOrg(db: Database, input: RenameOrgInput) {
+  const name = input.name.trim();
+  if (!name) {
+    throw new OrganizationNameError("Organization name cannot be empty");
+  }
+
+  return db.$transaction(async (transaction) => {
+    const existing = await transaction.org.findUniqueOrThrow({
+      where: { id: input.orgId },
+    });
+    const org = await transaction.org.update({
+      where: { id: input.orgId },
+      data: { name },
+    });
+    await transaction.scope.updateMany({
+      where: { orgId: input.orgId, kind: "org" },
+      data: { name },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: input.actorPrincipalId,
+        action: "org.rename",
+        subject: org.id,
+        payload: { previousName: existing.name, name: org.name },
+      },
+    });
+    return org;
   });
 }
