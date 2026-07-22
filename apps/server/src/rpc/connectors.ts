@@ -10,18 +10,27 @@ import {
   ConnectorCatalogDefectError,
   ConnectorCredentialNotFoundError,
   ConnectorInstallationError,
+  ConnectorInstallationNotFoundError,
+  ConnectorInstallationValidationError,
+  ConnectorMemberConnectabilityError,
   ConnectorProviderNotFoundError,
+  ConnectorSyncTransportError,
   CredentialVerificationError,
   createClientRegistration,
+  createConnectorInstallation,
   createStaticCredential,
   deleteClientRegistration,
   listClientRegistrations,
   listConnectorCredentials,
+  loadProviderCatalog,
   NoClientRegistrationError,
   revokeConnectorCredential,
   StaticCredentialValidationError,
+  sensitivities,
   startOAuthConnect,
+  syncConnectorInstallation,
   UnsupportedConnectorAuthModeError,
+  updateConnectorInstallation,
 } from "#/services/connectors/index.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
@@ -87,15 +96,20 @@ function throwConnectorError(error: unknown): never {
   if (
     error instanceof ClientRegistrationValidationError ||
     error instanceof ConnectorInstallationError ||
+    error instanceof ConnectorInstallationValidationError ||
     error instanceof StaticCredentialValidationError ||
     error instanceof UnsupportedConnectorAuthModeError ||
     error instanceof ConnectorCatalogDefectError
   ) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
+  if (error instanceof ConnectorMemberConnectabilityError) {
+    throw new ORPCError("FORBIDDEN", { message: error.message });
+  }
   if (
     error instanceof ClientRegistrationNotFoundError ||
     error instanceof ConnectorCredentialNotFoundError ||
+    error instanceof ConnectorInstallationNotFoundError ||
     error instanceof ConnectorProviderNotFoundError
   ) {
     throw new ORPCError("NOT_FOUND", { message: error.message });
@@ -108,6 +122,9 @@ function throwConnectorError(error: unknown): never {
   }
   if (error instanceof CredentialVerificationError) {
     throw new ORPCError("BAD_GATEWAY", { message: error.message });
+  }
+  if (error instanceof ConnectorSyncTransportError) {
+    throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
   throw error;
 }
@@ -204,6 +221,202 @@ const installationScoped = orgScoped.use(async ({ context, next }, input) => {
   }
   return next({ context: { authorizedScopeId: item.scopeId } });
 });
+
+const sensitivitySchema = z.enum(sensitivities);
+const enabledToolsSchema = z.union([z.literal("all"), z.array(z.string().trim().min(1))]);
+const sensitivityOverridesSchema = z.record(z.string().trim().min(1), sensitivitySchema);
+const installationSchema = z.object({
+  id: z.uuid(),
+  scopeId: z.uuid(),
+  kind: z.literal("connector"),
+  title: z.string(),
+  body: z.json(),
+  status: z.enum(["proposed", "active", "archived"]),
+  disclosure: z.enum(["standing", "retrieved"]),
+  createdById: z.uuid(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  version: z.number().int().positive(),
+});
+
+function serializeInstallation(
+  installation: Awaited<ReturnType<typeof createConnectorInstallation>>,
+) {
+  return {
+    id: installation.id,
+    scopeId: installation.scopeId,
+    kind: "connector" as const,
+    title: installation.title,
+    body: installation.body as z.infer<typeof installationSchema>["body"],
+    status: installation.status,
+    disclosure: installation.disclosure,
+    createdById: installation.createdById,
+    createdAt: installation.createdAt.toISOString(),
+    updatedAt: installation.updatedAt.toISOString(),
+    version: installation.version,
+  };
+}
+
+const createInstallation = requireCapability("manage_connectors", {
+  scopeId: (input) => (input as { scopeId?: string }).scopeId,
+})
+  .route({
+    method: "POST",
+    path: "/connector-installations",
+    summary: "Create a connector installation",
+    description: "Install a catalog provider into an authorized context scope.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      scopeId: z.uuid(),
+      catalogKey: z.string().trim().min(1),
+      enabledTools: enabledToolsSchema,
+      sensitivityOverrides: sensitivityOverridesSchema.optional(),
+    }),
+  )
+  .output(installationSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      return serializeInstallation(
+        await createConnectorInstallation(context.db, {
+          orgId: context.org.id,
+          actorPrincipalId: context.principal.id,
+          scopeId: input.scopeId,
+          catalogKey: input.catalogKey,
+          enabledTools: input.enabledTools,
+          ...(input.sensitivityOverrides
+            ? { sensitivityOverrides: input.sensitivityOverrides }
+            : {}),
+        }),
+      );
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const updateInstallation = installationScoped
+  .route({
+    method: "PATCH",
+    path: "/connector-installations/{installationItemId}",
+    summary: "Update a connector installation",
+    description: "Update only tool intent and sensitivity overrides for an installation.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z
+      .object({
+        installationItemId: z.uuid(),
+        enabledTools: enabledToolsSchema.optional(),
+        sensitivityOverrides: sensitivityOverridesSchema.optional(),
+      })
+      .refine(
+        (input) => input.enabledTools !== undefined || input.sensitivityOverrides !== undefined,
+        { message: "At least one editable field is required" },
+      ),
+  )
+  .output(installationSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      return serializeInstallation(
+        await updateConnectorInstallation(context.db, {
+          orgId: context.org.id,
+          actorPrincipalId: context.principal.id,
+          installationItemId: input.installationItemId,
+          ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
+          ...(input.sensitivityOverrides !== undefined
+            ? { sensitivityOverrides: input.sensitivityOverrides }
+            : {}),
+        }),
+      );
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const catalog = orgScoped
+  .route({
+    method: "GET",
+    path: "/connector-catalog",
+    summary: "List connector providers",
+    description: "List member-safe connector catalog metadata without auth recipes or URLs.",
+    tags: ["Connectors"],
+  })
+  .output(
+    z.array(
+      z.object({
+        key: z.string(),
+        displayName: z.string(),
+        categories: z.array(z.string()),
+        docsUrl: z.url(),
+        authMode: z.string(),
+        transport: z.object({ type: z.enum(["mcp", "rest"]) }),
+        memberConnectable: z.boolean(),
+        toolManifest: z
+          .array(z.object({ name: z.string(), sensitivity: sensitivitySchema }))
+          .optional(),
+      }),
+    ),
+  )
+  .handler(() =>
+    loadProviderCatalog().map((provider) => ({
+      key: provider.key,
+      displayName: provider.displayName,
+      categories: provider.categories,
+      docsUrl: provider.docsUrl,
+      authMode: provider.authMode,
+      transport: { type: provider.transport.type },
+      memberConnectable: provider.memberConnectable,
+      ...(provider.transport.type === "rest"
+        ? {
+            toolManifest: provider.toolManifest.map(({ name, sensitivity }) => ({
+              name,
+              sensitivity,
+            })),
+          }
+        : {}),
+    })),
+  );
+
+const syncInstallation = installationScoped
+  .route({
+    method: "POST",
+    path: "/connector-installations/{installationItemId}/sync",
+    summary: "Sync MCP connector tools",
+    description: "Refresh an MCP installation's tool list and apply tool drift rules.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ installationItemId: z.uuid() }))
+  .output(
+    z.object({
+      installation: installationSchema,
+      report: z.object({
+        added: z.array(z.string()),
+        removed: z.array(z.string()),
+        changed: z.array(z.string()),
+      }),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    try {
+      const result = await syncConnectorInstallation(context.db, {
+        orgId: context.org.id,
+        actorPrincipalId: context.principal.id,
+        installationItemId: input.installationItemId,
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+        ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+      });
+      return {
+        installation: serializeInstallation(result.installation),
+        report: result.report,
+      };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
 
 const startOAuth = installationScoped
   .route({
@@ -327,6 +540,12 @@ const revokeCredential = installationScoped
   });
 
 export const connectorsRouter = {
+  catalog: { list: catalog },
+  installations: {
+    create: createInstallation,
+    update: updateInstallation,
+    sync: syncInstallation,
+  },
   registrations: {
     create: createRegistration,
     list: listRegistrations,

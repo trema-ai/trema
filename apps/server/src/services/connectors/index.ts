@@ -29,6 +29,25 @@ export {
   providerHookRegistry,
 } from "#/services/connectors/hooks.js";
 export {
+  type ConnectorInstallationBody,
+  ConnectorInstallationNotFoundError,
+  ConnectorInstallationValidationError,
+  ConnectorMemberConnectabilityError,
+  type CreateConnectorInstallationInput,
+  connectorInstallationBodySchema,
+  createConnectorInstallation,
+  createConnectorInstallationBodySchema,
+  type ResolvedInstallationTool,
+  resolveInstallationTools,
+  type Sensitivity,
+  type SyncedTool,
+  sensitivities,
+  sensitivitySchema,
+  syncedToolSchema,
+  type UpdateConnectorInstallationInput,
+  updateConnectorInstallation,
+} from "#/services/connectors/installations.js";
+export {
   githubProvider,
   linearProvider,
   notionMcpProvider,
@@ -72,6 +91,20 @@ export {
   toolDefinitionSchema,
   transportSchema,
 } from "#/services/connectors/schema.js";
+export {
+  ConnectorSyncTransportError,
+  createStreamableHttpMcpClient,
+  type McpClientFactory,
+  type McpClientFactoryInput,
+  type McpListedTool,
+  type McpToolsClient,
+  mapMcpTool,
+  mergeSyncedTools,
+  type SyncConnectorInstallationInput,
+  type SyncReport,
+  sensitivityFromMcpAnnotations,
+  syncConnectorInstallation,
+} from "#/services/connectors/sync.js";
 export {
   extractPlaceholders,
   interpolate,

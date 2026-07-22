@@ -15,6 +15,7 @@ import {
   completeOAuthCallback,
   consumeOAuthState,
   hashOAuthState,
+  type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
   OAuthTokenExchangeError,
@@ -26,6 +27,7 @@ export interface AppDependencies {
   auth: Auth;
   env: Environment;
   connectorFetch?: ConnectorFetch;
+  mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
 }
 
@@ -58,7 +60,14 @@ function withConnectorError(url: string, code: string): string {
   return redirect.toString();
 }
 
-export function createApp({ db, auth, env, connectorFetch, platformApps }: AppDependencies): Hono {
+export function createApp({
+  db,
+  auth,
+  env,
+  connectorFetch,
+  mcpClientFactory,
+  platformApps,
+}: AppDependencies): Hono {
   const app = new Hono();
   const rpcHandler = new RPCHandler(router, {
     interceptors: [
@@ -154,6 +163,7 @@ export function createApp({ db, auth, env, connectorFetch, platformApps }: AppDe
         auth,
         env,
         ...(connectorFetch ? { connectorFetch } : {}),
+        ...(mcpClientFactory ? { mcpClientFactory } : {}),
         ...(platformApps ? { platformApps } : {}),
       },
     });
@@ -174,6 +184,7 @@ export function createApp({ db, auth, env, connectorFetch, platformApps }: AppDe
         auth,
         env,
         ...(connectorFetch ? { connectorFetch } : {}),
+        ...(mcpClientFactory ? { mcpClientFactory } : {}),
         ...(platformApps ? { platformApps } : {}),
       },
     });

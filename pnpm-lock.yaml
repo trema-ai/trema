@@ -42,6 +42,9 @@ importers:
       '@hono/node-server':
         specifier: ^2.0.10
         version: 2.0.10(hono@4.12.31)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(supports-color@10.2.2)(zod@3.25.76)
       '@orpc/openapi':
         specifier: ^1.14.8
         version: 1.14.8(@opentelemetry/api@1.9.0)(crossws@0.3.5)(ws@8.21.0)
