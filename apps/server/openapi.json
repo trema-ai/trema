@@ -2479,6 +2479,167 @@
         ]
       }
     },
+    "/items/{id}/versions": {
+      "get": {
+        "operationId": "items.versions",
+        "summary": "List prior item versions",
+        "description": "List the item's retained prior versions in descending order. The item row itself is the current version.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the item whose versions to list. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "exclusiveMinimum": 0,
+                        "description": "The prior version number."
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "The item's title at this prior version."
+                      },
+                      "body": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {},
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {},
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "description": "The item's kind-specific body at this prior version."
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "description": "When this prior version was retained. An ISO 8601 date-time."
+                      }
+                    },
+                    "required": [
+                      "version",
+                      "title",
+                      "body",
+                      "createdAt"
+                    ],
+                    "description": "A retained prior version of an item."
+                  },
+                  "description": "The item's retained prior versions."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/items/{id}/activate": {
       "post": {
         "operationId": "items.activate",
@@ -3728,7 +3889,7 @@
       "get": {
         "operationId": "scopes.list",
         "summary": "List scopes",
-        "description": "List scopes in the active organization, optionally filtered by kind.",
+        "description": "List scopes in the active organization filtered to what the caller may see, optionally filtered by kind.",
         "tags": [
           "Scopes"
         ],

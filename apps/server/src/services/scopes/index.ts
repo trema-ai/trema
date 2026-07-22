@@ -1,5 +1,11 @@
-import type { ScopeKind } from "#/generated/prisma/client.js";
+import type { Prisma, Scope, ScopeKind } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+
+type ScopeDatabase = Database | Prisma.TransactionClient;
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
 
 export class ScopeNotFoundError extends Error {
   constructor(message: string) {
@@ -19,6 +25,40 @@ export interface CreateSharedScopeInput {
   orgId: string;
   actorPrincipalId: string;
   name: string;
+}
+
+export async function ensurePersonalScope(
+  db: ScopeDatabase,
+  input: { orgId: string; principalId: string; displayName: string },
+): Promise<Scope> {
+  const existing = await db.scope.findFirst({
+    where: {
+      orgId: input.orgId,
+      kind: "personal",
+      ownerId: input.principalId,
+    },
+  });
+  if (existing) return existing;
+
+  try {
+    return await db.scope.create({
+      data: {
+        orgId: input.orgId,
+        kind: "personal",
+        ownerId: input.principalId,
+        name: input.displayName,
+      },
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    return db.scope.findFirstOrThrow({
+      where: {
+        orgId: input.orgId,
+        kind: "personal",
+        ownerId: input.principalId,
+      },
+    });
+  }
 }
 
 export async function createSharedScope(db: Database, input: CreateSharedScopeInput) {
@@ -79,6 +119,19 @@ export async function setPersonalPolicy(db: Database, input: SetPersonalPolicyIn
       data: { personalScopesEnabled: input.enabled },
       select: { personalScopesEnabled: true },
     });
+    if (org.personalScopesEnabled) {
+      const humans = await transaction.principal.findMany({
+        where: { orgId: input.orgId, kind: "human" },
+        select: { id: true, displayName: true },
+      });
+      for (const principal of humans) {
+        await ensurePersonalScope(transaction, {
+          orgId: input.orgId,
+          principalId: principal.id,
+          displayName: principal.displayName,
+        });
+      }
+    }
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,

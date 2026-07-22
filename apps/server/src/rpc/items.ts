@@ -1,7 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import type { Item } from "#/generated/prisma/client.js";
+import type { Item, ItemVersion } from "#/generated/prisma/client.js";
 import { orgScoped, requireCapability } from "#/rpc/builders.js";
 import { authorize, type Capability } from "#/services/authorize/index.js";
 import {
@@ -12,6 +12,7 @@ import {
   ItemNotFoundError,
   ItemValidationError,
   listItems,
+  listItemVersions,
   restoreItem,
   updateItem,
 } from "#/services/items/index.js";
@@ -71,6 +72,24 @@ function serializeItem(item: Item) {
     updatedAt: item.updatedAt.toISOString(),
     lastUsedAt: item.lastUsedAt?.toISOString() ?? null,
     version: item.version,
+  };
+}
+
+const itemVersionSchema = z
+  .object({
+    version: z.number().int().positive().describe("The prior version number."),
+    title: z.string().describe("The item's title at this prior version."),
+    body: itemBodySchema.describe("The item's kind-specific body at this prior version."),
+    createdAt: z.string().describe("When this prior version was retained. An ISO 8601 date-time."),
+  })
+  .describe("A retained prior version of an item.");
+
+function serializeItemVersion(version: ItemVersion) {
+  return {
+    version: version.version,
+    title: version.title,
+    body: version.body as z.infer<typeof itemBodySchema>,
+    createdAt: version.createdAt.toISOString(),
   };
 }
 
@@ -216,6 +235,27 @@ const get = itemScoped("read")
     }
   });
 
+const versions = itemScoped("read")
+  .route({
+    method: "GET",
+    path: "/items/{id}/versions",
+    summary: "List prior item versions",
+    description:
+      "List the item's retained prior versions in descending order. The item row itself is the current version.",
+    tags: ["Items"],
+  })
+  .input(z.object({ id: z.uuid().describe("The ID of the item whose versions to list. A UUID.") }))
+  .output(z.array(itemVersionSchema).describe("The item's retained prior versions."))
+  .handler(async ({ context, input }) => {
+    try {
+      return (await listItemVersions(context.db, context.org.id, input.id)).map(
+        serializeItemVersion,
+      );
+    } catch (error) {
+      throwItemError(error);
+    }
+  });
+
 const updateInput = z
   .object({
     id: z.uuid().describe("The ID of the item to update. A UUID."),
@@ -289,6 +329,7 @@ export const itemsRouter = {
   create,
   list,
   get,
+  versions,
   update,
   activate: lifecycleRoute("activate"),
   archive: lifecycleRoute("archive"),
