@@ -132,6 +132,11 @@ integration("scopes and surface bindings", () => {
       throw new Error("Linked DM did not resolve to a scope");
     }
     expect(personalAgain.scope.id).toBe(personal.scope.id);
+    const dmBindings = await db.binding.findMany({
+      where: { orgId: org.org.id, surface: "slack", locationRef: "T1:D1" },
+    });
+    expect(dmBindings).toHaveLength(1);
+    expect(dmBindings[0]?.scopeId).toBe(personal.scope.id);
 
     await expect(
       resolveLocation(db, {

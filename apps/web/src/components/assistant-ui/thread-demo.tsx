@@ -45,7 +45,7 @@ const markdownTable = `Here is a small comparison table:
 
 Anything else you want to see?`;
 
-const cannedReply = `Sure — here is a **streamed** reply.
+const cannedReply = `Sure, here is a **streamed** reply.
 
 It arrives a few words at a time, with a list:
 
@@ -60,7 +60,7 @@ echo "done"
 const initialMessages: readonly ThreadMessageLike[] = [
   { role: "user", content: "What can you render in a reply?" },
   { role: "assistant", content: markdownTour },
-  { role: "user", content: "Nice — show me a table too." },
+  { role: "user", content: "Nice, show me a table too." },
   { role: "assistant", content: markdownTable },
 ];
 

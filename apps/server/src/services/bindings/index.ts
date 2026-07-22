@@ -262,5 +262,19 @@ export async function resolveLocation(
     principalId: identity.principal.id,
     displayName: identity.principal.displayName,
   });
+  // The DM binding persists so admins can see where personal scopes are
+  // reachable; a concurrent first DM loses the unique race harmlessly.
+  try {
+    await db.binding.create({
+      data: {
+        orgId: input.orgId,
+        surface: input.surface,
+        locationRef: input.locationRef,
+        scopeId: scope.id,
+      },
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
   return { kind: "scope", scope };
 }

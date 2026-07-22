@@ -253,24 +253,24 @@ function TypographySection() {
   return (
     <Section title="Typography">
       <div className="space-y-3">
-        <Variant label="text-chrome — 13px UI text">
+        <Variant label="text-chrome: 13px UI text">
           <p className="text-chrome">Runs, approvals, and settings use this size for controls.</p>
         </Variant>
-        <Variant label="text-meta — 12px descriptions">
+        <Variant label="text-meta: 12px descriptions">
           <p className="text-meta text-muted-foreground">
             Secondary descriptions and captions sit one step below chrome.
           </p>
         </Variant>
-        <Variant label="text-chat — 15px chat prose">
+        <Variant label="text-chat: 15px chat prose">
           <p className="text-chat">Agent replies read at a comfortable prose size.</p>
         </Variant>
-        <Variant label="text-log — 12.5px mono log lines">
+        <Variant label="text-log: 12.5px mono log lines">
           <p className="font-mono text-log">12:04:11.352 worker checkpoint saved seq=418</p>
         </Variant>
         <Variant label="13px sentence-case section label">
           <span className="text-chrome font-medium text-muted-foreground">Section label</span>
         </Variant>
-        <Variant label="font-mono — the spec register">
+        <Variant label="font-mono: the spec register">
           <p className="font-mono text-chrome">run_66a2 · org/support · 2026-07-21T09:14:02Z</p>
         </Variant>
       </div>
@@ -484,7 +484,7 @@ function IdentitySection() {
             <RelativeTime date={new Date(Date.now() + 2 * 3_600_000)} />
           </Variant>
         </Row>
-        <Variant label="KeyValueList — plain, mono, and ReactNode values">
+        <Variant label="KeyValueList: plain, mono, and ReactNode values">
           <KeyValueList
             className="w-96 max-w-full"
             items={[
@@ -606,7 +606,7 @@ function OverlaysSection() {
               onClick={() => {
                 setToastCount((count) => count + 1);
                 toast("Run archived", {
-                  description: `Toast ${toastCount + 1} — undo is available for 10s.`,
+                  description: `Toast ${toastCount + 1}. Undo is available for 10s.`,
                 });
               }}
             >
@@ -614,7 +614,7 @@ function OverlaysSection() {
             </Button>
           </Variant>
         </Row>
-        <Variant label="Command — static, inside a bordered frame">
+        <Variant label="Command: static, inside a bordered frame">
           <Command className="w-80 rounded-lg border">
             <CommandInput placeholder="Type a command…" />
             <CommandList>
@@ -706,7 +706,7 @@ function ApprovalsSection() {
             onResolve={(optionId) => toast(`Resolved: ${optionId}`)}
           />
         </Variant>
-        <Variant label="Resolved — approved">
+        <Variant label="Resolved: approved">
           <ApprovalCard
             className="w-105 max-w-full"
             headline="Create an issue in Linear"
@@ -723,7 +723,7 @@ function ApprovalsSection() {
             resolution={{ outcome: "approved", by: "Nelson", at: new Date() }}
           />
         </Variant>
-        <Variant label="Resolved — denied">
+        <Variant label="Resolved: denied">
           <ApprovalCard
             className="w-105 max-w-full"
             headline="Delete 12 stale records"
@@ -739,7 +739,7 @@ function ApprovalsSection() {
             resolution={{ outcome: "denied", by: "Ada", at: new Date() }}
           />
         </Variant>
-        <Variant label="Resolved — expired">
+        <Variant label="Resolved: expired">
           <ApprovalCard
             className="w-105 max-w-full"
             headline="Confirm before sending"
@@ -797,7 +797,7 @@ function TimelineSection() {
           <UnknownEventsLine count={3} />
         </div>
         <div className="grid gap-4 lg:grid-cols-3">
-          <Variant label="OutputViewer json — large array, collapsed">
+          <Variant label="OutputViewer json: large array, collapsed">
             <OutputViewer className="w-full min-w-64" output={{ type: "json", value: largeJson }} />
           </Variant>
           <Variant label="OutputViewer text">
@@ -806,7 +806,7 @@ function TimelineSection() {
               output={{ type: "text", value: longSampleText }}
             />
           </Variant>
-          <Variant label="OutputViewer text — truncated">
+          <Variant label="OutputViewer text: truncated">
             <OutputViewer
               className="w-full min-w-64"
               output={{ type: "text", value: longSampleText }}
@@ -926,7 +926,7 @@ function AdminSection() {
             />
           </FilterBar>
           <p className="text-meta text-muted-foreground">
-            FilterBar — the state filter is at a non-default value, so it shows the moss tint.
+            FilterBar: the state filter is at a non-default value, so it shows the moss tint.
           </p>
         </div>
 
@@ -939,13 +939,13 @@ function AdminSection() {
             onRowClick={(row) => toast(`Open ${row.name}`)}
           />
           <p className="text-meta text-muted-foreground">
-            DataTable — 23 rows, page size 5, row click fires a toast.
+            DataTable: 23 rows, page size 5, row click fires a toast.
           </p>
         </div>
 
         <div className="space-y-1.5">
           <DataTable columns={tableColumns} rows={[]} rowKey={(row: RunRow) => row.id} loading />
-          <p className="text-meta text-muted-foreground">DataTable — loading state.</p>
+          <p className="text-meta text-muted-foreground">DataTable: loading state.</p>
         </div>
 
         <div className="space-y-1.5">
@@ -963,7 +963,7 @@ function AdminSection() {
             }
           />
           <p className="text-meta text-muted-foreground">
-            DataTable — empty with custom EmptyState.
+            DataTable: empty with custom EmptyState.
           </p>
         </div>
 
@@ -980,7 +980,7 @@ function AdminSection() {
               }
             />
           </div>
-          <p className="text-meta text-muted-foreground">EmptyState — standalone.</p>
+          <p className="text-meta text-muted-foreground">EmptyState: standalone.</p>
         </div>
       </div>
     </Section>
@@ -993,7 +993,7 @@ function ChatSection() {
       <div className="space-y-1.5">
         <ThreadDemo />
         <p className="text-meta text-muted-foreground">
-          ThreadDemo — self-contained thread with canned streaming. ThreadList needs the app runtime
+          ThreadDemo: self-contained thread with canned streaming. ThreadList needs the app runtime
           and renders inside the app sidebar, so it is not mounted here.
         </p>
       </div>
@@ -1008,10 +1008,10 @@ function BrandSection() {
         <Variant label="LogoMark">
           <LogoMark className="size-7" />
         </Variant>
-        <Variant label="Wordmark — auth pages">
+        <Variant label="Wordmark: auth pages">
           <Wordmark className="h-6 w-auto" />
         </Variant>
-        <Variant label="Auth layout — centered 360px column on card">
+        <Variant label="Auth layout: centered 360px column on card">
           <div className="w-[360px] border-y bg-card py-10 text-center">
             <Wordmark className="mx-auto h-6 w-auto" />
             <p className="mt-3 text-lg font-semibold">Sign in to Trema</p>

@@ -34,6 +34,9 @@ Rules:
    Users see the concrete pair instead: the connector (Slack, Linear)
    and the location (a channel, a team, a repository). The word lives
    in the specs, the API, and adapter code only.
+8. **No em dashes in UI copy.** Rewrite with commas, "such as", or
+   separate sentences. Docs and marketing prose keep their own style;
+   this rule is for interface chrome.
 
 ## Tokens
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Inbox, Lock, Pencil, Plus, Trash2, UserRound, UsersRound } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 
@@ -9,7 +9,6 @@ import { EmptyState } from "#/components/trema/empty-state.tsx";
 import { IdChip } from "#/components/trema/id-chip.tsx";
 import { PageHeader } from "#/components/trema/page-header.tsx";
 import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { ScopeBadge } from "#/components/trema/scope-badge.tsx";
 import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
 import {
   AlertDialog,
@@ -86,13 +85,18 @@ export function ScopesPage() {
       sharedScopes: all
         .filter((scope) => scope.kind === "shared")
         .sort((left, right) => left.name.localeCompare(right.name)),
-      personalCount: all.filter((scope) => scope.kind === "personal").length,
+      personalScopes: all
+        .filter((scope) => scope.kind === "personal")
+        .sort((left, right) => left.name.localeCompare(right.name)),
     };
   }, [scopes.data]);
-  const selectable = organized.org
+  const bindableScopes = organized.org
     ? [organized.org, ...organized.sharedScopes]
     : organized.sharedScopes;
+  const selectable = canManage ? [...bindableScopes, ...organized.personalScopes] : bindableScopes;
   const selectedScope = selectable.find((scope) => scope.id === scopeParam) ?? organized.org;
+  const defaultBindingScopeId =
+    selectedScope?.kind === "personal" ? organized.org?.id : selectedScope?.id;
 
   useEffect(() => {
     if (!selectedScope || scopeParam === selectedScope.id) return;
@@ -142,7 +146,8 @@ export function ScopesPage() {
             loading={scopes.isPending}
             org={organized.org}
             sharedScopes={organized.sharedScopes}
-            personalCount={organized.personalCount}
+            personalScopes={organized.personalScopes}
+            canManage={canManage}
             selectedId={selectedScope?.id}
             onSelect={selectScope}
           />
@@ -162,12 +167,12 @@ export function ScopesPage() {
         </div>
       )}
 
-      {canManage && selectedScope ? (
+      {canManage && defaultBindingScopeId ? (
         <NewBindingDialog
           open={bindingOpen}
           onOpenChange={setBindingOpen}
-          scopes={selectable}
-          defaultScopeId={selectedScope.id}
+          scopes={bindableScopes}
+          defaultScopeId={defaultBindingScopeId}
         />
       ) : null}
     </main>
@@ -178,14 +183,16 @@ function ScopeTree({
   loading,
   org,
   sharedScopes,
-  personalCount,
+  personalScopes,
+  canManage,
   selectedId,
   onSelect,
 }: {
   loading: boolean;
   org: Scope | undefined;
   sharedScopes: Scope[];
-  personalCount: number;
+  personalScopes: Scope[];
+  canManage: boolean;
   selectedId: string | undefined;
   onSelect: (scope: Scope) => void;
 }) {
@@ -214,12 +221,35 @@ function ScopeTree({
                 selected={sharedScope.id === selectedId}
                 onSelect={onSelect}
                 nested
+                action={
+                  canManage && sharedScope.id === selectedId ? (
+                    <RenameScopeDialog scope={sharedScope} />
+                  ) : undefined
+                }
               />
             ))}
-            <div className="mt-1 flex h-9 items-center gap-2 rounded-md px-2 text-chrome text-muted-foreground">
-              <UserRound className="size-4" aria-hidden="true" />
-              <span>Personal ({personalCount})</span>
-            </div>
+            {canManage && personalScopes.length > 0 ? (
+              <>
+                <div className="mt-1 flex h-7 items-center gap-2 px-2 text-meta text-muted-foreground">
+                  <UserRound className="size-3.5" aria-hidden="true" />
+                  <span>Personal</span>
+                </div>
+                {personalScopes.map((personalScope) => (
+                  <ScopeTreeRow
+                    key={personalScope.id}
+                    scope={personalScope}
+                    selected={personalScope.id === selectedId}
+                    onSelect={onSelect}
+                    nested
+                  />
+                ))}
+              </>
+            ) : (
+              <div className="mt-1 flex h-9 items-center gap-2 rounded-md px-2 text-chrome text-muted-foreground">
+                <UserRound className="size-4" aria-hidden="true" />
+                <span>Personal ({personalScopes.length})</span>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -236,27 +266,37 @@ function ScopeTreeRow({
   selected,
   onSelect,
   nested = false,
+  action,
 }: {
   scope: Scope;
   selected: boolean;
   onSelect: (scope: Scope) => void;
   nested?: boolean;
+  action?: ReactNode;
 }) {
-  const Icon = scope.kind === "org" ? Building2 : UsersRound;
+  const Icon =
+    scope.kind === "org" ? Building2 : scope.kind === "personal" ? UserRound : UsersRound;
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(scope)}
-      aria-current={selected ? "page" : undefined}
+    <div
       className={cn(
-        "flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-chrome hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        nested && "pl-7",
-        selected && "bg-moss-soft hover:bg-moss-soft",
+        "flex items-center rounded-md",
+        selected ? "bg-moss-soft" : "hover:bg-muted/60",
       )}
     >
-      <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="truncate">{scope.name}</span>
-    </button>
+      <button
+        type="button"
+        onClick={() => onSelect(scope)}
+        aria-current={selected ? "page" : undefined}
+        className={cn(
+          "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-chrome focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          nested && "pl-7",
+        )}
+      >
+        <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <span className="truncate">{scope.name}</span>
+      </button>
+      {action ? <div className="pr-1">{action}</div> : null}
+    </div>
   );
 }
 
@@ -304,22 +344,11 @@ function ScopeDetail({
 
   return (
     <section className="min-w-0 space-y-5">
-      <div className="flex items-start justify-between gap-4 rounded-lg border bg-card p-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="truncate text-base font-semibold">{scope.name}</h2>
-            <ScopeBadge scope={scope.kind} />
-          </div>
-          <p className="mt-1 font-mono text-meta text-muted-foreground">{scope.id}</p>
-        </div>
-        {canManage && scope.kind === "shared" ? <RenameScopeDialog scope={scope} /> : null}
-      </div>
-
       <div className="space-y-3">
         <div>
           <h3 className="text-chrome font-medium text-muted-foreground">Bindings</h3>
           <p className="mt-1 text-meta text-muted-foreground">
-            Locations that resolve to this scope.
+            Locations that resolve to {scope.name}.
           </p>
         </div>
         {bindings.error ? (
@@ -333,19 +362,27 @@ function ScopeDetail({
             rowKey={(binding) => binding.id}
             loading={bindings.isPending}
             empty={
-              <EmptyState
-                icon={Inbox}
-                title="No bindings yet"
-                description="Bindings connect places the agent is reachable — a Slack channel, a Linear team — to this scope."
-                action={
-                  canManage ? (
-                    <Button size="sm" onClick={onNewBinding}>
-                      <Plus />
-                      New binding
-                    </Button>
-                  ) : undefined
-                }
-              />
+              scope.kind === "personal" ? (
+                <EmptyState
+                  icon={Inbox}
+                  title="No bindings yet"
+                  description="Direct message locations appear here when the owner messages the agent."
+                />
+              ) : (
+                <EmptyState
+                  icon={Inbox}
+                  title="No bindings yet"
+                  description="Bindings connect places the agent is reachable, such as a Slack channel or a Linear team, to this scope."
+                  action={
+                    canManage ? (
+                      <Button size="sm" onClick={onNewBinding}>
+                        <Plus />
+                        New binding
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              )
             }
           />
         )}
@@ -567,7 +604,8 @@ function NewBindingDialog({
         <DialogHeader>
           <DialogTitle>New binding</DialogTitle>
           <DialogDescription>
-            Bind a place the agent is reachable — a Slack channel, a Linear team — to a scope.
+            Bind a place the agent is reachable, such as a Slack channel or a Linear team, to a
+            scope.
           </DialogDescription>
         </DialogHeader>
         {surfaces.isPending ? (
@@ -578,8 +616,8 @@ function NewBindingDialog({
           </Alert>
         ) : availableSurfaces.length === 0 ? (
           <p className="text-chrome text-muted-foreground">
-            Nothing can be bound yet. Locations appear here once a connector that provides them —
-            such as Slack — is connected.
+            Nothing can be bound yet. Locations appear here once a connector that provides them,
+            such as Slack, is connected.
           </p>
         ) : (
           <form onSubmit={submit} className="contents">
@@ -687,10 +725,6 @@ function DeleteBindingButton({ binding, scopeId }: { binding: Binding; scopeId: 
 function DetailSkeleton() {
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border p-4">
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="mt-2 h-3 w-64" />
-      </div>
       <div className="space-y-3">
         <Skeleton className="h-3 w-20" />
         <DataTable
