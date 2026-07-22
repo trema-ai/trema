@@ -12,10 +12,10 @@ import { Gallery } from "#/pages/gallery.tsx";
 import { AuthenticatedAppShell, AuthenticatedProvider, HomePage, Loading } from "#/pages/home.tsx";
 import { JoinPage } from "#/pages/join.tsx";
 import { ScopesPage } from "#/pages/scopes.tsx";
-import { SettingsAppearancePage } from "#/pages/settings-appearance.tsx";
-import { SettingsGeneralPage } from "#/pages/settings-general.tsx";
-import { SettingsMembersPage } from "#/pages/settings-members.tsx";
-import { SettingsProfilePage } from "#/pages/settings-profile.tsx";
+import { SettingsAppearancePage } from "#/pages/settings/appearance.tsx";
+import { SettingsGeneralPage } from "#/pages/settings/general.tsx";
+import { SettingsMembersPage } from "#/pages/settings/members.tsx";
+import { SettingsProfilePage } from "#/pages/settings/profile.tsx";
 import { SignInPage } from "#/pages/sign-in.tsx";
 
 const queryClient = new QueryClient({
