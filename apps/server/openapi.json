@@ -1234,6 +1234,1983 @@
         ]
       }
     },
+    "/items": {
+      "post": {
+        "operationId": "items.create",
+        "summary": "Create an item",
+        "description": "Create a memory or instruction in one scope. Other item kinds arrive in later phases.",
+        "tags": [
+          "Items"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The ID of the item's single context scope. A UUID."
+                  },
+                  "kind": {
+                    "enum": [
+                      "memory",
+                      "skill",
+                      "instruction",
+                      "connector",
+                      "conversation"
+                    ],
+                    "type": "string",
+                    "description": "The item kind."
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The item's short retrieval title."
+                  },
+                  "body": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {}
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {}
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "description": "The kind-specific item body."
+                  },
+                  "status": {
+                    "enum": [
+                      "proposed",
+                      "active",
+                      "archived"
+                    ],
+                    "type": "string",
+                    "description": "A requested status. The writer policy determines the stored status."
+                  },
+                  "disclosure": {
+                    "enum": [
+                      "standing",
+                      "retrieved"
+                    ],
+                    "type": "string",
+                    "description": "An explicit disclosure override. Otherwise the kind-specific default applies."
+                  },
+                  "sourceSessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The source session ID for agent-authored provenance, when present."
+                  }
+                },
+                "required": [
+                  "scopeId",
+                  "kind",
+                  "title",
+                  "body"
+                ],
+                "description": "The item to create."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The item's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the item's single context scope."
+                    },
+                    "kind": {
+                      "enum": [
+                        "memory",
+                        "skill",
+                        "instruction",
+                        "connector",
+                        "conversation"
+                      ],
+                      "type": "string",
+                      "description": "The item kind."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "The short title used as a retrieval key."
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The kind-specific item body."
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string",
+                      "description": "The item's lifecycle status."
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string",
+                      "description": "Whether the item is injected into sessions or retrieved on demand."
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "description": "The principal that created the item."
+                    },
+                    "sourceSessionId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The source session for an agent-authored item, when present."
+                    },
+                    "confirmedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The human principal that activated a proposed item, when present."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the item was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the item was last updated. An ISO 8601 date-time."
+                    },
+                    "lastUsedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When a session last used the item, when known. An ISO 8601 date-time."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0,
+                      "description": "The item's monotonic content version."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "sourceSessionId",
+                    "confirmedById",
+                    "createdAt",
+                    "updatedAt",
+                    "lastUsedAt",
+                    "version"
+                  ],
+                  "description": "A versioned context item in exactly one scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "items.list",
+        "summary": "List items",
+        "description": "List authorized items in the active organization with optional kind, status, and scope filters.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "memory",
+                "skill",
+                "instruction",
+                "connector",
+                "conversation"
+              ],
+              "type": "string",
+              "description": "Only return items of this kind."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "proposed",
+                "active",
+                "archived"
+              ],
+              "type": "string",
+              "description": "Only return items with this status."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "scopeId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Only return items in this scope. A UUID."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The item's unique ID. A UUID (version 7)."
+                      },
+                      "scopeId": {
+                        "type": "string",
+                        "description": "The ID of the item's single context scope."
+                      },
+                      "kind": {
+                        "enum": [
+                          "memory",
+                          "skill",
+                          "instruction",
+                          "connector",
+                          "conversation"
+                        ],
+                        "type": "string",
+                        "description": "The item kind."
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "The short title used as a retrieval key."
+                      },
+                      "body": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {},
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {},
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "description": "The kind-specific item body."
+                      },
+                      "status": {
+                        "enum": [
+                          "proposed",
+                          "active",
+                          "archived"
+                        ],
+                        "type": "string",
+                        "description": "The item's lifecycle status."
+                      },
+                      "disclosure": {
+                        "enum": [
+                          "standing",
+                          "retrieved"
+                        ],
+                        "type": "string",
+                        "description": "Whether the item is injected into sessions or retrieved on demand."
+                      },
+                      "createdById": {
+                        "type": "string",
+                        "description": "The principal that created the item."
+                      },
+                      "sourceSessionId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "The source session for an agent-authored item, when present."
+                      },
+                      "confirmedById": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "The human principal that activated a proposed item, when present."
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "description": "When the item was created. An ISO 8601 date-time."
+                      },
+                      "updatedAt": {
+                        "type": "string",
+                        "description": "When the item was last updated. An ISO 8601 date-time."
+                      },
+                      "lastUsedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "When a session last used the item, when known. An ISO 8601 date-time."
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "exclusiveMinimum": 0,
+                        "description": "The item's monotonic content version."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "scopeId",
+                      "kind",
+                      "title",
+                      "body",
+                      "status",
+                      "disclosure",
+                      "createdById",
+                      "sourceSessionId",
+                      "confirmedById",
+                      "createdAt",
+                      "updatedAt",
+                      "lastUsedAt",
+                      "version"
+                    ],
+                    "description": "A versioned context item in exactly one scope."
+                  },
+                  "description": "Items readable by the acting principal."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/{id}": {
+      "get": {
+        "operationId": "items.get",
+        "summary": "Get an item",
+        "description": "Get one authorized item in the active organization.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the item to fetch. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The item's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the item's single context scope."
+                    },
+                    "kind": {
+                      "enum": [
+                        "memory",
+                        "skill",
+                        "instruction",
+                        "connector",
+                        "conversation"
+                      ],
+                      "type": "string",
+                      "description": "The item kind."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "The short title used as a retrieval key."
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The kind-specific item body."
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string",
+                      "description": "The item's lifecycle status."
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string",
+                      "description": "Whether the item is injected into sessions or retrieved on demand."
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "description": "The principal that created the item."
+                    },
+                    "sourceSessionId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The source session for an agent-authored item, when present."
+                    },
+                    "confirmedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The human principal that activated a proposed item, when present."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the item was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the item was last updated. An ISO 8601 date-time."
+                    },
+                    "lastUsedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When a session last used the item, when known. An ISO 8601 date-time."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0,
+                      "description": "The item's monotonic content version."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "sourceSessionId",
+                    "confirmedById",
+                    "createdAt",
+                    "updatedAt",
+                    "lastUsedAt",
+                    "version"
+                  ],
+                  "description": "A versioned context item in exactly one scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "items.update",
+        "summary": "Update an item",
+        "description": "Update an item's title, body, or disclosure. Content changes retain the prior version.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the item to update. A UUID."
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "A replacement retrieval title."
+                  },
+                  "body": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {}
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {}
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "description": "A replacement kind-specific body."
+                  },
+                  "disclosure": {
+                    "enum": [
+                      "standing",
+                      "retrieved"
+                    ],
+                    "type": "string",
+                    "description": "A replacement disclosure tier."
+                  }
+                },
+                "description": "The item fields to update."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The item's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the item's single context scope."
+                    },
+                    "kind": {
+                      "enum": [
+                        "memory",
+                        "skill",
+                        "instruction",
+                        "connector",
+                        "conversation"
+                      ],
+                      "type": "string",
+                      "description": "The item kind."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "The short title used as a retrieval key."
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The kind-specific item body."
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string",
+                      "description": "The item's lifecycle status."
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string",
+                      "description": "Whether the item is injected into sessions or retrieved on demand."
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "description": "The principal that created the item."
+                    },
+                    "sourceSessionId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The source session for an agent-authored item, when present."
+                    },
+                    "confirmedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The human principal that activated a proposed item, when present."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the item was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the item was last updated. An ISO 8601 date-time."
+                    },
+                    "lastUsedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When a session last used the item, when known. An ISO 8601 date-time."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0,
+                      "description": "The item's monotonic content version."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "sourceSessionId",
+                    "confirmedById",
+                    "createdAt",
+                    "updatedAt",
+                    "lastUsedAt",
+                    "version"
+                  ],
+                  "description": "A versioned context item in exactly one scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/{id}/activate": {
+      "post": {
+        "operationId": "items.activate",
+        "summary": "Activate an item",
+        "description": "Apply the 'activate' lifecycle transition to an item.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the item to activate. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The item's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the item's single context scope."
+                    },
+                    "kind": {
+                      "enum": [
+                        "memory",
+                        "skill",
+                        "instruction",
+                        "connector",
+                        "conversation"
+                      ],
+                      "type": "string",
+                      "description": "The item kind."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "The short title used as a retrieval key."
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The kind-specific item body."
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string",
+                      "description": "The item's lifecycle status."
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string",
+                      "description": "Whether the item is injected into sessions or retrieved on demand."
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "description": "The principal that created the item."
+                    },
+                    "sourceSessionId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The source session for an agent-authored item, when present."
+                    },
+                    "confirmedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The human principal that activated a proposed item, when present."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the item was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the item was last updated. An ISO 8601 date-time."
+                    },
+                    "lastUsedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When a session last used the item, when known. An ISO 8601 date-time."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0,
+                      "description": "The item's monotonic content version."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "sourceSessionId",
+                    "confirmedById",
+                    "createdAt",
+                    "updatedAt",
+                    "lastUsedAt",
+                    "version"
+                  ],
+                  "description": "A versioned context item in exactly one scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/{id}/archive": {
+      "post": {
+        "operationId": "items.archive",
+        "summary": "Archive an item",
+        "description": "Apply the 'archive' lifecycle transition to an item.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the item to archive. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The item's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the item's single context scope."
+                    },
+                    "kind": {
+                      "enum": [
+                        "memory",
+                        "skill",
+                        "instruction",
+                        "connector",
+                        "conversation"
+                      ],
+                      "type": "string",
+                      "description": "The item kind."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "The short title used as a retrieval key."
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The kind-specific item body."
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string",
+                      "description": "The item's lifecycle status."
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string",
+                      "description": "Whether the item is injected into sessions or retrieved on demand."
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "description": "The principal that created the item."
+                    },
+                    "sourceSessionId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The source session for an agent-authored item, when present."
+                    },
+                    "confirmedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The human principal that activated a proposed item, when present."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the item was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the item was last updated. An ISO 8601 date-time."
+                    },
+                    "lastUsedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When a session last used the item, when known. An ISO 8601 date-time."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0,
+                      "description": "The item's monotonic content version."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "sourceSessionId",
+                    "confirmedById",
+                    "createdAt",
+                    "updatedAt",
+                    "lastUsedAt",
+                    "version"
+                  ],
+                  "description": "A versioned context item in exactly one scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/{id}/restore": {
+      "post": {
+        "operationId": "items.restore",
+        "summary": "Restore an item",
+        "description": "Apply the 'restore' lifecycle transition to an item.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the item to restore. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The item's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the item's single context scope."
+                    },
+                    "kind": {
+                      "enum": [
+                        "memory",
+                        "skill",
+                        "instruction",
+                        "connector",
+                        "conversation"
+                      ],
+                      "type": "string",
+                      "description": "The item kind."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "The short title used as a retrieval key."
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The kind-specific item body."
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string",
+                      "description": "The item's lifecycle status."
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string",
+                      "description": "Whether the item is injected into sessions or retrieved on demand."
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "description": "The principal that created the item."
+                    },
+                    "sourceSessionId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The source session for an agent-authored item, when present."
+                    },
+                    "confirmedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The human principal that activated a proposed item, when present."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the item was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the item was last updated. An ISO 8601 date-time."
+                    },
+                    "lastUsedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When a session last used the item, when known. An ISO 8601 date-time."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0,
+                      "description": "The item's monotonic content version."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "sourceSessionId",
+                    "confirmedById",
+                    "createdAt",
+                    "updatedAt",
+                    "lastUsedAt",
+                    "version"
+                  ],
+                  "description": "A versioned context item in exactly one scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/orgs": {
       "post": {
         "operationId": "org.create",
