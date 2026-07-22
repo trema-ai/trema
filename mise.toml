@@ -36,6 +36,15 @@ fi
 docker compose up -d --wait postgres
 '''
 
+[tasks."dev:clean"]
+description = "Tear down this worktree's dev stack: Postgres container, network, and data volume"
+run = '''
+project="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
+echo "Removing compose project '$project' (dev slot ${TREMA_DEV_SLOT:-0}), including its database volume"
+docker compose down --volumes --remove-orphans
+echo "Done. apps/server/.env is kept; delete it too if you are re-slotting this worktree."
+'''
+
 [tasks."db:migrate"]
 description = "Apply pending migrations to the local database"
 depends = ["env:init", "db:up"]

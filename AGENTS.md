@@ -59,6 +59,9 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   first time. If two worktrees ever hash to the same slot, pin one with
   `TREMA_DEV_SLOT=<n>` (delete the stale `apps/server/.env` after
   changing a slot).
+- Docker resources outlive `git worktree remove`: run
+  `mise run dev:clean` in a worktree before deleting it to remove its
+  Postgres container, network, and data volume.
 
 ## Verification
 
