@@ -250,25 +250,25 @@ function PersonalPolicyRow() {
     onError: (cause) => toast.error(messageFrom(cause)),
   });
   return (
-    <div className="flex items-center justify-between gap-2 border-t px-4 py-3">
-      <div>
+    <div className="space-y-0.5 border-t px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
         <Label htmlFor="personal-policy" className="text-chrome">
           Personal scopes
         </Label>
-        <p className="mt-0.5 text-meta text-muted-foreground">
-          Direct messages get a private scope per member.
-        </p>
+        {policy.isPending ? (
+          <Skeleton className="h-5 w-9" />
+        ) : (
+          <Switch
+            id="personal-policy"
+            checked={policy.data?.enabled ?? false}
+            disabled={mutation.isPending || Boolean(policy.error)}
+            onCheckedChange={(checked) => mutation.mutate(checked)}
+          />
+        )}
       </div>
-      {policy.isPending ? (
-        <Skeleton className="h-5 w-9" />
-      ) : (
-        <Switch
-          id="personal-policy"
-          checked={policy.data?.enabled ?? false}
-          disabled={mutation.isPending || Boolean(policy.error)}
-          onCheckedChange={(checked) => mutation.mutate(checked)}
-        />
-      )}
+      <p className="text-meta text-muted-foreground">
+        When enabled, direct messages get a private scope per member.
+      </p>
     </div>
   );
 }
