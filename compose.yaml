@@ -6,7 +6,9 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
     ports:
-      - "5432:5432"
+      # Set by scripts/dev-env.sh (via mise) to a per-worktree port, so
+      # parallel worktrees each get their own Postgres.
+      - "${TREMA_DB_PORT:-5432}:5432"
     volumes:
       - trema-postgres:/var/lib/postgresql/data
     healthcheck:
