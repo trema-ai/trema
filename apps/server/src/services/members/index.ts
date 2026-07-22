@@ -39,6 +39,19 @@ export async function listMembers(db: Database, orgId: string) {
   });
 }
 
+export async function listInvites(db: Database, orgId: string) {
+  return db.invite.findMany({
+    where: {
+      orgId,
+      redeemedAt: null,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    include: { createdBy: true, scope: true },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  });
+}
+
 export interface SetMemberRoleInput {
   orgId: string;
   actorPrincipalId: string;
@@ -75,13 +88,13 @@ export async function setMemberRole(db: Database, input: SetMemberRoleInput) {
         },
       },
     });
-    if (existing?.role === "owner" && input.role !== "owner") {
+    if (existing?.role === "owner" && input.role !== "owner" && principal.deactivatedAt === null) {
       const owners = await transaction.grant.count({
         where: {
           orgId: input.orgId,
           scopeId: orgScope.id,
           role: "owner",
-          principal: { kind: "human", orgId: input.orgId },
+          principal: { kind: "human", orgId: input.orgId, deactivatedAt: null },
         },
       });
       if (owners <= 1) {
@@ -121,6 +134,181 @@ export async function setMemberRole(db: Database, input: SetMemberRoleInput) {
     });
 
     return { grant, principal };
+  });
+}
+
+export interface RevokeInviteInput {
+  orgId: string;
+  actorPrincipalId: string;
+  inviteId: string;
+}
+
+export async function revokeInvite(db: Database, input: RevokeInviteInput) {
+  return db.$transaction(async (transaction) => {
+    const invite = await transaction.invite.findFirst({
+      where: { id: input.inviteId, orgId: input.orgId },
+    });
+    if (!invite) {
+      throw new MemberNotFoundError("Invite not found");
+    }
+    if (invite.redeemedAt) {
+      throw new MemberConflictError("Invite is already redeemed");
+    }
+    if (invite.revokedAt) {
+      throw new MemberConflictError("Invite is already revoked");
+    }
+
+    const revokedAt = new Date();
+    const claimed = await transaction.invite.updateMany({
+      where: {
+        id: invite.id,
+        orgId: input.orgId,
+        redeemedAt: null,
+        revokedAt: null,
+      },
+      data: { revokedAt },
+    });
+    if (claimed.count !== 1) {
+      throw new MemberConflictError("Invite is already redeemed or revoked");
+    }
+    const revoked = await transaction.invite.findUniqueOrThrow({
+      where: { id: invite.id, orgId: input.orgId },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: input.actorPrincipalId,
+        action: "invite.revoke",
+        subject: revoked.id,
+        payload: {
+          role: revoked.role,
+          scopeId: revoked.scopeId,
+          revokedAt: revokedAt.toISOString(),
+        },
+      },
+    });
+    return revoked;
+  });
+}
+
+export interface DeactivateMemberInput {
+  orgId: string;
+  actorPrincipalId: string;
+  principalId: string;
+}
+
+export async function deactivateMember(db: Database, input: DeactivateMemberInput) {
+  return db.$transaction(async (transaction) => {
+    await transaction.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtextextended(${input.orgId}, 0))
+    `;
+
+    const [orgScope, principal] = await Promise.all([
+      findOrgScope(transaction, input.orgId),
+      transaction.principal.findFirst({
+        where: { id: input.principalId, orgId: input.orgId, kind: "human" },
+      }),
+    ]);
+    if (!principal) {
+      throw new MemberNotFoundError("Human principal not found");
+    }
+    if (principal.deactivatedAt) {
+      throw new MemberConflictError("Member is already deactivated");
+    }
+
+    const orgGrant = await transaction.grant.findUnique({
+      where: {
+        orgId_principalId_scopeId: {
+          orgId: input.orgId,
+          principalId: principal.id,
+          scopeId: orgScope.id,
+        },
+      },
+    });
+    if (orgGrant?.role === "owner") {
+      const otherActiveOwners = await transaction.grant.count({
+        where: {
+          orgId: input.orgId,
+          scopeId: orgScope.id,
+          role: "owner",
+          principalId: { not: principal.id },
+          principal: { kind: "human", orgId: input.orgId, deactivatedAt: null },
+        },
+      });
+      if (otherActiveOwners === 0) {
+        throw new MemberConflictError("The organization's last owner cannot be deactivated");
+      }
+    }
+
+    const deactivatedAt = new Date();
+    const [deactivated, revokedCredentials, deletedIdentityLinks] = await Promise.all([
+      transaction.principal.update({
+        where: { id: principal.id, orgId: input.orgId },
+        data: { deactivatedAt },
+      }),
+      transaction.serviceCredential.updateMany({
+        where: { orgId: input.orgId, principalId: principal.id, revokedAt: null },
+        data: { revokedAt: deactivatedAt },
+      }),
+      transaction.identityLink.deleteMany({
+        where: { orgId: input.orgId, principalId: principal.id },
+      }),
+    ]);
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: input.actorPrincipalId,
+        action: "principal.deactivate",
+        subject: principal.id,
+        payload: {
+          deactivatedAt: deactivatedAt.toISOString(),
+          revokedCredentialCount: revokedCredentials.count,
+          deletedIdentityLinkCount: deletedIdentityLinks.count,
+        },
+      },
+    });
+    return deactivated;
+  });
+}
+
+export interface ReactivateMemberInput {
+  orgId: string;
+  actorPrincipalId: string;
+  principalId: string;
+}
+
+export async function reactivateMember(db: Database, input: ReactivateMemberInput) {
+  return db.$transaction(async (transaction) => {
+    const principal = await transaction.principal.findFirst({
+      where: { id: input.principalId, orgId: input.orgId, kind: "human" },
+    });
+    if (!principal) {
+      throw new MemberNotFoundError("Human principal not found");
+    }
+    if (!principal.deactivatedAt) {
+      throw new MemberConflictError("Member is not deactivated");
+    }
+
+    const claimed = await transaction.principal.updateMany({
+      where: { id: principal.id, orgId: input.orgId, deactivatedAt: { not: null } },
+      data: { deactivatedAt: null },
+    });
+    if (claimed.count !== 1) {
+      throw new MemberConflictError("Member is not deactivated");
+    }
+    const reactivated = await transaction.principal.findUniqueOrThrow({
+      where: { id: principal.id, orgId: input.orgId },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: input.actorPrincipalId,
+        action: "principal.reactivate",
+        subject: principal.id,
+        payload: { previousDeactivatedAt: principal.deactivatedAt.toISOString() },
+      },
+    });
+    return reactivated;
   });
 }
 
@@ -186,7 +374,7 @@ export async function previewInvite(db: Database, token: string) {
     where: { tokenHash: hashInviteToken(token) },
     include: { org: true, createdBy: true },
   });
-  if (!invite || invite.redeemedAt || invite.expiresAt <= new Date()) {
+  if (!invite || invite.redeemedAt || invite.revokedAt || invite.expiresAt <= new Date()) {
     throw new MemberNotFoundError("Invite is invalid, expired, or already redeemed");
   }
   return { orgName: invite.org.name, invitedBy: invite.createdBy.displayName };
@@ -205,7 +393,7 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
   return db.$transaction(async (transaction) => {
     const invite = await transaction.invite.findUnique({ where: { tokenHash } });
     const now = new Date();
-    if (!invite || invite.redeemedAt || invite.expiresAt <= now) {
+    if (!invite || invite.redeemedAt || invite.revokedAt || invite.expiresAt <= now) {
       throw new MemberConflictError("Invite is invalid, expired, or already redeemed");
     }
 
@@ -214,6 +402,7 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
         id: invite.id,
         orgId: invite.orgId,
         redeemedAt: null,
+        revokedAt: null,
         expiresAt: { gt: now },
       },
       data: { redeemedAt: now },
@@ -229,6 +418,9 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
     });
     if (existingPrincipal?.kind === "agent") {
       throw new MemberConflictError("Only human principals may redeem invites");
+    }
+    if (existingPrincipal?.deactivatedAt) {
+      throw new MemberConflictError("A deactivated member cannot redeem an invite");
     }
     const principal =
       existingPrincipal ??

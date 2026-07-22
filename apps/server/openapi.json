@@ -581,6 +581,14 @@
                         "type": "string",
                         "description": "The member's role on the organization scope."
                       },
+                      "status": {
+                        "enum": [
+                          "active",
+                          "deactivated"
+                        ],
+                        "type": "string",
+                        "description": "Whether the member can authenticate and act in the organization."
+                      },
                       "joinedAt": {
                         "type": "string",
                         "description": "When the member joined the organization. An ISO 8601 date-time."
@@ -589,6 +597,7 @@
                     "required": [
                       "principal",
                       "role",
+                      "status",
                       "joinedAt"
                     ],
                     "description": "A member of the organization and the role they hold."
@@ -693,6 +702,14 @@
                       "type": "string",
                       "description": "The member's role on the organization scope."
                     },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "deactivated"
+                      ],
+                      "type": "string",
+                      "description": "Whether the member can authenticate and act in the organization."
+                    },
                     "joinedAt": {
                       "type": "string",
                       "description": "When the member joined the organization. An ISO 8601 date-time."
@@ -701,6 +718,7 @@
                   "required": [
                     "principal",
                     "role",
+                    "status",
                     "joinedAt"
                   ],
                   "description": "A member of the organization and the role they hold."
@@ -716,7 +734,193 @@
         ]
       }
     },
+    "/principals/{id}/deactivate": {
+      "post": {
+        "operationId": "members.deactivate",
+        "summary": "Deactivate a member",
+        "description": "Block a human member from acting, revoke their service credentials, and remove their identity links without deleting their grants or authored records.",
+        "tags": [
+          "Members"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the member's principal. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The member principal's unique ID. A UUID (version 7)."
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "deactivated"
+                      ],
+                      "type": "string",
+                      "description": "Whether the member can authenticate and act in the organization."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "description": "The member's lifecycle state."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/principals/{id}/reactivate": {
+      "post": {
+        "operationId": "members.reactivate",
+        "summary": "Reactivate a member",
+        "description": "Restore a deactivated member without restoring revoked credentials or deleted identity links.",
+        "tags": [
+          "Members"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the member's principal. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The member principal's unique ID. A UUID (version 7)."
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "deactivated"
+                      ],
+                      "type": "string",
+                      "description": "Whether the member can authenticate and act in the organization."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "description": "The member's lifecycle state."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/invites": {
+      "get": {
+        "operationId": "members.invites.list",
+        "summary": "List pending invites",
+        "description": "List unexpired organization invites that have not been redeemed or revoked.",
+        "tags": [
+          "Members"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The invite's unique ID. A UUID (version 7)."
+                      },
+                      "role": {
+                        "enum": [
+                          "owner",
+                          "admin",
+                          "member",
+                          "viewer"
+                        ],
+                        "type": "string",
+                        "description": "The role the invite grants when redeemed."
+                      },
+                      "scopeId": {
+                        "type": "string",
+                        "description": "The ID of the scope the invite grants access to. A UUID."
+                      },
+                      "invitedBy": {
+                        "type": "string",
+                        "description": "The display name of the member who created the invite."
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "description": "When the invite was created. An ISO 8601 date-time."
+                      },
+                      "expiresAt": {
+                        "type": "string",
+                        "description": "When the invite expires. An ISO 8601 date-time."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "role",
+                      "scopeId",
+                      "invitedBy",
+                      "createdAt",
+                      "expiresAt"
+                    ],
+                    "description": "A pending organization invite."
+                  },
+                  "description": "The pending invites for the active organization."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
       "post": {
         "operationId": "members.invites.create",
         "summary": "Create an invite link",
@@ -964,6 +1168,60 @@
                     "scopeId"
                   ],
                   "description": "The result of redeeming an invite."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/invites/{id}/revoke": {
+      "post": {
+        "operationId": "members.invites.revoke",
+        "summary": "Revoke an invite",
+        "description": "Revoke a pending invite so its token can no longer be previewed or redeemed.",
+        "tags": [
+          "Members"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the invite to revoke. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The revoked invite's unique ID. A UUID (version 7)."
+                    },
+                    "revokedAt": {
+                      "type": "string",
+                      "description": "When the invite was revoked. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revokedAt"
+                  ],
+                  "description": "The revoked invite."
                 }
               }
             }

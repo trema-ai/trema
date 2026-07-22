@@ -12,7 +12,7 @@ import { orgRouter } from "#/rpc/org.js";
 import { authorize, capabilities } from "#/services/authorize/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
-const integration = testDatabaseUrl ? describe : describe.skip;
+const integration = describe.skipIf(!testDatabaseUrl);
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 
 integration("authorization, members, and invites", () => {
@@ -331,6 +331,210 @@ integration("authorization, members, and invites", () => {
     await expect(
       call(membersRouter.invites.preview, { token }, { context: anonymousContext }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("lists only pending invites and enforces the revoke lifecycle", async () => {
+    const org = await createOrg("Invite Lifecycle Org");
+    const pending = await call(
+      membersRouter.invites.create,
+      { role: "member" },
+      { context: org.context },
+    );
+    const revoked = await call(
+      membersRouter.invites.create,
+      { role: "viewer" },
+      { context: org.context },
+    );
+    const redeemed = await call(
+      membersRouter.invites.create,
+      { role: "admin" },
+      { context: org.context },
+    );
+    const expired = await call(
+      membersRouter.invites.create,
+      { role: "member" },
+      { context: org.context },
+    );
+    const redeemedToken = new URL(redeemed.link).searchParams.get("token")!;
+    const revokedToken = new URL(revoked.link).searchParams.get("token")!;
+    const joiner = await signUp("Redeemed invite member");
+
+    await call(membersRouter.invites.redeem, { token: redeemedToken }, { context: joiner.context });
+    await call(membersRouter.invites.revoke, { id: revoked.id }, { context: org.context });
+    await db.invite.update({
+      where: { id: expired.id },
+      data: { expiresAt: new Date(Date.now() - 1_000) },
+    });
+
+    await expect(
+      call(membersRouter.invites.list, undefined, { context: org.context }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: pending.id,
+        role: "member",
+        invitedBy: org.principal.displayName,
+      }),
+    ]);
+    const anonymousContext = { db, auth, env, headers: new Headers() };
+    await expect(
+      call(membersRouter.invites.preview, { token: revokedToken }, { context: anonymousContext }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      call(membersRouter.invites.redeem, { token: revokedToken }, { context: joiner.context }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      call(membersRouter.invites.revoke, { id: revoked.id }, { context: org.context }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      call(membersRouter.invites.revoke, { id: redeemed.id }, { context: org.context }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      db.auditLog.findFirst({ where: { orgId: org.org.id, action: "invite.revoke" } }),
+    ).resolves.toMatchObject({ actorPrincipalId: org.principal.id, subject: revoked.id });
+  });
+
+  it("deactivates and reactivates a human without restoring severed access", async () => {
+    const org = await createOrg("Member Lifecycle Org");
+    const member = await addMember(org.org.id, org.scope.id, "member", "Lifecycle Member");
+    const credential = await db.serviceCredential.create({
+      data: {
+        orgId: org.org.id,
+        principalId: member.principal.id,
+        name: "Member credential",
+        tokenHash: randomUUID(),
+        createdById: org.principal.id,
+      },
+    });
+    const identityLink = await db.identityLink.create({
+      data: {
+        orgId: org.org.id,
+        principalId: member.principal.id,
+        surface: "slack",
+        externalUserId: randomUUID(),
+      },
+    });
+
+    await expect(
+      call(membersRouter.deactivate, { id: member.principal.id }, { context: org.context }),
+    ).resolves.toEqual({ id: member.principal.id, status: "deactivated" });
+    await expect(
+      db.principal.findUniqueOrThrow({ where: { id: member.principal.id } }),
+    ).resolves.toMatchObject({ deactivatedAt: expect.any(Date) });
+    await expect(
+      db.serviceCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+    await expect(
+      db.identityLink.findUnique({ where: { id: identityLink.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      db.grant.findUnique({
+        where: {
+          orgId_principalId_scopeId: {
+            orgId: org.org.id,
+            principalId: member.principal.id,
+            scopeId: org.scope.id,
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ role: "member" });
+    await expect(
+      call(membersRouter.list, undefined, { context: org.context }),
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        principal: expect.objectContaining({ id: member.principal.id }),
+        status: "deactivated",
+      }),
+    );
+    await expect(
+      call(membersRouter.list, undefined, { context: member.context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      call(membersRouter.deactivate, { id: member.principal.id }, { context: org.context }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    await expect(
+      call(membersRouter.reactivate, { id: member.principal.id }, { context: org.context }),
+    ).resolves.toEqual({ id: member.principal.id, status: "active" });
+    await expect(
+      db.principal.findUniqueOrThrow({ where: { id: member.principal.id } }),
+    ).resolves.toMatchObject({ deactivatedAt: null });
+    await expect(
+      db.serviceCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+    await expect(
+      db.identityLink.findUnique({ where: { id: identityLink.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      call(membersRouter.reactivate, { id: member.principal.id }, { context: org.context }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      db.auditLog.findMany({
+        where: {
+          orgId: org.org.id,
+          action: { in: ["principal.deactivate", "principal.reactivate"] },
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+    ).resolves.toMatchObject([
+      { actorPrincipalId: org.principal.id, subject: member.principal.id },
+      { actorPrincipalId: org.principal.id, subject: member.principal.id },
+    ]);
+  });
+
+  it("blocks deactivating the last active owner and rejects agent principals", async () => {
+    const org = await createOrg("Protected Owner Org");
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "agent" },
+    });
+
+    await expect(
+      call(membersRouter.deactivate, { id: org.principal.id }, { context: org.context }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "The organization's last owner cannot be deactivated",
+    });
+    await expect(
+      call(membersRouter.deactivate, { id: agent.id }, { context: org.context }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("does not let an invite reactivate a deactivated member", async () => {
+    const org = await createOrg("Invite Reactivation Org");
+    const member = await addMember(org.org.id, org.scope.id, "member", "Deactivated Joiner");
+    const invite = await call(
+      membersRouter.invites.create,
+      { role: "admin" },
+      { context: org.context },
+    );
+    const token = new URL(invite.link).searchParams.get("token")!;
+    await call(membersRouter.deactivate, { id: member.principal.id }, { context: org.context });
+
+    await expect(
+      call(membersRouter.invites.redeem, { token }, { context: member.context }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "A deactivated member cannot redeem an invite",
+    });
+    await expect(db.invite.findUniqueOrThrow({ where: { id: invite.id } })).resolves.toMatchObject({
+      redeemedAt: null,
+    });
+  });
+
+  it("does not count a deactivated owner toward the last-owner role guard", async () => {
+    const org = await createOrg("Active Owner Guard Org");
+    const otherOwner = await addMember(org.org.id, org.scope.id, "owner", "Other Owner");
+    await call(membersRouter.deactivate, { id: otherOwner.principal.id }, { context: org.context });
+
+    await expect(
+      call(
+        membersRouter.setRole,
+        { principalId: org.principal.id, role: "admin" },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "The organization's last owner cannot be demoted",
+    });
   });
 
   it("sets roles, protects the last owner, and gates member management", async () => {
