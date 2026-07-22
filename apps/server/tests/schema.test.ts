@@ -45,4 +45,20 @@ integration("database schema", () => {
       }),
     ).resolves.toMatchObject({ orgId: secondOrg.id });
   });
+
+  it("allows only one personal scope per human in an org", async () => {
+    const org = await db.org.create({ data: { name: "Personal scope org" } });
+    const human = await db.principal.create({
+      data: { orgId: org.id, kind: "human", displayName: "Human" },
+    });
+    await db.scope.create({
+      data: { orgId: org.id, kind: "personal", name: "Human", ownerId: human.id },
+    });
+
+    await expect(
+      db.scope.create({
+        data: { orgId: org.id, kind: "personal", name: "Duplicate", ownerId: human.id },
+      }),
+    ).rejects.toThrow();
+  });
 });

@@ -109,6 +109,7 @@ model Org {
   invites            Invite[]
   serviceCredentials ServiceCredential[]
   auditLogs          AuditLog[]
+  bindings           Binding[]
 }
 
 model Principal {
@@ -152,6 +153,8 @@ model IdentityLink {
   @@index([orgId, principalId])
 }
 
+/// Personal-scope uniqueness is enforced by the DB-level partial unique index
+/// `Scope_one_personal_per_owner` on (orgId, ownerId) where kind = 'personal'.
 model Scope {
   id        String     @id @default(uuid(7))
   orgId     String
@@ -164,9 +167,25 @@ model Scope {
   owner     Principal? @relation("ScopeOwner", fields: [orgId, ownerId], references: [orgId, id], onDelete: Restrict)
   grants    Grant[]
   invites   Invite[]
+  bindings  Binding[]
 
   @@unique([orgId, id])
   @@index([orgId, ownerId])
+}
+
+model Binding {
+  id          String   @id @default(uuid(7))
+  orgId       String
+  surface     String
+  locationRef String
+  scopeId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope       Scope    @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, surface, locationRef])
+  @@index([orgId, scopeId])
 }
 
 model Grant {
