@@ -1,9 +1,17 @@
+# Alias the short name so this pin overrides a global `pnpm` entry instead of
+# coexisting with it as a second tool (`npm:pnpm`) that loses on PATH order.
+[tool_alias]
+pnpm = "npm:pnpm"
+
 [tools]
 node = "24.18.0"
-"npm:pnpm" = "11.15.1"
+pnpm = "11.15.1"
 vale = "3.15.1"
 
 [env]
+# The repo root, resolved by mise; dev-env.sh needs it because BASH_SOURCE is
+# unavailable in mise's env-source interpreter.
+TREMA_ROOT = "{{config_root}}"
 # Per-worktree dev slot and ports, so parallel worktrees don't collide.
 _.source = "{{config_root}}/scripts/dev-env.sh"
 

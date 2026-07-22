@@ -57,7 +57,7 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   `env:init` bakes the slot's ports into that worktree's
   `apps/server/.env`, so run `mise run dev` — not bare `pnpm dev` — the
   first time. If two worktrees ever hash to the same slot, pin one with
-  `TREMA_DEV_SLOT=<n>` (delete the stale `apps/server/.env` after
+  `TREMA_DEV_SLOT_PIN=<n>` (delete the stale `apps/server/.env` after
   changing a slot).
 - Docker resources outlive `git worktree remove`: run
   `mise run dev:clean` in a worktree before deleting it to remove its
