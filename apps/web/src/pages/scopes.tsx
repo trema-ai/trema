@@ -267,8 +267,7 @@ function PersonalPolicyRow() {
         )}
       </div>
       <p className="text-meta text-muted-foreground">
-        When enabled, members can message the agent privately. What it learns there is visible
-        only to them.
+        When enabled, members can message the agent privately and have it act on their behalf.
       </p>
     </div>
   );
@@ -293,7 +292,7 @@ function ScopeTreeRow({
     <div
       className={cn(
         "flex items-center rounded-md",
-        selected ? "bg-moss-soft" : "hover:bg-muted/60",
+        selected ? "bg-muted font-medium" : "hover:bg-muted/60",
       )}
     >
       <button

@@ -15,8 +15,12 @@ Rules:
 1. **Borders do the work.** Surfaces are flat with 1px borders. Do not
    put shadows on cards. One shadow token (`shadow-overlay`) exists for
    menus, dialogs, and popovers only.
-2. **One accent.** Moss blue (`moss`) marks links, focus, selection,
-   and the running state. Primary buttons are ink-filled, never blue.
+2. **One accent.** Moss blue (`moss`) marks links, focus, and the
+   running state. Primary buttons are ink-filled, never blue.
+   Selection is neutral: selected rows get the `muted` fill plus
+   `font-medium`, matching the sidebar's active state. Selection is
+   structural, not semantic; keeping moss out of it keeps the accent
+   meaningful.
 3. **Mono is the spec register.** Set ids, event seqs, scope paths,
    tool args, timestamps, log lines, and policy lines in `font-mono`.
    Uppercase mono labels are banned. Use sentence-case sans labels for
@@ -48,7 +52,8 @@ All tokens live in [src/styles/globals.css](src/styles/globals.css).
 - Action: `primary` (ink fill), `secondary` (quiet fill),
   `destructive`.
 - Accent: `moss`, `moss-strong`, `moss-soft`. Use `moss-soft` for
-  selected rows, active filter pills, and the selection tint.
+  active filter pills and the running-state soft fill. Not for
+  selected rows; selection uses `muted` (rule 2).
 - Status pairs: `go`/`go-soft` (success), `wait`/`wait-soft`
   (pending, paused), `destructive`/`destructive-soft` (failed),
   `moss`/`moss-soft` (running). Neutral states use `muted`.
