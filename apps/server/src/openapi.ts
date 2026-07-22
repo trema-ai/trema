@@ -81,6 +81,14 @@ export function generateOpenApiDocument() {
         description: "Organization membership, roles, and invites.",
       },
       {
+        name: "Scopes",
+        description: "Organization, shared-space, and personal context scopes.",
+      },
+      {
+        name: "Bindings",
+        description: "Deterministic mappings from surface locations to context scopes.",
+      },
+      {
         name: "Service credentials",
         description: "Machine credentials for calling Trema as an organization principal.",
       },

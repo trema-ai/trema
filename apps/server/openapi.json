@@ -47,6 +47,14 @@
       "description": "Organization membership, roles, and invites."
     },
     {
+      "name": "Scopes",
+      "description": "Organization, shared-space, and personal context scopes."
+    },
+    {
+      "name": "Bindings",
+      "description": "Deterministic mappings from surface locations to context scopes."
+    },
+    {
       "name": "Service credentials",
       "description": "Machine credentials for calling Trema as an organization principal."
     }
@@ -149,6 +157,263 @@
                     "principal"
                   ],
                   "description": "The organization and owner principal created by bootstrap."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/bindings": {
+      "post": {
+        "operationId": "bindings.create",
+        "summary": "Create a surface binding",
+        "description": "Bind a surface location to an organization or space scope.",
+        "tags": [
+          "Bindings"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "surface": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The interface surface. Cannot be empty."
+                  },
+                  "locationRef": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The surface-specific location identifier. Cannot be empty."
+                  },
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The ID of the org or space scope to bind. A UUID."
+                  }
+                },
+                "required": [
+                  "surface",
+                  "locationRef",
+                  "scopeId"
+                ],
+                "description": "The surface binding to create."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The binding's unique ID. A UUID (version 7)."
+                    },
+                    "surface": {
+                      "type": "string",
+                      "description": "The interface surface, such as `slack`, `web`, or `email`."
+                    },
+                    "locationRef": {
+                      "type": "string",
+                      "description": "The surface-specific location identifier."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the org or space scope this location resolves to."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the binding was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the binding was last updated. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "surface",
+                    "locationRef",
+                    "scopeId",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "description": "A surface location bound to a context scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "bindings.list",
+        "summary": "List surface bindings",
+        "description": "List bindings in the active organization with optional surface and scope filters.",
+        "tags": [
+          "Bindings"
+        ],
+        "parameters": [
+          {
+            "name": "surface",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only return this surface's bindings."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "scopeId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Only return bindings targeting this scope. A UUID."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The binding's unique ID. A UUID (version 7)."
+                      },
+                      "surface": {
+                        "type": "string",
+                        "description": "The interface surface, such as `slack`, `web`, or `email`."
+                      },
+                      "locationRef": {
+                        "type": "string",
+                        "description": "The surface-specific location identifier."
+                      },
+                      "scopeId": {
+                        "type": "string",
+                        "description": "The ID of the org or space scope this location resolves to."
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "description": "When the binding was created. An ISO 8601 date-time."
+                      },
+                      "updatedAt": {
+                        "type": "string",
+                        "description": "When the binding was last updated. An ISO 8601 date-time."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "surface",
+                      "locationRef",
+                      "scopeId",
+                      "createdAt",
+                      "updatedAt"
+                    ],
+                    "description": "A surface location bound to a context scope."
+                  },
+                  "description": "The active organization's surface bindings."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/bindings/{id}": {
+      "delete": {
+        "operationId": "bindings.delete",
+        "summary": "Delete a surface binding",
+        "description": "Unbind a surface location in the active organization.",
+        "tags": [
+          "Bindings"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the binding to delete. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The binding's unique ID. A UUID (version 7)."
+                    },
+                    "surface": {
+                      "type": "string",
+                      "description": "The interface surface, such as `slack`, `web`, or `email`."
+                    },
+                    "locationRef": {
+                      "type": "string",
+                      "description": "The surface-specific location identifier."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The ID of the org or space scope this location resolves to."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the binding was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the binding was last updated. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "surface",
+                    "locationRef",
+                    "scopeId",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "description": "A surface location bound to a context scope."
                 }
               }
             }
@@ -1055,6 +1320,345 @@
                     "principal"
                   ],
                   "description": "An organization and the caller's principal in it."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/scopes": {
+      "post": {
+        "operationId": "scopes.create",
+        "summary": "Create a space",
+        "description": "Create a shared space scope in the active organization.",
+        "tags": [
+          "Scopes"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "A display name for the space. Cannot be empty."
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "description": "The space to create."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The scope's unique ID. A UUID (version 7)."
+                    },
+                    "kind": {
+                      "enum": [
+                        "org",
+                        "space",
+                        "personal"
+                      ],
+                      "type": "string",
+                      "description": "The scope's kind."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The scope's display name."
+                    },
+                    "ownerId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The owning human principal's ID for a personal scope; otherwise null."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "name",
+                    "ownerId"
+                  ],
+                  "description": "A context scope in the active organization."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "scopes.list",
+        "summary": "List scopes",
+        "description": "List scopes in the active organization, optionally filtered by kind.",
+        "tags": [
+          "Scopes"
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "org",
+                "space",
+                "personal"
+              ],
+              "type": "string",
+              "description": "Only return scopes of this kind when provided."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The scope's unique ID. A UUID (version 7)."
+                      },
+                      "kind": {
+                        "enum": [
+                          "org",
+                          "space",
+                          "personal"
+                        ],
+                        "type": "string",
+                        "description": "The scope's kind."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "The scope's display name."
+                      },
+                      "ownerId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "The owning human principal's ID for a personal scope; otherwise null."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "name",
+                      "ownerId"
+                    ],
+                    "description": "A context scope in the active organization."
+                  },
+                  "description": "The active organization's scopes."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/scopes/{id}": {
+      "get": {
+        "operationId": "scopes.get",
+        "summary": "Get a scope",
+        "description": "Get one scope in the active organization.",
+        "tags": [
+          "Scopes"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the scope to fetch. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The scope's unique ID. A UUID (version 7)."
+                    },
+                    "kind": {
+                      "enum": [
+                        "org",
+                        "space",
+                        "personal"
+                      ],
+                      "type": "string",
+                      "description": "The scope's kind."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The scope's display name."
+                    },
+                    "ownerId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The owning human principal's ID for a personal scope; otherwise null."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "name",
+                    "ownerId"
+                  ],
+                  "description": "A context scope in the active organization."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "scopes.rename",
+        "summary": "Rename a space",
+        "description": "Rename a space scope. Organization and personal scopes cannot be renamed.",
+        "tags": [
+          "Scopes"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the space to rename. A UUID."
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The space's new name. Cannot be empty."
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "description": "The space rename."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The scope's unique ID. A UUID (version 7)."
+                    },
+                    "kind": {
+                      "enum": [
+                        "org",
+                        "space",
+                        "personal"
+                      ],
+                      "type": "string",
+                      "description": "The scope's kind."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The scope's display name."
+                    },
+                    "ownerId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The owning human principal's ID for a personal scope; otherwise null."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "name",
+                    "ownerId"
+                  ],
+                  "description": "A context scope in the active organization."
                 }
               }
             }
