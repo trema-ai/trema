@@ -109,6 +109,12 @@ export const orgScoped = authed.use(async ({ context, next }) => {
     });
   }
 
+  if (principal.deactivatedAt) {
+    throw new ORPCError("FORBIDDEN", {
+      message: "Principal is deactivated",
+    });
+  }
+
   return next({
     context: {
       org,

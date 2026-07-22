@@ -20,13 +20,15 @@ The organization's agent principal holds no role; roles belong to people.
 
 ## Invites
 
-Members with the `admin` or `owner` role create invites through the invites endpoint in the [API reference](/api). An invite carries:
+Members with the `admin` or `owner` role create invites from the member settings page or through the invites endpoint in the [API reference](/api). An invite carries:
 
 - the role it grants
 - the scope it applies to, defaulting to the organization
 - an expiry, defaulting to seven days after creation
 
 The response contains the join link exactly once. Only a hash of the link's token is stored, so a lost link cannot be recovered—create a new invite instead.
+
+Pending invites appear on the member settings page. Revoke an invite when its link should stop working. A revoked invite cannot be previewed or redeemed.
 
 ## Redeeming
 
@@ -35,6 +37,16 @@ The recipient opens the link, signs in or creates an account, and sees the organ
 ## Changing roles
 
 Roles change through the members endpoints in the [API reference](/api), and a change takes effect immediately. One rule holds: the organization's last owner cannot be demoted.
+
+## Deactivating members
+
+Owners and admins can deactivate a member from the member settings page or through the principals endpoint. Deactivation keeps the principal and grants, but blocks sign-in, revokes service credentials, and removes identity links. Items and other records the member created stay intact.
+
+The organization's last active owner cannot be deactivated. An invite cannot reactivate a deactivated member.
+
+## Reactivating members
+
+Reactivation restores access for the principal and keeps the existing grants. It does not restore revoked credentials or removed identity links. The member must connect those again through the normal flows.
 
 ## SMTP
 

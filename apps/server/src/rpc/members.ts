@@ -3,11 +3,15 @@ import { z } from "zod";
 
 import {
   createInvite,
+  deactivateMember,
+  listInvites,
   listMembers,
   MemberConflictError,
   MemberNotFoundError,
   previewInvite,
+  reactivateMember,
   redeemInvite,
+  revokeInvite,
   setMemberRole,
 } from "#/services/members/index.js";
 import { authed, pub, requireCapability } from "./builders.js";
@@ -31,6 +35,9 @@ const memberSchema = z
   .object({
     principal: principalSchema.describe("The member's principal."),
     role: roleSchema.describe("The member's role on the organization scope."),
+    status: z
+      .enum(["active", "deactivated"])
+      .describe("Whether the member can authenticate and act in the organization."),
     joinedAt: z
       .string()
       .describe("When the member joined the organization. An ISO 8601 date-time."),
@@ -50,6 +57,7 @@ const list = requireCapability("read")
     (await listMembers(context.db, context.org.id)).map(({ principal, role, createdAt }) => ({
       principal,
       role,
+      status: principal.deactivatedAt ? ("deactivated" as const) : ("active" as const),
       joinedAt: createdAt.toISOString(),
     })),
   );
@@ -81,8 +89,163 @@ const setRole = requireCapability("manage_members")
       return {
         principal: result.principal,
         role: result.grant.role,
+        status: result.principal.deactivatedAt ? "deactivated" : "active",
         joinedAt: result.grant.createdAt.toISOString(),
       };
+    } catch (error) {
+      if (error instanceof MemberConflictError) {
+        throw new ORPCError("CONFLICT", { message: error.message });
+      }
+      if (error instanceof MemberNotFoundError) {
+        throw new ORPCError("NOT_FOUND", { message: error.message });
+      }
+      throw error;
+    }
+  });
+
+const inviteList = requireCapability("manage_members")
+  .route({
+    method: "GET",
+    path: "/invites",
+    summary: "List pending invites",
+    description: "List unexpired organization invites that have not been redeemed or revoked.",
+    tags: ["Members"],
+  })
+  .output(
+    z
+      .array(
+        z
+          .object({
+            id: z.string().describe("The invite's unique ID. A UUID (version 7)."),
+            role: roleSchema.describe("The role the invite grants when redeemed."),
+            scopeId: z
+              .string()
+              .describe("The ID of the scope the invite grants access to. A UUID."),
+            invitedBy: z
+              .string()
+              .describe("The display name of the member who created the invite."),
+            createdAt: z.string().describe("When the invite was created. An ISO 8601 date-time."),
+            expiresAt: z.string().describe("When the invite expires. An ISO 8601 date-time."),
+          })
+          .describe("A pending organization invite."),
+      )
+      .describe("The pending invites for the active organization."),
+  )
+  .handler(async ({ context }) =>
+    (await listInvites(context.db, context.org.id)).map((invite) => ({
+      id: invite.id,
+      role: invite.role,
+      scopeId: invite.scopeId,
+      invitedBy: invite.createdBy.displayName,
+      createdAt: invite.createdAt.toISOString(),
+      expiresAt: invite.expiresAt.toISOString(),
+    })),
+  );
+
+const inviteRevoke = requireCapability("manage_members")
+  .route({
+    method: "POST",
+    path: "/invites/{id}/revoke",
+    summary: "Revoke an invite",
+    description: "Revoke a pending invite so its token can no longer be previewed or redeemed.",
+    tags: ["Members"],
+  })
+  .input(
+    z.object({
+      id: z.uuid().describe("The ID of the invite to revoke. A UUID."),
+    }),
+  )
+  .output(
+    z
+      .object({
+        id: z.string().describe("The revoked invite's unique ID. A UUID (version 7)."),
+        revokedAt: z.string().describe("When the invite was revoked. An ISO 8601 date-time."),
+      })
+      .describe("The revoked invite."),
+  )
+  .handler(async ({ context, input }) => {
+    try {
+      const invite = await revokeInvite(context.db, {
+        orgId: context.org.id,
+        actorPrincipalId: context.principal.id,
+        inviteId: input.id,
+      });
+      return { id: invite.id, revokedAt: invite.revokedAt!.toISOString() };
+    } catch (error) {
+      if (error instanceof MemberConflictError) {
+        throw new ORPCError("CONFLICT", { message: error.message });
+      }
+      if (error instanceof MemberNotFoundError) {
+        throw new ORPCError("NOT_FOUND", { message: error.message });
+      }
+      throw error;
+    }
+  });
+
+const memberStateSchema = z
+  .object({
+    id: z.string().describe("The member principal's unique ID. A UUID (version 7)."),
+    status: z
+      .enum(["active", "deactivated"])
+      .describe("Whether the member can authenticate and act in the organization."),
+  })
+  .describe("The member's lifecycle state.");
+
+function lifecycleInput() {
+  return z.object({
+    id: z.uuid().describe("The ID of the member's principal. A UUID."),
+  });
+}
+
+const deactivate = requireCapability("manage_members")
+  .route({
+    method: "POST",
+    path: "/principals/{id}/deactivate",
+    summary: "Deactivate a member",
+    description:
+      "Block a human member from acting, revoke their service credentials, and remove their identity links without deleting their grants or authored records.",
+    tags: ["Members"],
+  })
+  .input(lifecycleInput())
+  .output(memberStateSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      const principal = await deactivateMember(context.db, {
+        orgId: context.org.id,
+        actorPrincipalId: context.principal.id,
+        principalId: input.id,
+      });
+      return { id: principal.id, status: "deactivated" as const };
+    } catch (error) {
+      if (error instanceof MemberConflictError) {
+        throw new ORPCError("CONFLICT", { message: error.message });
+      }
+      if (error instanceof MemberNotFoundError) {
+        throw new ORPCError("NOT_FOUND", { message: error.message });
+      }
+      throw error;
+    }
+  });
+
+const reactivate = requireCapability("manage_members")
+  .route({
+    method: "POST",
+    path: "/principals/{id}/reactivate",
+    summary: "Reactivate a member",
+    description:
+      "Restore a deactivated member without restoring revoked credentials or deleted identity links.",
+    tags: ["Members"],
+  })
+  .input(lifecycleInput())
+  .output(memberStateSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      const principal = await reactivateMember(context.db, {
+        orgId: context.org.id,
+        actorPrincipalId: context.principal.id,
+        principalId: input.id,
+      });
+      return { id: principal.id, status: "active" as const };
     } catch (error) {
       if (error instanceof MemberConflictError) {
         throw new ORPCError("CONFLICT", { message: error.message });
@@ -243,5 +406,13 @@ const inviteRedeem = authed
 export const membersRouter = {
   list,
   setRole,
-  invites: { create: inviteCreate, preview: invitePreview, redeem: inviteRedeem },
+  deactivate,
+  reactivate,
+  invites: {
+    list: inviteList,
+    create: inviteCreate,
+    preview: invitePreview,
+    redeem: inviteRedeem,
+    revoke: inviteRevoke,
+  },
 };
