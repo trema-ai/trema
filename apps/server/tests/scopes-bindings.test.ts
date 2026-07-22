@@ -183,6 +183,44 @@ integration("scopes and surface bindings", () => {
     expect(first.scopeId).toBe(sharedScope.id);
   });
 
+  it("personal policy gates DM resolution for new and existing personal scopes", async () => {
+    const org = await createOrg();
+    const human = await addMember(org.org.id, org.orgScope.id, "member", "Dm Human");
+    await db.identityLink.create({
+      data: {
+        orgId: org.org.id,
+        surface: "slack",
+        externalUserId: "U-DM",
+        principalId: human.principal.id,
+      },
+    });
+    const dmInput = {
+      orgId: org.org.id,
+      surface: "slack",
+      locationRef: "T1:D9",
+      dm: { externalUserId: "U-DM" },
+    };
+    await expect(resolveLocation(db, dmInput)).resolves.toMatchObject({ kind: "scope" });
+
+    await expect(
+      call(scopesRouter.setPersonalPolicy, { enabled: false }, { context: human.context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      call(scopesRouter.setPersonalPolicy, { enabled: false }, { context: org.context }),
+    ).resolves.toEqual({ enabled: false });
+    await expect(
+      call(scopesRouter.personalPolicy, {}, { context: human.context }),
+    ).resolves.toEqual({ enabled: false });
+
+    await expect(resolveLocation(db, dmInput)).resolves.toEqual({ kind: "personal_disabled" });
+    await expect(
+      resolveLocation(db, { ...dmInput, locationRef: "T1:D10" }),
+    ).resolves.toEqual({ kind: "personal_disabled" });
+
+    await call(scopesRouter.setPersonalPolicy, { enabled: true }, { context: org.context });
+    await expect(resolveLocation(db, dmInput)).resolves.toMatchObject({ kind: "scope" });
+  });
+
   it("rejects duplicate locations and personal-scope binding targets", async () => {
     const org = await createOrg();
     const sharedScope = await call(

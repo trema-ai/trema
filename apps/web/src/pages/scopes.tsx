@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Inbox, Lock, Pencil, Plus, Trash2, UserRound, UsersRound } from "lucide-react";
+import { Building2, Inbox, Pencil, Plus, Trash2, UserRound, UsersRound } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -41,6 +41,7 @@ import {
   SelectValue,
 } from "#/components/ui/select.tsx";
 import { Skeleton } from "#/components/ui/skeleton.tsx";
+import { Switch } from "#/components/ui/switch.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
 import { cn } from "#/lib/utils.ts";
 import { useViewerRole } from "#/pages/home.tsx";
@@ -85,18 +86,13 @@ export function ScopesPage() {
       sharedScopes: all
         .filter((scope) => scope.kind === "shared")
         .sort((left, right) => left.name.localeCompare(right.name)),
-      personalScopes: all
-        .filter((scope) => scope.kind === "personal")
-        .sort((left, right) => left.name.localeCompare(right.name)),
+      personalCount: all.filter((scope) => scope.kind === "personal").length,
     };
   }, [scopes.data]);
-  const bindableScopes = organized.org
+  const selectable = organized.org
     ? [organized.org, ...organized.sharedScopes]
     : organized.sharedScopes;
-  const selectable = canManage ? [...bindableScopes, ...organized.personalScopes] : bindableScopes;
   const selectedScope = selectable.find((scope) => scope.id === scopeParam) ?? organized.org;
-  const defaultBindingScopeId =
-    selectedScope?.kind === "personal" ? organized.org?.id : selectedScope?.id;
 
   useEffect(() => {
     if (!selectedScope || scopeParam === selectedScope.id) return;
@@ -146,7 +142,7 @@ export function ScopesPage() {
             loading={scopes.isPending}
             org={organized.org}
             sharedScopes={organized.sharedScopes}
-            personalScopes={organized.personalScopes}
+            personalCount={organized.personalCount}
             canManage={canManage}
             selectedId={selectedScope?.id}
             onSelect={selectScope}
@@ -167,12 +163,12 @@ export function ScopesPage() {
         </div>
       )}
 
-      {canManage && defaultBindingScopeId ? (
+      {canManage && selectedScope ? (
         <NewBindingDialog
           open={bindingOpen}
           onOpenChange={setBindingOpen}
-          scopes={bindableScopes}
-          defaultScopeId={defaultBindingScopeId}
+          scopes={selectable}
+          defaultScopeId={selectedScope.id}
         />
       ) : null}
     </main>
@@ -183,7 +179,7 @@ function ScopeTree({
   loading,
   org,
   sharedScopes,
-  personalScopes,
+  personalCount,
   canManage,
   selectedId,
   onSelect,
@@ -191,7 +187,7 @@ function ScopeTree({
   loading: boolean;
   org: Scope | undefined;
   sharedScopes: Scope[];
-  personalScopes: Scope[];
+  personalCount: number;
   canManage: boolean;
   selectedId: string | undefined;
   onSelect: (scope: Scope) => void;
@@ -228,36 +224,52 @@ function ScopeTree({
                 }
               />
             ))}
-            {canManage && personalScopes.length > 0 ? (
-              <>
-                <div className="mt-1 flex h-7 items-center gap-2 px-2 text-meta text-muted-foreground">
-                  <UserRound className="size-3.5" aria-hidden="true" />
-                  <span>Personal</span>
-                </div>
-                {personalScopes.map((personalScope) => (
-                  <ScopeTreeRow
-                    key={personalScope.id}
-                    scope={personalScope}
-                    selected={personalScope.id === selectedId}
-                    onSelect={onSelect}
-                    nested
-                  />
-                ))}
-              </>
-            ) : (
-              <div className="mt-1 flex h-9 items-center gap-2 rounded-md px-2 text-chrome text-muted-foreground">
-                <UserRound className="size-4" aria-hidden="true" />
-                <span>Personal ({personalScopes.length})</span>
-              </div>
-            )}
+            <div className="mt-1 flex h-9 items-center gap-2 rounded-md px-2 text-chrome text-muted-foreground">
+              <UserRound className="size-4" aria-hidden="true" />
+              <span>Personal ({personalCount})</span>
+            </div>
           </>
         )}
       </div>
-      <div className="flex gap-2 border-t px-4 py-3 text-meta text-muted-foreground">
-        <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-        <p>Personal scope content is owner-only. Admins see existence, never content.</p>
-      </div>
+      {canManage ? <PersonalPolicyRow /> : null}
     </aside>
+  );
+}
+
+function PersonalPolicyRow() {
+  const queryClient = useQueryClient();
+  const policy = useQuery(orpc.scopes.personalPolicy.queryOptions({ input: {} }));
+  const mutation = useMutation({
+    mutationFn: (enabled: boolean) => rpcClient.scopes.setPersonalPolicy({ enabled }),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({
+        queryKey: orpc.scopes.personalPolicy.queryOptions({ input: {} }).queryKey,
+      });
+      toast.success(result.enabled ? "Personal scopes enabled" : "Personal scopes disabled");
+    },
+    onError: (cause) => toast.error(messageFrom(cause)),
+  });
+  return (
+    <div className="flex items-center justify-between gap-2 border-t px-4 py-3">
+      <div>
+        <Label htmlFor="personal-policy" className="text-chrome">
+          Personal scopes
+        </Label>
+        <p className="mt-0.5 text-meta text-muted-foreground">
+          Direct messages get a private scope per member.
+        </p>
+      </div>
+      {policy.isPending ? (
+        <Skeleton className="h-5 w-9" />
+      ) : (
+        <Switch
+          id="personal-policy"
+          checked={policy.data?.enabled ?? false}
+          disabled={mutation.isPending || Boolean(policy.error)}
+          onCheckedChange={(checked) => mutation.mutate(checked)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -362,27 +374,19 @@ function ScopeDetail({
             rowKey={(binding) => binding.id}
             loading={bindings.isPending}
             empty={
-              scope.kind === "personal" ? (
-                <EmptyState
-                  icon={Inbox}
-                  title="No bindings yet"
-                  description="Direct message locations appear here when the owner messages the agent."
-                />
-              ) : (
-                <EmptyState
-                  icon={Inbox}
-                  title="No bindings yet"
-                  description="Bindings connect places the agent is reachable, such as a Slack channel or a Linear team, to this scope."
-                  action={
-                    canManage ? (
-                      <Button size="sm" onClick={onNewBinding}>
-                        <Plus />
-                        New binding
-                      </Button>
-                    ) : undefined
-                  }
-                />
-              )
+              <EmptyState
+                icon={Inbox}
+                title="No bindings yet"
+                description="Bindings connect places the agent is reachable, such as a Slack channel or a Linear team, to this scope."
+                action={
+                  canManage ? (
+                    <Button size="sm" onClick={onNewBinding}>
+                      <Plus />
+                      New binding
+                    </Button>
+                  ) : undefined
+                }
+              />
             }
           />
         )}

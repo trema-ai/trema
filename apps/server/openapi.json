@@ -1675,6 +1675,98 @@
         ]
       }
     },
+    "/scopes/personal-policy": {
+      "get": {
+        "operationId": "scopes.personalPolicy",
+        "summary": "Get the personal-scope policy",
+        "description": "Whether direct messages create and resolve personal scopes.",
+        "tags": [
+          "Scopes"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Whether direct messages create and resolve personal scopes in this organization."
+                    }
+                  },
+                  "required": [
+                    "enabled"
+                  ],
+                  "description": "The organization's personal-scope policy."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "scopes.setPersonalPolicy",
+        "summary": "Set the personal-scope policy",
+        "description": "Enable or disable personal scopes for the organization. Disabling stops direct messages from creating or resolving personal scopes; existing scopes and their items are kept and become reachable again when re-enabled.",
+        "tags": [
+          "Scopes"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Whether direct messages create and resolve personal scopes in this organization."
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "description": "The organization's personal-scope policy."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Whether direct messages create and resolve personal scopes in this organization."
+                    }
+                  },
+                  "required": [
+                    "enabled"
+                  ],
+                  "description": "The organization's personal-scope policy."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/service-credentials": {
       "post": {
         "operationId": "serviceCredentials.create",

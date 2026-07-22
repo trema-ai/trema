@@ -3,11 +3,13 @@ import { z } from "zod";
 
 import {
   createSharedScope,
+  getPersonalPolicy,
   getScope,
   listScopes,
   renameSharedScope,
   ScopeNotFoundError,
   ScopeNotRenameableError,
+  setPersonalPolicy,
 } from "#/services/scopes/index.js";
 import { requireCapability } from "./builders.js";
 
@@ -132,5 +134,50 @@ const rename = requireCapability("manage_scopes")
     }
   });
 
+const personalPolicySchema = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe("Whether direct messages create and resolve personal scopes in this organization."),
+  })
+  .describe("The organization's personal-scope policy.");
+
+const personalPolicy = requireCapability("read")
+  .route({
+    method: "GET",
+    path: "/scopes/personal-policy",
+    summary: "Get the personal-scope policy",
+    description: "Whether direct messages create and resolve personal scopes.",
+    tags: ["Scopes"],
+  })
+  .output(personalPolicySchema)
+  .handler(({ context }) => getPersonalPolicy(context.db, context.org.id));
+
+const setPersonalPolicyRoute = requireCapability("manage_scopes")
+  .route({
+    method: "PATCH",
+    path: "/scopes/personal-policy",
+    summary: "Set the personal-scope policy",
+    description:
+      "Enable or disable personal scopes for the organization. Disabling stops direct messages from creating or resolving personal scopes; existing scopes and their items are kept and become reachable again when re-enabled.",
+    tags: ["Scopes"],
+  })
+  .input(personalPolicySchema)
+  .output(personalPolicySchema)
+  .handler(({ context, input }) =>
+    setPersonalPolicy(context.db, {
+      orgId: context.org.id,
+      actorPrincipalId: context.principal.id,
+      enabled: input.enabled,
+    }),
+  );
+
 // Scope lifecycle, including deletion, belongs to a later implementation phase.
-export const scopesRouter = { create, list, get, rename };
+export const scopesRouter = {
+  create,
+  list,
+  get,
+  rename,
+  personalPolicy,
+  setPersonalPolicy: setPersonalPolicyRoute,
+};

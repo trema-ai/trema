@@ -58,6 +58,40 @@ export async function getScope(db: Database, orgId: string, scopeId: string) {
   return scope;
 }
 
+export async function getPersonalPolicy(db: Database, orgId: string) {
+  const org = await db.org.findUniqueOrThrow({
+    where: { id: orgId },
+    select: { personalScopesEnabled: true },
+  });
+  return { enabled: org.personalScopesEnabled };
+}
+
+export interface SetPersonalPolicyInput {
+  orgId: string;
+  actorPrincipalId: string;
+  enabled: boolean;
+}
+
+export async function setPersonalPolicy(db: Database, input: SetPersonalPolicyInput) {
+  return db.$transaction(async (transaction) => {
+    const org = await transaction.org.update({
+      where: { id: input.orgId },
+      data: { personalScopesEnabled: input.enabled },
+      select: { personalScopesEnabled: true },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: input.actorPrincipalId,
+        action: "scope.personal_policy",
+        subject: input.orgId,
+        payload: { enabled: input.enabled },
+      },
+    });
+    return { enabled: org.personalScopesEnabled };
+  });
+}
+
 export interface RenameSharedScopeInput {
   orgId: string;
   actorPrincipalId: string;

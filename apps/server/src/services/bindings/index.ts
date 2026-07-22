@@ -182,7 +182,16 @@ export interface ResolveLocationInput {
 export type ResolveLocationResult =
   | { kind: "scope"; scope: Scope }
   | { kind: "unlinked"; surface: string; externalUserId: string }
+  | { kind: "personal_disabled" }
   | { kind: "unbound" };
+
+async function personalScopesEnabled(db: Database, orgId: string): Promise<boolean> {
+  const org = await db.org.findUnique({
+    where: { id: orgId },
+    select: { personalScopesEnabled: true },
+  });
+  return org?.personalScopesEnabled ?? false;
+}
 
 async function getOrCreatePersonalScope(
   db: Database,
@@ -233,10 +242,21 @@ export async function resolveLocation(
     include: { scope: true },
   });
   if (binding) {
+    // Off means off: an existing DM binding stops resolving too. Nothing
+    // is destroyed; re-enabling restores it.
+    if (
+      binding.scope.kind === "personal" &&
+      !(await personalScopesEnabled(db, input.orgId))
+    ) {
+      return { kind: "personal_disabled" };
+    }
     return { kind: "scope", scope: binding.scope };
   }
   if (!input.dm) {
     return { kind: "unbound" };
+  }
+  if (!(await personalScopesEnabled(db, input.orgId))) {
+    return { kind: "personal_disabled" };
   }
 
   const identity = await db.identityLink.findUnique({
