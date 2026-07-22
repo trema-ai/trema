@@ -18,7 +18,9 @@ A generated token is printed to the server log exactly once:
 Bootstrap token: <token>
 ```
 
-Only a hash of the token is stored, so the log line is the only place a generated token ever appears. If you lose it before redeeming, set `TREMA_BOOTSTRAP_TOKEN` and restart—while no organization exists, the supplied token replaces the stored one.
+Only a hash of the token is stored. The log line is the only place a generated token appears.
+
+If you lose the token before redemption, run `trema bootstrap-token` on the host. The command re-mints it while zero organizations exist.
 
 ## Redeem it
 

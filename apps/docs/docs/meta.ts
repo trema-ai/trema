@@ -7,6 +7,7 @@ export default defineMeta({
     "self-hosting",
     "first-boot",
     "configuration",
+    "cli",
     "members-and-invites",
   ],
 });
