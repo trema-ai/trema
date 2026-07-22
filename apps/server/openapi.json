@@ -523,6 +523,780 @@
         }
       }
     },
+    "/connector-registrations": {
+      "post": {
+        "operationId": "connectors.registrations.create",
+        "summary": "Create a connector client registration",
+        "description": "Create organization-level OAuth client registration metadata.",
+        "tags": [
+          "Connectors"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "providerKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "source": {
+                    "enum": [
+                      "platform",
+                      "customer",
+                      "dynamic"
+                    ],
+                    "type": "string"
+                  },
+                  "clientId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "clientSecret": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sharedRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "adminConsentGranted": {
+                    "type": "boolean"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "providerKey",
+                  "source"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "providerKey": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "enum": [
+                        "platform",
+                        "customer",
+                        "dynamic"
+                      ],
+                      "type": "string"
+                    },
+                    "clientId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sharedRef": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "adminConsentGranted": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "providerKey",
+                    "source",
+                    "clientId",
+                    "sharedRef",
+                    "adminConsentGranted",
+                    "notes",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "connectors.registrations.list",
+        "summary": "List connector client registrations",
+        "description": "List registration metadata without client secret material.",
+        "tags": [
+          "Connectors"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "providerKey": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "enum": [
+                          "platform",
+                          "customer",
+                          "dynamic"
+                        ],
+                        "type": "string"
+                      },
+                      "clientId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "sharedRef": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "adminConsentGranted": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "notes": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "providerKey",
+                      "source",
+                      "clientId",
+                      "sharedRef",
+                      "adminConsentGranted",
+                      "notes",
+                      "createdAt",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/connector-registrations/{id}": {
+      "delete": {
+        "operationId": "connectors.registrations.delete",
+        "summary": "Delete a connector client registration",
+        "description": "Delete one organization-level connector client registration.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/connector-installations/{installationItemId}/connect/oauth": {
+      "post": {
+        "operationId": "connectors.connect.startOAuth",
+        "summary": "Start an OAuth connector flow",
+        "description": "Create single-use OAuth state and return the provider authorization URL.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "installationItemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "providerKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "principalId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "returnTo": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "config": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "providerKey",
+                  "principalId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authorizationUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "authorizationUrl"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/connector-installations/{installationItemId}/credentials": {
+      "post": {
+        "operationId": "connectors.connect.createStatic",
+        "summary": "Create a static connector credential",
+        "description": "Validate, verify, and encrypt an API-key or basic credential.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "installationItemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "providerKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "principalId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "credentials": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "config": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "providerKey",
+                  "principalId",
+                  "credentials"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "installationItemId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "principalId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "mode": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "revokedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "lastRefreshSuccess": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "lastRefreshFailure": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "refreshAttempts": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "refreshExhausted": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "isRevoked": {
+                      "type": "boolean"
+                    },
+                    "isExpired": {
+                      "type": "boolean"
+                    },
+                    "isValid": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "installationItemId",
+                    "principalId",
+                    "mode",
+                    "expiresAt",
+                    "revokedAt",
+                    "lastRefreshSuccess",
+                    "lastRefreshFailure",
+                    "refreshAttempts",
+                    "refreshExhausted",
+                    "createdAt",
+                    "updatedAt",
+                    "isRevoked",
+                    "isExpired",
+                    "isValid"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "connectors.credentials.list",
+        "summary": "List connector credentials",
+        "description": "List credential metadata, refresh bookkeeping, and validity flags only.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "installationItemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "installationItemId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "principalId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "mode": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "revokedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "lastRefreshSuccess": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "lastRefreshFailure": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "refreshAttempts": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "refreshExhausted": {
+                        "type": "boolean"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      },
+                      "isRevoked": {
+                        "type": "boolean"
+                      },
+                      "isExpired": {
+                        "type": "boolean"
+                      },
+                      "isValid": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "installationItemId",
+                      "principalId",
+                      "mode",
+                      "expiresAt",
+                      "revokedAt",
+                      "lastRefreshSuccess",
+                      "lastRefreshFailure",
+                      "refreshAttempts",
+                      "refreshExhausted",
+                      "createdAt",
+                      "updatedAt",
+                      "isRevoked",
+                      "isExpired",
+                      "isValid"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/connector-installations/{installationItemId}/credentials/{credentialId}/revoke": {
+      "post": {
+        "operationId": "connectors.credentials.revoke",
+        "summary": "Revoke a connector credential",
+        "description": "Mark a connector credential revoked locally.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "installationItemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "credentialId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "revokedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revokedAt"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/members": {
       "get": {
         "operationId": "members.list",

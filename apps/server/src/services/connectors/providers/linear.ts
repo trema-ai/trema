@@ -22,7 +22,11 @@ export const linearProvider = {
     type: "rest",
     baseUrl: "https://api.linear.app",
     authHeader: `\${credentials.apiKey}`,
-    verification: { method: "POST", endpoints: ["/graphql"] },
+    verification: {
+      method: "POST",
+      endpoints: ["/graphql"],
+      body: { query: "{ viewer { id } }" },
+    },
   },
   toolManifest: [
     {

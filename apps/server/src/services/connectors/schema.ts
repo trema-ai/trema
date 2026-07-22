@@ -35,9 +35,9 @@ export const authModeSchema = z.enum(authModes);
 
 export const authRecipeSchema = z
   .object({
-    authorizationUrl: z.url().optional(),
-    tokenUrl: z.url().optional(),
-    refreshUrl: z.url().optional(),
+    authorizationUrl: z.string().trim().min(1).optional(),
+    tokenUrl: z.string().trim().min(1).optional(),
+    refreshUrl: z.string().trim().min(1).optional(),
     defaultScopes: z.array(z.string().trim().min(1)),
     scopeSeparator: z.string().min(1).optional(),
     pkce: z.boolean().default(true),
@@ -62,8 +62,14 @@ const verificationSchema = z
   .object({
     method: httpMethodSchema,
     endpoints: z.array(z.string().trim().min(1)).min(1),
+    // JSON request body for providers whose cheap check is not a bare GET
+    // (e.g. a GraphQL endpoint that rejects an empty POST).
+    body: z.record(z.string(), z.unknown()).optional(),
   })
-  .strict();
+  .strict()
+  .refine((verification) => verification.body === undefined || verification.method === "POST", {
+    message: "verification body requires method POST",
+  });
 
 export const restTransportSchema = z
   .object({

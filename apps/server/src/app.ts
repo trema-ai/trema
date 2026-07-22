@@ -10,14 +10,55 @@ import type { Database } from "./lib/db/index.js";
 import type { Environment } from "./lib/env/schema.js";
 import { generateOpenApiDocument, OPENAPI_PREFIX } from "./openapi.js";
 import { router } from "./router.js";
+import {
+  type ConnectorFetch,
+  completeOAuthCallback,
+  consumeOAuthState,
+  hashOAuthState,
+  OAuthStateExpiredError,
+  OAuthStateSingleUseError,
+  OAuthTokenExchangeError,
+  type PlatformAppDirectory,
+} from "./services/connectors/index.js";
 
 export interface AppDependencies {
   db: Database;
   auth: Auth;
   env: Environment;
+  connectorFetch?: ConnectorFetch;
+  platformApps?: PlatformAppDirectory;
 }
 
-export function createApp({ db, auth, env }: AppDependencies): Hono {
+export function safeConnectorReturnUrl(
+  returnTo: string | null | undefined,
+  webOrigins: readonly string[],
+): string {
+  const fallback = webOrigins[0];
+  if (!fallback) throw new Error("At least one web origin is required");
+  if (!returnTo) return fallback;
+  try {
+    const candidate = new URL(returnTo);
+    const allowedOrigins = new Set(webOrigins.map((origin) => new URL(origin).origin));
+    return allowedOrigins.has(candidate.origin) ? candidate.toString() : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function connectorErrorCode(error: unknown): string {
+  if (error instanceof OAuthStateExpiredError) return error.code;
+  if (error instanceof OAuthStateSingleUseError) return error.code;
+  if (error instanceof OAuthTokenExchangeError) return error.code;
+  return "connect_failed";
+}
+
+function withConnectorError(url: string, code: string): string {
+  const redirect = new URL(url);
+  redirect.searchParams.set("connector_error", code);
+  return redirect.toString();
+}
+
+export function createApp({ db, auth, env, connectorFetch, platformApps }: AppDependencies): Hono {
   const app = new Hono();
   const rpcHandler = new RPCHandler(router, {
     interceptors: [
@@ -45,6 +86,41 @@ export function createApp({ db, auth, env }: AppDependencies): Hono {
     } catch (error) {
       console.error(error);
       return context.json({ ok: false }, 503);
+    }
+  });
+
+  app.get("/connect/callback", async (context) => {
+    const state = context.req.query("state");
+    const code = context.req.query("code");
+    const providerError = context.req.query("error");
+    let returnTo: string | null | undefined;
+
+    try {
+      if (!state) throw new OAuthStateSingleUseError();
+      if (providerError || !code) {
+        const consumed = await consumeOAuthState(db, state);
+        returnTo = consumed.returnTo;
+        const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
+        return context.redirect(withConnectorError(destination, "provider_error"));
+      }
+      const pending = await db.connectorOAuthState.findUnique({
+        where: { stateHash: hashOAuthState(state) },
+        select: { returnTo: true },
+      });
+      returnTo = pending?.returnTo;
+      const result = await completeOAuthCallback(db, {
+        state,
+        code,
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
+        ...(connectorFetch ? { fetch: connectorFetch } : {}),
+        ...(platformApps ? { platformApps } : {}),
+      });
+      returnTo = result.returnTo;
+      return context.redirect(safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS));
+    } catch (error) {
+      const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
+      return context.redirect(withConnectorError(destination, connectorErrorCode(error)));
     }
   });
 
@@ -77,6 +153,8 @@ export function createApp({ db, auth, env }: AppDependencies): Hono {
         headers: context.req.raw.headers,
         auth,
         env,
+        ...(connectorFetch ? { connectorFetch } : {}),
+        ...(platformApps ? { platformApps } : {}),
       },
     });
 
@@ -95,6 +173,8 @@ export function createApp({ db, auth, env }: AppDependencies): Hono {
         headers: context.req.raw.headers,
         auth,
         env,
+        ...(connectorFetch ? { connectorFetch } : {}),
+        ...(platformApps ? { platformApps } : {}),
       },
     });
 

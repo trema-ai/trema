@@ -51,6 +51,7 @@ const environmentSchema = z
     TREMA_TERMS_URL: optionalUrl,
     TREMA_PRIVACY_URL: optionalUrl,
     TREMA_BOOTSTRAP_TOKEN: optionalString,
+    TREMA_CREDENTIAL_MASTER_KEY: optionalString,
     TREMA_OIDC_ISSUER: optionalString,
     TREMA_OIDC_CLIENT_ID: optionalString,
     TREMA_OIDC_CLIENT_SECRET: optionalString,

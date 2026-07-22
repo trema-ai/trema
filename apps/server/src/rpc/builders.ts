@@ -5,6 +5,7 @@ import type { Auth } from "#/lib/auth/index.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
 import { authorize, type Capability } from "#/services/authorize/index.js";
+import type { ConnectorFetch, PlatformAppDirectory } from "#/services/connectors/index.js";
 import {
   resolveServiceCredential,
   ServiceCredentialAuthenticationError,
@@ -15,6 +16,8 @@ export interface RpcContext {
   headers: Headers;
   auth: Auth;
   env: Environment;
+  connectorFetch?: ConnectorFetch;
+  platformApps?: PlatformAppDirectory;
 }
 
 export const pub = os.$context<RpcContext>();

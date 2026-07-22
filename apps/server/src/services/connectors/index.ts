@@ -4,6 +4,26 @@ export {
   ProviderCatalogValidationError,
 } from "#/services/connectors/catalog.js";
 export {
+  buildOAuthAuthorizationUrl,
+  ConnectorCatalogDefectError,
+  ConnectorCredentialNotFoundError,
+  type ConnectorFetch,
+  ConnectorInstallationError,
+  CredentialVerificationError,
+  completeOAuthCallback,
+  consumeOAuthState,
+  createStaticCredential,
+  hashOAuthState,
+  listConnectorCredentials,
+  OAuthStateExpiredError,
+  OAuthStateSingleUseError,
+  OAuthTokenExchangeError,
+  revokeConnectorCredential,
+  StaticCredentialValidationError,
+  startOAuthConnect,
+  UnsupportedConnectorAuthModeError,
+} from "#/services/connectors/connect.js";
+export {
   type ProviderHook,
   type ProviderHookRegistry,
   providerHookRegistry,
@@ -14,6 +34,22 @@ export {
   notionMcpProvider,
   providerDefinitions,
 } from "#/services/connectors/providers/index.js";
+export {
+  ClientRegistrationConflictError,
+  ClientRegistrationNotFoundError,
+  ClientRegistrationValidationError,
+  ConnectorProviderNotFoundError,
+  createClientRegistration,
+  deleteClientRegistration,
+  emptyPlatformAppDirectory,
+  listClientRegistrations,
+  NoClientRegistrationError,
+  type PlatformApp,
+  type PlatformAppDirectory,
+  resolveClientRegistration,
+  resolveStoredClientRegistration,
+  validateRegistrationFields,
+} from "#/services/connectors/registrations.js";
 export {
   type AuthMode,
   type AuthRecipe,
