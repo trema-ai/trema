@@ -5,12 +5,14 @@ import { createAuth } from "#/lib/auth/index.js";
 import { createPrismaClient } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
 import { initializeBootstrap } from "#/services/bootstrap/index.js";
+import { loadProviderCatalog } from "#/services/connectors/index.js";
 
 export interface ServeDependencies {
   env: Environment;
 }
 
 export async function serveTrema({ env }: ServeDependencies) {
+  loadProviderCatalog();
   const db = createPrismaClient(env.DATABASE_URL);
   await initializeBootstrap({ db, env });
   const auth = createAuth({ db, env });
