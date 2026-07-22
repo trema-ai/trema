@@ -48,6 +48,17 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   develop against `http://127.0.0.1:5173`.
 - The pieces are also individual tasks: `mise run db:up`,
   `mise run db:migrate`, `mise run dev:server`, `mise run dev:web`.
+- Parallel worktrees just work: `scripts/dev-env.sh` (sourced by mise's
+  `[env]`) assigns each worktree a stable slot that offsets every dev
+  port (server `3000+slot`, web `5173+slot`, Postgres `5432+slot`) and
+  gives linked worktrees their own compose project, so each one gets an
+  isolated Postgres container and volume. The main checkout is slot 0
+  (the default ports); linked worktrees hash their path into slots 1-99.
+  `env:init` bakes the slot's ports into that worktree's
+  `apps/server/.env`, so run `mise run dev` — not bare `pnpm dev` — the
+  first time. If two worktrees ever hash to the same slot, pin one with
+  `TREMA_DEV_SLOT=<n>` (delete the stale `apps/server/.env` after
+  changing a slot).
 
 ## Verification
 
