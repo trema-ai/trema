@@ -53,6 +53,14 @@ docker compose down --volumes --remove-orphans
 echo "Done. apps/server/.env is kept; delete it too if you are re-slotting this worktree."
 '''
 
+[tasks.test]
+description = "Run the full test suite against this worktree's dedicated trema_test database"
+depends = ["db:up"]
+run = '''
+export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:${TREMA_DB_PORT:-5432}/trema_test"
+mise exec -- pnpm -r test
+'''
+
 [tasks."db:migrate"]
 description = "Apply pending migrations to the local database"
 depends = ["env:init", "db:up"]

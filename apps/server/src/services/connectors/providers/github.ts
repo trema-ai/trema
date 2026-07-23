@@ -3,6 +3,8 @@ import type { ProviderDefInput } from "#/services/connectors/schema.js";
 export const githubProvider = {
   key: "github",
   displayName: "GitHub",
+  description: "Access repositories, issues, pull requests, and their comments.",
+  logoUrl: "/connector-logos/github.svg",
   categories: ["developer-tools"],
   docsUrl: "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps",
   authMode: "oauth2_code",

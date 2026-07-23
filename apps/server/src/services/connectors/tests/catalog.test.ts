@@ -14,5 +14,24 @@ describe("loadProviderCatalog", () => {
     expect(Object.isFrozen(catalog)).toBe(true);
     expect(Object.isFrozen(catalog[0])).toBe(true);
     expect(Object.isFrozen(catalog[0]?.auth)).toBe(true);
+    expect(catalog.map(({ key, description, logoUrl }) => ({ key, description, logoUrl }))).toEqual(
+      [
+        {
+          key: "github",
+          description: "Access repositories, issues, pull requests, and their comments.",
+          logoUrl: "/connector-logos/github.svg",
+        },
+        {
+          key: "linear",
+          description: "Access issues, projects, and comments in Linear workspaces.",
+          logoUrl: "/connector-logos/linear.svg",
+        },
+        {
+          key: "notion",
+          description: "Access pages, databases, and workspace content through Notion MCP.",
+          logoUrl: "/connector-logos/notion.svg",
+        },
+      ],
+    );
   });
 });

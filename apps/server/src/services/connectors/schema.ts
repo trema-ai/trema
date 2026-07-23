@@ -128,6 +128,8 @@ export const providerDefSchema = z
       .min(1)
       .regex(/^[a-z0-9]+(?:_[a-z0-9]+)*$/),
     displayName: z.string().trim().min(1),
+    description: z.string().trim().min(1).optional(),
+    logoUrl: z.string().trim().min(1).optional(),
     categories: z.array(z.string().trim().min(1)).min(1),
     docsUrl: z.url(),
     authMode: authModeSchema,

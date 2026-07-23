@@ -102,6 +102,7 @@ export interface CreateClientRegistrationInput extends RegistrationFields {
   notes?: string;
   masterKey?: string;
   catalog?: ProviderCatalog;
+  replace?: boolean;
 }
 
 const registrationMetadataSelect = {
@@ -121,21 +122,43 @@ export async function createClientRegistration(db: Database, input: CreateClient
   assertProvider(input.catalog ?? defaultCatalog, input.providerKey);
   validateRegistrationFields(input);
 
+  const values = {
+    clientId: input.clientId ?? null,
+    clientSecretCiphertext: input.clientSecret
+      ? encryptEnvelope(input.clientSecret, input.masterKey)
+      : null,
+    sharedRef: input.sharedRef ?? null,
+    adminConsentGranted: input.adminConsentGranted ?? null,
+    notes: input.notes ?? null,
+  };
+
+  if (input.replace) {
+    return db.clientRegistration.upsert({
+      where: {
+        orgId_providerKey_source: {
+          orgId: input.orgId,
+          providerKey: input.providerKey,
+          source: input.source,
+        },
+      },
+      create: {
+        orgId: input.orgId,
+        providerKey: input.providerKey,
+        source: input.source,
+        ...values,
+      },
+      update: values,
+      select: registrationMetadataSelect,
+    });
+  }
+
   try {
     return await db.clientRegistration.create({
       data: {
         orgId: input.orgId,
         providerKey: input.providerKey,
         source: input.source,
-        ...(input.clientId ? { clientId: input.clientId } : {}),
-        ...(input.clientSecret
-          ? { clientSecretCiphertext: encryptEnvelope(input.clientSecret, input.masterKey) }
-          : {}),
-        ...(input.sharedRef ? { sharedRef: input.sharedRef } : {}),
-        ...(input.adminConsentGranted !== undefined
-          ? { adminConsentGranted: input.adminConsentGranted }
-          : {}),
-        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        ...values,
       },
       select: registrationMetadataSelect,
     });

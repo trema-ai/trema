@@ -11,6 +11,8 @@ export {
   ConnectorInstallationError,
   CredentialVerificationError,
   completeOAuthCallback,
+  connectorCallbackUrl,
+  connectorCredentialValidity,
   consumeOAuthState,
   createStaticCredential,
   hashOAuthState,
@@ -29,6 +31,8 @@ export {
   providerHookRegistry,
 } from "#/services/connectors/hooks.js";
 export {
+  type ArchiveConnectorInstallationInput,
+  archiveConnectorInstallation,
   type ConnectorInstallationBody,
   ConnectorInstallationNotFoundError,
   ConnectorInstallationValidationError,
@@ -37,6 +41,8 @@ export {
   connectorInstallationBodySchema,
   createConnectorInstallation,
   createConnectorInstallationBodySchema,
+  type ListConnectorInstallationsInput,
+  listConnectorInstallations,
   type ResolvedInstallationTool,
   resolveInstallationTools,
   type Sensitivity,

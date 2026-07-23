@@ -145,7 +145,7 @@ export function hashOAuthState(state: string): string {
   return createHash("sha256").update(state, "utf8").digest("hex");
 }
 
-function callbackUrl(authBaseUrl: string): string {
+export function connectorCallbackUrl(authBaseUrl: string): string {
   return new URL("/connect/callback", authBaseUrl).toString();
 }
 
@@ -183,7 +183,7 @@ export function buildOAuthAuthorizationUrl(input: BuildAuthorizationUrlInput): s
     }),
   );
   authorizationUrl.searchParams.set("client_id", input.clientId);
-  authorizationUrl.searchParams.set("redirect_uri", callbackUrl(input.authBaseUrl));
+  authorizationUrl.searchParams.set("redirect_uri", connectorCallbackUrl(input.authBaseUrl));
   authorizationUrl.searchParams.set("response_type", "code");
   authorizationUrl.searchParams.set(
     "scope",
@@ -396,7 +396,7 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code: input.code,
-    redirect_uri: callbackUrl(input.authBaseUrl),
+    redirect_uri: connectorCallbackUrl(input.authBaseUrl),
   });
   if (provider.auth.pkce) body.set("code_verifier", oauthState.codeVerifier);
 
@@ -609,16 +609,23 @@ export async function listConnectorCredentials(
     select: publicCredentialSelect(),
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  return credentials.map((credential) => {
-    const isRevoked = credential.revokedAt !== null;
-    const isExpired = credential.expiresAt !== null && credential.expiresAt <= now;
-    return {
-      ...credential,
-      isRevoked,
-      isExpired,
-      isValid: !isRevoked && !isExpired && !credential.refreshExhausted,
-    };
-  });
+  return credentials.map((credential) => ({
+    ...credential,
+    ...connectorCredentialValidity(credential, now),
+  }));
+}
+
+export function connectorCredentialValidity(
+  credential: { revokedAt: Date | null; expiresAt: Date | null; refreshExhausted: boolean },
+  now = new Date(),
+) {
+  const isRevoked = credential.revokedAt !== null;
+  const isExpired = credential.expiresAt !== null && credential.expiresAt <= now;
+  return {
+    isRevoked,
+    isExpired,
+    isValid: !isRevoked && !isExpired && !credential.refreshExhausted,
+  };
 }
 
 export async function revokeConnectorCredential(

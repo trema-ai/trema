@@ -43,6 +43,7 @@ import {
 import { Skeleton } from "#/components/ui/skeleton.tsx";
 import { Switch } from "#/components/ui/switch.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
+import { scopeDisplayName } from "#/lib/scopes.ts";
 import { cn } from "#/lib/utils.ts";
 import { useViewerRole } from "#/pages/home.tsx";
 
@@ -302,7 +303,7 @@ function ScopeTreeRow({
         )}
       >
         <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span className="truncate">{scope.name}</span>
+        <span className="truncate">{scopeDisplayName(scope)}</span>
       </button>
       {action ? <div className="pr-1">{action}</div> : null}
     </div>
@@ -357,7 +358,7 @@ function ScopeDetail({
         <div>
           <h3 className="text-chrome font-medium text-muted-foreground">Bindings</h3>
           <p className="mt-1 text-meta text-muted-foreground">
-            Locations that resolve to {scope.name}.
+            Locations that resolve to {scopeDisplayName(scope)}.
           </p>
         </div>
         {bindings.error ? (
@@ -656,7 +657,7 @@ function NewBindingDialog({
                 <SelectContent>
                   {scopes.map((scope) => (
                     <SelectItem key={scope.id} value={scope.id}>
-                      {scope.name} ({scope.kind})
+                      {scopeDisplayName(scope)}
                     </SelectItem>
                   ))}
                 </SelectContent>

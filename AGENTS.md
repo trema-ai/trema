@@ -72,4 +72,8 @@ pnpm -r typecheck && pnpm -r test && pnpm -r build
 ```
 
 Integration tests run when `TEST_DATABASE_URL` points at a Postgres
-database (see `compose.yaml`).
+database whose name ends in `_test` — they truncate tables between tests,
+so the setup refuses any other name to protect dev data. `mise run test`
+wires this up: it starts this worktree's Postgres and runs the suite
+against a `trema_test` database on it, created on first use. Never point
+`TEST_DATABASE_URL` at the dev database from `apps/server/.env`.
