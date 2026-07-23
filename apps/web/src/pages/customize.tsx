@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Brain } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
@@ -44,26 +44,23 @@ export function CustomizePage() {
   const scopes = useQuery(orpc.scopes.list.queryOptions({ input: {} }));
   const tab = searchParams.get("tab") ?? "memory";
   const allScopes = (scopes.data ?? []) as Scope[];
-  const orderedScopes = useMemo(() => orderScopes(allScopes), [allScopes]);
-  const personalScope = allScopes.find(
-    (scope) => scope.kind === "personal" && scope.ownerId === session.membership.principal.id,
+  const principalId = session.membership.principal.id;
+  // scopes.list includes every member's personal scope for admins (the admin
+  // area needs them); this member-facing screen only ever shows your own.
+  const visibleScopes = useMemo(
+    () =>
+      orderScopes(
+        allScopes.filter((scope) => scope.kind !== "personal" || scope.ownerId === principalId),
+      ),
+    [allScopes, principalId],
   );
-  const orgScope = allScopes.find((scope) => scope.kind === "org");
+  const personalScope = visibleScopes.find((scope) => scope.kind === "personal");
+  const orgScope = visibleScopes.find((scope) => scope.kind === "org");
   const scopeParam = searchParams.get("scope");
+  // No URL normalization: the param is only ever written by an explicit pick,
+  // so the default stays Personal even when it appears later (backfill, policy).
   const selectedScope =
-    allScopes.find((scope) => scope.id === scopeParam) ?? personalScope ?? orgScope;
-
-  useEffect(() => {
-    if (!selectedScope || scopeParam === selectedScope.id) return;
-    setSearchParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.set("scope", selectedScope.id);
-        return next;
-      },
-      { replace: true },
-    );
-  }, [scopeParam, selectedScope, setSearchParams]);
+    visibleScopes.find((scope) => scope.id === scopeParam) ?? personalScope ?? orgScope;
 
   const allItems = (items.data ?? []) as Item[];
   const scopedItems = useMemo(
@@ -119,7 +116,7 @@ export function CustomizePage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent align="end">
-                  {orderedScopes.map((scope) => (
+                  {visibleScopes.map((scope) => (
                     <SelectItem key={scope.id} value={scope.id} className="capitalize">
                       {scope.kind === "shared" ? scope.name : scope.kind}
                     </SelectItem>
