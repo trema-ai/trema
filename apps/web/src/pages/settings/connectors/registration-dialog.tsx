@@ -115,8 +115,8 @@ export function RegistrationDialog({
         <div className="space-y-5">
           <div className="space-y-2">
             <Label>Callback URL</Label>
-            <div className="flex items-center rounded-md border bg-muted/30 px-3">
-              <code className="min-w-0 flex-1 truncate text-meta">{callbackUrl}</code>
+            <div className="flex items-center rounded-sm border bg-muted/30 px-3 py-0.5">
+              <code className="min-w-0 flex-1 truncate text-sm">{callbackUrl}</code>
               <CopyButton value={callbackUrl} />
             </div>
             <p className="text-meta text-muted-foreground">

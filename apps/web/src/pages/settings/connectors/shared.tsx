@@ -29,6 +29,8 @@ export type CatalogProvider = {
   configFields: Record<string, FieldDescriptor>;
   credentialFields: Record<string, FieldDescriptor>;
   toolManifest?: Array<{ name: string; description: string; sensitivity: Sensitivity }>;
+  defaultScopes: string[];
+  availableScopes?: string[];
 };
 
 export type Scope = {

@@ -6,7 +6,7 @@ import {
   ProviderCatalogValidationError,
   type ProviderDefInput,
   providerDefSchema,
-} from "#/services/connectors/index.js";
+} from "#/index.js";
 
 function githubInput(): ProviderDefInput {
   return structuredClone(githubProvider) as ProviderDefInput;
@@ -38,6 +38,20 @@ describe("providerDefSchema", () => {
   it("requires a non-empty manifest for REST providers", () => {
     const provider = githubInput();
     provider.toolManifest = [];
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(false);
+  });
+
+  it("accepts an availableScopes vocabulary of trimmed non-empty strings", () => {
+    const provider = githubInput();
+    provider.auth.availableScopes = ["read:user", "repo", "gist"];
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(true);
+  });
+
+  it("rejects availableScopes containing empty entries", () => {
+    const provider = githubInput();
+    provider.auth.availableScopes = ["read:user", ""];
 
     expect(providerDefSchema.safeParse(provider).success).toBe(false);
   });

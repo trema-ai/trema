@@ -1,9 +1,16 @@
 import { createHash, randomBytes } from "node:crypto";
-
+import type { FieldDescriptor, ProviderDef } from "@trema/connectors";
+import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import type { ConnectorOAuthState, Prisma } from "#/generated/prisma/client.js";
 import { encryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
-import { loadProviderCatalog, type ProviderCatalog } from "#/services/connectors/catalog.js";
+import {
+  buildMcpAuthorizationRequest,
+  discoverMcpAuthServer,
+  exchangeMcpAuthorizationCode,
+  resolveMcpClientRegistration,
+  resolveStoredMcpClientRegistration,
+} from "#/services/connectors/mcp-oauth.js";
 import {
   ConnectorProviderNotFoundError,
   emptyPlatformAppDirectory,
@@ -11,8 +18,6 @@ import {
   resolveClientRegistration,
   resolveStoredClientRegistration,
 } from "#/services/connectors/registrations.js";
-import type { FieldDescriptor, ProviderDef } from "#/services/connectors/schema.js";
-import { interpolate } from "#/services/connectors/templates.js";
 
 const defaultCatalog = loadProviderCatalog();
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
@@ -118,6 +123,40 @@ function installationConfig(
   );
 }
 
+function installationProviderScopes(body: Prisma.JsonValue): string[] {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return [];
+  const scopes = body.providerScopes;
+  if (!Array.isArray(scopes)) return [];
+  return scopes.filter((scope): scope is string => typeof scope === "string" && scope.length > 0);
+}
+
+// The scopes an authorization request will ask for: the installation override
+// when present and non-empty, otherwise the provider's defaults.
+export function requestedOAuthScopes(provider: ProviderDef, body: Prisma.JsonValue): string[] {
+  const override = installationProviderScopes(body);
+  return override.length > 0 ? override : [...provider.auth.defaultScopes];
+}
+
+// Parse the scopes a token response actually granted. Providers return the
+// granted scope set as a single delimited string; split on the provider's
+// separator, falling back to both spaces and commas, and drop empties. When
+// the response omits `scope`, treat the requested scopes as granted.
+export function parseGrantedScopes(
+  raw: unknown,
+  requested: readonly string[],
+  scopeSeparator?: string,
+): string[] {
+  if (typeof raw !== "string" || raw.trim() === "") return [...requested];
+  const pattern = scopeSeparator
+    ? new RegExp(`[${scopeSeparator.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s]+`)
+    : /[\s,]+/;
+  const parsed = raw
+    .split(pattern)
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
+  return parsed.length > 0 ? parsed : [...requested];
+}
+
 async function assertInstallation(
   db: Database,
   orgId: string,
@@ -160,6 +199,9 @@ export interface StartOAuthConnectInput {
   config?: Readonly<Record<string, string | number | boolean>>;
   catalog?: ProviderCatalog;
   platformApps?: PlatformAppDirectory;
+  // Used by mcp_oauth discovery, dynamic client registration, and (via the
+  // callback) token exchange. oauth2_code ignores it.
+  fetch?: ConnectorFetch;
   now?: Date;
 }
 
@@ -169,6 +211,9 @@ export interface BuildAuthorizationUrlInput {
   authBaseUrl: string;
   state: string;
   codeVerifier: string;
+  // The scopes to request; when omitted or empty, the provider's defaultScopes
+  // are used.
+  scopes?: readonly string[];
   config?: Readonly<Record<string, string | number | boolean>>;
 }
 
@@ -182,12 +227,17 @@ export function buildOAuthAuthorizationUrl(input: BuildAuthorizationUrlInput): s
       ...(input.config ? { config: input.config } : {}),
     }),
   );
+  for (const [name, value] of Object.entries(input.provider.auth.authorizationParams ?? {})) {
+    authorizationUrl.searchParams.set(name, value);
+  }
   authorizationUrl.searchParams.set("client_id", input.clientId);
   authorizationUrl.searchParams.set("redirect_uri", connectorCallbackUrl(input.authBaseUrl));
   authorizationUrl.searchParams.set("response_type", "code");
+  const scopes =
+    input.scopes && input.scopes.length > 0 ? input.scopes : input.provider.auth.defaultScopes;
   authorizationUrl.searchParams.set(
     "scope",
-    input.provider.auth.defaultScopes.join(input.provider.auth.scopeSeparator ?? " "),
+    scopes.join(input.provider.auth.scopeSeparator ?? " "),
   );
   authorizationUrl.searchParams.set("state", input.state);
   if (input.provider.auth.pkce) {
@@ -201,6 +251,9 @@ export function buildOAuthAuthorizationUrl(input: BuildAuthorizationUrlInput): s
 export async function startOAuthConnect(db: Database, input: StartOAuthConnectInput) {
   const catalog = input.catalog ?? defaultCatalog;
   const provider = providerFrom(catalog, input.providerKey);
+  if (provider.authMode === "mcp_oauth") {
+    return startMcpOAuthConnect(db, provider, input);
+  }
   if (provider.authMode !== "oauth2_code" || !provider.auth.authorizationUrl) {
     throw new UnsupportedConnectorAuthModeError(
       `Provider '${provider.key}' does not support the authorization-code connect flow`,
@@ -222,12 +275,14 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
   const state = randomBytes(32).toString("base64url");
   const codeVerifier = randomBytes(32).toString("base64url");
   const config = { ...installationConfig(installation.body), ...input.config };
+  const requestedScopes = requestedOAuthScopes(provider, installation.body);
   const authorizationUrl = buildOAuthAuthorizationUrl({
     provider,
     clientId: registration.clientId,
     authBaseUrl: input.authBaseUrl,
     state,
     codeVerifier,
+    scopes: requestedScopes,
     ...(Object.keys(config).length > 0 ? { config } : {}),
   });
 
@@ -241,6 +296,77 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
       principalId: input.principalId,
       stateHash: hashOAuthState(state),
       codeVerifier,
+      // Persist the requested scopes so the callback can record them when the
+      // token response omits its own `scope` field.
+      providerScopes: requestedScopes,
+      ...(input.returnTo !== undefined ? { returnTo: input.returnTo } : {}),
+      expiresAt: new Date(now.getTime() + OAUTH_STATE_TTL_MS),
+    },
+  });
+
+  return { authorizationUrl };
+}
+
+// The mcp_oauth connect flow (MCP authorization spec, June 2025 revision):
+// discover the authorization server from the MCP server URL, resolve or
+// dynamically register a client, then build a PKCE + resource authorization
+// redirect. The discovered token endpoint and resource are persisted on the
+// state so the callback can finish the exchange without re-running discovery.
+async function startMcpOAuthConnect(
+  db: Database,
+  provider: ProviderDef,
+  input: StartOAuthConnectInput,
+) {
+  if (provider.transport.type !== "mcp") {
+    throw new UnsupportedConnectorAuthModeError(
+      `Provider '${provider.key}' declares mcp_oauth without an MCP transport`,
+    );
+  }
+  // Validate the installation and principal exist; mcp_oauth needs no config
+  // interpolation, so the installation body itself is not read here.
+  await Promise.all([
+    assertInstallation(db, input.orgId, input.installationItemId, input.providerKey),
+    assertPrincipal(db, input.orgId, input.principalId),
+  ]);
+
+  const serverUrl = provider.transport.serverUrl;
+  const callbackUrl = connectorCallbackUrl(input.authBaseUrl);
+  const platformApps = input.platformApps ?? emptyPlatformAppDirectory;
+  const discovery = await discoverMcpAuthServer(serverUrl, input.fetch);
+  const client = await resolveMcpClientRegistration(db, {
+    orgId: input.orgId,
+    providerKey: input.providerKey,
+    discovery,
+    callbackUrl,
+    platformApps,
+    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+    ...(input.fetch ? { fetch: input.fetch } : {}),
+  });
+
+  const state = randomBytes(32).toString("base64url");
+  const { authorizationUrl, codeVerifier } = await buildMcpAuthorizationRequest({
+    discovery,
+    client,
+    callbackUrl,
+    serverUrl,
+    state,
+  });
+
+  const now = input.now ?? new Date();
+  await db.connectorOAuthState.create({
+    data: {
+      orgId: input.orgId,
+      providerKey: input.providerKey,
+      registrationId: client.registrationId,
+      installationItemId: input.installationItemId,
+      principalId: input.principalId,
+      stateHash: hashOAuthState(state),
+      codeVerifier,
+      // Record the scopes we asked for so the callback can attribute them when
+      // the token response omits its own `scope`.
+      providerScopes: discovery.requestedScopes,
+      tokenEndpoint: discovery.tokenEndpoint,
+      resource: serverUrl,
       ...(input.returnTo !== undefined ? { returnTo: input.returnTo } : {}),
       expiresAt: new Date(now.getTime() + OAUTH_STATE_TTL_MS),
     },
@@ -279,6 +405,7 @@ function publicCredentialSelect() {
     installationItemId: true,
     principalId: true,
     mode: true,
+    providerScopes: true,
     expiresAt: true,
     revokedAt: true,
     lastRefreshSuccess: true,
@@ -299,6 +426,7 @@ async function storeCredential(
     mode: string;
     ciphertext: string;
     expiresAt?: Date;
+    providerScopes?: string[];
     metadata?: Record<string, unknown>;
   },
 ) {
@@ -341,11 +469,13 @@ async function storeCredential(
         principalId: input.principalId,
         mode: input.mode,
         ciphertext: input.ciphertext,
+        providerScopes: input.providerScopes ?? [],
         ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
       },
       update: {
         mode: input.mode,
         ciphertext: input.ciphertext,
+        providerScopes: input.providerScopes ?? [],
         expiresAt: input.expiresAt ?? null,
         revokedAt: null,
         lastRefreshSuccess: null,
@@ -373,6 +503,9 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
   const now = input.now ?? new Date();
   const oauthState = await consumeOAuthState(db, input.state, now);
   const provider = providerFrom(input.catalog ?? defaultCatalog, oauthState.providerKey);
+  if (provider.authMode === "mcp_oauth") {
+    return completeMcpOAuthCallback(db, provider, oauthState, input, now);
+  }
   if (provider.authMode !== "oauth2_code" || !provider.auth.tokenUrl) {
     throw new UnsupportedConnectorAuthModeError("OAuth callback provider is not supported");
   }
@@ -451,6 +584,11 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
       .filter((field) => raw[field] !== undefined)
       .map((field) => [field, raw[field]]),
   );
+  const grantedScopes = parseGrantedScopes(
+    raw.scope,
+    oauthState.providerScopes,
+    provider.auth.scopeSeparator,
+  );
   const payload = { accessToken, ...(refreshToken ? { refreshToken } : {}), raw };
   const credential = await storeCredential(db, {
     orgId: oauthState.orgId,
@@ -458,10 +596,82 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
     principalId: oauthState.principalId,
     mode: provider.authMode,
     ciphertext: encryptEnvelope(payload, input.masterKey),
+    providerScopes: grantedScopes,
     ...(expiresAt ? { expiresAt } : {}),
     metadata,
   });
-  return { credential, returnTo: oauthState.returnTo };
+  return { credential, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
+}
+
+// Complete an mcp_oauth callback: resolve the client identity recorded on the
+// state, exchange the code at the persisted token endpoint (PKCE + RFC 8707
+// resource), and store the credential in the same envelope shape as
+// oauth2_code so sync's bearer resolution reads it unchanged.
+async function completeMcpOAuthCallback(
+  db: Database,
+  provider: ProviderDef,
+  oauthState: ConnectorOAuthState,
+  input: CompleteOAuthCallbackInput,
+  now: Date,
+) {
+  if (!oauthState.tokenEndpoint || !oauthState.resource) {
+    // A well-formed mcp_oauth state always persists these; their absence means
+    // the state was not produced by startMcpOAuthConnect.
+    throw new OAuthTokenExchangeError();
+  }
+  const client = await resolveStoredMcpClientRegistration(db, {
+    orgId: oauthState.orgId,
+    registrationId: oauthState.registrationId,
+    platformApps: input.platformApps ?? emptyPlatformAppDirectory,
+    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+  });
+
+  let tokens: Awaited<ReturnType<typeof exchangeMcpAuthorizationCode>>;
+  try {
+    tokens = await exchangeMcpAuthorizationCode({
+      tokenEndpoint: oauthState.tokenEndpoint,
+      resource: oauthState.resource,
+      client,
+      code: input.code,
+      codeVerifier: oauthState.codeVerifier,
+      callbackUrl: connectorCallbackUrl(input.authBaseUrl),
+      ...(input.fetch ? { fetch: input.fetch } : {}),
+    });
+  } catch {
+    throw new OAuthTokenExchangeError();
+  }
+
+  const accessToken = tokens.access_token;
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    throw new OAuthTokenExchangeError();
+  }
+  const refreshToken = typeof tokens.refresh_token === "string" ? tokens.refresh_token : undefined;
+  const expiresAt =
+    typeof tokens.expires_in === "number" &&
+    Number.isFinite(tokens.expires_in) &&
+    tokens.expires_in >= 0
+      ? new Date(now.getTime() + tokens.expires_in * 1000)
+      : undefined;
+  const grantedScopes = parseGrantedScopes(
+    tokens.scope,
+    oauthState.providerScopes,
+    provider.auth.scopeSeparator,
+  );
+  const payload = {
+    accessToken,
+    ...(refreshToken ? { refreshToken } : {}),
+    raw: tokens as Record<string, unknown>,
+  };
+  const credential = await storeCredential(db, {
+    orgId: oauthState.orgId,
+    installationItemId: oauthState.installationItemId,
+    principalId: oauthState.principalId,
+    mode: provider.authMode,
+    ciphertext: encryptEnvelope(payload, input.masterKey),
+    providerScopes: grantedScopes,
+    ...(expiresAt ? { expiresAt } : {}),
+  });
+  return { credential, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
 }
 
 function validateField(

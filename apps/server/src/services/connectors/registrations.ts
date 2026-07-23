@@ -1,7 +1,7 @@
+import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import type { ClientRegistrationSource } from "#/generated/prisma/client.js";
 import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
-import { loadProviderCatalog, type ProviderCatalog } from "#/services/connectors/catalog.js";
 
 const defaultCatalog = loadProviderCatalog();
 

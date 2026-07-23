@@ -47,6 +47,7 @@ const ownerUser = users.get(owner.email);
 if (!ownerUser) throw new Error("Owner user missing after sign-up");
 
 const { createOrgWithOwner } = await import("../src/services/org/index.js");
+const { ensurePersonalScope } = await import("../src/services/scopes/index.js");
 const { org } = await createOrgWithOwner(db, {
   name: ORG_NAME,
   owner: { authId: ownerUser.id, displayName: owner.name, email: owner.email },
@@ -68,6 +69,14 @@ for (const account of rest) {
   await db.grant.create({
     data: { orgId: org.id, principalId: principal.id, scopeId: orgScope.id, role: account.role },
   });
+  // Mirror the invite-redemption path: members get a personal scope at join.
+  if (org.personalScopesEnabled) {
+    await ensurePersonalScope(db, {
+      orgId: org.id,
+      principalId: principal.id,
+      displayName: principal.displayName,
+    });
+  }
 }
 
 console.info(`Seeded "${ORG_NAME}" (${org.id})`);

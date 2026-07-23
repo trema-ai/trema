@@ -1,10 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
+import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import type { Prisma } from "#/generated/prisma/client.js";
 import { decryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
-import { loadProviderCatalog, type ProviderCatalog } from "#/services/connectors/catalog.js";
 import {
   type ConnectorInstallationBody,
   ConnectorInstallationNotFoundError,
@@ -12,7 +11,6 @@ import {
   type Sensitivity,
   type SyncedTool,
 } from "#/services/connectors/installations.js";
-import { interpolate } from "#/services/connectors/templates.js";
 
 const defaultCatalog = loadProviderCatalog();
 

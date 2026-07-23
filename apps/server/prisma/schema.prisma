@@ -378,6 +378,7 @@ model ConnectorCredential {
   principalId        String
   mode               String
   ciphertext         String
+  providerScopes     String[]  @default([])
   expiresAt          DateTime?
   revokedAt          DateTime?
   lastRefreshSuccess DateTime?
@@ -404,6 +405,13 @@ model ConnectorOAuthState {
   principalId        String
   stateHash          String             @unique
   codeVerifier       String
+  providerScopes     String[]           @default([])
+  // mcp_oauth only: the token endpoint and RFC 8707 resource discovered before
+  // the redirect, persisted so the callback can complete the exchange without
+  // re-running discovery. Null for oauth2_code, whose token URL comes from the
+  // provider catalog.
+  tokenEndpoint      String?
+  resource           String?
   returnTo           String?
   expiresAt          DateTime
   createdAt          DateTime           @default(now())

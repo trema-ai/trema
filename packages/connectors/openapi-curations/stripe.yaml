@@ -1,0 +1,76 @@
+# Curation for the Stripe REST provider toolManifest.
+#
+# Spec: stripe/openapi, openapi/spec3.json
+#   https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
+# Retrieved: 2026-07-23
+#
+# Regenerate with:
+#   pnpm exec tsx scripts/openapi-to-manifest.ts <spec> --curation openapi-curations/stripe.yaml --format ts
+# Stripe request bodies are form-encoded (no application/json schema), so the
+# converter emits no body properties for create_refund/create_customer/
+# update_customer — those body parameters are hand-authored in the provider
+# file. Path placeholders are normalized to camelCase ids to match the
+# existing tools.
+tools:
+  # --- existing tools (kept) ---
+  - operationId: GetCustomersSearch
+    name: search_customers
+    description: Search Stripe customers with Stripe's search query language.
+    sensitivity: read
+  - operationId: GetCustomersCustomer
+    name: get_customer
+    description: Get one Stripe customer by id.
+    sensitivity: read
+  - operationId: GetInvoices
+    name: list_invoices
+    description: List Stripe invoices, optionally filtered by customer or status.
+    sensitivity: read
+  - operationId: GetPaymentIntents
+    name: list_payment_intents
+    description: List Stripe payment intents, optionally filtered by customer.
+    sensitivity: read
+  # --- added tools ---
+  - operationId: GetSubscriptions
+    name: list_subscriptions
+    description: List Stripe subscriptions, optionally filtered by customer, status, or price.
+    sensitivity: read
+  - operationId: GetSubscriptionsSubscriptionExposedId
+    name: get_subscription
+    description: Get one Stripe subscription by id.
+    sensitivity: read
+  - operationId: GetCharges
+    name: list_charges
+    description: List Stripe charges, optionally filtered by customer.
+    sensitivity: read
+  - operationId: GetChargesCharge
+    name: get_charge
+    description: Get one Stripe charge by id.
+    sensitivity: read
+  - operationId: PostRefunds
+    name: create_refund
+    description: Refund a Stripe charge or payment intent, fully or partially.
+    sensitivity: destructive
+  - operationId: GetProducts
+    name: list_products
+    description: List Stripe products in the catalog.
+    sensitivity: read
+  - operationId: GetPrices
+    name: list_prices
+    description: List Stripe prices, optionally filtered by product.
+    sensitivity: read
+  - operationId: GetInvoicesInvoice
+    name: get_invoice
+    description: Get one Stripe invoice by id.
+    sensitivity: read
+  - operationId: GetBalanceTransactions
+    name: list_balance_transactions
+    description: List Stripe balance transactions — the funds flowing through the account balance.
+    sensitivity: read
+  - operationId: PostCustomers
+    name: create_customer
+    description: Create a Stripe customer.
+    sensitivity: write
+  - operationId: PostCustomersCustomer
+    name: update_customer
+    description: Update a Stripe customer's details.
+    sensitivity: write

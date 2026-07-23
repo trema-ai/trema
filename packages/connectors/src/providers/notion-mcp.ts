@@ -1,9 +1,10 @@
-import type { ProviderDefInput } from "#/services/connectors/schema.js";
+import type { ProviderDefInput } from "#/schema.js";
 
 export const notionMcpProvider = {
   key: "notion",
-  displayName: "Notion MCP",
-  description: "Access pages, databases, and workspace content through Notion MCP.",
+  displayName: "Notion",
+  description:
+    "Access pages, databases, and workspace content. Tools come from Notion's official MCP server.",
   logoUrl: "/connector-logos/notion.svg",
   categories: ["knowledge-management"],
   docsUrl: "https://developers.notion.com/docs/mcp",

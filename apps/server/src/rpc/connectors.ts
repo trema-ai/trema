@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
+import { fieldDescriptorSchema } from "@trema/connectors";
 import { z } from "zod";
-
 import { orgScoped, requireCapability } from "#/rpc/builders.js";
 import { authorize } from "#/services/authorize/index.js";
 import {
@@ -26,6 +26,7 @@ import {
   listConnectorCredentials,
   listConnectorInstallations,
   loadProviderCatalog,
+  McpOAuthDiscoveryError,
   NoClientRegistrationError,
   revokeConnectorCredential,
   StaticCredentialValidationError,
@@ -35,7 +36,6 @@ import {
   UnsupportedConnectorAuthModeError,
   updateConnectorInstallation,
 } from "#/services/connectors/index.js";
-import { fieldDescriptorSchema } from "#/services/connectors/schema.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
 const registrationSchema = z.object({
@@ -69,6 +69,7 @@ const credentialSchema = z.object({
   installationItemId: z.uuid(),
   principalId: z.uuid(),
   mode: z.string(),
+  providerScopes: z.array(z.string()),
   expiresAt: z.string().nullable(),
   revokedAt: z.string().nullable(),
   lastRefreshSuccess: z.string().nullable(),
@@ -87,6 +88,7 @@ const credentialSummarySchema = z.object({
   principalId: z.uuid(),
   principalName: z.string(),
   mode: z.string(),
+  providerScopes: z.array(z.string()),
   isRevoked: z.boolean(),
   isExpired: z.boolean(),
   isValid: z.boolean(),
@@ -136,7 +138,7 @@ function throwConnectorError(error: unknown): never {
   if (error instanceof ClientRegistrationConflictError) {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
-  if (error instanceof CredentialVerificationError) {
+  if (error instanceof CredentialVerificationError || error instanceof McpOAuthDiscoveryError) {
     throw new ORPCError("BAD_GATEWAY", { message: error.message });
   }
   if (error instanceof ConnectorSyncTransportError) {
@@ -266,6 +268,7 @@ const installationScoped = orgScoped.use(async ({ context, next }, input) => {
 const sensitivitySchema = z.enum(sensitivities);
 const enabledToolsSchema = z.union([z.literal("all"), z.array(z.string().trim().min(1))]);
 const sensitivityOverridesSchema = z.record(z.string().trim().min(1), sensitivitySchema);
+const providerScopesSchema = z.array(z.string().trim().min(1));
 const installationSchema = z.object({
   id: z.uuid(),
   scopeId: z.uuid(),
@@ -314,6 +317,7 @@ const createInstallation = requireCapability("manage_connectors", {
       catalogKey: z.string().trim().min(1),
       enabledTools: enabledToolsSchema,
       sensitivityOverrides: sensitivityOverridesSchema.optional(),
+      providerScopes: providerScopesSchema.optional(),
     }),
   )
   .output(installationSchema)
@@ -329,6 +333,7 @@ const createInstallation = requireCapability("manage_connectors", {
           ...(input.sensitivityOverrides
             ? { sensitivityOverrides: input.sensitivityOverrides }
             : {}),
+          ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
         }),
       );
     } catch (error) {
@@ -350,9 +355,13 @@ const updateInstallation = installationScoped
         installationItemId: z.uuid(),
         enabledTools: enabledToolsSchema.optional(),
         sensitivityOverrides: sensitivityOverridesSchema.optional(),
+        providerScopes: providerScopesSchema.optional(),
       })
       .refine(
-        (input) => input.enabledTools !== undefined || input.sensitivityOverrides !== undefined,
+        (input) =>
+          input.enabledTools !== undefined ||
+          input.sensitivityOverrides !== undefined ||
+          input.providerScopes !== undefined,
         { message: "At least one editable field is required" },
       ),
   )
@@ -368,6 +377,7 @@ const updateInstallation = installationScoped
           ...(input.sensitivityOverrides !== undefined
             ? { sensitivityOverrides: input.sensitivityOverrides }
             : {}),
+          ...(input.providerScopes !== undefined ? { providerScopes: input.providerScopes } : {}),
         }),
       );
     } catch (error) {
@@ -481,6 +491,8 @@ const catalog = orgScoped
         authMode: z.string(),
         transport: z.object({ type: z.enum(["mcp", "rest"]) }),
         memberConnectable: z.boolean(),
+        defaultScopes: z.array(z.string()),
+        availableScopes: z.array(z.string()).optional(),
         configFields: z.record(z.string(), fieldDescriptorSchema),
         credentialFields: z.record(z.string(), fieldDescriptorSchema),
         toolManifest: z
@@ -506,6 +518,8 @@ const catalog = orgScoped
       authMode: provider.authMode,
       transport: { type: provider.transport.type },
       memberConnectable: provider.memberConnectable,
+      defaultScopes: provider.auth.defaultScopes,
+      ...(provider.auth.availableScopes ? { availableScopes: provider.auth.availableScopes } : {}),
       configFields: provider.configFields,
       credentialFields: provider.credentialFields,
       ...(provider.transport.type === "rest"
@@ -630,6 +644,7 @@ const startOAuth = installationScoped
         ...(input.returnTo ? { returnTo: input.returnTo } : {}),
         ...(input.config ? { config: input.config } : {}),
         ...(context.platformApps ? { platformApps: context.platformApps } : {}),
+        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
       });
     } catch (error) {
       throwConnectorError(error);

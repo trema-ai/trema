@@ -1,10 +1,9 @@
+import type { ProviderDef } from "@trema/connectors";
+import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import { z } from "zod";
-
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
-import { loadProviderCatalog, type ProviderCatalog } from "#/services/connectors/catalog.js";
 import { connectorCredentialValidity } from "#/services/connectors/connect.js";
-import type { ProviderDef } from "#/services/connectors/schema.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
 export const sensitivitySchema = z.enum(sensitivities);
@@ -27,6 +26,12 @@ const installationBodyShape = z
       }),
     ]),
     sensitivityOverrides: z.record(z.string().trim().min(1), sensitivitySchema).optional(),
+    providerScopes: z
+      .array(z.string().trim().min(1))
+      .refine((scopes) => new Set(scopes).size === scopes.length, {
+        message: "providerScopes cannot contain duplicate scopes",
+      })
+      .optional(),
     config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     syncedTools: z
       .array(syncedToolSchema)
@@ -57,6 +62,27 @@ export function createConnectorInstallationBodySchema(catalog: ProviderCatalog =
         path: ["syncedTools"],
         message: "REST connector installations cannot contain syncedTools",
       });
+    }
+
+    if (body.providerScopes !== undefined) {
+      if (provider.authMode !== "oauth2_code") {
+        context.addIssue({
+          code: "custom",
+          path: ["providerScopes"],
+          message: `Provider '${provider.key}' does not support OAuth scope selection`,
+        });
+      } else if (provider.auth.availableScopes) {
+        const available = new Set(provider.auth.availableScopes);
+        for (const [index, scope] of body.providerScopes.entries()) {
+          if (!available.has(scope)) {
+            context.addIssue({
+              code: "custom",
+              path: ["providerScopes", index],
+              message: `Scope '${scope}' is not available from provider '${provider.key}'`,
+            });
+          }
+        }
+      }
     }
 
     if (Array.isArray(body.enabledTools)) {
@@ -189,6 +215,7 @@ export async function listConnectorInstallations(
       catalogKey: body.catalogKey,
       enabledTools: body.enabledTools,
       sensitivityOverrides: body.sensitivityOverrides ?? {},
+      providerScopes: body.providerScopes ?? [],
       syncedTools: body.syncedTools ?? [],
       config: body.config ?? {},
       status: installation.status,
@@ -199,6 +226,7 @@ export async function listConnectorInstallations(
           principalId: credential.principalId,
           principalName: credential.principal.displayName,
           mode: credential.mode,
+          providerScopes: credential.providerScopes,
           ...connectorCredentialValidity(credential, now),
           expiresAt: credential.expiresAt,
           createdAt: credential.createdAt,
@@ -278,6 +306,7 @@ export interface CreateConnectorInstallationInput {
   catalogKey: string;
   enabledTools: "all" | string[];
   sensitivityOverrides?: Record<string, Sensitivity>;
+  providerScopes?: string[];
   catalog?: ProviderCatalog;
 }
 
@@ -297,6 +326,7 @@ export async function createConnectorInstallation(
       catalogKey: input.catalogKey,
       enabledTools: input.enabledTools,
       ...(input.sensitivityOverrides ? { sensitivityOverrides: input.sensitivityOverrides } : {}),
+      ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
     },
     catalog,
   );
@@ -354,6 +384,7 @@ export interface UpdateConnectorInstallationInput {
   installationItemId: string;
   enabledTools?: "all" | string[];
   sensitivityOverrides?: Record<string, Sensitivity>;
+  providerScopes?: string[];
   catalog?: ProviderCatalog;
 }
 
@@ -375,6 +406,7 @@ export async function updateConnectorInstallation(
         ...(input.sensitivityOverrides !== undefined
           ? { sensitivityOverrides: input.sensitivityOverrides }
           : {}),
+        ...(input.providerScopes !== undefined ? { providerScopes: input.providerScopes } : {}),
       },
       catalog,
     );

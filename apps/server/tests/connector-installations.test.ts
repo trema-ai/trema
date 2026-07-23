@@ -120,7 +120,7 @@ integration("connector installations and MCP sync", () => {
     await expect(
       call(
         connectorsRouter.installations.create,
-        { scopeId: personal.id, catalogKey: "linear", enabledTools: [] },
+        { scopeId: personal.id, catalogKey: "hubspot", enabledTools: [] },
         { context: member.context },
       ),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -161,30 +161,18 @@ integration("connector installations and MCP sync", () => {
       context: member.context,
     });
     expect(JSON.stringify(safeCatalog)).not.toMatch(/authorizationUrl|tokenUrl|serverUrl/);
-    expect(safeCatalog.find(({ key }) => key === "linear")).toMatchObject({
+    // Linear ships as an mcp_oauth provider: no static credential fields and no
+    // curated toolManifest (tools come from its MCP server at sync time).
+    const linearCatalogEntry = safeCatalog.find(({ key }) => key === "linear");
+    expect(linearCatalogEntry).toMatchObject({
       description: expect.any(String),
       logoUrl: "/connector-logos/linear.svg",
+      authMode: "mcp_oauth",
+      transport: { type: "mcp" },
       configFields: {},
-      credentialFields: {
-        apiKey: {
-          type: "string",
-          title: "API key",
-          secret: true,
-        },
-      },
-      toolManifest: [
-        {
-          name: "search_issues",
-          description: expect.any(String),
-          sensitivity: "read",
-        },
-        {
-          name: "create_comment",
-          description: expect.any(String),
-          sensitivity: "write",
-        },
-      ],
+      credentialFields: {},
     });
+    expect(linearCatalogEntry).not.toHaveProperty("toolManifest");
     await expect(
       call(connectorsRouter.meta, undefined, { context: admin.context }),
     ).resolves.toMatchObject({
