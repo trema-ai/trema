@@ -39,7 +39,15 @@ export const authRecipeSchema = z
     tokenUrl: z.string().trim().min(1).optional(),
     refreshUrl: z.string().trim().min(1).optional(),
     defaultScopes: z.array(z.string().trim().min(1)),
+    // The provider's full valid scope vocabulary, for validation and UI
+    // pickers. Every defaultScope must appear here (checked in the catalog
+    // loader). Omitted for providers with no enumerable scope catalog.
+    availableScopes: z.array(z.string().trim().min(1)).optional(),
     scopeSeparator: z.string().min(1).optional(),
+    // Extra static query params for the authorization redirect
+    // (e.g. Dropbox's token_access_type=offline). Standard params
+    // (client_id, redirect_uri, state, scope, PKCE) always win.
+    authorizationParams: z.record(z.string().min(1), z.string()).optional(),
     pkce: z.boolean().default(true),
     tokenRequestAuthMethod: z.enum(["basic", "body", "private_key_jwt"]).optional(),
     tokenResponseMetadata: z.array(z.string().trim().min(1)).optional(),
@@ -75,6 +83,10 @@ export const restTransportSchema = z
   .object({
     type: z.literal("rest"),
     baseUrl: z.string().trim().min(1),
+    // Pinned link to the provider's official machine-readable API spec —
+    // provenance for the curated toolManifest and input to the
+    // openapi-to-manifest script, never fetched at runtime.
+    openApiSpecUrl: z.url().optional(),
     authHeader: z.string().min(1).optional(),
     retry: retrySchema.optional(),
     verification: verificationSchema.optional(),

@@ -1,13 +1,10 @@
+import type { ProviderDef } from "@trema/connectors";
+import { githubProvider, loadProviderCatalog, notionMcpProvider } from "@trema/connectors";
 import { describe, expect, it } from "vitest";
-
-import { loadProviderCatalog } from "#/services/connectors/catalog.js";
 import {
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
 } from "#/services/connectors/installations.js";
-import { githubProvider } from "#/services/connectors/providers/github.js";
-import { notionMcpProvider } from "#/services/connectors/providers/notion-mcp.js";
-import type { ProviderDef } from "#/services/connectors/schema.js";
 
 const catalog = loadProviderCatalog([githubProvider, notionMcpProvider]);
 const bodySchema = createConnectorInstallationBodySchema(catalog);
@@ -57,6 +54,46 @@ describe("connector installation body", () => {
       bodySchema.safeParse({ catalogKey: "notion", enabledTools: ["before_first_sync"] }).success,
     ).toBe(false);
     expect(bodySchema.safeParse({ catalogKey: "notion", enabledTools: [] }).success).toBe(true);
+  });
+
+  it("accepts providerScopes drawn from the provider's availableScopes vocabulary", () => {
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "github",
+        enabledTools: "all",
+        providerScopes: ["repo", "read:org"],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a providerScope absent from the provider's availableScopes", () => {
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "github",
+        enabledTools: "all",
+        providerScopes: ["repo", "not_a_real_scope"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects duplicate providerScopes", () => {
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "github",
+        enabledTools: "all",
+        providerScopes: ["repo", "repo"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects providerScopes on a provider that is not oauth2_code", () => {
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "notion",
+        enabledTools: "all",
+        providerScopes: ["anything"],
+      }).success,
+    ).toBe(false);
   });
 });
 

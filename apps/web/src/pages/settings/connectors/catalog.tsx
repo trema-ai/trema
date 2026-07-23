@@ -43,7 +43,9 @@ import {
 } from "#/pages/settings/connectors/shared.tsx";
 
 function hasUsableRegistration(provider: CatalogProvider, registrations: Registration[]) {
-  if (!["oauth2_code", "mcp_oauth"].includes(provider.authMode)) return true;
+  // mcp_oauth providers register their client dynamically (RFC 7591) during the
+  // first connect, so they never require a pre-configured OAuth app.
+  if (provider.authMode !== "oauth2_code") return true;
   return registrations.some(
     (registration) => registration.providerKey === provider.key && registration.isUsable,
   );
@@ -160,9 +162,9 @@ function ProviderCard({
   const ready = hasUsableRegistration(provider, registrations);
 
   return (
-    <Card className="gap-4">
-      <CardHeader>
-        <div className="flex items-center gap-3">
+    <Card className="gap-2 py-4 shadow-xs">
+      <CardHeader className="px-4">
+        <div className="flex items-center gap-2">
           {providerLogo(provider)}
           <div className="min-w-0">
             <CardTitle>{provider.displayName}</CardTitle>
@@ -173,19 +175,19 @@ function ProviderCard({
         </div>
         <CardAction>
           {ready ? (
-            <Button size="sm" onClick={() => setInstallOpen(true)}>
+            <Button size="xs" onClick={() => setInstallOpen(true)}>
               <Plus />
               Install
             </Button>
           ) : (
-            <Button size="sm" variant="outline" onClick={() => setRegistrationOpen(true)}>
+            <Button size="xs" variant="outline" onClick={() => setRegistrationOpen(true)}>
               <Settings2 />
               Setup
             </Button>
           )}
         </CardAction>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4">
         <CardDescription>{provider.description ?? "No description available."}</CardDescription>
       </CardContent>
       <InstallDialog
@@ -222,17 +224,29 @@ function InstallDialog({
   const [scopeId, setScopeId] = useState("");
   const [allTools, setAllTools] = useState(true);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const availableScopes = provider.availableScopes ?? [];
+  const showScopePicker = provider.authMode === "oauth2_code" && availableScopes.length > 0;
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(provider.defaultScopes ?? []);
+  const defaultScopeSet = new Set(provider.defaultScopes ?? []);
+  const scopesDifferFromDefault =
+    selectedScopes.length !== defaultScopeSet.size ||
+    selectedScopes.some((scope) => !defaultScopeSet.has(scope));
   const mutation = useMutation({
     mutationFn: () =>
       rpcClient.connectors.installations.create({
         scopeId,
         catalogKey: provider.key,
         enabledTools: allTools ? "all" : selectedTools,
+        // Only override when the operator narrowed or widened the defaults.
+        ...(showScopePicker && scopesDifferFromDefault ? { providerScopes: selectedScopes } : {}),
       }),
     onSuccess: (installation) => {
       toast.success(`${provider.displayName} installed`);
       onOpenChange(false);
-      navigate(`/settings/connectors/${installation.id}`);
+      // Static-auth providers go straight to the credential dialog on the
+      // detail screen; OAuth providers land on the normal connect flow.
+      const isStatic = provider.authMode === "api_key" || provider.authMode === "basic";
+      navigate(`/settings/connectors/${installation.id}${isStatic ? "?connect=1" : ""}`);
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -266,6 +280,21 @@ function InstallDialog({
                 ))}
               </SelectContent>
             </Select>
+            {scopes.find((scope) => scope.id === scopeId)?.kind === "org" ? (
+              <p className="text-meta text-muted-foreground">
+                An organization install makes this connector available in every session across the
+                organization.{" "}
+                <a
+                  href="https://trema.so/docs/credential-security"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-moss hover:underline"
+                >
+                  Credential security
+                </a>{" "}
+                covers how its credentials are handled.
+              </p>
+            ) : null}
           </div>
           {provider.transport.type === "rest" && tools.length > 0 ? (
             <div className="space-y-3">
@@ -304,6 +333,36 @@ function InstallDialog({
                   ))}
                 </div>
               ) : null}
+            </div>
+          ) : null}
+          {showScopePicker ? (
+            <div className="space-y-3">
+              <div>
+                <Label>OAuth scopes</Label>
+                <p className="text-meta text-muted-foreground">
+                  Scopes requested when a member connects their account. Defaults are pre-selected.
+                </p>
+              </div>
+              <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
+                {availableScopes.map((scope) => (
+                  <label
+                    key={scope}
+                    htmlFor={`scope-${provider.key}-${scope}`}
+                    className="flex items-start gap-2 text-chrome"
+                  >
+                    <Checkbox
+                      id={`scope-${provider.key}-${scope}`}
+                      checked={selectedScopes.includes(scope)}
+                      onCheckedChange={(checked) =>
+                        setSelectedScopes((current) =>
+                          checked ? [...current, scope] : current.filter((name) => name !== scope),
+                        )
+                      }
+                    />
+                    <span className="font-medium">{scope}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           ) : null}
         </div>

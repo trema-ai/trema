@@ -1,13 +1,9 @@
 import { z } from "zod";
 
-import { type ProviderHookRegistry, providerHookRegistry } from "#/services/connectors/hooks.js";
-import { providerDefinitions } from "#/services/connectors/providers/index.js";
-import {
-  type ProviderDef,
-  type ProviderDefInput,
-  providerDefSchema,
-} from "#/services/connectors/schema.js";
-import { extractPlaceholders } from "#/services/connectors/templates.js";
+import { type ProviderHookRegistry, providerHookRegistry } from "#/hooks.js";
+import { providerDefinitions } from "#/providers/index.js";
+import { type ProviderDef, type ProviderDefInput, providerDefSchema } from "#/schema.js";
+import { extractPlaceholders } from "#/templates.js";
 
 export type ProviderCatalog = readonly Readonly<ProviderDef>[];
 
@@ -81,6 +77,18 @@ function templateIssues(provider: ProviderDef): string[] {
   return issues;
 }
 
+function scopeIssues(provider: ProviderDef): string[] {
+  const available = provider.auth.availableScopes;
+  if (!available) return [];
+  const known = new Set(available);
+  return provider.auth.defaultScopes
+    .filter((scope) => !known.has(scope))
+    .map(
+      (scope) =>
+        `Provider '${provider.key}' defaultScope '${scope}' is absent from availableScopes`,
+    );
+}
+
 function hookIssues(provider: ProviderDef, hooks: ProviderHookRegistry): string[] {
   if (!provider.hooks) return [];
   return Object.entries(provider.hooks).flatMap(([field, hookName]) => {
@@ -116,7 +124,11 @@ export function loadProviderCatalog(
       continue;
     }
     providers.push(parsed.data);
-    issues.push(...templateIssues(parsed.data), ...hookIssues(parsed.data, hooks));
+    issues.push(
+      ...templateIssues(parsed.data),
+      ...scopeIssues(parsed.data),
+      ...hookIssues(parsed.data, hooks),
+    );
   }
 
   const seen = new Set<string>();

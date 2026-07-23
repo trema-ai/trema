@@ -20,7 +20,12 @@ import {
   OAuthStateSingleUseError,
   OAuthTokenExchangeError,
   type PlatformAppDirectory,
+  syncConnectorInstallation,
 } from "./services/connectors/index.js";
+
+// A fresh connect should surface the MCP server's tools without a manual
+// sync click, but a slow provider must not hold the browser redirect hostage.
+const SYNC_ON_CONNECT_TIMEOUT_MS = 8000;
 
 export interface AppDependencies {
   db: Database;
@@ -126,6 +131,25 @@ export function createApp({
         ...(platformApps ? { platformApps } : {}),
       });
       returnTo = result.returnTo;
+      // Best-effort tool sync: MCP installations get their tools/list right
+      // away; REST providers reject sync by design and any failure is left
+      // for a manual sync — neither may break the redirect.
+      const sync = syncConnectorInstallation(db, {
+        orgId: result.orgId,
+        actorPrincipalId: result.credential.principalId,
+        installationItemId: result.credential.installationItemId,
+        ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
+        ...(connectorFetch ? { fetch: connectorFetch } : {}),
+        ...(mcpClientFactory ? { clientFactory: mcpClientFactory } : {}),
+      }).catch(() => undefined);
+      let syncTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        sync,
+        new Promise<void>((resolve) => {
+          syncTimer = setTimeout(resolve, SYNC_ON_CONNECT_TIMEOUT_MS);
+        }),
+      ]);
+      clearTimeout(syncTimer);
       return context.redirect(safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS));
     } catch (error) {
       const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);

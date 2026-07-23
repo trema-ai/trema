@@ -8,7 +8,7 @@ import {
   ProviderCatalogValidationError,
   type ProviderDefInput,
   TemplateInterpolationError,
-} from "#/services/connectors/index.js";
+} from "#/index.js";
 
 describe("connector templates", () => {
   it("extracts supported placeholder references", () => {

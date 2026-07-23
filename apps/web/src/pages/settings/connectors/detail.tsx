@@ -197,9 +197,7 @@ function ToolsSection({
     installation.sensitivityOverrides,
   );
   const [report, setReport] = useState<DriftReport>();
-  const installationKey = orpc.connectors.installations.list.queryOptions({
-    input: {},
-  }).queryKey;
+  const installationKey = orpc.connectors.installations.list.key();
   useEffect(() => {
     setAllTools(installation.enabledTools === "all");
     setEnabledTools(
@@ -383,6 +381,23 @@ function CredentialsSection({
   });
   const isOAuth = ["oauth2_code", "mcp_oauth"].includes(provider.authMode);
   const isStatic = ["api_key", "basic"].includes(provider.authMode);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const hasCredentials = installation.credentials.length > 0;
+
+  // Arriving from a fresh install of a static-auth provider (?connect=1),
+  // open the credential dialog directly instead of asking for another click.
+  useEffect(() => {
+    if (!searchParams.has("connect")) return;
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("connect");
+        return next;
+      },
+      { replace: true },
+    );
+    if (isStatic && !hasCredentials && principalId) setStaticOpen(true);
+  }, [searchParams, setSearchParams, isStatic, hasCredentials, principalId]);
 
   return (
     <SettingsSection
@@ -453,7 +468,7 @@ function CredentialRow({
 }) {
   const queryClient = useQueryClient();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const key = orpc.connectors.installations.list.queryOptions({ input: {} }).queryKey;
+  const key = orpc.connectors.installations.list.key();
   const revoke = useMutation({
     mutationFn: () =>
       rpcClient.connectors.credentials.revoke({
@@ -552,9 +567,7 @@ function StaticCredentialDialog({
   );
   const [values, setValues] = useState<Record<string, string>>(initialValues);
   const [inlineError, setInlineError] = useState<string>();
-  const installationKey = orpc.connectors.installations.list.queryOptions({
-    input: {},
-  }).queryKey;
+  const installationKey = orpc.connectors.installations.list.key();
   useEffect(() => setValues(initialValues), [initialValues]);
   const create = useMutation({
     mutationFn: () =>
@@ -718,6 +731,7 @@ function ConnectorSettingsSection({
   callbackUrl: string;
 }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const isOAuth = ["oauth2_code", "mcp_oauth"].includes(provider.authMode);
@@ -730,8 +744,12 @@ function ConnectorSettingsSection({
       rpcClient.connectors.installations.archive({
         installationItemId: installation.id,
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Connector uninstalled");
+      // Prefix key: also hits the scope-filtered list variants on the index page.
+      await queryClient.invalidateQueries({
+        queryKey: orpc.connectors.installations.list.key(),
+      });
       navigate("/settings/connectors");
     },
     onError: (cause) => toast.error(messageFrom(cause)),
@@ -760,9 +778,11 @@ function ConnectorSettingsSection({
                 label: "Registration",
                 value: resolvedRegistration
                   ? `${resolvedRegistration.source} app`
-                  : ["oauth2_code", "mcp_oauth"].includes(provider.authMode)
+                  : provider.authMode === "oauth2_code"
                     ? "Setup required"
-                    : "Not required",
+                    : provider.authMode === "mcp_oauth"
+                      ? "Registers on connect"
+                      : "Not required",
               },
               ...configItems.map(([key, value]) => ({
                 label: key,

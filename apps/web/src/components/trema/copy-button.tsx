@@ -35,7 +35,7 @@ function CopyButton({ value, className, ...props }: CopyButtonProps) {
       data-slot="copy-button"
       type="button"
       variant="ghost"
-      size="icon-xs"
+      size="icon-sm"
       aria-label={copied ? "Copied" : "Copy"}
       onClick={handleCopy}
       className={cn("text-muted-foreground", className)}

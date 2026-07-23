@@ -1,8 +1,39 @@
 export {
+  type AuthMode,
+  type AuthRecipe,
+  authModeSchema,
+  authModes,
+  authRecipeSchema,
+  extractPlaceholders,
+  type FieldDescriptor,
+  fieldDescriptorSchema,
+  githubProvider,
+  interpolate,
+  linearProvider,
   loadProviderCatalog,
+  type McpTransport,
+  mcpTransportSchema,
+  notionMcpProvider,
   type ProviderCatalog,
   ProviderCatalogValidationError,
-} from "#/services/connectors/catalog.js";
+  type ProviderDef,
+  type ProviderDefInput,
+  type ProviderHook,
+  type ProviderHookRegistry,
+  type ProviderHooks,
+  type ProviderTransport,
+  providerDefinitions,
+  providerDefSchema,
+  providerHookRegistry,
+  providerHooksSchema,
+  type RestTransport,
+  restTransportSchema,
+  TemplateInterpolationError,
+  type TemplateValues,
+  type ToolDefinition,
+  toolDefinitionSchema,
+  transportSchema,
+} from "@trema/connectors";
 export {
   buildOAuthAuthorizationUrl,
   ConnectorCatalogDefectError,
@@ -25,11 +56,6 @@ export {
   startOAuthConnect,
   UnsupportedConnectorAuthModeError,
 } from "#/services/connectors/connect.js";
-export {
-  type ProviderHook,
-  type ProviderHookRegistry,
-  providerHookRegistry,
-} from "#/services/connectors/hooks.js";
 export {
   type ArchiveConnectorInstallationInput,
   archiveConnectorInstallation,
@@ -54,11 +80,16 @@ export {
   updateConnectorInstallation,
 } from "#/services/connectors/installations.js";
 export {
-  githubProvider,
-  linearProvider,
-  notionMcpProvider,
-  providerDefinitions,
-} from "#/services/connectors/providers/index.js";
+  buildMcpAuthorizationRequest,
+  discoverMcpAuthServer,
+  exchangeMcpAuthorizationCode,
+  type McpAuthServer,
+  McpOAuthDiscoveryError,
+  type ResolvedMcpClient,
+  type ResolveMcpClientRegistrationInput,
+  resolveMcpClientRegistration,
+  resolveStoredMcpClientRegistration,
+} from "#/services/connectors/mcp-oauth.js";
 export {
   ClientRegistrationConflictError,
   ClientRegistrationNotFoundError,
@@ -76,28 +107,6 @@ export {
   validateRegistrationFields,
 } from "#/services/connectors/registrations.js";
 export {
-  type AuthMode,
-  type AuthRecipe,
-  authModeSchema,
-  authModes,
-  authRecipeSchema,
-  type FieldDescriptor,
-  fieldDescriptorSchema,
-  type McpTransport,
-  mcpTransportSchema,
-  type ProviderDef,
-  type ProviderDefInput,
-  type ProviderHooks,
-  type ProviderTransport,
-  providerDefSchema,
-  providerHooksSchema,
-  type RestTransport,
-  restTransportSchema,
-  type ToolDefinition,
-  toolDefinitionSchema,
-  transportSchema,
-} from "#/services/connectors/schema.js";
-export {
   ConnectorSyncTransportError,
   createStreamableHttpMcpClient,
   type McpClientFactory,
@@ -111,9 +120,3 @@ export {
   sensitivityFromMcpAnnotations,
   syncConnectorInstallation,
 } from "#/services/connectors/sync.js";
-export {
-  extractPlaceholders,
-  interpolate,
-  TemplateInterpolationError,
-  type TemplateValues,
-} from "#/services/connectors/templates.js";
