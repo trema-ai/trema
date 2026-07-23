@@ -30,7 +30,7 @@ import {
   type CatalogProvider,
   messageFrom,
   type Registration,
-} from "#/pages/settings/connectors-shared.tsx";
+} from "#/pages/settings/connectors/shared.tsx";
 
 export function RegistrationDialog({
   provider,

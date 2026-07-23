@@ -10,6 +10,11 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   operations live under `src/services/<module>/` with the same shape
   (see `services/org`, `services/bootstrap`). oRPC procedures live in
   `src/rpc/` split per domain and call into services.
+- No flat name-prefix files: when several files share a name prefix
+  (`connector-catalog.tsx`, `connector-detail.tsx`, …), the prefix is a
+  folder (`connectors/catalog.tsx`, `connectors/detail.tsx`, with the
+  main screen at `index.tsx`). Hyphens are for compound names
+  (`registration-dialog.tsx`), never for encoding hierarchy.
 
 ## Tests
 

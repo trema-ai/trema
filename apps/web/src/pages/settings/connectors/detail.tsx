@@ -45,7 +45,7 @@ import {
 import { Switch } from "#/components/ui/switch.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
 import { scopeDisplayName } from "#/lib/scopes.ts";
-import { RegistrationDialog } from "#/pages/settings/connector-registration-dialog.tsx";
+import { RegistrationDialog } from "#/pages/settings/connectors/registration-dialog.tsx";
 import {
   authModeLabel,
   type CatalogProvider,
@@ -57,7 +57,7 @@ import {
   type Registration,
   type Scope,
   type Sensitivity,
-} from "#/pages/settings/connectors-shared.tsx";
+} from "#/pages/settings/connectors/shared.tsx";
 
 type ConnectorMeta = {
   callbackUrl: string;

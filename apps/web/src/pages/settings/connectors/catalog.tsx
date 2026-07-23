@@ -32,7 +32,7 @@ import {
 } from "#/components/ui/select.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
 import { scopeDisplayName } from "#/lib/scopes.ts";
-import { RegistrationDialog } from "#/pages/settings/connector-registration-dialog.tsx";
+import { RegistrationDialog } from "#/pages/settings/connectors/registration-dialog.tsx";
 import {
   type CatalogProvider,
   categoryLabel,
@@ -40,7 +40,7 @@ import {
   providerLogo,
   type Registration,
   type Scope,
-} from "#/pages/settings/connectors-shared.tsx";
+} from "#/pages/settings/connectors/shared.tsx";
 
 function hasUsableRegistration(provider: CatalogProvider, registrations: Registration[]) {
   if (!["oauth2_code", "mcp_oauth"].includes(provider.authMode)) return true;

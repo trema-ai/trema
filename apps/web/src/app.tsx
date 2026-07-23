@@ -13,9 +13,9 @@ import { AuthenticatedAppShell, AuthenticatedProvider, HomePage, Loading } from 
 import { JoinPage } from "#/pages/join.tsx";
 import { ScopesPage } from "#/pages/scopes.tsx";
 import { SettingsAppearancePage } from "#/pages/settings/appearance.tsx";
-import { SettingsConnectorCatalogPage } from "#/pages/settings/connector-catalog.tsx";
-import { SettingsConnectorDetailPage } from "#/pages/settings/connector-detail.tsx";
-import { SettingsConnectorsPage } from "#/pages/settings/connectors.tsx";
+import { SettingsConnectorCatalogPage } from "#/pages/settings/connectors/catalog.tsx";
+import { SettingsConnectorDetailPage } from "#/pages/settings/connectors/detail.tsx";
+import { SettingsConnectorsPage } from "#/pages/settings/connectors/index.tsx";
 import { SettingsGeneralPage } from "#/pages/settings/general.tsx";
 import { SettingsMembersPage } from "#/pages/settings/members.tsx";
 import { SettingsProfilePage } from "#/pages/settings/profile.tsx";

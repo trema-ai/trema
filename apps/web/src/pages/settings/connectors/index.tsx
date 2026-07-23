@@ -26,7 +26,7 @@ import {
   type ConnectorInstallation,
   providerLogo,
   type Scope,
-} from "#/pages/settings/connectors-shared.tsx";
+} from "#/pages/settings/connectors/shared.tsx";
 
 export function SettingsConnectorsPage() {
   const navigate = useNavigate();
