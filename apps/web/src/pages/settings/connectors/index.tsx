@@ -1,12 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
-import { Cable } from "lucide-react";
+import { Cable, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { CredentialStatusBadge } from "#/components/trema/credential-status-badge.tsx";
-import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
 import { EmptyState } from "#/components/trema/empty-state.tsx";
 import { PageHeader } from "#/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
+import { Button } from "#/components/ui/button.tsx";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "#/components/ui/card.tsx";
 import { orpc } from "#/lib/api.ts";
 import { StaticConnectionDialog } from "#/pages/settings/connectors/connection-dialogs.tsx";
 import { RegistrationDialog } from "#/pages/settings/connectors/registration-dialog.tsx";
@@ -15,6 +23,7 @@ import {
   type ConnectorConnection,
   type ConnectorInstallation,
   type ConnectorMeta,
+  categoryLabel,
   providerLogo,
   type Registration,
 } from "#/pages/settings/connectors/shared.tsx";
@@ -67,35 +76,14 @@ export function SettingsConnectorsPage() {
       needsSetup,
     };
   });
-  const columns: DataTableColumn<ProviderRow>[] = [
-    {
-      key: "connector",
-      header: "Connector",
-      render: ({ provider }) => (
-        <div className="flex items-center gap-2.5">
-          {providerLogo(provider, "size-8")}
-          <span className="font-medium">{provider.displayName}</span>
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      render: (row) => <CredentialStatusBadge {...status(row)} />,
-    },
-    {
-      key: "connections",
-      header: "Connections",
-      render: (row) => row.connections.length,
-    },
-    {
-      key: "scopes",
-      header: "Scopes",
-      render: (row) => row.installations.length,
-    },
-  ];
   const error =
     catalog.error ?? connections.error ?? installations.error ?? registrations.error ?? meta.error;
+  const pending =
+    catalog.isPending ||
+    connections.isPending ||
+    installations.isPending ||
+    registrations.isPending ||
+    meta.isPending;
 
   function open(row: ProviderRow) {
     if (row.needsSetup) {
@@ -123,26 +111,25 @@ export function SettingsConnectorsPage() {
           <AlertDescription>{error.message}</AlertDescription>
         </Alert>
       ) : null}
-      <DataTable
-        columns={columns}
-        rows={rows}
-        rowKey={(row) => row.provider.key}
-        onRowClick={open}
-        loading={
-          catalog.isPending ||
-          connections.isPending ||
-          installations.isPending ||
-          registrations.isPending ||
-          meta.isPending
-        }
-        empty={
-          <EmptyState
-            icon={Cable}
-            title="No connector providers"
-            description="No providers are available in the connector catalog."
-          />
-        }
-      />
+      {pending ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3].map((key) => (
+            <div key={key} className="h-40 animate-pulse rounded-xl border bg-muted/40" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={Cable}
+          title="No connector providers"
+          description="No providers are available in the connector catalog."
+        />
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.map((row) => (
+            <ProviderCard key={row.provider.key} row={row} onOpen={() => open(row)} />
+          ))}
+        </div>
+      )}
       {registrationProvider ? (
         <RegistrationDialog
           provider={registrationProvider}
@@ -176,5 +163,59 @@ export function SettingsConnectorsPage() {
         />
       ) : null}
     </main>
+  );
+}
+
+function ProviderCard({ row, onOpen }: { row: ProviderRow; onOpen: () => void }) {
+  const { provider } = row;
+  const badge = status(row);
+  const counts = [
+    row.connections.length > 0
+      ? `${row.connections.length} connection${row.connections.length === 1 ? "" : "s"}`
+      : undefined,
+    row.installations.length > 0
+      ? `${row.installations.length} scope${row.installations.length === 1 ? "" : "s"}`
+      : undefined,
+  ].filter(Boolean);
+  return (
+    <Card
+      className="cursor-pointer gap-2 py-4 shadow-xs transition-colors hover:bg-muted/40"
+      onClick={onOpen}
+    >
+      <CardHeader className="px-4">
+        <div className="flex items-center gap-2">
+          {providerLogo(provider)}
+          <div className="min-w-0">
+            <CardTitle>{provider.displayName}</CardTitle>
+            <p className="mt-0.5 text-meta text-muted-foreground">
+              {categoryLabel(provider.categories)}
+            </p>
+          </div>
+        </div>
+        <CardAction>
+          {row.needsSetup ? (
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpen();
+              }}
+            >
+              <Settings2 />
+              Setup
+            </Button>
+          ) : (
+            <CredentialStatusBadge {...badge} />
+          )}
+        </CardAction>
+      </CardHeader>
+      <CardContent className="px-4">
+        <CardDescription>{provider.description ?? "No description available."}</CardDescription>
+        {counts.length > 0 ? (
+          <p className="mt-2 text-meta text-muted-foreground">{counts.join(" · ")}</p>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
