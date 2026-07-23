@@ -234,6 +234,62 @@ integration("item envelope", () => {
     expect(humanRule.status).toBe("active");
   });
 
+  it("allows at most one active instruction per scope across create, activate, and restore", async () => {
+    const org = await createOrg();
+    const shared = await call(
+      scopesRouter.create,
+      { name: "Engineering" },
+      { context: org.context },
+    );
+
+    function createInstruction(scopeId: string, title: string) {
+      return call(
+        itemsRouter.create,
+        { scopeId, kind: "instruction", title, body: { content: title } },
+        { context: org.context },
+      );
+    }
+
+    const first = await createInstruction(org.orgScope.id, "Instructions");
+    expect(first.status).toBe("active");
+
+    await expect(createInstruction(org.orgScope.id, "Second instructions")).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("active instruction"),
+    });
+    await expect(createInstruction(shared.id, "Shared instructions")).resolves.toMatchObject({
+      status: "active",
+      scopeId: shared.id,
+    });
+
+    const proposed = await createItem(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.agent.id,
+      scopeId: org.orgScope.id,
+      kind: "instruction",
+      title: "Proposed instructions",
+      body: { content: "Proposed while another is active" },
+    });
+    expect(proposed.status).toBe("proposed");
+    await expect(
+      call(itemsRouter.activate, { id: proposed.id }, { context: org.context }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("active instruction"),
+    });
+
+    await call(itemsRouter.archive, { id: first.id }, { context: org.context });
+    await expect(
+      call(itemsRouter.activate, { id: proposed.id }, { context: org.context }),
+    ).resolves.toMatchObject({ status: "active" });
+    await expect(
+      call(itemsRouter.restore, { id: first.id }, { context: org.context }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("active instruction"),
+    });
+  });
+
   it("rejects later-phase kinds and malformed memory bodies", async () => {
     const org = await createOrg();
     for (const kind of ["skill", "conversation"] as const) {
