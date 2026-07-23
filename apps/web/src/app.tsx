@@ -7,7 +7,7 @@ import { Toaster } from "#/components/ui/sonner.tsx";
 import { authClient, orpc } from "#/lib/api.ts";
 import { AutomationsPage } from "#/pages/automations.tsx";
 import { BootstrapPage } from "#/pages/bootstrap.tsx";
-import { CustomizePage } from "#/pages/customize.tsx";
+import { CustomizePage } from "#/pages/customize/index.tsx";
 import { Gallery } from "#/pages/gallery.tsx";
 import { AuthenticatedAppShell, AuthenticatedProvider, HomePage, Loading } from "#/pages/home.tsx";
 import { JoinPage } from "#/pages/join.tsx";

@@ -8,8 +8,8 @@ import { RelativeTime } from "#/components/trema/relative-time.tsx";
 import { StatusDot } from "#/components/trema/status-dot.tsx";
 import { Skeleton } from "#/components/ui/skeleton.tsx";
 import { cn } from "#/lib/utils.ts";
-import { ArchiveItemButton, LifecycleActions } from "#/pages/customize-item-editor.tsx";
-import type { Item, SkillBody } from "#/pages/customize-types.ts";
+import { ArchiveItemButton, LifecycleActions } from "#/pages/customize/item-editor.tsx";
+import type { Item, SkillBody } from "#/pages/customize/types.ts";
 
 const statusTone = { active: "go", proposed: "wait", archived: "neutral" } as const;
 

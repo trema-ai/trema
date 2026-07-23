@@ -30,13 +30,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#/components/ui/sh
 import { Skeleton } from "#/components/ui/skeleton.tsx";
 import { Textarea } from "#/components/ui/textarea.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
-import { ItemVersionHistory } from "#/pages/customize-item-editor.tsx";
+import { ItemVersionHistory } from "#/pages/customize/item-editor.tsx";
 import {
   type InstructionBody,
   type Item,
   messageFrom,
   type Scope,
-} from "#/pages/customize-types.ts";
+} from "#/pages/customize/types.ts";
 
 export function InstructionsTab({
   items,

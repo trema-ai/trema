@@ -46,7 +46,7 @@ import {
   type MemoryBody,
   messageFrom,
   type VersionAuthor,
-} from "#/pages/customize-types.ts";
+} from "#/pages/customize/types.ts";
 import { useAuthenticatedSession } from "#/pages/home.tsx";
 import { VersionDiffViewer } from "#/pages/version-diff.tsx";
 

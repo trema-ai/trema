@@ -43,7 +43,7 @@ import {
   messageFrom,
   type Scope,
   type Sensitivity,
-} from "#/pages/customize-types.ts";
+} from "#/pages/customize/types.ts";
 import { useAuthenticatedSession } from "#/pages/home.tsx";
 
 const oauthModes = new Set(["oauth2_code", "mcp_oauth"]);

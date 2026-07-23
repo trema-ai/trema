@@ -1,5 +1,5 @@
 import { cn } from "#/lib/utils.ts";
-import { diffWords } from "#/pages/customize-types.ts";
+import { diffWords } from "#/pages/customize/types.ts";
 
 /* Prose diff: one merged reading flow instead of paired −/+ lines. Additions
    are tinted chips; removals stay visible in place, struck through. */

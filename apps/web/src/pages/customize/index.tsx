@@ -19,11 +19,16 @@ import {
 } from "#/components/ui/select.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs.tsx";
 import { orpc } from "#/lib/api.ts";
-import { ConnectionsTab } from "#/pages/customize-connections.tsx";
-import { InstructionsTab } from "#/pages/customize-instructions.tsx";
-import { ItemEditorSheet } from "#/pages/customize-item-editor.tsx";
-import { SkillsTab } from "#/pages/customize-skills.tsx";
-import { type Item, type MemoryBody, orderScopes, type Scope } from "#/pages/customize-types.ts";
+import { ConnectionsTab } from "#/pages/customize/connections.tsx";
+import { InstructionsTab } from "#/pages/customize/instructions.tsx";
+import { ItemEditorSheet } from "#/pages/customize/item-editor.tsx";
+import { SkillsTab } from "#/pages/customize/skills.tsx";
+import {
+  type Item,
+  type MemoryBody,
+  orderScopes,
+  type Scope,
+} from "#/pages/customize/types.ts";
 import { useAuthenticatedSession } from "#/pages/home.tsx";
 
 const statusTone = { active: "go", proposed: "wait", archived: "neutral" } as const;
