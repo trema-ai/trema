@@ -13,6 +13,7 @@
     "sourceMap": false,
     "types": ["vite/client"],
     "paths": {
+      "@trema/connectors": ["../../packages/connectors/src/index.ts"],
       "#/*": ["./src/*"]
     }
   },
