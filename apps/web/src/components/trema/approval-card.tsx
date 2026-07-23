@@ -79,7 +79,7 @@ function ApprovalCard({
     <div
       data-slot="approval-card"
       data-kind={kind}
-      className={cn("rounded-lg border bg-card p-4", className)}
+      className={cn("rounded-md border bg-card p-4", className)}
     >
       {/* What is being asked, and how risky it is — the two glance signals. */}
       <div className="flex items-start justify-between gap-3">

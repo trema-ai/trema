@@ -131,7 +131,7 @@ function DataTable<T>({
   return (
     <div
       data-slot="data-table"
-      className={cn("overflow-hidden rounded-lg border bg-card", className)}
+      className={cn("overflow-hidden rounded-md border bg-card", className)}
     >
       <Table className="text-(length:--text-chrome)">
         <TableHeader>

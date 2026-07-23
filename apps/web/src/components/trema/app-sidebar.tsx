@@ -1,12 +1,12 @@
 import {
   BookOpen,
-  Brain,
   Check,
   ChevronsUpDown,
   LogOut,
   MessageSquarePlus,
   Search,
   Settings,
+  SlidersHorizontal,
   UserRound,
   Zap,
 } from "lucide-react";
@@ -39,7 +39,7 @@ const navItems = [
   { label: "New session", icon: MessageSquarePlus, href: "/" },
   { label: "Search", icon: Search },
   { label: "Automations", icon: Zap, href: "/automations" },
-  { label: "Context", icon: Brain, href: "/context" },
+  { label: "Customize", icon: SlidersHorizontal, href: "/customize" },
 ] as const;
 
 export type AppSidebarProps = {
