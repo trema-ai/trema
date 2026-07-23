@@ -16,6 +16,7 @@ import {
   createClientRegistration,
   createStaticConnection,
   hashOAuthState,
+  type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
   startOAuthConnect,
@@ -192,6 +193,232 @@ integration("connector connection flows", () => {
     await expect(
       db.connectorConnection.findUnique({ where: { id: connectionId! } }),
     ).resolves.not.toBeNull();
+  });
+
+  it("completes dynamic MCP OAuth, redirects with the connection, and syncs installation tools", async () => {
+    const org = await createOrg();
+    const orgScope = await db.scope.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "org" },
+    });
+    const callbackUrl = "https://auth.trema.example/connect/callback";
+    const mcpServerUrl = "https://mcp.notion.com/mcp";
+    const authorizationServerUrl = "https://mcp.notion.com";
+    const tokenEndpoint = `${authorizationServerUrl}/token`;
+    const connectorFetch = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("oauth-protected-resource")) {
+          return new Response(
+            JSON.stringify({
+              resource: mcpServerUrl,
+              authorization_servers: [authorizationServerUrl],
+              scopes_supported: ["default"],
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("oauth-authorization-server") || url.includes("openid-configuration")) {
+          return new Response(
+            JSON.stringify({
+              issuer: authorizationServerUrl,
+              authorization_endpoint: `${authorizationServerUrl}/authorize`,
+              token_endpoint: tokenEndpoint,
+              registration_endpoint: `${authorizationServerUrl}/register`,
+              response_types_supported: ["code"],
+              grant_types_supported: ["authorization_code", "refresh_token"],
+              code_challenge_methods_supported: ["S256"],
+              token_endpoint_auth_methods_supported: [
+                "client_secret_basic",
+                "client_secret_post",
+                "none",
+              ],
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === `${authorizationServerUrl}/register`) {
+          const registration = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          expect(registration).toMatchObject({
+            redirect_uris: [callbackUrl],
+            token_endpoint_auth_method: "none",
+          });
+          return new Response(
+            JSON.stringify({
+              client_id: "notion-dynamic-client",
+              client_secret: "notion-dynamic-secret",
+              redirect_uris: [callbackUrl],
+              token_endpoint_auth_method: "client_secret_post",
+              grant_types: ["authorization_code", "refresh_token"],
+              response_types: ["code"],
+            }),
+            { status: 201, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === tokenEndpoint) {
+          const headers = new Headers(init?.headers);
+          const body = new URLSearchParams(String(init?.body));
+          if (
+            headers.has("Authorization") ||
+            body.get("client_id") !== "notion-dynamic-client" ||
+            body.get("client_secret") !== "notion-dynamic-secret"
+          ) {
+            return new Response(
+              JSON.stringify({
+                error: "invalid_client",
+                error_description: "client_secret_post is required",
+              }),
+              { status: 401, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          expect(body.get("grant_type")).toBe("authorization_code");
+          expect(body.get("code")).toBe("notion-authorization-code");
+          expect(body.get("redirect_uri")).toBe(callbackUrl);
+          expect(body.get("resource")).toBe(mcpServerUrl);
+          expect(body.get("code_verifier")).toBeTruthy();
+          return new Response(
+            JSON.stringify({
+              access_token: "notion-access-token",
+              refresh_token: "notion-refresh-token",
+              token_type: "bearer",
+              expires_in: 3600,
+              scope: "default",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(null, { status: url === mcpServerUrl ? 401 : 404 });
+      },
+    ) as unknown as typeof globalThis.fetch;
+
+    const started = await startOAuthConnect(db, {
+      orgId: org.org.id,
+      providerKey: "notion",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      returnTo: "https://app.trema.example/settings/connectors/notion?from=list",
+      fetch: connectorFetch,
+    });
+    const authorization = new URL(started.authorizationUrl);
+    const state = authorization.searchParams.get("state");
+    expect(state).toBeTruthy();
+    expect(authorization.searchParams.get("client_id")).toBe("notion-dynamic-client");
+    expect(authorization.searchParams.get("resource")).toBe(mcpServerUrl);
+    await expect(
+      db.connectorOAuthState.findUniqueOrThrow({
+        where: { stateHash: hashOAuthState(state!) },
+      }),
+    ).resolves.toMatchObject({
+      orgId: org.org.id,
+      providerKey: "notion",
+      principalId: org.agent.id,
+      connectionId: null,
+      config: {},
+      providerScopes: ["default"],
+      tokenEndpoint,
+      resource: mcpServerUrl,
+    });
+    await expect(
+      db.clientRegistration.findFirstOrThrow({
+        where: { orgId: org.org.id, providerKey: "notion", source: "dynamic" },
+      }),
+    ).resolves.toMatchObject({
+      clientId: "notion-dynamic-client",
+      tokenEndpointAuthMethod: "client_secret_post",
+    });
+
+    const app = createApp({ db, auth, env, connectorFetch });
+    const callback = await app.request(
+      `https://auth.trema.example/connect/callback?state=${encodeURIComponent(state!)}&code=notion-authorization-code`,
+    );
+    expect(callback.status).toBe(302);
+    const redirect = new URL(callback.headers.get("location")!);
+    expect(redirect.origin + redirect.pathname).toBe(
+      "https://app.trema.example/settings/connectors/notion",
+    );
+    expect(redirect.searchParams.get("from")).toBe("list");
+    expect(redirect.searchParams.has("connector_error")).toBe(false);
+    const connectionId = redirect.searchParams.get("connected");
+    expect(connectionId).toBeTruthy();
+
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: connectionId! } }),
+    ).resolves.toMatchObject({
+      orgId: org.org.id,
+      providerKey: "notion",
+      principalId: org.agent.id,
+      mode: "mcp_oauth",
+      config: {},
+      providerScopes: ["default"],
+    });
+
+    const reconnectStarted = await startOAuthConnect(db, {
+      orgId: org.org.id,
+      providerKey: "notion",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      returnTo: "https://app.trema.example/settings/connectors/notion",
+      reconnectConnectionId: connectionId!,
+      fetch: connectorFetch,
+    });
+    const reconnectState = new URL(reconnectStarted.authorizationUrl).searchParams.get("state");
+    expect(reconnectState).toBeTruthy();
+    const reconnectCallback = await app.request(
+      `https://auth.trema.example/connect/callback?state=${encodeURIComponent(reconnectState!)}&code=notion-authorization-code`,
+    );
+    const reconnectRedirect = new URL(reconnectCallback.headers.get("location")!);
+    expect(reconnectRedirect.searchParams.get("connected")).toBe(connectionId);
+    expect(reconnectRedirect.searchParams.has("connector_error")).toBe(false);
+    const registrationCalls = vi
+      .mocked(connectorFetch)
+      .mock.calls.filter(([input]) => String(input) === `${authorizationServerUrl}/register`);
+    expect(registrationCalls).toHaveLength(1);
+    await expect(
+      db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "notion" } }),
+    ).resolves.toBe(1);
+
+    const clientFactory = vi.fn(async ({ serverUrl, authorization }) => {
+      expect(serverUrl).toBe(mcpServerUrl);
+      expect(authorization).toBe("Bearer notion-access-token");
+      return {
+        listTools: async () => ({
+          tools: [
+            {
+              name: "notion-search",
+              description: "Search the connected Notion workspace",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+        close: async () => {},
+      };
+    }) satisfies McpClientFactory;
+    const installation = await call(
+      connectorsRouter.installations.create,
+      {
+        scopeId: orgScope.id,
+        catalogKey: "notion",
+        connectionId: connectionId!,
+        enabledTools: "all",
+      },
+      { context: { ...org.context, mcpClientFactory: clientFactory } },
+    );
+    const storedInstallation = await db.item.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+    });
+    expect(storedInstallation.body).toMatchObject({
+      catalogKey: "notion",
+      connectionId,
+      enabledTools: "all",
+      syncedTools: [
+        {
+          name: "notion-search",
+          description: "Search the connected Notion workspace",
+          sensitivity: "read",
+        },
+      ],
+    });
+    expect(clientFactory).toHaveBeenCalledOnce();
   });
 
   it("reconnects in place and clears revocation and refresh exhaustion", async () => {

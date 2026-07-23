@@ -142,6 +142,7 @@ export interface ResolvedMcpClient {
   source: ClientRegistrationSource;
   clientId: string;
   clientSecret?: string;
+  tokenEndpointAuthMethod?: string;
 }
 
 // A registration usable for the mcp_oauth flow. Unlike oauth2_code, public
@@ -153,6 +154,7 @@ function usableStored(
     source: ClientRegistrationSource;
     clientId: string | null;
     clientSecretCiphertext: string | null;
+    tokenEndpointAuthMethod: string | null;
   },
   masterKey: string | undefined,
 ): ResolvedMcpClient | undefined {
@@ -163,6 +165,9 @@ function usableStored(
     clientId: registration.clientId,
     ...(registration.clientSecretCiphertext
       ? { clientSecret: decryptEnvelope<string>(registration.clientSecretCiphertext, masterKey) }
+      : {}),
+    ...(registration.tokenEndpointAuthMethod
+      ? { tokenEndpointAuthMethod: registration.tokenEndpointAuthMethod }
       : {}),
   };
 }
@@ -234,6 +239,7 @@ export async function resolveMcpClientRegistration(
       clientSecretCiphertext: registered.client_secret
         ? encryptEnvelope(registered.client_secret, input.masterKey)
         : null,
+      tokenEndpointAuthMethod: registered.token_endpoint_auth_method ?? null,
       notes: "Dynamically registered via RFC 7591",
     },
     select: { id: true },
@@ -244,6 +250,9 @@ export async function resolveMcpClientRegistration(
     source: "dynamic",
     clientId: registered.client_id,
     ...(registered.client_secret ? { clientSecret: registered.client_secret } : {}),
+    ...(registered.token_endpoint_auth_method
+      ? { tokenEndpointAuthMethod: registered.token_endpoint_auth_method }
+      : {}),
   };
 }
 
@@ -283,11 +292,18 @@ export async function resolveStoredMcpClientRegistration(
 }
 
 function clientInformation(client: ResolvedMcpClient): OAuthClientInformationMixed {
-  // A secret makes the SDK select client_secret_basic; a public client pins the
-  // "none" method so the client_id travels in the token request body.
-  return client.clientSecret
-    ? { client_id: client.clientId, client_secret: client.clientSecret }
-    : { client_id: client.clientId, token_endpoint_auth_method: "none" };
+  // Preserve the method selected by RFC 7591. Inferring Basic merely from the
+  // presence of a secret breaks servers that issued client_secret_post
+  // registrations. Public clients still pin "none" so client_id is sent.
+  return {
+    client_id: client.clientId,
+    ...(client.clientSecret ? { client_secret: client.clientSecret } : {}),
+    ...(client.tokenEndpointAuthMethod
+      ? { token_endpoint_auth_method: client.tokenEndpointAuthMethod }
+      : !client.clientSecret
+        ? { token_endpoint_auth_method: "none" }
+        : {}),
+  };
 }
 
 // Build the authorization redirect (PKCE S256, RFC 8707 resource, state) via

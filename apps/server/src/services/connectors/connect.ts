@@ -59,8 +59,9 @@ export class OAuthStateExpiredError extends Error {
 export class OAuthTokenExchangeError extends Error {
   readonly code = "token_exchange_failed";
 
-  constructor() {
-    super("OAuth token exchange failed");
+  constructor(cause?: unknown) {
+    const detail = cause instanceof Error ? `: ${cause.message}` : "";
+    super(`OAuth token exchange failed${detail}`, { cause });
     this.name = "OAuthTokenExchangeError";
   }
 }
@@ -636,8 +637,8 @@ async function completeMcpOAuthCallback(
       callbackUrl: connectorCallbackUrl(input.authBaseUrl),
       ...(input.fetch ? { fetch: input.fetch } : {}),
     });
-  } catch {
-    throw new OAuthTokenExchangeError();
+  } catch (error) {
+    throw new OAuthTokenExchangeError(error);
   }
 
   const accessToken = tokens.access_token;

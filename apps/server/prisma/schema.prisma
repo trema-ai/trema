@@ -351,19 +351,20 @@ model AuditLog {
 }
 
 model ClientRegistration {
-  id                     String                   @id @default(uuid(7))
-  orgId                  String
-  providerKey            String
-  source                 ClientRegistrationSource
-  clientId               String?
-  clientSecretCiphertext String?
-  sharedRef              String?
-  adminConsentGranted    Boolean?
-  notes                  String?
-  createdAt              DateTime                 @default(now())
-  updatedAt              DateTime                 @updatedAt
-  org                    Org                      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  oauthStates            ConnectorOAuthState[]
+  id                      String                   @id @default(uuid(7))
+  orgId                   String
+  providerKey             String
+  source                  ClientRegistrationSource
+  clientId                String?
+  clientSecretCiphertext  String?
+  tokenEndpointAuthMethod String?
+  sharedRef               String?
+  adminConsentGranted     Boolean?
+  notes                   String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  org                     Org                      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  oauthStates             ConnectorOAuthState[]
 
   @@unique([orgId, providerKey, source])
   @@unique([orgId, id])

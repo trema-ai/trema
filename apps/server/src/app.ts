@@ -135,6 +135,7 @@ export function createApp({
       const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
       return context.redirect(withConnected(destination, result.connection.id));
     } catch (error) {
+      console.error("Connector OAuth callback failed", error);
       const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
       return context.redirect(withConnectorError(destination, connectorErrorCode(error)));
     }
