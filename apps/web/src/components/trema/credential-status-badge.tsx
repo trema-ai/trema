@@ -11,9 +11,12 @@ const statusTone: Record<CredentialStatus, "go" | "wait" | "destructive"> = {
   expired: "destructive",
 };
 
-type CredentialStatusBadgeProps = React.ComponentProps<"span"> & { status: CredentialStatus };
+type CredentialStatusBadgeProps = React.ComponentProps<"span"> & {
+  status: CredentialStatus;
+  label?: string;
+};
 
-function CredentialStatusBadge({ status, className, ...props }: CredentialStatusBadgeProps) {
+function CredentialStatusBadge({ status, label, className, ...props }: CredentialStatusBadgeProps) {
   return (
     <span
       data-slot="credential-status-badge"
@@ -22,7 +25,7 @@ function CredentialStatusBadge({ status, className, ...props }: CredentialStatus
       {...props}
     >
       <StatusDot tone={statusTone[status]} />
-      {status}
+      {label ?? status}
     </span>
   );
 }

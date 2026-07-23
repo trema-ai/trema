@@ -10,6 +10,14 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   operations live under `src/services/<module>/` with the same shape
   (see `services/org`, `services/bootstrap`). oRPC procedures live in
   `src/rpc/` split per domain and call into services.
+- Commits and PR titles use conventional commit format
+  (`feat(web): …`, `fix(server): …`). PRs squash-merge, so the PR
+  title becomes the commit message on `main`.
+- No flat name-prefix files: when several files share a name prefix
+  (`connector-catalog.tsx`, `connector-detail.tsx`, …), the prefix is a
+  folder (`connectors/catalog.tsx`, `connectors/detail.tsx`, with the
+  main screen at `index.tsx`). Hyphens are for compound names
+  (`registration-dialog.tsx`), never for encoding hierarchy.
 
 ## Tests
 
@@ -72,4 +80,8 @@ pnpm -r typecheck && pnpm -r test && pnpm -r build
 ```
 
 Integration tests run when `TEST_DATABASE_URL` points at a Postgres
-database (see `compose.yaml`).
+database whose name ends in `_test` — they truncate tables between tests,
+so the setup refuses any other name to protect dev data. `mise run test`
+wires this up: it starts this worktree's Postgres and runs the suite
+against a `trema_test` database on it, created on first use. Never point
+`TEST_DATABASE_URL` at the dev database from `apps/server/.env`.

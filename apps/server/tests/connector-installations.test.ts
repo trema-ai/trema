@@ -161,6 +161,151 @@ integration("connector installations and MCP sync", () => {
       context: member.context,
     });
     expect(JSON.stringify(safeCatalog)).not.toMatch(/authorizationUrl|tokenUrl|serverUrl/);
+    expect(safeCatalog.find(({ key }) => key === "linear")).toMatchObject({
+      description: expect.any(String),
+      logoUrl: "/connector-logos/linear.svg",
+      configFields: {},
+      credentialFields: {
+        apiKey: {
+          type: "string",
+          title: "API key",
+          secret: true,
+        },
+      },
+      toolManifest: [
+        {
+          name: "search_issues",
+          description: expect.any(String),
+          sensitivity: "read",
+        },
+        {
+          name: "create_comment",
+          description: expect.any(String),
+          sensitivity: "write",
+        },
+      ],
+    });
+    await expect(
+      call(connectorsRouter.meta, undefined, { context: admin.context }),
+    ).resolves.toMatchObject({
+      callbackUrl: "https://auth.trema.example/connect/callback",
+      principals: expect.arrayContaining([
+        {
+          id: admin.principal.id,
+          displayName: admin.principal.displayName,
+          kind: "human",
+        },
+        expect.objectContaining({ kind: "agent" }),
+      ]),
+    });
+  });
+
+  it("lists safe credential summaries and archives an installation atomically", async () => {
+    const org = await createOrg();
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "agent" },
+    });
+    const installation = await call(
+      connectorsRouter.installations.create,
+      {
+        scopeId: org.orgScope.id,
+        catalogKey: "linear",
+        enabledTools: "all",
+      },
+      { context: org.context },
+    );
+    const credential = await db.connectorCredential.create({
+      data: {
+        orgId: org.org.id,
+        installationItemId: installation.id,
+        principalId: agent.id,
+        mode: "api_key",
+        ciphertext: encryptEnvelope({ apiKey: "must-not-leak" }, masterKey),
+      },
+    });
+
+    const listed = await call(connectorsRouter.installations.list, {}, { context: org.context });
+    expect(listed).toEqual([
+      expect.objectContaining({
+        id: installation.id,
+        scopeId: org.orgScope.id,
+        catalogKey: "linear",
+        enabledTools: "all",
+        config: {},
+        status: "active",
+        credentials: [
+          expect.objectContaining({
+            id: credential.id,
+            principalId: agent.id,
+            principalName: agent.displayName,
+            mode: "api_key",
+            isRevoked: false,
+            isExpired: false,
+            isValid: true,
+          }),
+        ],
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toMatch(/ciphertext|must-not-leak|refresh/);
+
+    const archived = await call(
+      connectorsRouter.installations.archive,
+      { installationItemId: installation.id },
+      { context: org.context },
+    );
+    expect(archived).toMatchObject({
+      installation: {
+        id: installation.id,
+        status: "archived",
+        version: installation.version + 1,
+      },
+      revokedCredentials: 1,
+    });
+    await expect(
+      db.connectorCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+    await expect(
+      db.itemVersion.findUnique({
+        where: {
+          itemId_version: {
+            itemId: installation.id,
+            version: installation.version,
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ itemId: installation.id });
+    await expect(
+      db.auditLog.findFirst({
+        where: {
+          orgId: org.org.id,
+          action: "connector.installation.archive",
+          subject: installation.id,
+        },
+      }),
+    ).resolves.toMatchObject({
+      actorPrincipalId: org.principal.id,
+      payload: {
+        revokedCredentials: 1,
+        version: installation.version + 1,
+      },
+    });
+
+    await expect(
+      call(connectorsRouter.installations.list, {}, { context: org.context }),
+    ).resolves.toEqual([]);
+    await expect(
+      call(
+        connectorsRouter.installations.list,
+        { includeArchived: true },
+        { context: org.context },
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: installation.id,
+        status: "archived",
+        credentials: [expect.objectContaining({ isRevoked: true, isValid: false })],
+      }),
+    ]);
   });
 
   it("syncs through a real MCP pair, applies drift, and selects credentials", async () => {

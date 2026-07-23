@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
 import { loadProviderCatalog, type ProviderCatalog } from "#/services/connectors/catalog.js";
+import { connectorCredentialValidity } from "#/services/connectors/connect.js";
 import type { ProviderDef } from "#/services/connectors/schema.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
@@ -145,6 +146,129 @@ function parseBody(body: unknown, catalog: ProviderCatalog): ConnectorInstallati
 
 function jsonValue(body: ConnectorInstallationBody): Prisma.InputJsonValue {
   return body as Prisma.InputJsonValue;
+}
+
+export interface ListConnectorInstallationsInput {
+  orgId: string;
+  scopeId?: string;
+  includeArchived?: boolean;
+  catalog?: ProviderCatalog;
+  now?: Date;
+}
+
+export async function listConnectorInstallations(
+  db: Database,
+  input: ListConnectorInstallationsInput,
+) {
+  const catalog = input.catalog ?? defaultCatalog;
+  const installations = await db.item.findMany({
+    where: {
+      orgId: input.orgId,
+      kind: "connector",
+      scope: {
+        kind: { in: ["org", "shared"] },
+        ...(input.scopeId ? { id: input.scopeId } : {}),
+      },
+      ...(!input.includeArchived ? { status: { not: "archived" } } : {}),
+    },
+    include: {
+      connectorCredentials: {
+        include: { principal: { select: { displayName: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+  });
+  const now = input.now ?? new Date();
+
+  return installations.map((installation) => {
+    const body = parseBody(installation.body, catalog);
+    return {
+      id: installation.id,
+      scopeId: installation.scopeId,
+      catalogKey: body.catalogKey,
+      enabledTools: body.enabledTools,
+      sensitivityOverrides: body.sensitivityOverrides ?? {},
+      syncedTools: body.syncedTools ?? [],
+      config: body.config ?? {},
+      status: installation.status,
+      updatedAt: installation.updatedAt,
+      credentials: installation.connectorCredentials.map((credential) => {
+        return {
+          id: credential.id,
+          principalId: credential.principalId,
+          principalName: credential.principal.displayName,
+          mode: credential.mode,
+          ...connectorCredentialValidity(credential, now),
+          expiresAt: credential.expiresAt,
+          createdAt: credential.createdAt,
+        };
+      }),
+    };
+  });
+}
+
+export interface ArchiveConnectorInstallationInput {
+  orgId: string;
+  actorPrincipalId: string;
+  installationItemId: string;
+  now?: Date;
+}
+
+export async function archiveConnectorInstallation(
+  db: Database,
+  input: ArchiveConnectorInstallationInput,
+) {
+  return db.$transaction(async (transaction) => {
+    const existing = await transaction.item.findFirst({
+      where: {
+        id: input.installationItemId,
+        orgId: input.orgId,
+        kind: "connector",
+      },
+    });
+    if (!existing) throw new ConnectorInstallationNotFoundError();
+    const archivedAt = input.now ?? new Date();
+    let installation = existing;
+    const revoked = await transaction.connectorCredential.updateMany({
+      where: {
+        orgId: input.orgId,
+        installationItemId: existing.id,
+        revokedAt: null,
+      },
+      data: { revokedAt: archivedAt },
+    });
+
+    if (existing.status !== "archived") {
+      await transaction.itemVersion.create({
+        data: {
+          orgId: input.orgId,
+          itemId: existing.id,
+          version: existing.version,
+          title: existing.title,
+          body: existing.body as Prisma.InputJsonValue,
+        },
+      });
+      installation = await transaction.item.update({
+        where: { orgId_id: { orgId: input.orgId, id: existing.id } },
+        data: { status: "archived", version: { increment: 1 } },
+      });
+    }
+
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: input.actorPrincipalId,
+        action: "connector.installation.archive",
+        subject: installation.id,
+        payload: {
+          revokedCredentials: revoked.count,
+          version: installation.version,
+        },
+      },
+    });
+    return { installation, revokedCredentials: revoked.count };
+  });
 }
 
 export interface CreateConnectorInstallationInput {

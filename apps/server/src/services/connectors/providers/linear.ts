@@ -3,6 +3,8 @@ import type { ProviderDefInput } from "#/services/connectors/schema.js";
 export const linearProvider = {
   key: "linear",
   displayName: "Linear",
+  description: "Access issues, projects, and comments in Linear workspaces.",
+  logoUrl: "/connector-logos/linear.svg",
   categories: ["project-management"],
   docsUrl: "https://linear.app/developers/graphql",
   authMode: "api_key",

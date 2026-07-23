@@ -13,6 +13,9 @@ import { AuthenticatedAppShell, AuthenticatedProvider, HomePage, Loading } from 
 import { JoinPage } from "#/pages/join.tsx";
 import { ScopesPage } from "#/pages/scopes.tsx";
 import { SettingsAppearancePage } from "#/pages/settings/appearance.tsx";
+import { SettingsConnectorCatalogPage } from "#/pages/settings/connectors/catalog.tsx";
+import { SettingsConnectorDetailPage } from "#/pages/settings/connectors/detail.tsx";
+import { SettingsConnectorsPage } from "#/pages/settings/connectors/index.tsx";
 import { SettingsGeneralPage } from "#/pages/settings/general.tsx";
 import { SettingsMembersPage } from "#/pages/settings/members.tsx";
 import { SettingsProfilePage } from "#/pages/settings/profile.tsx";
@@ -80,6 +83,15 @@ function AppRoutes() {
       <Route path="/settings/general" element={settings(<SettingsGeneralPage />, true)} />
       <Route path="/settings/members" element={settings(<SettingsMembersPage />, true)} />
       <Route path="/settings/scopes" element={settings(<ScopesPage />, true)} />
+      <Route path="/settings/connectors" element={settings(<SettingsConnectorsPage />, true)} />
+      <Route
+        path="/settings/connectors/catalog"
+        element={settings(<SettingsConnectorCatalogPage />, true)}
+      />
+      <Route
+        path="/settings/connectors/:installationItemId"
+        element={settings(<SettingsConnectorDetailPage />, true)}
+      />
       <Route path="/settings/*" element={settings(<Navigate to="/settings/profile" replace />)} />
       <Route path="/" element={shell(<HomePage />)} />
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -523,6 +523,70 @@
         }
       }
     },
+    "/connectors/meta": {
+      "get": {
+        "operationId": "connectors.meta",
+        "summary": "Get connector deployment metadata",
+        "description": "Get the OAuth callback URL and principals available to connector credentials.",
+        "tags": [
+          "Connectors"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "callbackUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "principals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "human",
+                              "agent"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "displayName",
+                          "kind"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "callbackUrl",
+                    "principals"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/connector-catalog": {
       "get": {
         "operationId": "connectors.catalog.list",
@@ -545,6 +609,12 @@
                         "type": "string"
                       },
                       "displayName": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "logoUrl": {
                         "type": "string"
                       },
                       "categories": {
@@ -578,12 +648,167 @@
                       "memberConnectable": {
                         "type": "boolean"
                       },
+                      "configFields": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "const": "string"
+                            },
+                            "title": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "example": {
+                              "type": "string"
+                            },
+                            "pattern": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "secret": {
+                              "type": "boolean"
+                            },
+                            "enum": {
+                              "type": "array",
+                              "minItems": 1,
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "default": {
+                              "type": "string"
+                            },
+                            "prefix": {
+                              "type": "string"
+                            },
+                            "suffix": {
+                              "type": "string"
+                            },
+                            "visibleWhen": {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "equals": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "equals"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "automated": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "title"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "credentialFields": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "const": "string"
+                            },
+                            "title": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "example": {
+                              "type": "string"
+                            },
+                            "pattern": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "secret": {
+                              "type": "boolean"
+                            },
+                            "enum": {
+                              "type": "array",
+                              "minItems": 1,
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "default": {
+                              "type": "string"
+                            },
+                            "prefix": {
+                              "type": "string"
+                            },
+                            "suffix": {
+                              "type": "string"
+                            },
+                            "visibleWhen": {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "equals": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "equals"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "automated": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "title"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "toolManifest": {
                         "type": "array",
                         "items": {
                           "type": "object",
                           "properties": {
                             "name": {
+                              "type": "string"
+                            },
+                            "description": {
                               "type": "string"
                             },
                             "sensitivity": {
@@ -597,6 +822,7 @@
                           },
                           "required": [
                             "name",
+                            "description",
                             "sensitivity"
                           ]
                         }
@@ -609,7 +835,9 @@
                       "docsUrl",
                       "authMode",
                       "transport",
-                      "memberConnectable"
+                      "memberConnectable",
+                      "configFields",
+                      "credentialFields"
                     ]
                   }
                 }
@@ -846,6 +1074,220 @@
                     "updatedAt",
                     "version"
                   ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "connectors.installations.list",
+        "summary": "List connector installations",
+        "description": "List manageable organization and shared-scope installations with credential status.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "scopeId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "includeArchived",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "scopeId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "catalogKey": {
+                        "type": "string"
+                      },
+                      "enabledTools": {
+                        "anyOf": [
+                          {
+                            "const": "all"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
+                        ]
+                      },
+                      "sensitivityOverrides": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "additionalProperties": {
+                          "enum": [
+                            "read",
+                            "write",
+                            "destructive"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "syncedTools": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "sensitivity": {
+                              "enum": [
+                                "read",
+                                "write",
+                                "destructive"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "sensitivity"
+                          ]
+                        }
+                      },
+                      "config": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            }
+                          ]
+                        }
+                      },
+                      "status": {
+                        "enum": [
+                          "proposed",
+                          "active",
+                          "archived"
+                        ],
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      },
+                      "credentials": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "principalId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "principalName": {
+                              "type": "string"
+                            },
+                            "mode": {
+                              "type": "string"
+                            },
+                            "isRevoked": {
+                              "type": "boolean"
+                            },
+                            "isExpired": {
+                              "type": "boolean"
+                            },
+                            "isValid": {
+                              "type": "boolean"
+                            },
+                            "expiresAt": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "createdAt": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "principalId",
+                            "principalName",
+                            "mode",
+                            "isRevoked",
+                            "isExpired",
+                            "isValid",
+                            "expiresAt",
+                            "createdAt"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "scopeId",
+                      "catalogKey",
+                      "enabledTools",
+                      "sensitivityOverrides",
+                      "syncedTools",
+                      "config",
+                      "status",
+                      "updatedAt",
+                      "credentials"
+                    ]
+                  }
                 }
               }
             }
@@ -1318,6 +1760,211 @@
         ]
       }
     },
+    "/connector-installations/{installationItemId}/archive": {
+      "post": {
+        "operationId": "connectors.installations.archive",
+        "summary": "Archive a connector installation",
+        "description": "Archive an installation and revoke all of its active credentials.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "installationItemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "installation": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "scopeId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "const": "connector"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "body": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "proposed",
+                            "active",
+                            "archived"
+                          ],
+                          "type": "string"
+                        },
+                        "disclosure": {
+                          "enum": [
+                            "standing",
+                            "retrieved"
+                          ],
+                          "type": "string"
+                        },
+                        "createdById": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "updatedAt": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "exclusiveMinimum": 0
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "scopeId",
+                        "kind",
+                        "title",
+                        "body",
+                        "status",
+                        "disclosure",
+                        "createdById",
+                        "createdAt",
+                        "updatedAt",
+                        "version"
+                      ]
+                    },
+                    "revokedCredentials": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "installation",
+                    "revokedCredentials"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/connector-registrations": {
       "post": {
         "operationId": "connectors.registrations.create",
@@ -1362,6 +2009,9 @@
                   },
                   "notes": {
                     "type": "string"
+                  },
+                  "replace": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -1541,6 +2191,9 @@
                       },
                       "updatedAt": {
                         "type": "string"
+                      },
+                      "isUsable": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -1552,7 +2205,8 @@
                       "adminConsentGranted",
                       "notes",
                       "createdAt",
-                      "updatedAt"
+                      "updatedAt",
+                      "isUsable"
                     ]
                   }
                 }

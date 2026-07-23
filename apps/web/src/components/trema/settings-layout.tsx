@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   Building2,
+  Cable,
   LogOut,
   Monitor,
   Settings,
@@ -25,6 +26,7 @@ const adminItems = [
   { label: "General", href: "/settings/general", icon: Settings },
   { label: "Members", href: "/settings/members", icon: UsersRound },
   { label: "Scopes", href: "/settings/scopes", icon: SlidersHorizontal },
+  { label: "Connectors", href: "/settings/connectors", icon: Cable },
 ];
 
 function SettingsMenu({

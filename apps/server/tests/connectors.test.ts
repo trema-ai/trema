@@ -10,6 +10,7 @@ import { parseEnv } from "#/lib/env/schema.js";
 import { connectorsRouter } from "#/rpc/connectors.js";
 import { orgRouter } from "#/rpc/org.js";
 import {
+  ClientRegistrationConflictError,
   ConnectorCatalogDefectError,
   CredentialVerificationError,
   completeOAuthCallback,
@@ -420,5 +421,30 @@ integration("connector registrations and credentials", () => {
       }),
     ).rejects.toBeInstanceOf(ConnectorCatalogDefectError);
     expect(okFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces the customer registration in place, keeping its id", async () => {
+    const org = await fixture("github");
+    const first = await customerRegistration(org.org.id);
+    await expect(customerRegistration(org.org.id)).rejects.toBeInstanceOf(
+      ClientRegistrationConflictError,
+    );
+
+    const replaced = await createClientRegistration(db, {
+      orgId: org.org.id,
+      providerKey: "github",
+      source: "customer",
+      clientId: "rotated-client",
+      clientSecret: "rotated-secret",
+      masterKey,
+      catalog: oauthCatalog,
+      replace: true,
+    });
+    expect(replaced.id).toBe(first.id);
+    expect(replaced.clientId).toBe("rotated-client");
+
+    const row = await db.clientRegistration.findUniqueOrThrow({ where: { id: first.id } });
+    expect(row.clientSecretCiphertext).not.toBeNull();
+    expect(decryptEnvelope(row.clientSecretCiphertext as string, masterKey)).toBe("rotated-secret");
   });
 });

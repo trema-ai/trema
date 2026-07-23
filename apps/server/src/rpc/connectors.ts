@@ -4,6 +4,7 @@ import { z } from "zod";
 import { orgScoped, requireCapability } from "#/rpc/builders.js";
 import { authorize } from "#/services/authorize/index.js";
 import {
+  archiveConnectorInstallation,
   ClientRegistrationConflictError,
   ClientRegistrationNotFoundError,
   ClientRegistrationValidationError,
@@ -16,12 +17,14 @@ import {
   ConnectorProviderNotFoundError,
   ConnectorSyncTransportError,
   CredentialVerificationError,
+  connectorCallbackUrl,
   createClientRegistration,
   createConnectorInstallation,
   createStaticCredential,
   deleteClientRegistration,
   listClientRegistrations,
   listConnectorCredentials,
+  listConnectorInstallations,
   loadProviderCatalog,
   NoClientRegistrationError,
   revokeConnectorCredential,
@@ -32,6 +35,7 @@ import {
   UnsupportedConnectorAuthModeError,
   updateConnectorInstallation,
 } from "#/services/connectors/index.js";
+import { fieldDescriptorSchema } from "#/services/connectors/schema.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
 const registrationSchema = z.object({
@@ -76,6 +80,18 @@ const credentialSchema = z.object({
   isRevoked: z.boolean(),
   isExpired: z.boolean(),
   isValid: z.boolean(),
+});
+
+const credentialSummarySchema = z.object({
+  id: z.uuid(),
+  principalId: z.uuid(),
+  principalName: z.string(),
+  mode: z.string(),
+  isRevoked: z.boolean(),
+  isExpired: z.boolean(),
+  isValid: z.boolean(),
+  expiresAt: z.string().nullable(),
+  createdAt: z.string(),
 });
 
 type ListedCredential = Awaited<ReturnType<typeof listConnectorCredentials>>[number];
@@ -146,6 +162,7 @@ const createRegistration = requireCapability("manage_connectors")
       sharedRef: z.string().trim().min(1).optional(),
       adminConsentGranted: z.boolean().optional(),
       notes: z.string().optional(),
+      replace: z.boolean().optional(),
     }),
   )
   .output(registrationSchema)
@@ -163,6 +180,7 @@ const createRegistration = requireCapability("manage_connectors")
             ? { adminConsentGranted: input.adminConsentGranted }
             : {}),
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
+          ...(input.replace !== undefined ? { replace: input.replace } : {}),
           ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
             ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
             : {}),
@@ -181,10 +199,33 @@ const listRegistrations = requireCapability("manage_connectors")
     description: "List registration metadata without client secret material.",
     tags: ["Connectors"],
   })
-  .output(z.array(registrationSchema))
-  .handler(async ({ context }) =>
-    (await listClientRegistrations(context.db, context.org.id)).map(serializeRegistration),
-  );
+  .output(z.array(registrationSchema.extend({ isUsable: z.boolean() })))
+  .handler(async ({ context }) => {
+    const registrations = await listClientRegistrations(context.db, context.org.id);
+    const secretRows = await context.db.clientRegistration.findMany({
+      where: { orgId: context.org.id },
+      select: { id: true, clientSecretCiphertext: true },
+    });
+    const hasSecret = new Map(
+      secretRows.map((registration) => [
+        registration.id,
+        registration.clientSecretCiphertext !== null,
+      ]),
+    );
+
+    return Promise.all(
+      registrations.map(async (registration) => {
+        let isUsable =
+          registration.source !== "platform" &&
+          registration.clientId !== null &&
+          hasSecret.get(registration.id) === true;
+        if (registration.source === "platform" && registration.sharedRef && context.platformApps) {
+          isUsable = Boolean(await context.platformApps.get(registration.sharedRef));
+        }
+        return { ...serializeRegistration(registration), isUsable };
+      }),
+    );
+  });
 
 const deleteRegistration = requireCapability("manage_connectors")
   .route({
@@ -334,6 +375,92 @@ const updateInstallation = installationScoped
     }
   });
 
+const listedInstallationSchema = z.object({
+  id: z.uuid(),
+  scopeId: z.uuid(),
+  catalogKey: z.string(),
+  enabledTools: enabledToolsSchema,
+  sensitivityOverrides: sensitivityOverridesSchema,
+  syncedTools: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      sensitivity: sensitivitySchema,
+    }),
+  ),
+  config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  status: z.enum(["proposed", "active", "archived"]),
+  updatedAt: z.string(),
+  credentials: z.array(credentialSummarySchema),
+});
+
+const listInstallations = requireCapability("manage_connectors", {
+  scopeId: (input) => (input as { scopeId?: string }).scopeId,
+})
+  .route({
+    method: "GET",
+    path: "/connector-installations",
+    summary: "List connector installations",
+    description:
+      "List manageable organization and shared-scope installations with credential status.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      scopeId: z.uuid().optional(),
+      includeArchived: z.boolean().optional(),
+    }),
+  )
+  .output(z.array(listedInstallationSchema))
+  .handler(async ({ context, input }) =>
+    (
+      await listConnectorInstallations(context.db, {
+        orgId: context.org.id,
+        ...(input.scopeId ? { scopeId: input.scopeId } : {}),
+        ...(input.includeArchived !== undefined ? { includeArchived: input.includeArchived } : {}),
+      })
+    ).map((installation) => ({
+      ...installation,
+      updatedAt: installation.updatedAt.toISOString(),
+      credentials: installation.credentials.map((credential) => ({
+        ...credential,
+        expiresAt: credential.expiresAt?.toISOString() ?? null,
+        createdAt: credential.createdAt.toISOString(),
+      })),
+    })),
+  );
+
+const archiveInstallation = installationScoped
+  .route({
+    method: "POST",
+    path: "/connector-installations/{installationItemId}/archive",
+    summary: "Archive a connector installation",
+    description: "Archive an installation and revoke all of its active credentials.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ installationItemId: z.uuid() }))
+  .output(
+    z.object({
+      installation: installationSchema,
+      revokedCredentials: z.number().int().nonnegative(),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    try {
+      const result = await archiveConnectorInstallation(context.db, {
+        orgId: context.org.id,
+        actorPrincipalId: context.principal.id,
+        installationItemId: input.installationItemId,
+      });
+      return {
+        installation: serializeInstallation(result.installation),
+        revokedCredentials: result.revokedCredentials,
+      };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
 const catalog = orgScoped
   .route({
     method: "GET",
@@ -347,13 +474,23 @@ const catalog = orgScoped
       z.object({
         key: z.string(),
         displayName: z.string(),
+        description: z.string().optional(),
+        logoUrl: z.string().optional(),
         categories: z.array(z.string()),
         docsUrl: z.url(),
         authMode: z.string(),
         transport: z.object({ type: z.enum(["mcp", "rest"]) }),
         memberConnectable: z.boolean(),
+        configFields: z.record(z.string(), fieldDescriptorSchema),
+        credentialFields: z.record(z.string(), fieldDescriptorSchema),
         toolManifest: z
-          .array(z.object({ name: z.string(), sensitivity: sensitivitySchema }))
+          .array(
+            z.object({
+              name: z.string(),
+              description: z.string(),
+              sensitivity: sensitivitySchema,
+            }),
+          )
           .optional(),
       }),
     ),
@@ -362,21 +499,64 @@ const catalog = orgScoped
     loadProviderCatalog().map((provider) => ({
       key: provider.key,
       displayName: provider.displayName,
+      description: provider.description,
+      logoUrl: provider.logoUrl,
       categories: provider.categories,
       docsUrl: provider.docsUrl,
       authMode: provider.authMode,
       transport: { type: provider.transport.type },
       memberConnectable: provider.memberConnectable,
+      configFields: provider.configFields,
+      credentialFields: provider.credentialFields,
       ...(provider.transport.type === "rest"
         ? {
-            toolManifest: provider.toolManifest.map(({ name, sensitivity }) => ({
+            toolManifest: provider.toolManifest.map(({ name, description, sensitivity }) => ({
               name,
+              description,
               sensitivity,
             })),
           }
         : {}),
     })),
   );
+
+const meta = requireCapability("manage_connectors")
+  .route({
+    method: "GET",
+    path: "/connectors/meta",
+    summary: "Get connector deployment metadata",
+    description: "Get the OAuth callback URL and principals available to connector credentials.",
+    tags: ["Connectors"],
+  })
+  .output(
+    z.object({
+      callbackUrl: z.url(),
+      principals: z.array(
+        z.object({
+          id: z.uuid(),
+          displayName: z.string(),
+          kind: z.enum(["human", "agent"]),
+        }),
+      ),
+    }),
+  )
+  .handler(async ({ context }) => {
+    const agent = await context.db.principal.findFirst({
+      where: { orgId: context.org.id, kind: "agent", deactivatedAt: null },
+      select: { id: true, displayName: true, kind: true },
+    });
+    return {
+      callbackUrl: connectorCallbackUrl(context.env.TREMA_AUTH_BASE_URL),
+      principals: [
+        {
+          id: context.principal.id,
+          displayName: context.principal.displayName,
+          kind: context.principal.kind,
+        },
+        ...(agent && agent.id !== context.principal.id ? [agent] : []),
+      ],
+    };
+  });
 
 const syncInstallation = installationScoped
   .route({
@@ -540,11 +720,14 @@ const revokeCredential = installationScoped
   });
 
 export const connectorsRouter = {
+  meta,
   catalog: { list: catalog },
   installations: {
     create: createInstallation,
+    list: listInstallations,
     update: updateInstallation,
     sync: syncInstallation,
+    archive: archiveInstallation,
   },
   registrations: {
     create: createRegistration,
