@@ -335,6 +335,95 @@ integration("connector connections and installations", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
+  it("creates member installations only in the caller's personal scope", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member");
+    const other = await addMember(org.org.id, org.orgScope.id, "member");
+    const [personal, otherPersonal] = await Promise.all([
+      db.scope.create({
+        data: {
+          orgId: org.org.id,
+          kind: "personal",
+          name: "Connector Member",
+          ownerId: member.principal.id,
+        },
+      }),
+      db.scope.create({
+        data: {
+          orgId: org.org.id,
+          kind: "personal",
+          name: "Other Connector Member",
+          ownerId: other.principal.id,
+        },
+      }),
+    ]);
+    const memberGithub = await connection({
+      orgId: org.org.id,
+      principalId: member.principal.id,
+      providerKey: "github",
+    });
+    const otherGithub = await connection({
+      orgId: org.org.id,
+      principalId: other.principal.id,
+      providerKey: "github",
+    });
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "github", memberEnabled: true },
+      { context: org.context },
+    );
+
+    for (const scopeId of [org.orgScope.id, otherPersonal.id]) {
+      await expect(
+        call(
+          connectorsRouter.member.installations.create,
+          {
+            scopeId,
+            catalogKey: "github",
+            connectionId: memberGithub.id,
+          },
+          { context: member.context },
+        ),
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message: expect.stringContaining("own personal scope"),
+      });
+    }
+    await expect(
+      call(
+        connectorsRouter.member.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "github",
+          connectionId: otherGithub.id,
+        },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("scope owner's connection"),
+    });
+
+    await expect(
+      call(
+        connectorsRouter.member.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "github",
+          connectionId: memberGithub.id,
+        },
+        { context: member.context },
+      ),
+    ).resolves.toMatchObject({
+      scopeId: personal.id,
+      body: {
+        catalogKey: "github",
+        connectionId: memberGithub.id,
+        enabledTools: "all",
+      },
+    });
+  });
+
   it("archives only the binding and lists safe connection-to-scope metadata", async () => {
     const org = await createOrg();
     const connected = await connection({

@@ -4,7 +4,7 @@ import { githubProvider, loadProviderCatalog } from "@trema/connectors";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "#/app.js";
 import { createAuth } from "#/lib/auth/index.js";
-import { decryptEnvelope } from "#/lib/crypto/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
 import { createPrismaClient } from "#/lib/db/index.js";
 import { parseEnv } from "#/lib/env/schema.js";
 import { connectorsRouter } from "#/rpc/connectors.js";
@@ -59,23 +59,31 @@ integration("connector connection flows", () => {
     await db.$disconnect();
   });
 
-  async function createOrg() {
+  async function signUp(name: string) {
     const email = `${randomUUID()}@example.com`;
     const response = await auth.api.signUpEmail({
-      body: { name: "Connector Owner", email, password: "integration-password" },
+      body: { name, email, password: "integration-password" },
       asResponse: true,
     });
     const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
     if (!cookie) throw new Error("Sign-up did not return a session cookie");
     const user = await db.user.findUniqueOrThrow({ where: { email } });
     const context = { db, auth, env, headers: new Headers({ cookie }) };
+    return { user, context };
+  }
+
+  async function createOrg() {
+    const owner = await signUp("Connector Owner");
     const membership = await call(
       orgRouter.create,
       { name: "Connector Integration Org" },
-      { context },
+      { context: owner.context },
     );
     const agent = await db.principal.findFirstOrThrow({
       where: { orgId: membership.org.id, kind: "agent" },
+    });
+    const orgScope = await db.scope.findFirstOrThrow({
+      where: { orgId: membership.org.id, kind: "org" },
     });
     await createClientRegistration(db, {
       orgId: membership.org.id,
@@ -85,7 +93,46 @@ integration("connector connection flows", () => {
       clientSecret: "github-secret",
       masterKey,
     });
-    return { ...membership, user, context, agent };
+    return { ...owner, ...membership, agent, orgScope };
+  }
+
+  async function addMember(orgId: string, orgScopeId: string, name: string) {
+    const signedUp = await signUp(name);
+    const principal = await db.principal.create({
+      data: {
+        orgId,
+        kind: "human",
+        authId: signedUp.user.id,
+        displayName: name,
+        email: signedUp.user.email,
+      },
+    });
+    await Promise.all([
+      db.grant.create({
+        data: { orgId, principalId: principal.id, scopeId: orgScopeId, role: "member" },
+      }),
+      db.session.updateMany({
+        where: { userId: signedUp.user.id },
+        data: { activeOrgId: orgId },
+      }),
+    ]);
+    const personalScope = await db.scope.create({
+      data: { orgId, kind: "personal", name, ownerId: principal.id },
+    });
+    return { ...signedUp, principal, personalScope };
+  }
+
+  async function storedConnection(orgId: string, principalId: string, providerKey = "github") {
+    return db.connectorConnection.create({
+      data: {
+        orgId,
+        principalId,
+        providerKey,
+        mode: "oauth2_code",
+        config: {},
+        ciphertext: encryptEnvelope({ accessToken: "test-token" }, masterKey),
+      },
+    });
   }
 
   function tokenFetch(
@@ -114,8 +161,13 @@ integration("connector connection flows", () => {
       providerScopes?: string[];
     } = {},
   ) {
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId, kind: "agent" },
+      select: { id: true },
+    });
     const started = await startOAuthConnect(db, {
       orgId,
+      principalId: agent.id,
       providerKey: "github",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -131,10 +183,16 @@ integration("connector connection flows", () => {
 
   it("derives the organization agent principal server-side for admin OAuth", async () => {
     const org = await createOrg();
-    const state = await start(org.org.id, {
-      returnTo: "https://app.trema.example/settings/connectors/github",
-      providerScopes: ["repo", "read:org"],
-    });
+    const started = await call(
+      connectorsRouter.connect.startOAuth,
+      {
+        providerKey: "github",
+        returnTo: "https://app.trema.example/settings/connectors/github",
+        providerScopes: ["repo", "read:org"],
+      },
+      { context: org.context },
+    );
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
     const pending = await db.connectorOAuthState.findUniqueOrThrow({
       where: { stateHash: hashOAuthState(state) },
     });
@@ -170,6 +228,129 @@ integration("connector connection flows", () => {
       refreshToken: "refresh-token",
       raw: { access_token: "access-token", account_name: "octo-org" },
     });
+  });
+
+  it("derives the caller principal for member OAuth after both access gates pass", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "OAuth Member");
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "github", memberEnabled: true },
+      { context: org.context },
+    );
+
+    const started = await call(
+      connectorsRouter.member.connect.startOAuth,
+      {
+        providerKey: "github",
+        returnTo: "https://app.trema.example/customize?tab=connections",
+      },
+      { context: member.context },
+    );
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await expect(
+      db.connectorOAuthState.findUniqueOrThrow({
+        where: { stateHash: hashOAuthState(state) },
+      }),
+    ).resolves.toMatchObject({
+      orgId: org.org.id,
+      providerKey: "github",
+      principalId: member.principal.id,
+      connectionId: null,
+    });
+  });
+
+  it("rejects member OAuth unless the org setting and catalog ceiling both allow it", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "Gated Member");
+    const returnTo = "https://app.trema.example/customize?tab=connections";
+
+    await expect(
+      call(
+        connectorsRouter.member.connect.startOAuth,
+        { providerKey: "github", returnTo },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("not enabled for member connections"),
+    });
+    await expect(
+      call(
+        connectorsRouter.member.connect.startOAuth,
+        { providerKey: "stripe", returnTo },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("not enabled for member connections"),
+    });
+  });
+
+  it("lists and revokes only the caller's connections", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "Connection Member");
+    const other = await addMember(org.org.id, org.orgScope.id, "Other Connection Member");
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "github", memberEnabled: true },
+      { context: org.context },
+    );
+    const ownConnection = await storedConnection(org.org.id, member.principal.id);
+    const otherConnection = await storedConnection(org.org.id, other.principal.id);
+    const installation = await call(
+      connectorsRouter.member.installations.create,
+      {
+        scopeId: member.personalScope.id,
+        catalogKey: "github",
+        connectionId: ownConnection.id,
+      },
+      { context: member.context },
+    );
+
+    const listed = await call(
+      connectorsRouter.member.connections.list,
+      {},
+      { context: member.context },
+    );
+    expect(listed).toEqual([
+      expect.objectContaining({
+        id: ownConnection.id,
+        principalId: member.principal.id,
+        installations: [{ id: installation.id, scopeId: member.personalScope.id }],
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toMatch(/ciphertext|test-token|config/);
+
+    await expect(
+      call(
+        connectorsRouter.member.connections.revoke,
+        { connectionId: otherConnection.id },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      call(
+        connectorsRouter.member.connect.startOAuth,
+        {
+          providerKey: "github",
+          reconnectConnectionId: otherConnection.id,
+          returnTo: "https://app.trema.example/customize?tab=connections",
+        },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: otherConnection.id } }),
+    ).resolves.toMatchObject({ revokedAt: null });
+
+    await expect(
+      call(
+        connectorsRouter.member.connections.revoke,
+        { connectionId: ownConnection.id },
+        { context: member.context },
+      ),
+    ).resolves.toMatchObject({ id: ownConnection.id });
   });
 
   it("appends connected=<connectionId> to the safe callback redirect", async () => {
@@ -293,6 +474,7 @@ integration("connector connection flows", () => {
 
     const started = await startOAuthConnect(db, {
       orgId: org.org.id,
+      principalId: org.agent.id,
       providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -354,6 +536,7 @@ integration("connector connection flows", () => {
 
     const reconnectStarted = await startOAuthConnect(db, {
       orgId: org.org.id,
+      principalId: org.agent.id,
       providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -483,14 +666,15 @@ integration("connector connection flows", () => {
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer rk_test_secret");
       return new Response("{}", { status: 200 });
     });
-    const created = await createStaticConnection(db, {
-      orgId: org.org.id,
-      providerKey: "stripe",
-      config: {},
-      credentials: { apiKey: "rk_test_secret" },
-      masterKey,
-      fetch,
-    });
+    const created = await call(
+      connectorsRouter.connect.createStatic,
+      {
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_test_secret" },
+      },
+      { context: { ...org.context, connectorFetch: fetch } },
+    );
     const stored = await db.connectorConnection.findUniqueOrThrow({
       where: { id: created.id },
     });
@@ -522,6 +706,7 @@ integration("connector connection flows", () => {
     const okFetch = async () => new Response("{}", { status: 200 });
     const first = await createStaticConnection(db, {
       orgId: org.org.id,
+      principalId: org.agent.id,
       providerKey: "stripe",
       config: {},
       credentials: { apiKey: "rk_old_secret" },
@@ -534,6 +719,7 @@ integration("connector connection flows", () => {
     });
     const second = await createStaticConnection(db, {
       orgId: org.org.id,
+      principalId: org.agent.id,
       providerKey: "stripe",
       config: {},
       credentials: { apiKey: "rk_new_secret" },
@@ -555,6 +741,7 @@ integration("connector connection flows", () => {
     await expect(
       createStaticConnection(db, {
         orgId: org.org.id,
+        principalId: org.agent.id,
         providerKey: "stripe",
         config: {},
         credentials: { apiKey: "rk_new_secret" },
@@ -573,6 +760,7 @@ integration("connector connection flows", () => {
 
     const expired = await startOAuthConnect(db, {
       orgId: org.org.id,
+      principalId: org.agent.id,
       providerKey: "github",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,

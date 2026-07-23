@@ -77,26 +77,37 @@ function submittedFields(data: FormData, prefix: "config" | "credential"): Recor
 export function StaticConnectionDialog({
   provider,
   reconnect,
+  audience = "admin",
   open,
   onOpenChange,
   onConnected,
 }: {
   provider: CatalogProvider;
   reconnect?: ConnectorConnection | undefined;
+  audience?: "admin" | "member";
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected: (connectionId: string) => void;
 }) {
   const create = useMutation({
-    mutationFn: (values: { config: Record<string, string>; credentials: Record<string, string> }) =>
-      rpcClient.connectors.connect.createStatic({
+    mutationFn: (values: {
+      config: Record<string, string>;
+      credentials: Record<string, string>;
+    }) => {
+      const input = {
         providerKey: provider.key,
         config: values.config,
         credentials: values.credentials,
         ...(reconnect ? { reconnectConnectionId: reconnect.id } : {}),
-      }),
+      };
+      return audience === "member"
+        ? rpcClient.connectors.member.connect.createStatic(input)
+        : rpcClient.connectors.connect.createStatic(input);
+    },
     onSuccess: ({ id }) => {
-      toast.success(`${provider.displayName} ${reconnect ? "reconnected" : "connected"}`);
+      if (audience === "admin") {
+        toast.success(`${provider.displayName} ${reconnect ? "reconnected" : "connected"}`);
+      }
       onOpenChange(false);
       onConnected(id);
     },
@@ -149,11 +160,13 @@ export function StaticConnectionDialog({
 export function OAuthConnectionDialog({
   provider,
   reconnect,
+  audience = "admin",
   open,
   onOpenChange,
 }: {
   provider: CatalogProvider;
   reconnect?: ConnectorConnection | undefined;
+  audience?: "admin" | "member";
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -165,14 +178,18 @@ export function OAuthConnectionDialog({
     if (open) setSelectedScopes(defaultScopes);
   }, [open, defaultScopes]);
   const start = useMutation({
-    mutationFn: (config: Record<string, string>) =>
-      rpcClient.connectors.connect.startOAuth({
+    mutationFn: (config: Record<string, string>) => {
+      const input = {
         providerKey: provider.key,
         ...(Object.keys(config).length > 0 ? { config } : {}),
         ...(provider.availableScopes ? { providerScopes: selectedScopes } : {}),
         ...(reconnect ? { reconnectConnectionId: reconnect.id } : {}),
         returnTo: returnUrl(),
-      }),
+      };
+      return audience === "member"
+        ? rpcClient.connectors.member.connect.startOAuth(input)
+        : rpcClient.connectors.connect.startOAuth(input);
+    },
     onSuccess: ({ authorizationUrl }) => window.location.assign(authorizationUrl),
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -191,7 +208,9 @@ export function OAuthConnectionDialog({
               {reconnect ? "Reconnect" : "Connect"} {provider.displayName}
             </DialogTitle>
             <DialogDescription>
-              An admin authorizes the provider account the organization agent acts as.
+              {audience === "member"
+                ? "Authorize the provider account the agent may use for you in personal sessions."
+                : "An admin authorizes the provider account the organization agent acts as."}
             </DialogDescription>
           </DialogHeader>
           <div className="my-5 space-y-4">

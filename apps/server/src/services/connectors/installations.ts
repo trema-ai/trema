@@ -128,9 +128,29 @@ export class ConnectorInstallationNotFoundError extends Error {
 export class ConnectorMemberConnectabilityError extends Error {
   readonly code = "member_connection_not_allowed";
 
-  constructor(providerKey: string) {
-    super(`Provider '${providerKey}' cannot be installed in a personal scope`);
+  constructor(
+    providerKey: string,
+    message = `Provider '${providerKey}' cannot be installed in a personal scope`,
+  ) {
+    super(message);
     this.name = "ConnectorMemberConnectabilityError";
+  }
+}
+
+type MemberConnectorAccessDb = Pick<Prisma.TransactionClient, "connectorProviderSettings">;
+
+export async function requireMemberConnectorAccess(
+  db: MemberConnectorAccessDb,
+  input: { orgId: string; provider: ProviderDef; errorMessage?: string },
+) {
+  const settings = await db.connectorProviderSettings.findUnique({
+    where: {
+      orgId_providerKey: { orgId: input.orgId, providerKey: input.provider.key },
+    },
+    select: { memberEnabled: true },
+  });
+  if (!input.provider.memberConnectable || settings?.memberEnabled !== true) {
+    throw new ConnectorMemberConnectabilityError(input.provider.key, input.errorMessage);
   }
 }
 
@@ -296,15 +316,10 @@ async function validateBinding(
     throw new ConnectorInstallationValidationError("Connector connection is revoked");
   }
   if (scope.kind === "personal") {
-    const settings = await db.connectorProviderSettings.findUnique({
-      where: {
-        orgId_providerKey: { orgId: input.orgId, providerKey: input.provider.key },
-      },
-      select: { memberEnabled: true },
+    await requireMemberConnectorAccess(db, {
+      orgId: input.orgId,
+      provider: input.provider,
     });
-    if (!input.provider.memberConnectable || settings?.memberEnabled !== true) {
-      throw new ConnectorMemberConnectabilityError(input.provider.key);
-    }
     if (!scope.ownerId || connection.principalId !== scope.ownerId) {
       throw new ConnectorInstallationValidationError(
         "Personal installations must use the scope owner's connection",

@@ -70,6 +70,7 @@ export {
   type ListConnectorInstallationsInput,
   listConnectorInstallations,
   type ResolvedInstallationTool,
+  requireMemberConnectorAccess,
   resolveInstallationTools,
   type Sensitivity,
   type SyncedTool,

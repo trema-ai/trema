@@ -161,15 +161,6 @@ export function parseGrantedScopes(
   return parsed.length > 0 ? parsed : [...requested];
 }
 
-async function agentPrincipal(db: Database, orgId: string) {
-  const principal = await db.principal.findFirst({
-    where: { orgId, kind: "agent", deactivatedAt: null },
-    select: { id: true },
-  });
-  if (!principal) throw new ConnectorInstallationError("Organization agent principal not found");
-  return principal;
-}
-
 export function hashOAuthState(state: string): string {
   return createHash("sha256").update(state, "utf8").digest("hex");
 }
@@ -180,6 +171,7 @@ export function connectorCallbackUrl(authBaseUrl: string): string {
 
 export interface StartOAuthConnectInput {
   orgId: string;
+  principalId: string;
   providerKey: string;
   authBaseUrl: string;
   masterKey?: string;
@@ -250,14 +242,13 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
     );
   }
 
-  const principal = await agentPrincipal(db, input.orgId);
   const existing = input.reconnectConnectionId
     ? await db.connectorConnection.findFirst({
         where: {
           id: input.reconnectConnectionId,
           orgId: input.orgId,
           providerKey: input.providerKey,
-          principalId: principal.id,
+          principalId: input.principalId,
         },
         select: { id: true, config: true },
       })
@@ -298,7 +289,7 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
       providerKey: input.providerKey,
       registrationId: registration.registrationId,
       ...(existing ? { connectionId: existing.id } : {}),
-      principalId: principal.id,
+      principalId: input.principalId,
       stateHash: hashOAuthState(state),
       codeVerifier,
       config: config as Prisma.InputJsonValue,
@@ -326,14 +317,13 @@ async function startMcpOAuthConnect(
       `Provider '${provider.key}' declares mcp_oauth without an MCP transport`,
     );
   }
-  const principal = await agentPrincipal(db, input.orgId);
   const existing = input.reconnectConnectionId
     ? await db.connectorConnection.findFirst({
         where: {
           id: input.reconnectConnectionId,
           orgId: input.orgId,
           providerKey: input.providerKey,
-          principalId: principal.id,
+          principalId: input.principalId,
         },
         select: { id: true, config: true },
       })
@@ -374,7 +364,7 @@ async function startMcpOAuthConnect(
       providerKey: input.providerKey,
       registrationId: client.registrationId,
       ...(existing ? { connectionId: existing.id } : {}),
-      principalId: principal.id,
+      principalId: input.principalId,
       stateHash: hashOAuthState(state),
       codeVerifier,
       config: config as Prisma.InputJsonValue,
@@ -759,6 +749,7 @@ function basicAuthorization(credentials: Readonly<Record<string, string>>): stri
 
 export interface CreateStaticConnectionInput {
   orgId: string;
+  principalId: string;
   providerKey: string;
   credentials: Readonly<Record<string, unknown>>;
   config: Readonly<Record<string, string | number | boolean>>;
@@ -780,14 +771,13 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
       `Provider '${provider.key}' has no static credential verification recipe`,
     );
   }
-  const principal = await agentPrincipal(db, input.orgId);
   const existing = input.reconnectConnectionId
     ? await db.connectorConnection.findFirst({
         where: {
           id: input.reconnectConnectionId,
           orgId: input.orgId,
           providerKey: input.providerKey,
-          principalId: principal.id,
+          principalId: input.principalId,
         },
         select: { id: true, config: true },
       })
@@ -850,7 +840,7 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
   return storeConnection(db, {
     orgId: input.orgId,
     providerKey: input.providerKey,
-    principalId: principal.id,
+    principalId: input.principalId,
     mode: provider.authMode,
     config,
     ciphertext: encryptEnvelope(payload, input.masterKey),
@@ -863,13 +853,21 @@ export async function listConnectorConnections(
   orgId: string,
   providerKey?: string,
   now = new Date(),
+  principalId?: string,
 ) {
   const [connections, installations] = await Promise.all([
     db.connectorConnection.findMany({
-      where: { orgId, ...(providerKey ? { providerKey } : {}) },
+      where: {
+        orgId,
+        ...(providerKey ? { providerKey } : {}),
+        ...(principalId ? { principalId } : {}),
+      },
       select: publicConnectionSelect(),
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
+    // No principal filter here: bindings only surface when their connectionId
+    // matches a listed connection, and binding validation already ties a
+    // connection's principal to the scopes it may serve.
     db.item.findMany({
       where: { orgId, kind: "connector", status: { not: "archived" } },
       select: { id: true, scopeId: true, body: true },
@@ -910,10 +908,15 @@ export function connectorConnectionValidity(
   };
 }
 
-export async function revokeConnectorConnection(db: Database, orgId: string, connectionId: string) {
+export async function revokeConnectorConnection(
+  db: Database,
+  orgId: string,
+  connectionId: string,
+  principalId?: string,
+) {
   const revokedAt = new Date();
   const result = await db.connectorConnection.updateMany({
-    where: { id: connectionId, orgId },
+    where: { id: connectionId, orgId, ...(principalId ? { principalId } : {}) },
     data: { revokedAt },
   });
   if (result.count === 0) throw new ConnectorConnectionNotFoundError();

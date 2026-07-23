@@ -1,6 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { fieldDescriptorSchema } from "@trema/connectors";
 import { z } from "zod";
+import type { Database } from "#/lib/db/index.js";
 import { orgScoped, requireCapability } from "#/rpc/builders.js";
 import { authorize } from "#/services/authorize/index.js";
 import {
@@ -30,6 +31,7 @@ import {
   loadProviderCatalog,
   McpOAuthDiscoveryError,
   NoClientRegistrationError,
+  requireMemberConnectorAccess,
   revokeConnectorConnection,
   StaticCredentialValidationError,
   sensitivities,
@@ -137,6 +139,26 @@ function serializeConnection(connection: ListedConnection) {
     createdAt: connection.createdAt.toISOString(),
     updatedAt: connection.updatedAt.toISOString(),
   };
+}
+
+async function orgAgentPrincipalId(db: Database, orgId: string) {
+  const principal = await db.principal.findFirst({
+    where: { orgId, kind: "agent", deactivatedAt: null },
+    select: { id: true },
+  });
+  if (!principal) throw new ConnectorInstallationError("Organization agent principal not found");
+  return principal.id;
+}
+
+async function requireMemberProvider(db: Database, orgId: string, providerKey: string) {
+  const provider = loadProviderCatalog().find((candidate) => candidate.key === providerKey);
+  if (!provider) throw new ConnectorProviderNotFoundError(providerKey);
+  await requireMemberConnectorAccess(db, {
+    orgId,
+    provider,
+    errorMessage: `Provider '${provider.key}' is not enabled for member connections`,
+  });
+  return provider;
 }
 
 function throwConnectorError(error: unknown): never {
@@ -627,8 +649,10 @@ const startOAuth = requireCapability("manage_connectors")
   .output(z.object({ authorizationUrl: z.url() }))
   .handler(async ({ context, input }) => {
     try {
+      const principalId = await orgAgentPrincipalId(context.db, context.org.id);
       return await startOAuthConnect(context.db, {
         orgId: context.org.id,
+        principalId,
         providerKey: input.providerKey,
         authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
         ...(input.config ? { config: input.config } : {}),
@@ -668,8 +692,10 @@ const createStatic = requireCapability("manage_connectors")
   .output(z.object({ id: z.uuid() }))
   .handler(async ({ context, input }) => {
     try {
+      const principalId = await orgAgentPrincipalId(context.db, context.org.id);
       const connection = await createStaticConnection(context.db, {
         orgId: context.org.id,
+        principalId,
         providerKey: input.providerKey,
         config: input.config,
         credentials: input.credentials,
@@ -699,9 +725,17 @@ const listConnections = requireCapability("manage_connectors")
   .input(z.object({ providerKey: z.string().trim().min(1).optional() }))
   .output(z.array(connectionSchema))
   .handler(async ({ context, input }) =>
-    (await listConnectorConnections(context.db, context.org.id, input.providerKey)).map(
-      serializeConnection,
-    ),
+    (
+      await listConnectorConnections(
+        context.db,
+        context.org.id,
+        input.providerKey,
+        new Date(),
+        // Personal connections are managed by their owners in the main view;
+        // the admin area lists the agent's connections only.
+        await orgAgentPrincipalId(context.db, context.org.id),
+      )
+    ).map(serializeConnection),
   );
 
 const revokeConnection = requireCapability("manage_connectors")
@@ -727,6 +761,194 @@ const revokeConnection = requireCapability("manage_connectors")
     }
   });
 
+const memberStartOAuth = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-connections/oauth",
+    summary: "Start a member OAuth connector flow",
+    description:
+      "Create single-use OAuth state for the caller's connection and return the provider authorization URL.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      providerKey: z.string().trim().min(1),
+      config: configSchema.optional(),
+      providerScopes: z.array(z.string().trim().min(1)).optional(),
+      returnTo: z.url(),
+      reconnectConnectionId: z.uuid().optional(),
+    }),
+  )
+  .output(z.object({ authorizationUrl: z.url() }))
+  .handler(async ({ context, input }) => {
+    try {
+      await requireMemberProvider(context.db, context.org.id, input.providerKey);
+      return await startOAuthConnect(context.db, {
+        orgId: context.org.id,
+        principalId: context.principal.id,
+        providerKey: input.providerKey,
+        authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
+        ...(input.config ? { config: input.config } : {}),
+        ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+        returnTo: input.returnTo,
+        ...(input.reconnectConnectionId
+          ? { reconnectConnectionId: input.reconnectConnectionId }
+          : {}),
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+        ...(context.platformApps ? { platformApps: context.platformApps } : {}),
+        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+      });
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const memberCreateStatic = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-connections/static",
+    summary: "Create a member static connector connection",
+    description: "Validate, verify, and encrypt an API-key or basic connection for the caller.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      providerKey: z.string().trim().min(1),
+      config: configSchema,
+      credentials: z.record(z.string(), z.string()),
+      reconnectConnectionId: z.uuid().optional(),
+    }),
+  )
+  .output(z.object({ id: z.uuid() }))
+  .handler(async ({ context, input }) => {
+    try {
+      await requireMemberProvider(context.db, context.org.id, input.providerKey);
+      const connection = await createStaticConnection(context.db, {
+        orgId: context.org.id,
+        principalId: context.principal.id,
+        providerKey: input.providerKey,
+        config: input.config,
+        credentials: input.credentials,
+        ...(input.reconnectConnectionId
+          ? { reconnectConnectionId: input.reconnectConnectionId }
+          : {}),
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+      });
+      return { id: connection.id };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const memberListConnections = orgScoped
+  .route({
+    method: "GET",
+    path: "/member/connector-connections",
+    summary: "List the caller's connector connections",
+    description:
+      "List safe status metadata and personal installation ids for the caller's connections.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ providerKey: z.string().trim().min(1).optional() }))
+  .output(z.array(connectionSchema))
+  .handler(async ({ context, input }) =>
+    (
+      await listConnectorConnections(
+        context.db,
+        context.org.id,
+        input.providerKey,
+        new Date(),
+        context.principal.id,
+      )
+    ).map(serializeConnection),
+  );
+
+const memberRevokeConnection = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-connections/{connectionId}/revoke",
+    summary: "Revoke one of the caller's connector connections",
+    description: "Mark one caller-owned connector connection revoked locally.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ connectionId: z.uuid() }))
+  .output(z.object({ id: z.uuid(), revokedAt: z.string() }))
+  .handler(async ({ context, input }) => {
+    try {
+      // Ownership alone gates revocation: a member can always revoke their own
+      // connection, even after an admin disables member access for the provider.
+      const result = await revokeConnectorConnection(
+        context.db,
+        context.org.id,
+        input.connectionId,
+        context.principal.id,
+      );
+      return { id: result.id, revokedAt: result.revokedAt.toISOString() };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const memberCreateInstallation = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-installations",
+    summary: "Create a personal connector installation",
+    description:
+      "Bind one of the caller's connections into the caller's personal scope with all tools enabled.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      scopeId: z.uuid(),
+      catalogKey: z.string().trim().min(1),
+      connectionId: z.uuid(),
+    }),
+  )
+  .output(installationSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      await requireMemberProvider(context.db, context.org.id, input.catalogKey);
+      const scope = await context.db.scope.findFirst({
+        where: {
+          id: input.scopeId,
+          orgId: context.org.id,
+          kind: "personal",
+          ownerId: context.principal.id,
+        },
+        select: { id: true },
+      });
+      if (!scope) {
+        throw new ORPCError("FORBIDDEN", {
+          message: "Members may only install connectors in their own personal scope",
+        });
+      }
+      return serializeInstallation(
+        await createConnectorInstallation(context.db, {
+          orgId: context.org.id,
+          actorPrincipalId: context.principal.id,
+          scopeId: scope.id,
+          catalogKey: input.catalogKey,
+          connectionId: input.connectionId,
+          enabledTools: "all",
+          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+            : {}),
+          ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+          ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof ORPCError) throw error;
+      throwConnectorError(error);
+    }
+  });
+
 export const connectorsRouter = {
   meta,
   catalog: { list: catalog },
@@ -745,4 +967,9 @@ export const connectorsRouter = {
   },
   connect: { startOAuth, createStatic },
   connections: { list: listConnections, revoke: revokeConnection },
+  member: {
+    connect: { startOAuth: memberStartOAuth, createStatic: memberCreateStatic },
+    connections: { list: memberListConnections, revoke: memberRevokeConnection },
+    installations: { create: memberCreateInstallation },
+  },
 };
