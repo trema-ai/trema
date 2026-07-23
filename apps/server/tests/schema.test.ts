@@ -61,4 +61,41 @@ integration("database schema", () => {
       }),
     ).rejects.toThrow();
   });
+
+  it("allows only one active instruction per scope", async () => {
+    const org = await db.org.create({ data: { name: "Instruction org" } });
+    const human = await db.principal.create({
+      data: { orgId: org.id, kind: "human", displayName: "Human" },
+    });
+    const scope = await db.scope.create({
+      data: { orgId: org.id, kind: "org", name: "Instruction org root" },
+    });
+    const otherScope = await db.scope.create({
+      data: { orgId: org.id, kind: "shared", name: "Engineering" },
+    });
+
+    function instruction(scopeId: string, title: string, status: "proposed" | "active") {
+      return db.item.create({
+        data: {
+          orgId: org.id,
+          scopeId,
+          kind: "instruction",
+          title,
+          body: { content: title },
+          status,
+          disclosure: "standing",
+          createdById: human.id,
+        },
+      });
+    }
+
+    await instruction(scope.id, "First active", "active");
+    await expect(instruction(scope.id, "Second active", "active")).rejects.toThrow();
+    await expect(instruction(scope.id, "Proposed", "proposed")).resolves.toMatchObject({
+      status: "proposed",
+    });
+    await expect(instruction(otherScope.id, "Other scope", "active")).resolves.toMatchObject({
+      scopeId: otherScope.id,
+    });
+  });
 });
