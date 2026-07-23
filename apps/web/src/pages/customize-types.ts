@@ -92,6 +92,60 @@ export function orderScopes(scopes: Scope[]): Scope[] {
   );
 }
 
+export type DiffSegment = { kind: "same" | "added" | "removed"; text: string };
+
+/* Word-level LCS merge for prose diffs: one reading flow, removals shown in
+   place. Tokens keep their whitespace so spacing and newlines survive. */
+export function diffWords(before: string, after: string): DiffSegment[] {
+  const tokenize = (text: string) => text.split(/(\s+)/).filter((token) => token.length > 0);
+  const left = tokenize(before);
+  const right = tokenize(after);
+  const table: number[][] = Array.from({ length: left.length + 1 }, () =>
+    new Array<number>(right.length + 1).fill(0),
+  );
+  const cell = (i: number, j: number) => table[i]?.[j] ?? 0;
+  for (let i = left.length - 1; i >= 0; i -= 1) {
+    const row = table[i];
+    if (!row) continue;
+    for (let j = right.length - 1; j >= 0; j -= 1) {
+      row[j] =
+        left[i] === right[j] ? cell(i + 1, j + 1) + 1 : Math.max(cell(i + 1, j), cell(i, j + 1));
+    }
+  }
+  const segments: DiffSegment[] = [];
+  const push = (kind: DiffSegment["kind"], text: string) => {
+    const last = segments[segments.length - 1];
+    if (last && last.kind === kind) last.text += text;
+    else segments.push({ kind, text });
+  };
+  let i = 0;
+  let j = 0;
+  while (i < left.length && j < right.length) {
+    const beforeToken = left[i] ?? "";
+    const afterToken = right[j] ?? "";
+    if (beforeToken === afterToken) {
+      push("same", beforeToken);
+      i += 1;
+      j += 1;
+    } else if (cell(i + 1, j) >= cell(i, j + 1)) {
+      push("removed", beforeToken);
+      i += 1;
+    } else {
+      push("added", afterToken);
+      j += 1;
+    }
+  }
+  while (i < left.length) {
+    push("removed", left[i] ?? "");
+    i += 1;
+  }
+  while (j < right.length) {
+    push("added", right[j] ?? "");
+    j += 1;
+  }
+  return segments;
+}
+
 export function bodyContent(body: unknown): string {
   if (body && typeof body === "object" && "content" in body) {
     const value = (body as { content?: unknown }).content;

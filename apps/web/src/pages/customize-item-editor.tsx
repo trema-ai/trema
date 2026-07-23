@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, RotateCcw } from "lucide-react";
-import { type FormEvent, lazy, Suspense, useState } from "react";
+import { Archive, ChevronRight, RotateCcw } from "lucide-react";
+import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 
 import { KeyValueList } from "#/components/trema/key-value-list.tsx";
@@ -37,6 +37,7 @@ import {
 import { Skeleton } from "#/components/ui/skeleton.tsx";
 import { Textarea } from "#/components/ui/textarea.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
+import { cn } from "#/lib/utils.ts";
 import {
   bodyContent,
   type InstructionBody,
@@ -47,13 +48,9 @@ import {
   type VersionAuthor,
 } from "#/pages/customize-types.ts";
 import { useAuthenticatedSession } from "#/pages/home.tsx";
+import { VersionDiffViewer } from "#/pages/version-diff.tsx";
 
 const memoryTypes = ["fact", "preference", "rule", "procedure"] as const;
-const VersionDiffViewer = lazy(() =>
-  import("#/pages/version-diff.tsx").then((module) => ({
-    default: module.VersionDiffViewer,
-  })),
-);
 
 function useInvalidateItems() {
   const queryClient = useQueryClient();
@@ -210,6 +207,7 @@ export function ItemVersionHistory({ item }: { item: Item }) {
   const session = useAuthenticatedSession();
   const invalidate = useInvalidateItems();
   const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState<number | null>(item.version);
   const versions = useQuery(orpc.items.versions.queryOptions({ input: { id: item.id } }));
   const restore = useMutation({
     mutationFn: (version: ItemVersion) =>
@@ -279,40 +277,74 @@ export function ItemVersionHistory({ item }: { item: Item }) {
 
   return (
     <ul className="divide-y rounded-md border bg-card">
-      {entries.map(({ version, previous, isCurrent }) => (
-        <li key={version.version} className="space-y-2 px-3 py-2.5">
-          <div className="flex items-center gap-2">
-            <p className="text-chrome font-medium">Version {version.version}</p>
-            {isCurrent ? <p className="text-meta text-muted-foreground">Current</p> : null}
-            <span className="ml-auto shrink-0 text-meta text-muted-foreground">
-              <RelativeTime date={version.createdAt} />
-              {version.author ? (
-                <p className="truncate text-meta text-muted-foreground">
-                  by {version.author.kind === "agent" ? "the agent" : version.author.displayName}
-                </p>
-              ) : null}
-            </span>
-            {!isCurrent ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={restore.isPending}
-                onClick={() => restore.mutate(version)}
+      {entries.map(({ version, previous, isCurrent }) => {
+        const open = expanded === version.version;
+        const delta = previous
+          ? bodyContent(version.body).length - bodyContent(previous.body).length
+          : bodyContent(version.body).length;
+        const summary = previous
+          ? delta === 0
+            ? "Details changed"
+            : `${delta > 0 ? "+" : "−"}${Math.abs(delta).toLocaleString()} characters`
+          : `${delta.toLocaleString()} characters`;
+        return (
+          <li key={version.version} className="space-y-2 px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => setExpanded(open ? null : version.version)}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <RotateCcw />
-                Restore
-              </Button>
+                <ChevronRight
+                  className={cn(
+                    "size-4 shrink-0 text-muted-foreground transition-transform",
+                    open && "rotate-90",
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="whitespace-nowrap text-chrome font-medium">
+                  Version {version.version}
+                </span>
+                {isCurrent ? (
+                  <span className="text-meta text-muted-foreground">Current</span>
+                ) : null}
+                {!open ? (
+                  <span className="truncate text-meta text-muted-foreground">{summary}</span>
+                ) : null}
+              </button>
+              <span className="inline-flex shrink-0 gap-x-2 text-meta text-muted-foreground">
+                {version.author ? (
+                  <span className="truncate">
+                    {version.author.kind === "agent" ? "the agent" : version.author.displayName} ·
+                  </span>
+                ) : null}
+                <RelativeTime date={version.createdAt} />
+              </span>
+              {!isCurrent ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={restore.isPending}
+                  onClick={() => restore.mutate(version)}
+                >
+                  <RotateCcw />
+                  Restore
+                </Button>
+              ) : null}
+            </div>
+            {open ? (
+              previous ? (
+                <VersionDiff before={previous} after={version} />
+              ) : (
+                <p className="whitespace-pre-wrap text-meta text-muted-foreground">
+                  {bodyContent(version.body)}
+                </p>
+              )
             ) : null}
-          </div>
-          {previous ? (
-            <VersionDiff before={previous} after={version} />
-          ) : (
-            <p className="whitespace-pre-wrap font-mono text-meta text-muted-foreground">
-              {bodyContent(version.body)}
-            </p>
-          )}
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -327,11 +359,7 @@ function VersionDiff({ before, after }: { before: ItemVersion; after: ItemVersio
       </p>
     );
   }
-  return (
-    <Suspense fallback={<Skeleton className="h-16 w-full" />}>
-      <VersionDiffViewer before={beforeContent} after={afterContent} />
-    </Suspense>
-  );
+  return <VersionDiffViewer before={beforeContent} after={afterContent} />;
 }
 
 export function LifecycleActions({ item, compact = false }: { item: Item; compact?: boolean }) {

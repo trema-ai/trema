@@ -1,70 +1,35 @@
-import { useTheme } from "next-themes";
-import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
+import { cn } from "#/lib/utils.ts";
+import { diffWords } from "#/pages/customize-types.ts";
 
-const diffStyles = {
-  variables: {
-    light: {
-      diffViewerBackground: "var(--card)",
-      diffViewerColor: "var(--foreground)",
-      addedBackground: "var(--go-soft)",
-      addedColor: "var(--foreground)",
-      removedBackground: "var(--destructive-soft)",
-      removedColor: "var(--foreground)",
-      wordAddedBackground: "color-mix(in srgb, var(--go) 28%, transparent)",
-      wordRemovedBackground: "color-mix(in srgb, var(--destructive) 28%, transparent)",
-      addedGutterBackground: "var(--go-soft)",
-      removedGutterBackground: "var(--destructive-soft)",
-      gutterBackground: "var(--muted)",
-      gutterColor: "var(--muted-foreground)",
-      diffViewerTitleBorderColor: "var(--border)",
-    },
-    dark: {
-      diffViewerBackground: "var(--card)",
-      diffViewerColor: "var(--foreground)",
-      addedBackground: "var(--go-soft)",
-      addedColor: "var(--foreground)",
-      removedBackground: "var(--destructive-soft)",
-      removedColor: "var(--foreground)",
-      wordAddedBackground: "color-mix(in srgb, var(--go) 35%, transparent)",
-      wordRemovedBackground: "color-mix(in srgb, var(--destructive) 35%, transparent)",
-      addedGutterBackground: "var(--go-soft)",
-      removedGutterBackground: "var(--destructive-soft)",
-      gutterBackground: "var(--muted)",
-      gutterColor: "var(--muted-foreground)",
-      diffViewerTitleBorderColor: "var(--border)",
-    },
-  },
-  diffContainer: {
-    border: "1px solid var(--border)",
-    borderRadius: "var(--radius)",
-    overflow: "hidden",
-  },
-  contentText: {
-    fontFamily: "var(--font-mono)",
-    fontSize: "0.75rem",
-    lineHeight: "1.45",
-    overflowWrap: "anywhere",
-    whiteSpace: "pre-wrap",
-  },
-  line: {
-    paddingBlock: "0.125rem",
-  },
-} as const;
-
+/* Prose diff: one merged reading flow instead of paired −/+ lines. Additions
+   are tinted chips; removals stay visible in place, struck through. */
 export function VersionDiffViewer({ before, after }: { before: string; after: string }) {
-  const { resolvedTheme } = useTheme();
-
+  const seen = new Map<string, number>();
+  const segments = diffWords(before, after).map((segment) => {
+    const base = `${segment.kind}:${segment.text}`;
+    const occurrence = (seen.get(base) ?? 0) + 1;
+    seen.set(base, occurrence);
+    return { ...segment, key: `${base}:${occurrence}` };
+  });
   return (
-    <ReactDiffViewer
-      oldValue={before}
-      newValue={after}
-      compareMethod={DiffMethod.LINES}
-      splitView={false}
-      hideLineNumbers
-      hideSummary
-      showDiffOnly={false}
-      useDarkTheme={resolvedTheme === "dark"}
-      styles={diffStyles}
-    />
+    <p className="whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-[0.8125rem] leading-relaxed">
+      {segments.map((segment) => {
+        const { key } = segment;
+        if (segment.kind === "same") return <span key={key}>{segment.text}</span>;
+        return (
+          <span
+            key={key}
+            className={cn(
+              "rounded-xs px-0.5",
+              segment.kind === "added"
+                ? "bg-go-soft text-foreground"
+                : "bg-destructive-soft text-muted-foreground line-through decoration-destructive/70",
+            )}
+          >
+            {segment.text}
+          </span>
+        );
+      })}
+    </p>
   );
 }
