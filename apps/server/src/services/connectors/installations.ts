@@ -204,6 +204,7 @@ export async function createConnectorInstallation(
         status: "active",
         disclosure: "retrieved",
         createdById: actor.id,
+        updatedById: actor.id,
       },
     });
     await transaction.auditLog.create({
@@ -263,13 +264,20 @@ export async function updateConnectorInstallation(
           version: existing.version,
           title: existing.title,
           body: existing.body as Prisma.InputJsonValue,
+          authorId: existing.updatedById ?? existing.createdById,
         },
       });
     }
     const installation = await transaction.item.update({
       where: { orgId_id: { orgId: input.orgId, id: existing.id } },
       data: {
-        ...(changed ? { body: jsonValue(body), version: { increment: 1 } } : {}),
+        ...(changed
+          ? {
+              body: jsonValue(body),
+              version: { increment: 1 },
+              updatedById: input.actorPrincipalId,
+            }
+          : {}),
       },
     });
     await transaction.auditLog.create({

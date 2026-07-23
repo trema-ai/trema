@@ -179,6 +179,7 @@ export async function createItem(db: Database, input: CreateItemInput) {
         status,
         disclosure,
         createdById: writer.id,
+        updatedById: writer.id,
         ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId } : {}),
       },
     });
@@ -217,6 +218,7 @@ export async function listItemVersions(db: Database, orgId: string, itemId: stri
   return db.itemVersion.findMany({
     where: { orgId, itemId: item.id },
     orderBy: { version: "desc" },
+    include: { author: { select: { id: true, displayName: true, kind: true } } },
   });
 }
 
@@ -273,6 +275,9 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
           version: existing.version,
           title: existing.title,
           body: existing.body as Prisma.InputJsonValue,
+          // The retained snapshot is attributed to whoever wrote it, not the
+          // actor replacing it; items predating updatedById fall back to their creator.
+          authorId: existing.updatedById ?? existing.createdById,
         },
       });
     }
@@ -283,7 +288,9 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
         ...(input.title !== undefined ? { title } : {}),
         ...(input.body !== undefined ? { body: body as Prisma.InputJsonValue } : {}),
         ...(input.disclosure !== undefined ? { disclosure: input.disclosure } : {}),
-        ...(contentChanged ? { version: { increment: 1 } } : {}),
+        ...(contentChanged
+          ? { version: { increment: 1 }, updatedById: input.actorPrincipalId }
+          : {}),
       },
     });
     await transaction.auditLog.create({

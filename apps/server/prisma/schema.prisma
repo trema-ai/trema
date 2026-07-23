@@ -166,6 +166,8 @@ model Principal {
   auditLogs                 AuditLog[]            @relation("AuditActor")
   createdItems              Item[]                @relation("ItemCreator")
   confirmedItems            Item[]                @relation("ItemConfirmer")
+  updatedItems              Item[]                @relation("ItemUpdater")
+  authoredItemVersions      ItemVersion[]         @relation("ItemVersionAuthor")
   connectorCredentials      ConnectorCredential[]
   connectorOAuthStates      ConnectorOAuthState[]
 
@@ -223,6 +225,7 @@ model Item {
   createdById          String
   sourceSessionId      String?
   confirmedById        String?
+  updatedById          String?
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   lastUsedAt           DateTime?
@@ -231,6 +234,7 @@ model Item {
   scope                Scope                 @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
   createdBy            Principal             @relation("ItemCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
   confirmedBy          Principal?            @relation("ItemConfirmer", fields: [orgId, confirmedById], references: [orgId, id], onDelete: Restrict)
+  updatedBy            Principal?            @relation("ItemUpdater", fields: [orgId, updatedById], references: [orgId, id], onDelete: Restrict)
   versions             ItemVersion[]
   connectorCredentials ConnectorCredential[]
   connectorOAuthStates ConnectorOAuthState[]
@@ -243,15 +247,17 @@ model Item {
 }
 
 model ItemVersion {
-  id        String   @id @default(uuid(7))
+  id        String     @id @default(uuid(7))
   orgId     String
   itemId    String
   version   Int
   title     String
   body      Json
-  createdAt DateTime @default(now())
-  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  item      Item     @relation(fields: [orgId, itemId], references: [orgId, id], onDelete: Cascade)
+  authorId  String?
+  createdAt DateTime   @default(now())
+  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  item      Item       @relation(fields: [orgId, itemId], references: [orgId, id], onDelete: Cascade)
+  author    Principal? @relation("ItemVersionAuthor", fields: [orgId, authorId], references: [orgId, id], onDelete: Restrict)
 
   @@unique([itemId, version])
   @@index([orgId, itemId])

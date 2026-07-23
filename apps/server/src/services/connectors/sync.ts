@@ -258,6 +258,7 @@ export async function syncConnectorInstallation(
           version: current.version,
           title: current.title,
           body: current.body as Prisma.InputJsonValue,
+          authorId: current.updatedById ?? current.createdById,
         },
       });
     }
@@ -267,6 +268,7 @@ export async function syncConnectorInstallation(
           data: {
             body: validated as Prisma.InputJsonValue,
             version: { increment: 1 },
+            updatedById: input.actorPrincipalId,
           },
         })
       : current;
