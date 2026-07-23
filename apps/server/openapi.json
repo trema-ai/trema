@@ -527,7 +527,7 @@
       "get": {
         "operationId": "connectors.meta",
         "summary": "Get connector deployment metadata",
-        "description": "Get the OAuth callback URL and principals available to connector credentials.",
+        "description": "Get the deployment OAuth callback URL.",
         "tags": [
           "Connectors"
         ],
@@ -542,38 +542,10 @@
                     "callbackUrl": {
                       "type": "string",
                       "format": "uri"
-                    },
-                    "principals": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "format": "uuid"
-                          },
-                          "displayName": {
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "human",
-                              "agent"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "displayName",
-                          "kind"
-                        ]
-                      }
                     }
                   },
                   "required": [
-                    "callbackUrl",
-                    "principals"
+                    "callbackUrl"
                   ]
                 }
               }
@@ -591,7 +563,7 @@
       "get": {
         "operationId": "connectors.catalog.list",
         "summary": "List connector providers",
-        "description": "List member-safe connector catalog metadata without auth recipes or URLs.",
+        "description": "List safe catalog metadata and effective member-access settings.",
         "tags": [
           "Connectors"
         ],
@@ -647,6 +619,21 @@
                       },
                       "memberConnectable": {
                         "type": "boolean"
+                      },
+                      "memberEnabled": {
+                        "type": "boolean"
+                      },
+                      "defaultScopes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "availableScopes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       },
                       "configFields": {
                         "type": "object",
@@ -836,6 +823,8 @@
                       "authMode",
                       "transport",
                       "memberConnectable",
+                      "memberEnabled",
+                      "defaultScopes",
                       "configFields",
                       "credentialFields"
                     ]
@@ -852,11 +841,83 @@
         ]
       }
     },
+    "/connector-providers/{providerKey}/settings": {
+      "patch": {
+        "operationId": "connectors.providers.updateSettings",
+        "summary": "Update connector provider settings",
+        "description": "Enable or disable member connections for one provider.",
+        "tags": [
+          "Connectors"
+        ],
+        "parameters": [
+          {
+            "name": "providerKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "memberEnabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "memberEnabled"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "providerKey": {
+                      "type": "string"
+                    },
+                    "memberEnabled": {
+                      "type": "boolean"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "providerKey",
+                    "memberEnabled",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/connector-installations": {
       "post": {
         "operationId": "connectors.installations.create",
         "summary": "Create a connector installation",
-        "description": "Install a catalog provider into an authorized context scope.",
+        "description": "Bind a connector connection into an authorized context scope.",
         "tags": [
           "Connectors"
         ],
@@ -874,6 +935,10 @@
                   "catalogKey": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "connectionId": {
+                    "type": "string",
+                    "format": "uuid"
                   },
                   "enabledTools": {
                     "anyOf": [
@@ -908,7 +973,7 @@
                 "required": [
                   "scopeId",
                   "catalogKey",
-                  "enabledTools"
+                  "connectionId"
                 ]
               }
             }
@@ -1088,7 +1153,7 @@
       "get": {
         "operationId": "connectors.installations.list",
         "summary": "List connector installations",
-        "description": "List manageable organization and shared-scope installations with credential status.",
+        "description": "List manageable organization and shared-scope connection bindings.",
         "tags": [
           "Connectors"
         ],
@@ -1133,6 +1198,10 @@
                       },
                       "catalogKey": {
                         "type": "string"
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "format": "uuid"
                       },
                       "enabledTools": {
                         "anyOf": [
@@ -1189,25 +1258,6 @@
                           ]
                         }
                       },
-                      "config": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "additionalProperties": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "boolean"
-                            }
-                          ]
-                        }
-                      },
                       "status": {
                         "enum": [
                           "proposed",
@@ -1218,74 +1268,18 @@
                       },
                       "updatedAt": {
                         "type": "string"
-                      },
-                      "credentials": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "format": "uuid"
-                            },
-                            "principalId": {
-                              "type": "string",
-                              "format": "uuid"
-                            },
-                            "principalName": {
-                              "type": "string"
-                            },
-                            "mode": {
-                              "type": "string"
-                            },
-                            "isRevoked": {
-                              "type": "boolean"
-                            },
-                            "isExpired": {
-                              "type": "boolean"
-                            },
-                            "isValid": {
-                              "type": "boolean"
-                            },
-                            "expiresAt": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "createdAt": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "principalId",
-                            "principalName",
-                            "mode",
-                            "isRevoked",
-                            "isExpired",
-                            "isValid",
-                            "expiresAt",
-                            "createdAt"
-                          ]
-                        }
                       }
                     },
                     "required": [
                       "id",
                       "scopeId",
                       "catalogKey",
+                      "connectionId",
                       "enabledTools",
                       "sensitivityOverrides",
                       "syncedTools",
-                      "config",
                       "status",
-                      "updatedAt",
-                      "credentials"
+                      "updatedAt"
                     ]
                   }
                 }
@@ -1304,7 +1298,7 @@
       "patch": {
         "operationId": "connectors.installations.update",
         "summary": "Update a connector installation",
-        "description": "Update only tool intent and sensitivity overrides for an installation.",
+        "description": "Update its connection, tool intent, or sensitivity overrides.",
         "tags": [
           "Connectors"
         ],
@@ -1326,6 +1320,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "connectionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
                   "enabledTools": {
                     "anyOf": [
                       {
@@ -1764,7 +1762,7 @@
       "post": {
         "operationId": "connectors.installations.archive",
         "summary": "Archive a connector installation",
-        "description": "Archive an installation and revoke all of its active credentials.",
+        "description": "Archive one scope binding without revoking its connection.",
         "tags": [
           "Connectors"
         ],
@@ -1942,16 +1940,10 @@
                         "updatedAt",
                         "version"
                       ]
-                    },
-                    "revokedCredentials": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
                     }
                   },
                   "required": [
-                    "installation",
-                    "revokedCredentials"
+                    "installation"
                   ]
                 }
               }
@@ -2268,24 +2260,13 @@
         ]
       }
     },
-    "/connector-installations/{installationItemId}/connect/oauth": {
+    "/connector-connections/oauth": {
       "post": {
         "operationId": "connectors.connect.startOAuth",
         "summary": "Start an OAuth connector flow",
-        "description": "Create single-use OAuth state and return the provider authorization URL.",
+        "description": "Create single-use OAuth state for an organization-agent connection and return the provider authorization URL.",
         "tags": [
           "Connectors"
-        ],
-        "parameters": [
-          {
-            "name": "installationItemId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
         ],
         "requestBody": {
           "required": true,
@@ -2297,14 +2278,6 @@
                   "providerKey": {
                     "type": "string",
                     "minLength": 1
-                  },
-                  "principalId": {
-                    "type": "string",
-                    "format": "uuid"
-                  },
-                  "returnTo": {
-                    "type": "string",
-                    "format": "uri"
                   },
                   "config": {
                     "type": "object",
@@ -2324,11 +2297,25 @@
                         }
                       ]
                     }
+                  },
+                  "providerScopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "returnTo": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "reconnectConnectionId": {
+                    "type": "string",
+                    "format": "uuid"
                   }
                 },
                 "required": [
-                  "providerKey",
-                  "principalId"
+                  "providerKey"
                 ]
               }
             }
@@ -2362,24 +2349,13 @@
         ]
       }
     },
-    "/connector-installations/{installationItemId}/credentials": {
+    "/connector-connections/static": {
       "post": {
         "operationId": "connectors.connect.createStatic",
-        "summary": "Create a static connector credential",
-        "description": "Validate, verify, and encrypt an API-key or basic credential.",
+        "summary": "Create a static connector connection",
+        "description": "Validate, verify, and encrypt an API-key or basic connection for the organization agent.",
         "tags": [
           "Connectors"
-        ],
-        "parameters": [
-          {
-            "name": "installationItemId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
         ],
         "requestBody": {
           "required": true,
@@ -2391,19 +2367,6 @@
                   "providerKey": {
                     "type": "string",
                     "minLength": 1
-                  },
-                  "principalId": {
-                    "type": "string",
-                    "format": "uuid"
-                  },
-                  "credentials": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "type": "string"
-                    }
                   },
                   "config": {
                     "type": "object",
@@ -2423,11 +2386,24 @@
                         }
                       ]
                     }
+                  },
+                  "credentials": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "reconnectConnectionId": {
+                    "type": "string",
+                    "format": "uuid"
                   }
                 },
                 "required": [
                   "providerKey",
-                  "principalId",
+                  "config",
                   "credentials"
                 ]
               }
@@ -2445,98 +2421,10 @@
                     "id": {
                       "type": "string",
                       "format": "uuid"
-                    },
-                    "installationItemId": {
-                      "type": "string",
-                      "format": "uuid"
-                    },
-                    "principalId": {
-                      "type": "string",
-                      "format": "uuid"
-                    },
-                    "mode": {
-                      "type": "string"
-                    },
-                    "expiresAt": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "revokedAt": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "lastRefreshSuccess": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "lastRefreshFailure": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "refreshAttempts": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "refreshExhausted": {
-                      "type": "boolean"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "string"
-                    },
-                    "isRevoked": {
-                      "type": "boolean"
-                    },
-                    "isExpired": {
-                      "type": "boolean"
-                    },
-                    "isValid": {
-                      "type": "boolean"
                     }
                   },
                   "required": [
-                    "id",
-                    "installationItemId",
-                    "principalId",
-                    "mode",
-                    "expiresAt",
-                    "revokedAt",
-                    "lastRefreshSuccess",
-                    "lastRefreshFailure",
-                    "refreshAttempts",
-                    "refreshExhausted",
-                    "createdAt",
-                    "updatedAt",
-                    "isRevoked",
-                    "isExpired",
-                    "isValid"
+                    "id"
                   ]
                 }
               }
@@ -2548,23 +2436,26 @@
             "sessionCookie": []
           }
         ]
-      },
+      }
+    },
+    "/connector-connections": {
       "get": {
-        "operationId": "connectors.credentials.list",
-        "summary": "List connector credentials",
-        "description": "List credential metadata, refresh bookkeeping, and validity flags only.",
+        "operationId": "connectors.connections.list",
+        "summary": "List connector connections",
+        "description": "List safe connection status metadata and bound installation ids without secret material.",
         "tags": [
           "Connectors"
         ],
         "parameters": [
           {
-            "name": "installationItemId",
-            "in": "path",
-            "required": true,
+            "name": "providerKey",
+            "in": "query",
             "schema": {
               "type": "string",
-              "format": "uuid"
-            }
+              "minLength": 1
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
           }
         ],
         "responses": {
@@ -2581,9 +2472,8 @@
                         "type": "string",
                         "format": "uuid"
                       },
-                      "installationItemId": {
-                        "type": "string",
-                        "format": "uuid"
+                      "providerKey": {
+                        "type": "string"
                       },
                       "principalId": {
                         "type": "string",
@@ -2591,6 +2481,22 @@
                       },
                       "mode": {
                         "type": "string"
+                      },
+                      "label": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "providerScopes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       },
                       "expiresAt": {
                         "anyOf": [
@@ -2654,13 +2560,35 @@
                       },
                       "isValid": {
                         "type": "boolean"
+                      },
+                      "installations": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "scopeId": {
+                              "type": "string",
+                              "format": "uuid"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "scopeId"
+                          ]
+                        }
                       }
                     },
                     "required": [
                       "id",
-                      "installationItemId",
+                      "providerKey",
                       "principalId",
                       "mode",
+                      "label",
+                      "providerScopes",
                       "expiresAt",
                       "revokedAt",
                       "lastRefreshSuccess",
@@ -2671,7 +2599,8 @@
                       "updatedAt",
                       "isRevoked",
                       "isExpired",
-                      "isValid"
+                      "isValid",
+                      "installations"
                     ]
                   }
                 }
@@ -2686,26 +2615,17 @@
         ]
       }
     },
-    "/connector-installations/{installationItemId}/credentials/{credentialId}/revoke": {
+    "/connector-connections/{connectionId}/revoke": {
       "post": {
-        "operationId": "connectors.credentials.revoke",
-        "summary": "Revoke a connector credential",
-        "description": "Mark a connector credential revoked locally.",
+        "operationId": "connectors.connections.revoke",
+        "summary": "Revoke a connector connection",
+        "description": "Mark one connector connection revoked locally.",
         "tags": [
           "Connectors"
         ],
         "parameters": [
           {
-            "name": "installationItemId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "credentialId",
+            "name": "connectionId",
             "in": "path",
             "required": true,
             "schema": {
@@ -3775,6 +3695,17 @@
                       ],
                       "description": "The human principal that activated a proposed item, when present."
                     },
+                    "updatedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The principal that wrote the current content, when known."
+                    },
                     "createdAt": {
                       "type": "string",
                       "description": "When the item was created. An ISO 8601 date-time."
@@ -3813,6 +3744,7 @@
                     "createdById",
                     "sourceSessionId",
                     "confirmedById",
+                    "updatedById",
                     "createdAt",
                     "updatedAt",
                     "lastUsedAt",
@@ -4052,6 +3984,17 @@
                         ],
                         "description": "The human principal that activated a proposed item, when present."
                       },
+                      "updatedById": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "The principal that wrote the current content, when known."
+                      },
                       "createdAt": {
                         "type": "string",
                         "description": "When the item was created. An ISO 8601 date-time."
@@ -4090,6 +4033,7 @@
                       "createdById",
                       "sourceSessionId",
                       "confirmedById",
+                      "updatedById",
                       "createdAt",
                       "updatedAt",
                       "lastUsedAt",
@@ -4298,6 +4242,17 @@
                       ],
                       "description": "The human principal that activated a proposed item, when present."
                     },
+                    "updatedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The principal that wrote the current content, when known."
+                    },
                     "createdAt": {
                       "type": "string",
                       "description": "When the item was created. An ISO 8601 date-time."
@@ -4336,6 +4291,7 @@
                     "createdById",
                     "sourceSessionId",
                     "confirmedById",
+                    "updatedById",
                     "createdAt",
                     "updatedAt",
                     "lastUsedAt",
@@ -4646,6 +4602,17 @@
                       ],
                       "description": "The human principal that activated a proposed item, when present."
                     },
+                    "updatedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The principal that wrote the current content, when known."
+                    },
                     "createdAt": {
                       "type": "string",
                       "description": "When the item was created. An ISO 8601 date-time."
@@ -4684,6 +4651,7 @@
                     "createdById",
                     "sourceSessionId",
                     "confirmedById",
+                    "updatedById",
                     "createdAt",
                     "updatedAt",
                     "lastUsedAt",
@@ -4837,6 +4805,40 @@
                         ],
                         "description": "The item's kind-specific body at this prior version."
                       },
+                      "author": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The authoring principal's ID."
+                              },
+                              "displayName": {
+                                "type": "string",
+                                "description": "The authoring principal's display name."
+                              },
+                              "kind": {
+                                "enum": [
+                                  "human",
+                                  "agent"
+                                ],
+                                "type": "string",
+                                "description": "Whether a human or the agent wrote this version."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "displayName",
+                              "kind"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "The principal that wrote this version's content, when known."
+                      },
                       "createdAt": {
                         "type": "string",
                         "description": "When this prior version was retained. An ISO 8601 date-time."
@@ -4846,6 +4848,7 @@
                       "version",
                       "title",
                       "body",
+                      "author",
                       "createdAt"
                     ],
                     "description": "A retained prior version of an item."
@@ -5051,6 +5054,17 @@
                       ],
                       "description": "The human principal that activated a proposed item, when present."
                     },
+                    "updatedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The principal that wrote the current content, when known."
+                    },
                     "createdAt": {
                       "type": "string",
                       "description": "When the item was created. An ISO 8601 date-time."
@@ -5089,6 +5103,7 @@
                     "createdById",
                     "sourceSessionId",
                     "confirmedById",
+                    "updatedById",
                     "createdAt",
                     "updatedAt",
                     "lastUsedAt",
@@ -5295,6 +5310,17 @@
                       ],
                       "description": "The human principal that activated a proposed item, when present."
                     },
+                    "updatedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The principal that wrote the current content, when known."
+                    },
                     "createdAt": {
                       "type": "string",
                       "description": "When the item was created. An ISO 8601 date-time."
@@ -5333,6 +5359,7 @@
                     "createdById",
                     "sourceSessionId",
                     "confirmedById",
+                    "updatedById",
                     "createdAt",
                     "updatedAt",
                     "lastUsedAt",
@@ -5539,6 +5566,17 @@
                       ],
                       "description": "The human principal that activated a proposed item, when present."
                     },
+                    "updatedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The principal that wrote the current content, when known."
+                    },
                     "createdAt": {
                       "type": "string",
                       "description": "When the item was created. An ISO 8601 date-time."
@@ -5577,6 +5615,7 @@
                     "createdById",
                     "sourceSessionId",
                     "confirmedById",
+                    "updatedById",
                     "createdAt",
                     "updatedAt",
                     "lastUsedAt",

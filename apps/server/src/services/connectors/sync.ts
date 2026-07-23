@@ -135,10 +135,6 @@ function parsedBody(value: unknown, catalog: ProviderCatalog): ConnectorInstalla
   return parsed.data;
 }
 
-function configFrom(body: ConnectorInstallationBody) {
-  return body.config ?? {};
-}
-
 interface CredentialPayload {
   accessToken?: unknown;
   access_token?: unknown;
@@ -161,24 +157,43 @@ function bearerToken(payload: CredentialPayload): string | undefined {
 async function resolveBearerToken(
   db: Database,
   orgId: string,
-  installationItemId: string,
+  connectionId: string,
   masterKey: string | undefined,
   now: Date,
-): Promise<string | undefined> {
-  const credentials = await db.connectorCredential.findMany({
+): Promise<{
+  token: string | undefined;
+  config: Record<string, string | number | boolean>;
+}> {
+  const connection = await db.connectorConnection.findFirst({
     where: {
+      id: connectionId,
       orgId,
-      installationItemId,
       revokedAt: null,
+      refreshExhausted: false,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
-    include: { principal: { select: { kind: true } } },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  const credential =
-    credentials.find(({ principal }) => principal.kind === "agent") ?? credentials[0];
-  if (!credential) return undefined;
-  return bearerToken(decryptEnvelope<CredentialPayload>(credential.ciphertext, masterKey));
+  if (!connection) {
+    throw new ConnectorSyncTransportError("Connector connection is unavailable");
+  }
+  const rawConfig =
+    typeof connection.config === "object" &&
+    connection.config !== null &&
+    !Array.isArray(connection.config)
+      ? connection.config
+      : {};
+  const config = Object.fromEntries(
+    Object.entries(rawConfig).filter(
+      (entry): entry is [string, string | number | boolean] =>
+        typeof entry[1] === "string" ||
+        typeof entry[1] === "number" ||
+        typeof entry[1] === "boolean",
+    ),
+  );
+  return {
+    token: bearerToken(decryptEnvelope<CredentialPayload>(connection.ciphertext, masterKey)),
+    config,
+  };
 }
 
 export interface SyncConnectorInstallationInput {
@@ -210,17 +225,17 @@ export async function syncConnectorInstallation(
     );
   }
 
-  const serverUrl = interpolate(provider.transport.serverUrl, { config: configFrom(body) });
-  const token = await resolveBearerToken(
+  const resolved = await resolveBearerToken(
     db,
     input.orgId,
-    installation.id,
+    body.connectionId,
     input.masterKey,
     input.now ?? new Date(),
   );
+  const serverUrl = interpolate(provider.transport.serverUrl, { config: resolved.config });
   const client = await (input.clientFactory ?? createStreamableHttpMcpClient)({
     serverUrl,
-    ...(token ? { authorization: `Bearer ${token}` } : {}),
+    ...(resolved.token ? { authorization: `Bearer ${resolved.token}` } : {}),
     ...(input.fetch ? { fetch: input.fetch } : {}),
   });
   const listed: McpListedTool[] = [];

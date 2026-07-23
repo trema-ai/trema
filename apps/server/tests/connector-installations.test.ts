@@ -1,12 +1,6 @@
 import { randomUUID } from "node:crypto";
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-
 import type { Role } from "#/generated/prisma/client.js";
 import { createAuth } from "#/lib/auth/index.js";
 import { encryptEnvelope } from "#/lib/crypto/index.js";
@@ -15,18 +9,14 @@ import { parseEnv } from "#/lib/env/schema.js";
 import { connectorsRouter } from "#/rpc/connectors.js";
 import { itemsRouter } from "#/rpc/items.js";
 import { orgRouter } from "#/rpc/org.js";
-import type {
-  McpClientFactory,
-  McpClientFactoryInput,
-  McpToolsClient,
-} from "#/services/connectors/index.js";
+import type { McpClientFactory } from "#/services/connectors/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const masterKey = Buffer.alloc(32, 42).toString("base64");
 
-integration("connector installations and MCP sync", () => {
+integration("connector connections and installations", () => {
   const db = createPrismaClient(databaseUrl);
   const env = parseEnv({
     NODE_ENV: "test",
@@ -38,6 +28,10 @@ integration("connector installations and MCP sync", () => {
     TREMA_CREDENTIAL_MASTER_KEY: masterKey,
   });
   const auth = createAuth({ db, env });
+  const emptyMcpFactory: McpClientFactory = async () => ({
+    listTools: async () => ({ tools: [] }),
+    close: async () => {},
+  });
 
   beforeEach(async () => {
     await db.$executeRaw`TRUNCATE TABLE "Org", "user", "verification", "BootstrapToken" CASCADE`;
@@ -59,27 +53,26 @@ integration("connector installations and MCP sync", () => {
     return { user, context: { db, auth, env, headers: new Headers({ cookie }) } };
   }
 
-  async function createOrg() {
-    const owner = await signUp("Connector Owner");
-    const membership = await call(
-      orgRouter.create,
-      { name: "Connector Installation Org" },
-      { context: owner.context },
-    );
+  async function createOrg(name = "Connector Org") {
+    const owner = await signUp(`${name} Owner`);
+    const membership = await call(orgRouter.create, { name }, { context: owner.context });
     const orgScope = await db.scope.findFirstOrThrow({
       where: { orgId: membership.org.id, kind: "org" },
     });
-    return { ...owner, ...membership, orgScope };
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId: membership.org.id, kind: "agent" },
+    });
+    return { ...owner, ...membership, orgScope, agent };
   }
 
-  async function addMember(orgId: string, scopeId: string, role: Role, name = "Connector Member") {
-    const member = await signUp(name);
+  async function addMember(orgId: string, scopeId: string, role: Role) {
+    const member = await signUp("Connector Member");
     const principal = await db.principal.create({
       data: {
         orgId,
         kind: "human",
         authId: member.user.id,
-        displayName: name,
+        displayName: "Connector Member",
         email: member.user.email,
       },
     });
@@ -91,43 +84,43 @@ integration("connector installations and MCP sync", () => {
     return { ...member, principal };
   }
 
-  it("enforces installation authority and blocks generic connector writes", async () => {
-    const org = await createOrg();
-    const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Connector Admin");
-    const member = await addMember(org.org.id, org.orgScope.id, "member");
-    const personal = await db.scope.create({
+  async function connection(input: {
+    orgId: string;
+    principalId: string;
+    providerKey: string;
+    token?: string;
+    revokedAt?: Date;
+  }) {
+    return db.connectorConnection.create({
       data: {
-        orgId: org.org.id,
-        kind: "personal",
-        name: "Connector Member",
-        ownerId: member.principal.id,
+        orgId: input.orgId,
+        providerKey: input.providerKey,
+        principalId: input.principalId,
+        mode: input.providerKey === "notion" ? "mcp_oauth" : "oauth2_code",
+        config: {},
+        ciphertext: encryptEnvelope({ accessToken: input.token ?? "token" }, masterKey),
+        ...(input.revokedAt ? { revokedAt: input.revokedAt } : {}),
       },
     });
+  }
 
-    const restInstallation = await call(
-      connectorsRouter.installations.create,
-      { scopeId: org.orgScope.id, catalogKey: "github", enabledTools: ["get_issue"] },
-      { context: admin.context },
-    );
-    expect(restInstallation).toMatchObject({ status: "active", disclosure: "retrieved" });
+  it("keeps connector writes capability-guarded and catalog metadata secret-free", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member");
+    const agentConnection = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "github",
+    });
     await expect(
       call(
         connectorsRouter.installations.create,
-        { scopeId: personal.id, catalogKey: "notion", enabledTools: "all" },
-        { context: member.context },
-      ),
-    ).resolves.toMatchObject({ scopeId: personal.id, body: { catalogKey: "notion" } });
-    await expect(
-      call(
-        connectorsRouter.installations.create,
-        { scopeId: personal.id, catalogKey: "hubspot", enabledTools: [] },
-        { context: member.context },
-      ),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(
-      call(
-        connectorsRouter.installations.create,
-        { scopeId: org.orgScope.id, catalogKey: "github", enabledTools: [] },
+        {
+          scopeId: org.orgScope.id,
+          catalogKey: "github",
+          connectionId: agentConnection.id,
+          enabledTools: [],
+        },
         { context: member.context },
       ),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -138,7 +131,11 @@ integration("connector installations and MCP sync", () => {
           scopeId: org.orgScope.id,
           kind: "connector",
           title: "Bypass",
-          body: { catalogKey: "github", enabledTools: [] },
+          body: {
+            catalogKey: "github",
+            connectionId: agentConnection.id,
+            enabledTools: [],
+          },
         },
         { context: org.context },
       ),
@@ -146,366 +143,304 @@ integration("connector installations and MCP sync", () => {
       code: "BAD_REQUEST",
       message: expect.stringContaining("connector installation routes"),
     });
-    await expect(
-      call(
-        connectorsRouter.installations.sync,
-        { installationItemId: restInstallation.id },
-        { context: admin.context },
-      ),
-    ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-      message: expect.stringContaining("uses REST"),
-    });
 
-    const safeCatalog = await call(connectorsRouter.catalog.list, undefined, {
+    const catalog = await call(connectorsRouter.catalog.list, undefined, {
       context: member.context,
     });
-    expect(JSON.stringify(safeCatalog)).not.toMatch(/authorizationUrl|tokenUrl|serverUrl/);
-    // Linear ships as an mcp_oauth provider: no static credential fields and no
-    // curated toolManifest (tools come from its MCP server at sync time).
-    const linearCatalogEntry = safeCatalog.find(({ key }) => key === "linear");
-    expect(linearCatalogEntry).toMatchObject({
-      description: expect.any(String),
-      logoUrl: "/connector-logos/linear.svg",
-      authMode: "mcp_oauth",
+    expect(JSON.stringify(catalog)).not.toMatch(
+      /authorizationUrl|tokenUrl|serverUrl|clientSecret|ciphertext/,
+    );
+    expect(catalog.find(({ key }) => key === "notion")).toMatchObject({
+      memberConnectable: true,
+      memberEnabled: false,
       transport: { type: "mcp" },
-      configFields: {},
-      credentialFields: {},
     });
-    expect(linearCatalogEntry).not.toHaveProperty("toolManifest");
+    await expect(call(connectorsRouter.meta, undefined, { context: org.context })).resolves.toEqual(
+      {
+        callbackUrl: "https://auth.trema.example/connect/callback",
+      },
+    );
+  });
+
+  it("validates connection org, provider, revocation, and agent ownership on create and update", async () => {
+    const org = await createOrg();
+    const other = await createOrg("Other Org");
+    const human = await addMember(org.org.id, org.orgScope.id, "admin");
+    const agentGithub = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "github",
+    });
+    const humanGithub = await connection({
+      orgId: org.org.id,
+      principalId: human.principal.id,
+      providerKey: "github",
+    });
+    const agentStripe = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "stripe",
+    });
+    const revokedGithub = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "github",
+      revokedAt: new Date(),
+    });
+    const otherGithub = await connection({
+      orgId: other.org.id,
+      principalId: other.agent.id,
+      providerKey: "github",
+    });
+
+    const installation = await call(
+      connectorsRouter.installations.create,
+      {
+        scopeId: org.orgScope.id,
+        catalogKey: "github",
+        connectionId: agentGithub.id,
+      },
+      { context: org.context },
+    );
+    for (const invalidConnectionId of [
+      humanGithub.id,
+      agentStripe.id,
+      revokedGithub.id,
+      otherGithub.id,
+    ]) {
+      await expect(
+        call(
+          connectorsRouter.installations.create,
+          {
+            scopeId: org.orgScope.id,
+            catalogKey: "github",
+            connectionId: invalidConnectionId,
+          },
+          { context: org.context },
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      await expect(
+        call(
+          connectorsRouter.installations.update,
+          {
+            installationItemId: installation.id,
+            connectionId: invalidConnectionId,
+          },
+          { context: org.context },
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    const secondGithub = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "github",
+    });
     await expect(
-      call(connectorsRouter.meta, undefined, { context: admin.context }),
+      call(
+        connectorsRouter.installations.update,
+        { installationItemId: installation.id, connectionId: secondGithub.id },
+        { context: org.context },
+      ),
     ).resolves.toMatchObject({
-      callbackUrl: "https://auth.trema.example/connect/callback",
-      principals: expect.arrayContaining([
-        {
-          id: admin.principal.id,
-          displayName: admin.principal.displayName,
-          kind: "human",
-        },
-        expect.objectContaining({ kind: "agent" }),
-      ]),
+      body: { catalogKey: "github", connectionId: secondGithub.id },
     });
   });
 
-  it("lists safe credential summaries and archives an installation atomically", async () => {
+  it("requires both the catalog ceiling and memberEnabled for personal installations", async () => {
     const org = await createOrg();
-    const agent = await db.principal.findFirstOrThrow({
-      where: { orgId: org.org.id, kind: "agent" },
+    const member = await addMember(org.org.id, org.orgScope.id, "member");
+    const personal = await db.scope.create({
+      data: {
+        orgId: org.org.id,
+        kind: "personal",
+        name: "Connector Member",
+        ownerId: member.principal.id,
+      },
+    });
+    const memberNotion = await connection({
+      orgId: org.org.id,
+      principalId: member.principal.id,
+      providerKey: "notion",
+    });
+    const memberHubspot = await connection({
+      orgId: org.org.id,
+      principalId: member.principal.id,
+      providerKey: "hubspot",
+    });
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "notion",
+          connectionId: memberNotion.id,
+        },
+        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "notion", memberEnabled: true },
+      { context: org.context },
+    );
+    await expect(
+      call(
+        connectorsRouter.providers.updateSettings,
+        { providerKey: "hubspot", memberEnabled: true },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "hubspot",
+          connectionId: memberHubspot.id,
+        },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "notion",
+          connectionId: memberNotion.id,
+        },
+        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
+      ),
+    ).resolves.toMatchObject({
+      scopeId: personal.id,
+      body: { connectionId: memberNotion.id },
+    });
+    const agentNotion = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "notion",
+          connectionId: agentNotion.id,
+        },
+        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("archives only the binding and lists safe connection-to-scope metadata", async () => {
+    const org = await createOrg();
+    const connected = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "github",
+      token: "must-not-leak",
     });
     const installation = await call(
       connectorsRouter.installations.create,
       {
         scopeId: org.orgScope.id,
-        catalogKey: "linear",
-        enabledTools: "all",
+        catalogKey: "github",
+        connectionId: connected.id,
       },
       { context: org.context },
     );
-    const credential = await db.connectorCredential.create({
-      data: {
-        orgId: org.org.id,
-        installationItemId: installation.id,
-        principalId: agent.id,
-        mode: "api_key",
-        ciphertext: encryptEnvelope({ apiKey: "must-not-leak" }, masterKey),
-      },
-    });
-
-    const listed = await call(connectorsRouter.installations.list, {}, { context: org.context });
+    const listed = await call(
+      connectorsRouter.connections.list,
+      { providerKey: "github" },
+      { context: org.context },
+    );
     expect(listed).toEqual([
       expect.objectContaining({
-        id: installation.id,
-        scopeId: org.orgScope.id,
-        catalogKey: "linear",
-        enabledTools: "all",
-        config: {},
-        status: "active",
-        credentials: [
-          expect.objectContaining({
-            id: credential.id,
-            principalId: agent.id,
-            principalName: agent.displayName,
-            mode: "api_key",
-            isRevoked: false,
-            isExpired: false,
-            isValid: true,
-          }),
-        ],
+        id: connected.id,
+        providerKey: "github",
+        isValid: true,
+        installations: [{ id: installation.id, scopeId: org.orgScope.id }],
       }),
     ]);
-    expect(JSON.stringify(listed)).not.toMatch(/ciphertext|must-not-leak|refresh/);
+    expect(JSON.stringify(listed)).not.toMatch(/ciphertext|must-not-leak|config/);
 
-    const archived = await call(
+    await call(
       connectorsRouter.installations.archive,
       { installationItemId: installation.id },
       { context: org.context },
     );
-    expect(archived).toMatchObject({
-      installation: {
-        id: installation.id,
-        status: "archived",
-        version: installation.version + 1,
-      },
-      revokedCredentials: 1,
-    });
     await expect(
-      db.connectorCredential.findUniqueOrThrow({ where: { id: credential.id } }),
-    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+      db.connectorConnection.findUniqueOrThrow({ where: { id: connected.id } }),
+    ).resolves.toMatchObject({ revokedAt: null });
     await expect(
-      db.itemVersion.findUnique({
-        where: {
-          itemId_version: {
-            itemId: installation.id,
-            version: installation.version,
-          },
-        },
-      }),
-    ).resolves.toMatchObject({ itemId: installation.id });
-    await expect(
-      db.auditLog.findFirst({
-        where: {
-          orgId: org.org.id,
-          action: "connector.installation.archive",
-          subject: installation.id,
-        },
-      }),
-    ).resolves.toMatchObject({
-      actorPrincipalId: org.principal.id,
-      payload: {
-        revokedCredentials: 1,
-        version: installation.version + 1,
-      },
-    });
-
-    await expect(
-      call(connectorsRouter.installations.list, {}, { context: org.context }),
-    ).resolves.toEqual([]);
-    await expect(
-      call(
-        connectorsRouter.installations.list,
-        { includeArchived: true },
-        { context: org.context },
-      ),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        id: installation.id,
-        status: "archived",
-        credentials: [expect.objectContaining({ isRevoked: true, isValid: false })],
-      }),
-    ]);
+      call(connectorsRouter.connections.list, { providerKey: "github" }, { context: org.context }),
+    ).resolves.toEqual([expect.objectContaining({ id: connected.id, installations: [] })]);
   });
 
-  it("syncs through a real MCP pair, applies drift, and selects credentials", async () => {
+  it("syncs from exactly the bound connection and preserves no-fallback semantics", async () => {
     const org = await createOrg();
-    const agent = await db.principal.findFirstOrThrow({
-      where: { orgId: org.org.id, kind: "agent" },
+    const bound = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+      token: "bound-token",
     });
+    await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+      token: "broader-token",
+    });
+    const calls: Array<string | undefined> = [];
+    const factory: McpClientFactory = async (input) => {
+      calls.push(input.authorization);
+      return {
+        listTools: async () => ({
+          tools: [
+            {
+              name: "read_page",
+              description: "Read a page",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+        close: async () => {},
+      };
+    };
     const installation = await call(
       connectorsRouter.installations.create,
       {
         scopeId: org.orgScope.id,
         catalogKey: "notion",
-        enabledTools: "all",
-        sensitivityOverrides: { remove_me: "read" },
+        connectionId: bound.id,
       },
-      { context: org.context },
+      { context: { ...org.context, mcpClientFactory: factory } },
     );
-    await db.connectorCredential.create({
-      data: {
-        orgId: org.org.id,
-        installationItemId: installation.id,
-        principalId: agent.id,
-        mode: "mcp_oauth",
-        ciphertext: encryptEnvelope({ accessToken: "agent-sync-token" }, masterKey),
-      },
+    expect(calls).toEqual(["Bearer bound-token"]);
+    const listed = await call(connectorsRouter.installations.list, {}, { context: org.context });
+    expect(listed[0]).toMatchObject({
+      id: installation.id,
+      connectionId: bound.id,
+      syncedTools: [{ name: "read_page", sensitivity: "read" }],
     });
 
-    let tools = [
-      {
-        name: "read_page",
-        description: "Read a page",
-        annotations: { readOnlyHint: true },
-      },
-      {
-        name: "remove_me",
-        description: "Update a page",
-        annotations: { destructiveHint: false },
-      },
-      { name: "unknown_risk", description: "Do something" },
-    ];
-    const factoryInputs: McpClientFactoryInput[] = [];
-    const mcpClientFactory: McpClientFactory = async (input) => {
-      factoryInputs.push(input);
-      const server = new McpServer({ name: "sync-test", version: "1.0.0" });
-      for (const tool of tools) {
-        server.registerTool(
-          tool.name,
-          {
-            description: tool.description,
-            ...(tool.annotations ? { annotations: tool.annotations } : {}),
-          },
-          async () => ({ content: [{ type: "text", text: "ok" }] }),
-        );
-      }
-      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-      await server.connect(serverTransport);
-      const client = new Client({ name: "sync-test-client", version: "1.0.0" });
-      await client.connect(clientTransport);
-      return {
-        listTools: async (params) => {
-          const page = await client.listTools(params);
-          return {
-            tools: page.tools,
-            ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
-          };
-        },
-        close: async () => {
-          await client.close();
-          await server.close();
-        },
-      } satisfies McpToolsClient;
-    };
-    const syncContext = { ...org.context, mcpClientFactory };
-
-    const first = await call(
-      connectorsRouter.installations.sync,
-      { installationItemId: installation.id },
-      { context: syncContext },
-    );
-    expect(first.report).toEqual({
-      added: ["read_page", "remove_me", "unknown_risk"],
-      removed: [],
-      changed: [],
-    });
-    expect(first.installation.body).toMatchObject({
-      syncedTools: [
-        { name: "read_page", sensitivity: "read" },
-        { name: "remove_me", sensitivity: "write" },
-        { name: "unknown_risk", sensitivity: "destructive" },
-      ],
-      sensitivityOverrides: { remove_me: "read" },
-    });
-    expect(factoryInputs[0]).toMatchObject({ authorization: "Bearer agent-sync-token" });
-
-    await call(
-      connectorsRouter.installations.update,
-      { installationItemId: installation.id, enabledTools: ["read_page", "remove_me"] },
-      { context: org.context },
-    );
-    tools = [
-      {
-        name: "read_page",
-        description: "Read a page with details",
-        annotations: { destructiveHint: false },
-      },
-      { name: "new_tool", description: "A new tool", annotations: { readOnlyHint: true } },
-    ];
-    const second = await call(
-      connectorsRouter.installations.sync,
-      { installationItemId: installation.id },
-      { context: syncContext },
-    );
-    expect(second.report).toEqual({
-      added: ["new_tool"],
-      removed: ["remove_me", "unknown_risk"],
-      changed: ["read_page"],
-    });
-    expect(second.installation.body).toMatchObject({
-      enabledTools: ["read_page"],
-      sensitivityOverrides: { remove_me: "read" },
-      syncedTools: [{ name: "read_page" }, { name: "new_tool" }],
+    await db.connectorConnection.update({
+      where: { id: bound.id },
+      data: { revokedAt: new Date() },
     });
     await expect(
-      db.auditLog.findFirst({
-        where: {
-          orgId: org.org.id,
-          action: "connector.installation.sync",
-          subject: installation.id,
-        },
-        orderBy: { createdAt: "desc" },
-      }),
-    ).resolves.toMatchObject({
-      actorPrincipalId: org.principal.id,
-      payload: second.report,
+      call(
+        connectorsRouter.installations.sync,
+        { installationItemId: installation.id },
+        { context: { ...org.context, mcpClientFactory: factory } },
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("unavailable"),
     });
-
-    const unauthenticated = await call(
-      connectorsRouter.installations.create,
-      { scopeId: org.orgScope.id, catalogKey: "notion", enabledTools: [] },
-      { context: org.context },
-    );
-    await call(
-      connectorsRouter.installations.sync,
-      { installationItemId: unauthenticated.id },
-      { context: syncContext },
-    );
-    expect(factoryInputs.at(-1)?.authorization).toBeUndefined();
-  });
-
-  it("sends stored credentials through streamable HTTP and otherwise omits authorization", async () => {
-    const org = await createOrg();
-    const agent = await db.principal.findFirstOrThrow({
-      where: { orgId: org.org.id, kind: "agent" },
-    });
-
-    async function httpHarness() {
-      const receivedAuthorization: Array<string | null> = [];
-      // A stateless streamable-HTTP transport serves exactly one request, so
-      // each fetch stands up a fresh server + transport pair.
-      const fetch: typeof globalThis.fetch = async (input, init) => {
-        const request = new Request(input, init);
-        receivedAuthorization.push(request.headers.get("authorization"));
-        const server = new McpServer({ name: "http-sync-test", version: "1.0.0" });
-        server.registerTool(
-          "list_pages",
-          { description: "List pages", annotations: { readOnlyHint: true } },
-          async () => ({ content: [{ type: "text", text: "ok" }] }),
-        );
-        const transport = new WebStandardStreamableHTTPServerTransport({
-          enableJsonResponse: true,
-        });
-        await server.connect(transport as Parameters<McpServer["connect"]>[0]);
-        return transport.handleRequest(request);
-      };
-      return { fetch, receivedAuthorization };
-    }
-
-    const authenticated = await call(
-      connectorsRouter.installations.create,
-      { scopeId: org.orgScope.id, catalogKey: "notion", enabledTools: "all" },
-      { context: org.context },
-    );
-    await db.connectorCredential.create({
-      data: {
-        orgId: org.org.id,
-        installationItemId: authenticated.id,
-        principalId: agent.id,
-        mode: "mcp_oauth",
-        ciphertext: encryptEnvelope({ accessToken: "http-sync-token" }, masterKey),
-      },
-    });
-    const authenticatedHarness = await httpHarness();
-    await call(
-      connectorsRouter.installations.sync,
-      { installationItemId: authenticated.id },
-      {
-        context: { ...org.context, connectorFetch: authenticatedHarness.fetch },
-      },
-    );
-    expect(authenticatedHarness.receivedAuthorization).toContain("Bearer http-sync-token");
-
-    const publicInstallation = await call(
-      connectorsRouter.installations.create,
-      { scopeId: org.orgScope.id, catalogKey: "notion", enabledTools: "all" },
-      { context: org.context },
-    );
-    const publicHarness = await httpHarness();
-    await call(
-      connectorsRouter.installations.sync,
-      { installationItemId: publicInstallation.id },
-      { context: { ...org.context, connectorFetch: publicHarness.fetch } },
-    );
-    expect(publicHarness.receivedAuthorization.every((value) => value === null)).toBe(true);
+    expect(calls).toEqual(["Bearer bound-token"]);
   });
 });

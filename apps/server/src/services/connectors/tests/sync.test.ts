@@ -7,6 +7,8 @@ import {
   sensitivityFromMcpAnnotations,
 } from "#/services/connectors/sync.js";
 
+const connectionId = "00000000-0000-4000-8000-000000000001";
+
 describe("MCP sensitivity classification", () => {
   it.each([
     [{ readOnlyHint: true, destructiveHint: true }, "read"],
@@ -40,7 +42,7 @@ const freshTools = [
 describe("MCP tool drift merge", () => {
   it("keeps all-tools intent so new tools become enabled", () => {
     const merged = mergeSyncedTools(
-      { catalogKey: "notion", enabledTools: "all", syncedTools: initialTools },
+      { catalogKey: "notion", connectionId, enabledTools: "all", syncedTools: initialTools },
       freshTools,
     );
     expect(merged.body.enabledTools).toBe("all");
@@ -56,6 +58,7 @@ describe("MCP tool drift merge", () => {
     const merged = mergeSyncedTools(
       {
         catalogKey: "notion",
+        connectionId,
         enabledTools: ["kept", "removed"],
         syncedTools: initialTools,
       },
@@ -68,6 +71,7 @@ describe("MCP tool drift merge", () => {
   it("preserves overrides for removed tools and re-applies them if the tool returns", () => {
     const original: ConnectorInstallationBody = {
       catalogKey: "notion",
+      connectionId,
       enabledTools: "all",
       syncedTools: initialTools,
       sensitivityOverrides: { removed: "read" },
