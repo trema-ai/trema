@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Cable, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { CredentialStatusBadge } from "#/components/trema/credential-status-badge.tsx";
 import { EmptyState } from "#/components/trema/empty-state.tsx";
 import { PageHeader } from "#/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
@@ -34,15 +33,6 @@ type ProviderRow = {
   installations: ConnectorInstallation[];
   needsSetup: boolean;
 };
-
-function status(row: ProviderRow) {
-  if (row.needsSetup) return { status: "missing" as const, label: "Needs setup" };
-  if (row.connections.length === 0) return { status: "missing" as const, label: "Not connected" };
-  if (row.connections.some((connection) => connection.isValid)) {
-    return { status: "connected" as const, label: "Connected" };
-  }
-  return { status: "expired" as const, label: "Reconnect needed" };
-}
 
 export function SettingsConnectorsPage() {
   const navigate = useNavigate();
@@ -124,10 +114,19 @@ export function SettingsConnectorsPage() {
           description="No providers are available in the connector catalog."
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((row) => (
-            <ProviderCard key={row.provider.key} row={row} onOpen={() => open(row)} />
-          ))}
+        <div className="space-y-8">
+          <CatalogSection
+            title="Ready to connect"
+            description="Connect these without further configuration."
+            rows={rows.filter((row) => !row.needsSetup)}
+            onOpen={open}
+          />
+          <CatalogSection
+            title="Needs setup"
+            description="Add the organization's OAuth app before connecting."
+            rows={rows.filter((row) => row.needsSetup)}
+            onOpen={open}
+          />
         </div>
       )}
       {registrationProvider ? (
@@ -166,9 +165,33 @@ export function SettingsConnectorsPage() {
   );
 }
 
+function CatalogSection({
+  title,
+  description,
+  rows,
+  onOpen,
+}: {
+  title: string;
+  description: string;
+  rows: ProviderRow[];
+  onOpen: (row: ProviderRow) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <section>
+      <h2 className="font-medium">{title}</h2>
+      <p className="mt-0.5 text-meta text-muted-foreground">{description}</p>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {rows.map((row) => (
+          <ProviderCard key={row.provider.key} row={row} onOpen={() => onOpen(row)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProviderCard({ row, onOpen }: { row: ProviderRow; onOpen: () => void }) {
   const { provider } = row;
-  const badge = status(row);
   const counts = [
     row.connections.length > 0
       ? `${row.connections.length} connection${row.connections.length === 1 ? "" : "s"}`
@@ -192,8 +215,8 @@ function ProviderCard({ row, onOpen }: { row: ProviderRow; onOpen: () => void })
             </p>
           </div>
         </div>
-        <CardAction>
-          {row.needsSetup ? (
+        {row.needsSetup ? (
+          <CardAction>
             <Button
               size="xs"
               variant="outline"
@@ -205,10 +228,8 @@ function ProviderCard({ row, onOpen }: { row: ProviderRow; onOpen: () => void })
               <Settings2 />
               Setup
             </Button>
-          ) : (
-            <CredentialStatusBadge {...badge} />
-          )}
-        </CardAction>
+          </CardAction>
+        ) : null}
       </CardHeader>
       <CardContent className="px-4">
         <CardDescription>{provider.description ?? "No description available."}</CardDescription>
