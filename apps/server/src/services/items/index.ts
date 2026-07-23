@@ -68,8 +68,34 @@ export class ItemValidationError extends Error {
   }
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
+
 function laterPhaseError(kind: ItemKind): ItemValidationError {
   return new ItemValidationError(`Item kind '${kind}' arrives in a later phase`);
+}
+
+function activeInstructionError(): ItemValidationError {
+  return new ItemValidationError(
+    "Scope already has an active instruction; update or archive it instead",
+  );
+}
+
+// A scope holds at most one active instruction: it is the scope's
+// system-prompt addendum, edited in place rather than accumulated. The
+// partial unique index Item_one_active_instruction_per_scope backstops
+// this check against concurrent writers.
+async function assertNoActiveInstruction(
+  transaction: Prisma.TransactionClient,
+  orgId: string,
+  scopeId: string,
+): Promise<void> {
+  const existing = await transaction.item.findFirst({
+    where: { orgId, scopeId, kind: "instruction", status: "active" },
+    select: { id: true },
+  });
+  if (existing) throw activeInstructionError();
 }
 
 function connectorRouteError(): ItemValidationError {
@@ -167,22 +193,32 @@ export async function createItem(db: Database, input: CreateItemInput) {
   const disclosure = input.disclosure ?? disclosureForItem(input.kind, body);
 
   return db.$transaction(async (transaction) => {
-    const item = await transaction.item.create({
-      data: {
-        orgId: input.orgId,
-        scopeId: input.scopeId,
-        kind: input.kind,
-        title,
-        body: jsonValue(body),
-        // Human writers always create active items. Agent requests are
-        // deterministically coerced to the write-policy table.
-        status,
-        disclosure,
-        createdById: writer.id,
-        updatedById: writer.id,
-        ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId } : {}),
-      },
-    });
+    if (input.kind === "instruction" && status === "active") {
+      await assertNoActiveInstruction(transaction, input.orgId, input.scopeId);
+    }
+    const item = await transaction.item
+      .create({
+        data: {
+          orgId: input.orgId,
+          scopeId: input.scopeId,
+          kind: input.kind,
+          title,
+          body: jsonValue(body),
+          // Human writers always create active items. Agent requests are
+          // deterministically coerced to the write-policy table.
+          status,
+          disclosure,
+          createdById: writer.id,
+          updatedById: writer.id,
+          ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId } : {}),
+        },
+      })
+      .catch((error: unknown) => {
+        if (input.kind === "instruction" && isUniqueViolation(error)) {
+          throw activeInstructionError();
+        }
+        throw error;
+      });
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
@@ -339,14 +375,24 @@ export async function transitionItem(db: Database, input: TransitionItemInput) {
     if (!status) {
       throw new ItemValidationError(`Cannot ${input.action} an item with status '${item.status}'`);
     }
+    if (item.kind === "instruction" && status === "active") {
+      await assertNoActiveInstruction(transaction, input.orgId, item.scopeId);
+    }
 
-    const updated = await transaction.item.update({
-      where: { orgId_id: { orgId: input.orgId, id: item.id } },
-      data: {
-        status,
-        ...(input.action === "activate" ? { confirmedById: input.actorPrincipalId } : {}),
-      },
-    });
+    const updated = await transaction.item
+      .update({
+        where: { orgId_id: { orgId: input.orgId, id: item.id } },
+        data: {
+          status,
+          ...(input.action === "activate" ? { confirmedById: input.actorPrincipalId } : {}),
+        },
+      })
+      .catch((error: unknown) => {
+        if (item.kind === "instruction" && isUniqueViolation(error)) {
+          throw activeInstructionError();
+        }
+        throw error;
+      });
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
