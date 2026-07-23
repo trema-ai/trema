@@ -193,7 +193,7 @@ function ScopeTree({
   onSelect: (scope: Scope) => void;
 }) {
   return (
-    <aside className="self-start overflow-hidden rounded-lg border bg-card">
+    <aside className="self-start overflow-hidden rounded-md border bg-card">
       <div className="p-2">
         {loading ? (
           <div className="space-y-2 p-2">

@@ -7,7 +7,7 @@ import { Toaster } from "#/components/ui/sonner.tsx";
 import { authClient, orpc } from "#/lib/api.ts";
 import { AutomationsPage } from "#/pages/automations.tsx";
 import { BootstrapPage } from "#/pages/bootstrap.tsx";
-import { ContextPage } from "#/pages/context.tsx";
+import { CustomizePage } from "#/pages/customize/index.tsx";
 import { Gallery } from "#/pages/gallery.tsx";
 import { AuthenticatedAppShell, AuthenticatedProvider, HomePage, Loading } from "#/pages/home.tsx";
 import { JoinPage } from "#/pages/join.tsx";
@@ -71,7 +71,8 @@ function AppRoutes() {
       <Route path="/join" element={<JoinPage />} />
       <Route path="/gallery" element={shell(<Gallery />)} />
       <Route path="/automations" element={shell(<AutomationsPage />)} />
-      <Route path="/context" element={shell(<ContextPage />)} />
+      <Route path="/customize" element={shell(<CustomizePage />)} />
+      <Route path="/context" element={<Navigate to="/customize" replace />} />
       <Route path="/scopes" element={<Navigate to="/settings/scopes" replace />} />
       <Route path="/settings" element={settings(<Navigate to="/settings/profile" replace />)} />
       <Route path="/settings/profile" element={settings(<SettingsProfilePage />)} />

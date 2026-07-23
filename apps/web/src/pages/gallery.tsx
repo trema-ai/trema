@@ -115,7 +115,7 @@ function Section({ title, bare = false, children }: SectionProps) {
   return (
     <section className="space-y-3">
       <h2 className="text-chrome font-medium text-muted-foreground">{title}</h2>
-      {bare ? children : <div className="rounded-lg border bg-card p-6">{children}</div>}
+      {bare ? children : <div className="rounded-md border bg-card p-6">{children}</div>}
     </section>
   );
 }
@@ -759,7 +759,7 @@ function TimelineSection() {
   return (
     <Section title="Run timeline" bare>
       <div className="space-y-6">
-        <div className="max-w-215 space-y-4 rounded-lg border bg-card p-6">
+        <div className="max-w-215 space-y-4 rounded-md border bg-card p-6">
           <SteeringNote author="Nelson" at={new Date(Date.now() - 4 * 3_600_000)}>
             Skip anything already triaged this week and keep titles short.
           </SteeringNote>
@@ -968,7 +968,7 @@ function AdminSection() {
         </div>
 
         <div className="space-y-1.5">
-          <div className="rounded-lg border bg-card">
+          <div className="rounded-md border bg-card">
             <EmptyState
               icon={Inbox}
               title="No connectors"

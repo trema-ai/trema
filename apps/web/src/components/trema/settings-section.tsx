@@ -11,7 +11,7 @@ function SettingsSection({ title, description, children }: SettingsSectionProps)
     <section data-slot="settings-section">
       <h3 className="text-chrome font-medium text-foreground">{title}</h3>
       {description ? <p className="mt-0.5 text-meta text-muted-foreground">{description}</p> : null}
-      <div className="mt-2 divide-y rounded-lg border bg-card">{children}</div>
+      <div className="mt-2 divide-y rounded-md border bg-card">{children}</div>
     </section>
   );
 }

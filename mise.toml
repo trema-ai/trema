@@ -58,6 +58,11 @@ description = "Apply pending migrations to the local database"
 depends = ["env:init", "db:up"]
 run = "pnpm --filter @trema/server exec prisma migrate deploy"
 
+[tasks.seed]
+description = "Seed the local database with development accounts"
+depends = ["db:migrate"]
+run = "pnpm --filter @trema/server exec tsx scripts/seed-dev.ts"
+
 [tasks."dev:server"]
 description = "Run the API server in watch mode"
 depends = ["db:migrate"]

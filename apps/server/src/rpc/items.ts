@@ -46,6 +46,10 @@ const itemSchema = z
       .string()
       .nullable()
       .describe("The human principal that activated a proposed item, when present."),
+    updatedById: z
+      .string()
+      .nullable()
+      .describe("The principal that wrote the current content, when known."),
     createdAt: z.string().describe("When the item was created. An ISO 8601 date-time."),
     updatedAt: z.string().describe("When the item was last updated. An ISO 8601 date-time."),
     lastUsedAt: z
@@ -68,6 +72,7 @@ function serializeItem(item: Item) {
     createdById: item.createdById,
     sourceSessionId: item.sourceSessionId,
     confirmedById: item.confirmedById,
+    updatedById: item.updatedById,
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),
     lastUsedAt: item.lastUsedAt?.toISOString() ?? null,
@@ -75,20 +80,35 @@ function serializeItem(item: Item) {
   };
 }
 
+const versionAuthorSchema = z
+  .object({
+    id: z.string().describe("The authoring principal's ID."),
+    displayName: z.string().describe("The authoring principal's display name."),
+    kind: z.enum(["human", "agent"]).describe("Whether a human or the agent wrote this version."),
+  })
+  .nullable()
+  .describe("The principal that wrote this version's content, when known.");
+
 const itemVersionSchema = z
   .object({
     version: z.number().int().positive().describe("The prior version number."),
     title: z.string().describe("The item's title at this prior version."),
     body: itemBodySchema.describe("The item's kind-specific body at this prior version."),
+    author: versionAuthorSchema,
     createdAt: z.string().describe("When this prior version was retained. An ISO 8601 date-time."),
   })
   .describe("A retained prior version of an item.");
 
-function serializeItemVersion(version: ItemVersion) {
+type ItemVersionWithAuthor = ItemVersion & {
+  author: { id: string; displayName: string; kind: "human" | "agent" } | null;
+};
+
+function serializeItemVersion(version: ItemVersionWithAuthor) {
   return {
     version: version.version,
     title: version.title,
     body: version.body as z.infer<typeof itemBodySchema>,
+    author: version.author,
     createdAt: version.createdAt.toISOString(),
   };
 }
