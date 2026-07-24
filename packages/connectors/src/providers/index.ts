@@ -9,6 +9,7 @@ import { dropboxProvider } from "#/providers/dropbox.js";
 import { figmaProvider } from "#/providers/figma.js";
 import { gammaProvider } from "#/providers/gamma.js";
 import { githubProvider } from "#/providers/github.js";
+import { googleWorkspaceProvider } from "#/providers/google_workspace.js";
 import { granolaProvider } from "#/providers/granola.js";
 import { hubspotProvider } from "#/providers/hubspot.js";
 import { intercomProvider } from "#/providers/intercom.js";
@@ -41,6 +42,7 @@ export {
   figmaProvider,
   gammaProvider,
   githubProvider,
+  googleWorkspaceProvider,
   granolaProvider,
   hubspotProvider,
   intercomProvider,
@@ -73,6 +75,7 @@ export const providerDefinitions = [
   figmaProvider,
   gammaProvider,
   githubProvider,
+  googleWorkspaceProvider,
   granolaProvider,
   hubspotProvider,
   intercomProvider,

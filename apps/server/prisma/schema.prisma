@@ -385,6 +385,7 @@ model ConnectorConnection {
   revokedAt          DateTime?
   lastRefreshSuccess DateTime?
   lastRefreshFailure DateTime?
+  refreshFailureStartedAt DateTime?
   refreshAttempts    Int                   @default(0)
   refreshExhausted   Boolean               @default(false)
   createdAt          DateTime              @default(now())

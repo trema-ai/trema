@@ -4,6 +4,7 @@ import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
 
 const defaultCatalog = loadProviderCatalog();
+type ClientRegistrationDatabase = Pick<Database, "clientRegistration">;
 
 export interface PlatformApp {
   clientId: string;
@@ -192,7 +193,7 @@ export interface ResolvedClientRegistration {
 }
 
 export async function resolveClientRegistration(
-  db: Database,
+  db: ClientRegistrationDatabase,
   orgId: string,
   providerKey: string,
   platformApps: PlatformAppDirectory = emptyPlatformAppDirectory,
@@ -231,7 +232,7 @@ export async function resolveClientRegistration(
 }
 
 export async function resolveStoredClientRegistration(
-  db: Database,
+  db: ClientRegistrationDatabase,
   orgId: string,
   registrationId: string,
   platformApps: PlatformAppDirectory = emptyPlatformAppDirectory,

@@ -58,6 +58,17 @@ export {
   updateConnectorConnectionLabel,
 } from "#/services/connectors/connect.js";
 export {
+  ConnectorApprovalRequiredError,
+  ConnectorSsrfRejectedError,
+  ConnectorToolNotAvailableError,
+  ConnectorToolValidationError,
+  ConnectorTransportError,
+  type ExecuteConnectorToolInput,
+  executeConnectorTool,
+  type McpConnectorToolResult,
+  type RestConnectorToolResult,
+} from "#/services/connectors/execute.js";
+export {
   type ArchiveConnectorInstallationInput,
   archiveConnectorInstallation,
   type ConnectorInstallationBody,
@@ -89,9 +100,22 @@ export {
   McpOAuthDiscoveryError,
   type ResolvedMcpClient,
   type ResolveMcpClientRegistrationInput,
+  resolveExistingMcpClientRegistration,
   resolveMcpClientRegistration,
   resolveStoredMcpClientRegistration,
 } from "#/services/connectors/mcp-oauth.js";
+export {
+  CONSERVATIVE_TOKEN_LIFETIME_SECONDS,
+  type ConnectionCredentialPayload,
+  ConnectorReconnectRequiredError,
+  connectionNeedsRefresh,
+  DEFAULT_TOKEN_EXPIRATION_BUFFER_SECONDS,
+  REFRESH_FAILURE_BUDGET_MS,
+  REFRESH_FAILURE_COOLDOWN_MS,
+  type ResolveConnectionCredentialInput,
+  type ResolvedConnectionCredential,
+  resolveConnectionCredential,
+} from "#/services/connectors/refresh.js";
 export {
   ClientRegistrationConflictError,
   ClientRegistrationNotFoundError,

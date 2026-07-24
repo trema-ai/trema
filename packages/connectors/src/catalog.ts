@@ -45,6 +45,9 @@ function providerTemplates(provider: ProviderDef): NamedTemplate[] {
 
   for (const [index, tool] of provider.toolManifest.entries()) {
     templates.push({ field: `toolManifest[${index}].path`, value: tool.path });
+    if (tool.baseUrl) {
+      templates.push({ field: `toolManifest[${index}].baseUrl`, value: tool.baseUrl });
+    }
   }
   return templates;
 }

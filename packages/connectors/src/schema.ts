@@ -126,6 +126,10 @@ export const toolDefinitionSchema = z
     description: z.string().trim().min(1),
     method: httpMethodSchema,
     path: z.string().trim().min(1),
+    // A tool may target a different API host than the provider's default REST
+    // transport. When present, the executor uses this URL instead of
+    // transport.baseUrl for this operation.
+    baseUrl: z.string().trim().min(1).optional(),
     paramsSchema: z.record(z.string(), z.unknown()),
     authInjection: z.record(z.string(), z.unknown()).optional(),
     sensitivity: z.enum(["read", "write", "destructive"]),
