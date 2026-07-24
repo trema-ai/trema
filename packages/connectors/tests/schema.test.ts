@@ -55,6 +55,20 @@ describe("providerDefSchema", () => {
 
     expect(providerDefSchema.safeParse(provider).success).toBe(false);
   });
+
+  it("accepts a non-empty account identity field declaration", () => {
+    const provider = githubInput();
+    provider.auth.accountIdentityFields = ["account_id"];
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(true);
+  });
+
+  it("rejects an empty account identity field declaration", () => {
+    const provider = githubInput();
+    provider.auth.accountIdentityFields = [];
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(false);
+  });
 });
 
 describe("provider catalog validation", () => {

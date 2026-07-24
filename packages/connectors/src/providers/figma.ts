@@ -47,6 +47,8 @@ export const figmaProvider = {
     // not support PKCE.
     tokenRequestAuthMethod: "basic",
     pkce: false,
+    // Figma returns the authorizing user's exact ID as a decimal string.
+    accountIdentityFields: ["user_id_string"],
   },
   configFields: {},
   credentialFields: {},

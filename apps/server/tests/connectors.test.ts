@@ -35,6 +35,18 @@ const oauthCatalog = loadProviderCatalog([
       pkce: true,
       tokenRequestAuthMethod: "body" as const,
       tokenResponseMetadata: ["account_name"],
+      accountIdentityFields: ["account_name"],
+    },
+  },
+]);
+const metadataOnlyOAuthCatalog = loadProviderCatalog([
+  {
+    ...githubProvider,
+    auth: {
+      ...githubProvider.auth,
+      pkce: true,
+      tokenRequestAuthMethod: "body" as const,
+      tokenResponseMetadata: ["account_name"],
     },
   },
 ]);
@@ -501,6 +513,8 @@ integration("connector connection flows", () => {
               token_type: "bearer",
               expires_in: 3600,
               scope: "default",
+              workspace_id: "notion-workspace",
+              user_id: "notion-user",
             }),
             { headers: { "Content-Type": "application/json" } },
           );
@@ -567,9 +581,29 @@ integration("connector connection flows", () => {
       providerKey: "notion",
       principalId: org.agent.id,
       mode: "mcp_oauth",
-      config: {},
+      config: {
+        workspace_id: "notion-workspace",
+        user_id: "notion-user",
+      },
       providerScopes: ["default"],
     });
+
+    const duplicateStarted = await startOAuthConnect(db, {
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      fetch: connectorFetch,
+    });
+    const duplicateState = new URL(duplicateStarted.authorizationUrl).searchParams.get("state");
+    expect(duplicateState).toBeTruthy();
+    const duplicateCallback = await app.request(
+      `https://auth.trema.example/connect/callback?state=${encodeURIComponent(duplicateState!)}&code=notion-authorization-code`,
+    );
+    expect(new URL(duplicateCallback.headers.get("location")!).searchParams.get("connected")).toBe(
+      connectionId,
+    );
 
     const reconnectStarted = await startOAuthConnect(db, {
       orgId: org.org.id,
@@ -725,6 +759,27 @@ integration("connector connection flows", () => {
     expect(
       new Set(connections.map((row) => (row.config as { account_name?: string }).account_name)),
     ).toEqual(new Set(["octo-org", "hooli"]));
+  });
+
+  it("keeps fresh connections distinct when a provider declares metadata but no identity", async () => {
+    const org = await createOrg();
+    const complete = (state: string, code: string) =>
+      completeOAuthCallback(db, {
+        state,
+        code,
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: metadataOnlyOAuthCatalog,
+        fetch: tokenFetch({ access_token: `token-${code}`, account_name: "shared-metadata" }),
+      });
+
+    const first = await complete(await start(org.org.id), "first");
+    const second = await complete(await start(org.org.id), "second");
+
+    expect(second.connection.id).not.toBe(first.connection.id);
+    await expect(
+      db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "github" } }),
+    ).resolves.toBe(2);
   });
 
   it("creates verified static connections for the agent and exposes metadata only", async () => {

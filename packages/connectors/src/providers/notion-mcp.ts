@@ -11,6 +11,9 @@ export const notionMcpProvider = {
   authMode: "mcp_oauth",
   auth: {
     defaultScopes: [],
+    // Both values are required: one user can authorize multiple workspaces,
+    // and one workspace can be authorized by multiple users.
+    accountIdentityFields: ["workspace_id", "user_id"],
   },
   configFields: {},
   credentialFields: {},

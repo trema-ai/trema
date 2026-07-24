@@ -11,6 +11,8 @@ export const asanaProvider = {
   authMode: "mcp_oauth",
   auth: {
     defaultScopes: [],
+    // Asana's token response nests the authorizing user's stable GID.
+    accountIdentityFields: ["data.gid"],
   },
   configFields: {},
   credentialFields: {},
