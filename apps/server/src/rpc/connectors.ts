@@ -9,6 +9,7 @@ import {
   ClientRegistrationConflictError,
   ClientRegistrationNotFoundError,
   ClientRegistrationValidationError,
+  ConnectorApprovalRequiredError,
   ConnectorCatalogDefectError,
   ConnectorConnectionNotFoundError,
   ConnectorInstallationError,
@@ -18,13 +19,18 @@ import {
   ConnectorProviderNotFoundError,
   ConnectorProviderSettingsError,
   ConnectorReconnectRequiredError,
+  ConnectorSsrfRejectedError,
   ConnectorSyncTransportError,
+  ConnectorToolNotAvailableError,
+  ConnectorToolValidationError,
+  ConnectorTransportError,
   CredentialVerificationError,
   connectorCallbackUrl,
   createClientRegistration,
   createConnectorInstallation,
   createStaticConnection,
   deleteClientRegistration,
+  executeConnectorTool,
   listClientRegistrations,
   listConnectorConnections,
   listConnectorInstallations,
@@ -173,9 +179,22 @@ function throwConnectorError(error: unknown): never {
     error instanceof StaticCredentialValidationError ||
     error instanceof UnsupportedConnectorAuthModeError ||
     error instanceof ConnectorCatalogDefectError ||
-    error instanceof ConnectorProviderSettingsError
+    error instanceof ConnectorProviderSettingsError ||
+    error instanceof ConnectorToolValidationError ||
+    error instanceof ConnectorSsrfRejectedError
   ) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
+  }
+  if (error instanceof ConnectorApprovalRequiredError) {
+    throw new ORPCError("PRECONDITION_FAILED", {
+      message: error.message,
+      data: {
+        code: error.code,
+        toolKey: error.toolKey,
+        sensitivity: error.sensitivity,
+        installationItemId: error.installationItemId,
+      },
+    });
   }
   if (error instanceof ConnectorMemberConnectabilityError) {
     throw new ORPCError("FORBIDDEN", { message: error.message });
@@ -187,6 +206,16 @@ function throwConnectorError(error: unknown): never {
     error instanceof ConnectorProviderNotFoundError
   ) {
     throw new ORPCError("NOT_FOUND", { message: error.message });
+  }
+  if (error instanceof ConnectorToolNotAvailableError) {
+    throw new ORPCError("NOT_FOUND", {
+      message: error.message,
+      data: {
+        code: error.code,
+        toolKey: error.toolKey,
+        ...(error.installationItemId ? { installationItemId: error.installationItemId } : {}),
+      },
+    });
   }
   if (error instanceof NoClientRegistrationError) {
     throw new ORPCError("PRECONDITION_FAILED", { message: error.message });
@@ -213,6 +242,16 @@ function throwConnectorError(error: unknown): never {
   }
   if (error instanceof ConnectorSyncTransportError) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
+  }
+  if (error instanceof ConnectorTransportError) {
+    throw new ORPCError("BAD_GATEWAY", {
+      message: error.message,
+      data: {
+        code: error.code,
+        ...(error.status === undefined ? {} : { status: error.status }),
+        ...(error.providerCode === undefined ? {} : { providerCode: error.providerCode }),
+      },
+    });
   }
   throw error;
 }
@@ -529,6 +568,53 @@ const syncInstallation = installationScoped
         report: result.report,
       };
     } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const executeTool = requireCapability("manage_connectors", {
+  scopeId: (input) => (input as { scopeIds?: string[] }).scopeIds?.[0],
+})
+  .route({
+    method: "POST",
+    path: "/connector-tools/execute",
+    summary: "Execute a connector tool",
+    description:
+      "Resolve the narrowest enabled connector installation and execute one curated REST or synced MCP tool.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      scopeIds: z.array(z.uuid()).min(1),
+      toolKey: z.string().trim().min(3),
+      args: z.record(z.string(), z.json()),
+    }),
+  )
+  .output(z.json())
+  .handler(async ({ context, input }) => {
+    try {
+      for (const scopeId of input.scopeIds.slice(1)) {
+        if (!(await authorize(context.principal, "manage_connectors", scopeId, context.db))) {
+          throw new ORPCError("FORBIDDEN", {
+            message: "Capability required: manage_connectors",
+          });
+        }
+      }
+      return (await executeConnectorTool(context.db, {
+        orgId: context.org.id,
+        scopeIds: input.scopeIds,
+        principalId: context.principal.id,
+        toolKey: input.toolKey,
+        args: input.args,
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+        ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+        ...(context.platformApps ? { platformApps: context.platformApps } : {}),
+      })) as z.infer<ReturnType<typeof z.json>>;
+    } catch (error) {
+      if (error instanceof ORPCError) throw error;
       throwConnectorError(error);
     }
   });
@@ -1006,6 +1092,7 @@ export const connectorsRouter = {
   meta,
   catalog: { list: catalog },
   providers: { updateSettings: updateProviderSettings },
+  tools: { execute: executeTool },
   installations: {
     create: createInstallation,
     list: listInstallations,

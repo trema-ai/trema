@@ -58,6 +58,17 @@ export {
   updateConnectorConnectionLabel,
 } from "#/services/connectors/connect.js";
 export {
+  ConnectorApprovalRequiredError,
+  ConnectorSsrfRejectedError,
+  ConnectorToolNotAvailableError,
+  ConnectorToolValidationError,
+  ConnectorTransportError,
+  type ExecuteConnectorToolInput,
+  executeConnectorTool,
+  type McpConnectorToolResult,
+  type RestConnectorToolResult,
+} from "#/services/connectors/execute.js";
+export {
   type ArchiveConnectorInstallationInput,
   archiveConnectorInstallation,
   type ConnectorInstallationBody,

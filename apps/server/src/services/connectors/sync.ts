@@ -81,8 +81,14 @@ export interface McpToolsClient {
     tools: McpListedTool[];
     nextCursor?: string | undefined;
   }>;
+  callTool?(params: {
+    name: string;
+    arguments?: Record<string, unknown>;
+  }): Promise<McpToolCallResult>;
   close(): Promise<void>;
 }
+
+export type McpToolCallResult = Awaited<ReturnType<Client["callTool"]>>;
 
 export interface McpClientFactoryInput {
   serverUrl: string;
@@ -124,6 +130,7 @@ export const createStreamableHttpMcpClient: McpClientFactory = async (input) => 
         ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
       };
     },
+    callTool: (params) => client.callTool(params),
     close: () => client.close(),
   };
 };
