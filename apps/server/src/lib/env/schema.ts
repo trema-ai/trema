@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { LOG_FORMATS, LOG_THRESHOLDS } from "#/lib/logger/index.js";
 import { DEFAULT_STANDING_BUDGET_TOKENS } from "#/services/sessions/standing.js";
 
 const postgresUrl = z
@@ -43,6 +44,8 @@ const environmentSchema = z
     HOST: z.string().trim().min(1).default("127.0.0.1"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
     TREMA_MODE: z.enum(["hosted", "dedicated"]).default("dedicated"),
+    TREMA_LOG_FORMAT: z.enum(LOG_FORMATS).default("logfmt"),
+    TREMA_LOG_LEVEL: z.enum(LOG_THRESHOLDS).default("info"),
     TREMA_AUTH_SECRET: z.string().trim().min(32),
     TREMA_AUTH_BASE_URL: url.default("http://127.0.0.1:3000"),
     TREMA_WEB_ORIGINS: webOrigins.default(["http://127.0.0.1:5173"]),

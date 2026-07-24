@@ -19,6 +19,29 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   main screen at `index.tsx`). Hyphens are for compound names
   (`registration-dialog.tsx`), never for encoding hierarchy.
 
+## Logging
+
+- Server code logs through the ambient logger: `import { log } from
+  "#/lib/logger/index.js"`, then `log.info("Member invited", { inviteId })`
+  — message first, details second. Never take a logger parameter and
+  never use `console` outside `src/cli.ts` (the CLI reports in plain
+  text; only `trema serve` emits log records).
+- `TREMA_LOG_FORMAT` picks `logfmt` or `json`; `TREMA_LOG_LEVEL` sets the
+  threshold. `serveTrema` calls `configureLogger(env)` before anything
+  else runs.
+- Correlation is automatic: the HTTP middleware binds `requestId`,
+  `method`, and `path`; the oRPC interceptor and middleware add
+  `procedure`, `userId`, `orgId`, and `principalId`. Log only the ids of
+  the record you touched — re-logging a bound field is duplication.
+- Levels: `error` for broken, `warn` for a denied or degraded outcome,
+  `info` for a state change an operator would want, `debug` for
+  internals. Errors go in whole (`{ error }`); the formatter expands
+  name, message, stack, cause, and custom fields.
+- Telemetry carries ids, counts, and durations — never tokens, secrets,
+  ciphertext, item content, tool arguments, tool results, or email
+  addresses. The first-boot token line in `services/bootstrap` is the one
+  deliberate exception.
+
 ## Tests
 
 - Integration tests and their helpers (global setup, fixtures) live in a

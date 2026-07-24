@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Prisma, Role } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
+import { log } from "#/lib/logger/index.js";
 import { ensurePersonalScope } from "#/services/scopes/index.js";
 
 const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -99,6 +100,10 @@ export async function setMemberRole(db: Database, input: SetMemberRoleInput) {
         },
       });
       if (owners <= 1) {
+        log.warn("Member role change rejected", {
+          targetPrincipalId: principal.id,
+          reason: "last_owner",
+        });
         throw new MemberConflictError("The organization's last owner cannot be demoted");
       }
     }
@@ -133,6 +138,7 @@ export async function setMemberRole(db: Database, input: SetMemberRoleInput) {
         },
       },
     });
+    log.info("Member role changed", { targetPrincipalId: principal.id, role: input.role });
 
     return { grant, principal };
   });
@@ -153,9 +159,11 @@ export async function revokeInvite(db: Database, input: RevokeInviteInput) {
       throw new MemberNotFoundError("Invite not found");
     }
     if (invite.redeemedAt) {
+      log.warn("Invite revoke rejected", { inviteId: invite.id, reason: "already_redeemed" });
       throw new MemberConflictError("Invite is already redeemed");
     }
     if (invite.revokedAt) {
+      log.warn("Invite revoke rejected", { inviteId: invite.id, reason: "already_revoked" });
       throw new MemberConflictError("Invite is already revoked");
     }
 
@@ -170,6 +178,7 @@ export async function revokeInvite(db: Database, input: RevokeInviteInput) {
       data: { revokedAt },
     });
     if (claimed.count !== 1) {
+      log.warn("Invite revoke rejected", { inviteId: invite.id, reason: "conflict" });
       throw new MemberConflictError("Invite is already redeemed or revoked");
     }
     const revoked = await transaction.invite.findUniqueOrThrow({
@@ -188,6 +197,7 @@ export async function revokeInvite(db: Database, input: RevokeInviteInput) {
         },
       },
     });
+    log.info("Invite revoked", { inviteId: revoked.id });
     return revoked;
   });
 }
@@ -214,6 +224,10 @@ export async function deactivateMember(db: Database, input: DeactivateMemberInpu
       throw new MemberNotFoundError("Human principal not found");
     }
     if (principal.deactivatedAt) {
+      log.warn("Member deactivate rejected", {
+        targetPrincipalId: principal.id,
+        reason: "already_deactivated",
+      });
       throw new MemberConflictError("Member is already deactivated");
     }
 
@@ -237,6 +251,10 @@ export async function deactivateMember(db: Database, input: DeactivateMemberInpu
         },
       });
       if (otherActiveOwners === 0) {
+        log.warn("Member deactivate rejected", {
+          targetPrincipalId: principal.id,
+          reason: "last_owner",
+        });
         throw new MemberConflictError("The organization's last owner cannot be deactivated");
       }
     }
@@ -268,6 +286,7 @@ export async function deactivateMember(db: Database, input: DeactivateMemberInpu
         },
       },
     });
+    log.info("Member deactivated", { targetPrincipalId: principal.id });
     return deactivated;
   });
 }
@@ -287,6 +306,10 @@ export async function reactivateMember(db: Database, input: ReactivateMemberInpu
       throw new MemberNotFoundError("Human principal not found");
     }
     if (!principal.deactivatedAt) {
+      log.warn("Member reactivate rejected", {
+        targetPrincipalId: principal.id,
+        reason: "not_deactivated",
+      });
       throw new MemberConflictError("Member is not deactivated");
     }
 
@@ -295,6 +318,10 @@ export async function reactivateMember(db: Database, input: ReactivateMemberInpu
       data: { deactivatedAt: null },
     });
     if (claimed.count !== 1) {
+      log.warn("Member reactivate rejected", {
+        targetPrincipalId: principal.id,
+        reason: "not_deactivated",
+      });
       throw new MemberConflictError("Member is not deactivated");
     }
     const reactivated = await transaction.principal.findUniqueOrThrow({
@@ -309,6 +336,7 @@ export async function reactivateMember(db: Database, input: ReactivateMemberInpu
         payload: { previousDeactivatedAt: principal.deactivatedAt.toISOString() },
       },
     });
+    log.info("Member reactivated", { targetPrincipalId: principal.id });
     return reactivated;
   });
 }
@@ -363,6 +391,7 @@ export async function createInvite(db: Database, env: Environment, input: Create
         },
       },
     });
+    log.info("Member invited", { inviteId: created.id, role: input.role, scopeId: scope.id });
     return created;
   });
 
@@ -395,6 +424,7 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
     const invite = await transaction.invite.findUnique({ where: { tokenHash } });
     const now = new Date();
     if (!invite || invite.redeemedAt || invite.revokedAt || invite.expiresAt <= now) {
+      log.warn("Invite redemption rejected", { reason: "invalid_or_expired" });
       throw new MemberConflictError("Invite is invalid, expired, or already redeemed");
     }
 
@@ -409,6 +439,7 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
       data: { redeemedAt: now },
     });
     if (claimed.count !== 1) {
+      log.warn("Invite redemption rejected", { inviteId: invite.id, reason: "conflict" });
       throw new MemberConflictError("Invite is invalid, expired, or already redeemed");
     }
 
@@ -418,9 +449,11 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
       },
     });
     if (existingPrincipal?.kind === "agent") {
+      log.warn("Invite redemption rejected", { inviteId: invite.id, reason: "not_human" });
       throw new MemberConflictError("Only human principals may redeem invites");
     }
     if (existingPrincipal?.deactivatedAt) {
+      log.warn("Invite redemption rejected", { inviteId: invite.id, reason: "deactivated" });
       throw new MemberConflictError("A deactivated member cannot redeem an invite");
     }
     const principal =
@@ -477,6 +510,12 @@ export async function redeemInvite(db: Database, input: RedeemInviteInput) {
           principalId: principal.id,
         },
       },
+    });
+    log.info("Invite accepted", {
+      orgId: invite.orgId,
+      inviteId: invite.id,
+      targetPrincipalId: principal.id,
+      role: invite.role,
     });
 
     return { invite: { ...invite, redeemedAt: now }, principal, grant };

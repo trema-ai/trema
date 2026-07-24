@@ -1,6 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
+import { log } from "#/lib/logger/index.js";
 import {
   BootstrapConflictError,
   getBootstrapTokenHash,
@@ -61,6 +62,7 @@ const redeem = authed
 
     const persistedHash = await getBootstrapTokenHash(context.db);
     if (!persistedHash || !verifyBootstrapToken(input.token, persistedHash)) {
+      log.warn("Bootstrap token rejected");
       throw new ORPCError("FORBIDDEN", {
         message: "Invalid bootstrap token",
       });
@@ -100,12 +102,18 @@ const redeem = authed
         },
       );
 
+      log.info("Organization bootstrapped", {
+        orgId: result.org.id,
+        principalId: result.ownerPrincipal.id,
+      });
+
       return {
         org: result.org,
         principal: result.ownerPrincipal,
       };
     } catch (error) {
       if (error instanceof BootstrapConflictError) {
+        log.warn("Bootstrap redeem rejected", { reason: "already_bootstrapped" });
         throw new ORPCError("CONFLICT", { message: error.message });
       }
       throw error;

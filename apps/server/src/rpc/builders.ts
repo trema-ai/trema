@@ -4,6 +4,7 @@ import { ORPCError, os } from "@orpc/server";
 import type { Auth } from "#/lib/auth/index.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
+import { bindLogger, log } from "#/lib/logger/index.js";
 import { authorize, type Capability } from "#/services/authorize/index.js";
 import type {
   ConnectorFetch,
@@ -26,6 +27,9 @@ export interface RpcContext {
   platformApps?: PlatformAppDirectory;
 }
 
+// The procedure name and timing are bound by the handler interceptor in
+// `app.ts`; the middleware below adds the ids it resolves along the way, so a
+// line logged in a service carries the whole chain.
 export const pub = os.$context<RpcContext>();
 
 export const authed = pub.use(
@@ -36,10 +40,13 @@ export const authed = pub.use(
       });
 
       if (!session) {
+        log.warn("Authentication required");
         throw new ORPCError("UNAUTHORIZED", {
           message: "Authentication required",
         });
       }
+
+      bindLogger({ userId: session.user.id });
 
       return next({
         context: {
@@ -57,6 +64,7 @@ export const serviceAuthed = pub.use(
       const authorization = context.headers.get("authorization");
       const match = authorization?.match(/^Bearer (\S+)$/);
       if (!match) {
+        log.warn("Service credential required");
         throw new ORPCError("UNAUTHORIZED", {
           message: "Service credential required",
         });
@@ -64,7 +72,13 @@ export const serviceAuthed = pub.use(
 
       try {
         const credential = await resolveServiceCredential(context.db, match[1]!);
-        return next({
+        bindLogger({
+          orgId: credential.org.id,
+          principalId: credential.principal.id,
+          actor: "service",
+        });
+
+        return await next({
           context: {
             org: credential.org,
             principal: credential.principal,
@@ -72,6 +86,7 @@ export const serviceAuthed = pub.use(
         });
       } catch (error) {
         if (error instanceof ServiceCredentialAuthenticationError) {
+          log.warn("Service credential rejected");
           throw new ORPCError("UNAUTHORIZED", {
             message: "Invalid service credential",
           });
@@ -137,22 +152,27 @@ export const orgScoped = authed.use(async ({ context, next }) => {
   ]);
 
   if (!org) {
+    log.warn("Active organization not found", { orgId: activeOrgId });
     throw new ORPCError("FORBIDDEN", {
       message: "Active organization not found",
     });
   }
 
   if (!principal) {
+    log.warn("Principal not found in active organization", { orgId: activeOrgId });
     throw new ORPCError("FORBIDDEN", {
       message: "Principal not found in active organization",
     });
   }
 
   if (principal.deactivatedAt) {
+    log.warn("Principal is deactivated", { orgId: org.id, principalId: principal.id });
     throw new ORPCError("FORBIDDEN", {
       message: "Principal is deactivated",
     });
   }
+
+  bindLogger({ orgId: org.id, principalId: principal.id });
 
   return next({
     context: {
@@ -175,6 +195,7 @@ export function requireCapability(capability: Capability, options: CapabilityOpt
         select: { id: true },
       });
       if (!orgScope) {
+        log.error("Organization scope not found");
         throw new ORPCError("FORBIDDEN", {
           message: "Organization scope not found",
         });
@@ -183,10 +204,13 @@ export function requireCapability(capability: Capability, options: CapabilityOpt
     }
 
     if (!(await authorize(context.principal, capability, scopeId, context.db))) {
+      log.warn("Capability denied", { capability, scopeId });
       throw new ORPCError("FORBIDDEN", {
         message: `Capability required: ${capability}`,
       });
     }
+
+    log.debug("Capability granted", { capability, scopeId });
 
     return next({ context: { authorizedScopeId: scopeId } });
   });

@@ -1,5 +1,6 @@
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import { ensurePersonalScope } from "#/services/scopes/index.js";
 
 export class OrganizationNameError extends Error {
@@ -91,6 +92,11 @@ export async function createOrgWithOwner(
 
     const result = { org, ownerPrincipal };
     await hooks.afterCreate?.(transaction, result);
+    log.info("Organization created", {
+      orgId: org.id,
+      scopeId: orgScope.id,
+      targetPrincipalId: ownerPrincipal.id,
+    });
     return result;
   });
 }

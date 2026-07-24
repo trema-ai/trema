@@ -1,6 +1,7 @@
 import type { Auth } from "#/lib/auth/index.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
+import { log } from "#/lib/logger/index.js";
 
 export class AdminUserNotFoundError extends Error {
   constructor(email: string) {
@@ -58,6 +59,8 @@ export async function resetPassword({ db, auth, email, password }: ResetPassword
       })),
     });
   }
+
+  log.info("Password reset", { userId: found.user.id, organizations: principals.length });
 
   return { user: found.user, affectedOrgIds: principals.map(({ orgId }) => orgId) };
 }
@@ -145,6 +148,12 @@ export async function promote({ db, env, email, orgId }: PromoteDependencies) {
         subject: principal.id,
         payload: { actor: "host", userId: user.id, role: "owner" },
       },
+    });
+    log.info("Member promoted", {
+      orgId: org.id,
+      targetPrincipalId: principal.id,
+      userId: user.id,
+      role: grant.role,
     });
     return { org, principal, grant };
   });

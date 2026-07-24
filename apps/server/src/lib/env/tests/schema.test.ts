@@ -19,6 +19,8 @@ describe("parseEnv", () => {
       HOST: "127.0.0.1",
       PORT: 3000,
       TREMA_MODE: "dedicated",
+      TREMA_LOG_FORMAT: "logfmt",
+      TREMA_LOG_LEVEL: "info",
       TREMA_AUTH_SECRET: authSecret,
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
@@ -45,6 +47,8 @@ describe("parseEnv", () => {
       HOST: "0.0.0.0",
       PORT: 8080,
       TREMA_MODE: "dedicated",
+      TREMA_LOG_FORMAT: "logfmt",
+      TREMA_LOG_LEVEL: "info",
       TREMA_AUTH_SECRET: authSecret,
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
@@ -58,6 +62,8 @@ describe("parseEnv", () => {
     const result = parseEnv({
       DATABASE_URL: "postgresql://localhost/trema",
       TREMA_MODE: "hosted",
+      TREMA_LOG_FORMAT: "json",
+      TREMA_LOG_LEVEL: "debug",
       TREMA_AUTH_SECRET: authSecret,
       TREMA_AUTH_BASE_URL: "https://api.example.com",
       TREMA_WEB_ORIGINS: "https://app.example.com, https://admin.example.com",
@@ -75,6 +81,8 @@ describe("parseEnv", () => {
 
     expect(result).toMatchObject({
       TREMA_MODE: "hosted",
+      TREMA_LOG_FORMAT: "json",
+      TREMA_LOG_LEVEL: "debug",
       TREMA_AUTH_BASE_URL: "https://api.example.com",
       TREMA_WEB_ORIGINS: ["https://app.example.com", "https://admin.example.com"],
       TREMA_WEB_DIST: "/srv/trema/web",
@@ -217,6 +225,22 @@ describe("parseEnv", () => {
         TREMA_PASSWORD_AUTH_ENABLED: "yes",
       },
       "TREMA_PASSWORD_AUTH_ENABLED",
+    ],
+    [
+      {
+        DATABASE_URL: "postgresql://localhost/trema",
+        TREMA_AUTH_SECRET: authSecret,
+        TREMA_LOG_FORMAT: "pretty",
+      },
+      "TREMA_LOG_FORMAT",
+    ],
+    [
+      {
+        DATABASE_URL: "postgresql://localhost/trema",
+        TREMA_AUTH_SECRET: authSecret,
+        TREMA_LOG_LEVEL: "trace",
+      },
+      "TREMA_LOG_LEVEL",
     ],
   ])("rejects invalid input", (input, message) => {
     expect(() => parseEnv({ TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey, ...input })).toThrow(

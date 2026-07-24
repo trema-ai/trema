@@ -67,8 +67,10 @@ TREMA_WEB_DIST=../web/dist node dist/index.js
 The log confirms the address:
 
 ```
-Server listening on http://127.0.0.1:3000
+time=2026-07-24T10:00:00.000Z level=info msg="Server listening" url=http://127.0.0.1:3000
 ```
+
+Logs go to stderr, one record per line. Set `TREMA_LOG_FORMAT=json` for a log shipper—see [Logging](/configuration#logging).
 
 The server binds `127.0.0.1` by default; in a container or behind a reverse proxy, set `HOST` and `PORT` to match. Two endpoints support probes: `/health` answers when the process is up, and `/ready` answers when the database is reachable.
 
