@@ -898,6 +898,28 @@ integration("connector connection flows", () => {
     expect(JSON.stringify(listed)).not.toMatch(/rk_test_secret|ciphertext|config/);
   });
 
+  it("uses a provider's named authentication header for static verification", async () => {
+    const org = await createOrg();
+    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("x-api-key")).toBe("sk-gamma-test-secret");
+      expect(headers.has("authorization")).toBe(false);
+      return new Response("{}", { status: 200 });
+    });
+
+    await call(
+      connectorsRouter.connect.createStatic,
+      {
+        providerKey: "gamma",
+        config: {},
+        credentials: { apiKey: "sk-gamma-test-secret" },
+      },
+      { context: { ...org.context, connectorFetch: fetch } },
+    );
+
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it("reconnects a static connection in place instead of creating a duplicate", async () => {
     const org = await createOrg();
     const okFetch = async () => new Response("{}", { status: 200 });

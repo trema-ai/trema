@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  gammaProvider,
   githubProvider,
   googleIdTokenIdentity,
   loadProviderCatalog,
@@ -70,6 +71,23 @@ describe("providerDefSchema", () => {
 
     expect(providerDefSchema.safeParse(provider).success).toBe(false);
   });
+
+  it("accepts named authentication headers for REST providers", () => {
+    const provider = providerDefSchema.parse(gammaProvider);
+
+    expect(provider.transport).toMatchObject({
+      type: "rest",
+      authHeaders: { "x-api-key": `\${credentials.apiKey}` },
+    });
+  });
+
+  it("rejects simultaneous standard and named authentication headers", () => {
+    const provider = structuredClone(gammaProvider) as ProviderDefInput;
+    if (provider.transport.type !== "rest") throw new Error("Expected a REST provider");
+    provider.transport.authHeader = `Bearer \${credentials.apiKey}`;
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(false);
+  });
 });
 
 describe("provider catalog validation", () => {
@@ -118,6 +136,16 @@ describe("provider catalog validation", () => {
     expect(() => loadProviderCatalog([provider])).toThrowError(ProviderCatalogValidationError);
     expect(() => loadProviderCatalog([provider])).toThrowError(
       /toolManifest\[0\]\.baseUrl has invalid placeholder 'config\.missingHost'/,
+    );
+  });
+
+  it("validates placeholders in named authentication headers", () => {
+    const provider = structuredClone(gammaProvider) as ProviderDefInput;
+    if (provider.transport.type !== "rest") throw new Error("Expected a REST provider");
+    provider.transport.authHeaders = { "x-api-key": `\${credentials.missing}` };
+
+    expect(() => loadProviderCatalog([provider])).toThrowError(
+      /transport\.authHeaders\.x-api-key has invalid placeholder 'credentials\.missing'/,
     );
   });
 });

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { call } from "@orpc/server";
 import {
+  gammaProvider,
   googleWorkspaceProvider,
   loadProviderCatalog,
   notionMcpProvider,
@@ -494,6 +495,42 @@ integration("connector tool execution", () => {
         testCase.expected,
       );
     }
+  });
+
+  it("injects Gamma's named API-key header and redacts it from provider errors", async () => {
+    const owner = await fixture();
+    const apiKey = "sk-gamma-execute-secret";
+    const stored = await connection({
+      orgId: owner.org.id,
+      principalId: owner.principal.id,
+      providerKey: "gamma",
+      mode: "api_key",
+      credential: { apiKey },
+    });
+    await installation({
+      orgId: owner.org.id,
+      scopeId: owner.orgScope.id,
+      principalId: owner.principal.id,
+      catalogKey: "gamma",
+      connectionId: stored.id,
+    });
+    const fetch: FetchMock = vi.fn(async () => jsonResponse({ error: apiKey }, 400));
+
+    const failure = await executeConnectorTool(db, {
+      orgId: owner.org.id,
+      scopeIds: [owner.orgScope.id],
+      principalId: owner.principal.id,
+      toolKey: "gamma:list_folders",
+      args: {},
+      masterKey,
+      fetch,
+      catalog: loadProviderCatalog([gammaProvider]),
+    }).catch((error: unknown) => error);
+
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get("x-api-key")).toBe(apiKey);
+    expect(failure).toBeInstanceOf(ConnectorTransportError);
+    expect(failure).toMatchObject({ status: 400, providerCode: undefined });
+    expect(`${String(failure)} ${JSON.stringify(failure)}`).not.toContain(apiKey);
   });
 
   it("honors Retry-After and re-resolves credentials before every attempt", async () => {

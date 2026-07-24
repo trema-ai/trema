@@ -486,6 +486,14 @@ function applyAuth(
     redactor.addString(authorization);
     return;
   }
+  if (provider.transport.authHeaders) {
+    for (const [name, template] of Object.entries(provider.transport.authHeaders)) {
+      const value = interpolateAuthValue(template, resolved);
+      headers.set(name, value);
+      redactor.addString(value);
+    }
+    return;
+  }
   if (
     resolved.mode === "oauth2_code" ||
     resolved.mode === "oauth2_client_credentials" ||
@@ -508,7 +516,7 @@ function applyAuth(
   }
   if (resolved.mode === "api_key") {
     throw new ConnectorToolValidationError(
-      `API-key provider '${provider.key}' must declare authHeader or tool authInjection`,
+      `API-key provider '${provider.key}' must declare authHeader, authHeaders, or tool authInjection`,
     );
   }
   throw new ConnectorToolValidationError(

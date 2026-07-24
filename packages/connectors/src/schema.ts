@@ -91,11 +91,22 @@ export const restTransportSchema = z
     // provenance for the curated toolManifest and input to the
     // openapi-to-manifest script, never fetched at runtime.
     openApiSpecUrl: z.url().optional(),
+    // Value for the standard Authorization header.
     authHeader: z.string().min(1).optional(),
+    // Named authentication headers for APIs that do not use Authorization.
+    authHeaders: z
+      .record(z.string().trim().min(1), z.string().min(1))
+      .refine((headers) => Object.keys(headers).length > 0, {
+        message: "authHeaders must declare at least one header",
+      })
+      .optional(),
     retry: retrySchema.optional(),
     verification: verificationSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((transport) => !(transport.authHeader && transport.authHeaders), {
+    message: "Declare authHeader or authHeaders, not both",
+  });
 
 export const mcpTransportSchema = z
   .object({
