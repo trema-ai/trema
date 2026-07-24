@@ -59,8 +59,9 @@ export class OAuthStateExpiredError extends Error {
 export class OAuthTokenExchangeError extends Error {
   readonly code = "token_exchange_failed";
 
-  constructor() {
-    super("OAuth token exchange failed");
+  constructor(cause?: unknown) {
+    const detail = cause instanceof Error ? `: ${cause.message}` : "";
+    super(`OAuth token exchange failed${detail}`, { cause });
     this.name = "OAuthTokenExchangeError";
   }
 }
@@ -88,10 +89,10 @@ export class ConnectorCatalogDefectError extends Error {
   }
 }
 
-export class ConnectorCredentialNotFoundError extends Error {
+export class ConnectorConnectionNotFoundError extends Error {
   constructor() {
-    super("Connector credential not found");
-    this.name = "ConnectorCredentialNotFoundError";
+    super("Connector connection not found");
+    this.name = "ConnectorConnectionNotFoundError";
   }
 }
 
@@ -101,20 +102,16 @@ function providerFrom(catalog: ProviderCatalog, providerKey: string): ProviderDe
   return provider;
 }
 
-function installationCatalogKey(body: Prisma.JsonValue): string | undefined {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
-  const value = body.catalogKey;
-  return typeof value === "string" ? value : undefined;
+function connectionConfig(value: Prisma.JsonValue): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([, candidate]) => candidate !== undefined),
+  );
 }
 
-function installationConfig(
-  body: Prisma.JsonValue,
-): Readonly<Record<string, string | number | boolean>> {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return {};
-  const config = body.config;
-  if (typeof config !== "object" || config === null || Array.isArray(config)) return {};
+function interpolationConfig(value: Prisma.JsonValue): Record<string, string | number | boolean> {
   return Object.fromEntries(
-    Object.entries(config).filter(
+    Object.entries(connectionConfig(value)).filter(
       (entry): entry is [string, string | number | boolean] =>
         typeof entry[1] === "string" ||
         typeof entry[1] === "number" ||
@@ -123,17 +120,24 @@ function installationConfig(
   );
 }
 
-function installationProviderScopes(body: Prisma.JsonValue): string[] {
+function declaredConfig(provider: ProviderDef, value: Prisma.JsonValue): Record<string, unknown> {
+  const stored = connectionConfig(value);
+  return Object.fromEntries(
+    Object.keys(provider.configFields).flatMap((name) =>
+      stored[name] === undefined ? [] : [[name, stored[name]]],
+    ),
+  );
+}
+
+function submittedProviderScopes(body: unknown): string[] {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return [];
-  const scopes = body.providerScopes;
+  const scopes = (body as { providerScopes?: unknown }).providerScopes;
   if (!Array.isArray(scopes)) return [];
   return scopes.filter((scope): scope is string => typeof scope === "string" && scope.length > 0);
 }
 
-// The scopes an authorization request will ask for: the installation override
-// when present and non-empty, otherwise the provider's defaults.
-export function requestedOAuthScopes(provider: ProviderDef, body: Prisma.JsonValue): string[] {
-  const override = installationProviderScopes(body);
+export function requestedOAuthScopes(provider: ProviderDef, input: unknown): string[] {
+  const override = submittedProviderScopes(input);
   return override.length > 0 ? override : [...provider.auth.defaultScopes];
 }
 
@@ -157,29 +161,6 @@ export function parseGrantedScopes(
   return parsed.length > 0 ? parsed : [...requested];
 }
 
-async function assertInstallation(
-  db: Database,
-  orgId: string,
-  installationItemId: string,
-  providerKey: string,
-) {
-  const installation = await db.item.findFirst({
-    where: { id: installationItemId, orgId },
-  });
-  if (installation?.kind !== "connector") {
-    throw new ConnectorInstallationError("Connector installation not found");
-  }
-  if (installationCatalogKey(installation.body) !== providerKey) {
-    throw new ConnectorInstallationError("Connector installation provider does not match");
-  }
-  return installation;
-}
-
-async function assertPrincipal(db: Database, orgId: string, principalId: string) {
-  const principal = await db.principal.findFirst({ where: { id: principalId, orgId } });
-  if (!principal) throw new ConnectorInstallationError("Credential principal not found");
-}
-
 export function hashOAuthState(state: string): string {
   return createHash("sha256").update(state, "utf8").digest("hex");
 }
@@ -190,13 +171,15 @@ export function connectorCallbackUrl(authBaseUrl: string): string {
 
 export interface StartOAuthConnectInput {
   orgId: string;
-  providerKey: string;
-  installationItemId: string;
   principalId: string;
+  providerKey: string;
   authBaseUrl: string;
   masterKey?: string;
   returnTo?: string;
   config?: Readonly<Record<string, string | number | boolean>>;
+  providerScopes?: readonly string[];
+  label?: string;
+  reconnectConnectionId?: string;
   catalog?: ProviderCatalog;
   platformApps?: PlatformAppDirectory;
   // Used by mcp_oauth discovery, dynamic client registration, and (via the
@@ -260,10 +243,26 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
     );
   }
 
-  const [installation] = await Promise.all([
-    assertInstallation(db, input.orgId, input.installationItemId, input.providerKey),
-    assertPrincipal(db, input.orgId, input.principalId),
-  ]);
+  const existing = input.reconnectConnectionId
+    ? await db.connectorConnection.findFirst({
+        where: {
+          id: input.reconnectConnectionId,
+          orgId: input.orgId,
+          providerKey: input.providerKey,
+          principalId: input.principalId,
+        },
+        select: { id: true, config: true },
+      })
+    : undefined;
+  if (input.reconnectConnectionId && !existing) throw new ConnectorConnectionNotFoundError();
+  const config = validateConfigFields(provider.configFields, {
+    ...(existing ? declaredConfig(provider, existing.config) : {}),
+    ...(input.config ?? {}),
+  });
+  const requestedScopes = requestedOAuthScopes(provider, {
+    providerScopes: input.providerScopes,
+  });
+  validateProviderScopes(provider, requestedScopes);
   const registration = await resolveClientRegistration(
     db,
     input.orgId,
@@ -274,8 +273,6 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
 
   const state = randomBytes(32).toString("base64url");
   const codeVerifier = randomBytes(32).toString("base64url");
-  const config = { ...installationConfig(installation.body), ...input.config };
-  const requestedScopes = requestedOAuthScopes(provider, installation.body);
   const authorizationUrl = buildOAuthAuthorizationUrl({
     provider,
     clientId: registration.clientId,
@@ -292,12 +289,12 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
       orgId: input.orgId,
       providerKey: input.providerKey,
       registrationId: registration.registrationId,
-      installationItemId: input.installationItemId,
+      ...(existing ? { connectionId: existing.id } : {}),
       principalId: input.principalId,
       stateHash: hashOAuthState(state),
       codeVerifier,
-      // Persist the requested scopes so the callback can record them when the
-      // token response omits its own `scope` field.
+      config: config as Prisma.InputJsonValue,
+      ...(input.label !== undefined ? { label: input.label } : {}),
       providerScopes: requestedScopes,
       ...(input.returnTo !== undefined ? { returnTo: input.returnTo } : {}),
       expiresAt: new Date(now.getTime() + OAUTH_STATE_TTL_MS),
@@ -322,12 +319,22 @@ async function startMcpOAuthConnect(
       `Provider '${provider.key}' declares mcp_oauth without an MCP transport`,
     );
   }
-  // Validate the installation and principal exist; mcp_oauth needs no config
-  // interpolation, so the installation body itself is not read here.
-  await Promise.all([
-    assertInstallation(db, input.orgId, input.installationItemId, input.providerKey),
-    assertPrincipal(db, input.orgId, input.principalId),
-  ]);
+  const existing = input.reconnectConnectionId
+    ? await db.connectorConnection.findFirst({
+        where: {
+          id: input.reconnectConnectionId,
+          orgId: input.orgId,
+          providerKey: input.providerKey,
+          principalId: input.principalId,
+        },
+        select: { id: true, config: true },
+      })
+    : undefined;
+  if (input.reconnectConnectionId && !existing) throw new ConnectorConnectionNotFoundError();
+  const config = validateConfigFields(provider.configFields, {
+    ...(existing ? declaredConfig(provider, existing.config) : {}),
+    ...(input.config ?? {}),
+  });
 
   const serverUrl = provider.transport.serverUrl;
   const callbackUrl = connectorCallbackUrl(input.authBaseUrl);
@@ -358,12 +365,12 @@ async function startMcpOAuthConnect(
       orgId: input.orgId,
       providerKey: input.providerKey,
       registrationId: client.registrationId,
-      installationItemId: input.installationItemId,
+      ...(existing ? { connectionId: existing.id } : {}),
       principalId: input.principalId,
       stateHash: hashOAuthState(state),
       codeVerifier,
-      // Record the scopes we asked for so the callback can attribute them when
-      // the token response omits its own `scope`.
+      config: config as Prisma.InputJsonValue,
+      ...(input.label !== undefined ? { label: input.label } : {}),
       providerScopes: discovery.requestedScopes,
       tokenEndpoint: discovery.tokenEndpoint,
       resource: serverUrl,
@@ -399,13 +406,14 @@ function recordFromJson(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function publicCredentialSelect() {
+function publicConnectionSelect() {
   return {
     id: true,
-    installationItemId: true,
+    providerKey: true,
     principalId: true,
     mode: true,
     providerScopes: true,
+    label: true,
     expiresAt: true,
     revokedAt: true,
     lastRefreshSuccess: true,
@@ -417,64 +425,69 @@ function publicCredentialSelect() {
   } as const;
 }
 
-async function storeCredential(
+// A fresh connect that lands on an already-connected provider account must not
+// mint a duplicate. Account identity is only detectable through the provider's
+// hoisted token-response metadata; when every metadata value matches an active
+// connection's stored config, that connection is the same account.
+async function sameAccountConnectionId(
+  db: Database,
+  input: { orgId: string; providerKey: string; principalId: string },
+  metadata: Record<string, unknown> | undefined,
+): Promise<string | undefined> {
+  if (!metadata || Object.keys(metadata).length === 0) return undefined;
+  const candidates = await db.connectorConnection.findMany({
+    where: {
+      orgId: input.orgId,
+      providerKey: input.providerKey,
+      principalId: input.principalId,
+      revokedAt: null,
+    },
+    select: { id: true, config: true },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  });
+  const match = candidates.find((candidate) => {
+    const stored = connectionConfig(candidate.config);
+    return Object.entries(metadata).every(
+      ([key, value]) => JSON.stringify(stored[key]) === JSON.stringify(value),
+    );
+  });
+  return match?.id;
+}
+
+async function storeConnection(
   db: Database,
   input: {
     orgId: string;
-    installationItemId: string;
+    providerKey: string;
     principalId: string;
     mode: string;
+    config: Record<string, unknown>;
     ciphertext: string;
+    connectionId?: string;
+    label?: string;
     expiresAt?: Date;
     providerScopes?: string[];
     metadata?: Record<string, unknown>;
   },
 ) {
-  return db.$transaction(async (transaction) => {
-    if (input.metadata && Object.keys(input.metadata).length > 0) {
-      const installation = await transaction.item.findUniqueOrThrow({
-        where: { orgId_id: { orgId: input.orgId, id: input.installationItemId } },
-        select: { body: true },
-      });
-      const body =
-        typeof installation.body === "object" &&
-        installation.body !== null &&
-        !Array.isArray(installation.body)
-          ? installation.body
-          : {};
-      const existingConfig =
-        typeof body.config === "object" && body.config !== null && !Array.isArray(body.config)
-          ? body.config
-          : {};
-      await transaction.item.update({
-        where: { orgId_id: { orgId: input.orgId, id: input.installationItemId } },
-        data: {
-          body: JSON.parse(
-            JSON.stringify({ ...body, config: { ...existingConfig, ...input.metadata } }),
-          ) as Prisma.InputJsonValue,
-        },
-      });
-    }
-
-    return transaction.connectorCredential.upsert({
+  const config = JSON.parse(
+    JSON.stringify({ ...input.config, ...(input.metadata ?? {}) }),
+  ) as Prisma.InputJsonValue;
+  const connectionId =
+    input.connectionId ?? (await sameAccountConnectionId(db, input, input.metadata));
+  if (connectionId) {
+    const updated = await db.connectorConnection.updateMany({
       where: {
-        installationItemId_principalId: {
-          installationItemId: input.installationItemId,
-          principalId: input.principalId,
-        },
-      },
-      create: {
+        id: connectionId,
         orgId: input.orgId,
-        installationItemId: input.installationItemId,
+        providerKey: input.providerKey,
         principalId: input.principalId,
-        mode: input.mode,
-        ciphertext: input.ciphertext,
-        providerScopes: input.providerScopes ?? [],
-        ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
       },
-      update: {
+      data: {
         mode: input.mode,
+        config,
         ciphertext: input.ciphertext,
+        ...(input.label !== undefined ? { label: input.label } : {}),
         providerScopes: input.providerScopes ?? [],
         expiresAt: input.expiresAt ?? null,
         revokedAt: null,
@@ -483,8 +496,26 @@ async function storeCredential(
         refreshAttempts: 0,
         refreshExhausted: false,
       },
-      select: publicCredentialSelect(),
     });
+    if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
+    return db.connectorConnection.findUniqueOrThrow({
+      where: { id: connectionId },
+      select: publicConnectionSelect(),
+    });
+  }
+  return db.connectorConnection.create({
+    data: {
+      orgId: input.orgId,
+      providerKey: input.providerKey,
+      principalId: input.principalId,
+      mode: input.mode,
+      config,
+      ciphertext: input.ciphertext,
+      ...(input.label !== undefined ? { label: input.label } : {}),
+      providerScopes: input.providerScopes ?? [],
+      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+    },
+    select: publicConnectionSelect(),
   });
 }
 
@@ -516,15 +547,9 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
     input.platformApps ?? emptyPlatformAppDirectory,
     input.masterKey,
   );
-  const installation = await assertInstallation(
-    db,
-    oauthState.orgId,
-    oauthState.installationItemId,
-    oauthState.providerKey,
-  );
   const tokenUrl = interpolate(provider.auth.tokenUrl, {
     clientId: registration.clientId,
-    config: installationConfig(installation.body),
+    config: interpolationConfig(oauthState.config),
   });
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -590,17 +615,20 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
     provider.auth.scopeSeparator,
   );
   const payload = { accessToken, ...(refreshToken ? { refreshToken } : {}), raw };
-  const credential = await storeCredential(db, {
+  const connection = await storeConnection(db, {
     orgId: oauthState.orgId,
-    installationItemId: oauthState.installationItemId,
+    providerKey: oauthState.providerKey,
     principalId: oauthState.principalId,
     mode: provider.authMode,
+    config: connectionConfig(oauthState.config),
     ciphertext: encryptEnvelope(payload, input.masterKey),
+    ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
+    ...(oauthState.label ? { label: oauthState.label } : {}),
     providerScopes: grantedScopes,
     ...(expiresAt ? { expiresAt } : {}),
     metadata,
   });
-  return { credential, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
+  return { connection, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
 }
 
 // Complete an mcp_oauth callback: resolve the client identity recorded on the
@@ -637,8 +665,8 @@ async function completeMcpOAuthCallback(
       callbackUrl: connectorCallbackUrl(input.authBaseUrl),
       ...(input.fetch ? { fetch: input.fetch } : {}),
     });
-  } catch {
-    throw new OAuthTokenExchangeError();
+  } catch (error) {
+    throw new OAuthTokenExchangeError(error);
   }
 
   const accessToken = tokens.access_token;
@@ -662,51 +690,89 @@ async function completeMcpOAuthCallback(
     ...(refreshToken ? { refreshToken } : {}),
     raw: tokens as Record<string, unknown>,
   };
-  const credential = await storeCredential(db, {
+  const connection = await storeConnection(db, {
     orgId: oauthState.orgId,
-    installationItemId: oauthState.installationItemId,
+    providerKey: oauthState.providerKey,
     principalId: oauthState.principalId,
     mode: provider.authMode,
+    config: connectionConfig(oauthState.config),
     ciphertext: encryptEnvelope(payload, input.masterKey),
+    ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
+    ...(oauthState.label ? { label: oauthState.label } : {}),
     providerScopes: grantedScopes,
     ...(expiresAt ? { expiresAt } : {}),
   });
-  return { credential, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
+  return { connection, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
 }
 
 function validateField(
   name: string,
   descriptor: FieldDescriptor,
   value: unknown,
+  fieldKind: "Config" | "Credential",
 ): string | undefined {
   if (value === undefined || value === "") {
     if (descriptor.optional) return descriptor.default;
-    throw new StaticCredentialValidationError(`Credential field '${name}' is required`);
+    throw new StaticCredentialValidationError(`${fieldKind} field '${name}' is required`);
   }
   if (typeof value !== "string") {
-    throw new StaticCredentialValidationError(`Credential field '${name}' must be a string`);
+    throw new StaticCredentialValidationError(`${fieldKind} field '${name}' must be a string`);
   }
   if (descriptor.enum && !descriptor.enum.includes(value)) {
-    throw new StaticCredentialValidationError(`Credential field '${name}' is not an allowed value`);
+    throw new StaticCredentialValidationError(
+      `${fieldKind} field '${name}' is not an allowed value`,
+    );
   }
   if (descriptor.pattern && !new RegExp(descriptor.pattern).test(value)) {
-    throw new StaticCredentialValidationError(`Credential field '${name}' has an invalid format`);
+    throw new StaticCredentialValidationError(`${fieldKind} field '${name}' has an invalid format`);
   }
   return value;
+}
+
+function validateFields(
+  descriptors: Readonly<Record<string, FieldDescriptor>>,
+  submitted: Readonly<Record<string, unknown>>,
+  fieldKind: "Config" | "Credential",
+): Record<string, string> {
+  const unknown = Object.keys(submitted).find((name) => !Object.hasOwn(descriptors, name));
+  if (unknown)
+    throw new StaticCredentialValidationError(
+      `Unknown ${fieldKind.toLowerCase()} field '${unknown}'`,
+    );
+  return Object.fromEntries(
+    Object.entries(descriptors).flatMap(([name, descriptor]) => {
+      const value = validateField(name, descriptor, submitted[name], fieldKind);
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
 }
 
 function validateCredentialFields(
   descriptors: Readonly<Record<string, FieldDescriptor>>,
   submitted: Readonly<Record<string, unknown>>,
-): Record<string, string> {
-  const unknown = Object.keys(submitted).find((name) => !Object.hasOwn(descriptors, name));
-  if (unknown) throw new StaticCredentialValidationError(`Unknown credential field '${unknown}'`);
-  return Object.fromEntries(
-    Object.entries(descriptors).flatMap(([name, descriptor]) => {
-      const value = validateField(name, descriptor, submitted[name]);
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
+) {
+  return validateFields(descriptors, submitted, "Credential");
+}
+
+function validateConfigFields(
+  descriptors: Readonly<Record<string, FieldDescriptor>>,
+  submitted: Readonly<Record<string, unknown>>,
+) {
+  return validateFields(descriptors, submitted, "Config");
+}
+
+function validateProviderScopes(provider: ProviderDef, requested: readonly string[]) {
+  if (provider.authMode !== "oauth2_code" || !provider.auth.availableScopes) return;
+  const available = new Set(provider.auth.availableScopes);
+  const unknown = requested.find((scope) => !available.has(scope));
+  if (unknown) {
+    throw new StaticCredentialValidationError(
+      `OAuth scope '${unknown}' is not available from provider '${provider.key}'`,
+    );
+  }
+  if (new Set(requested).size !== requested.length) {
+    throw new StaticCredentialValidationError("OAuth scopes cannot contain duplicates");
+  }
 }
 
 function basicAuthorization(credentials: Readonly<Record<string, string>>): string {
@@ -720,19 +786,20 @@ function basicAuthorization(credentials: Readonly<Record<string, string>>): stri
   return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
 }
 
-export interface CreateStaticCredentialInput {
+export interface CreateStaticConnectionInput {
   orgId: string;
-  providerKey: string;
-  installationItemId: string;
   principalId: string;
+  providerKey: string;
   credentials: Readonly<Record<string, unknown>>;
-  config?: Readonly<Record<string, string | number | boolean>>;
+  config: Readonly<Record<string, string | number | boolean>>;
+  label?: string;
+  reconnectConnectionId?: string;
   masterKey?: string;
   catalog?: ProviderCatalog;
   fetch?: ConnectorFetch;
 }
 
-export async function createStaticCredential(db: Database, input: CreateStaticCredentialInput) {
+export async function createStaticConnection(db: Database, input: CreateStaticConnectionInput) {
   const provider = providerFrom(input.catalog ?? defaultCatalog, input.providerKey);
   if (provider.authMode !== "api_key" && provider.authMode !== "basic") {
     throw new UnsupportedConnectorAuthModeError(
@@ -744,12 +811,23 @@ export async function createStaticCredential(db: Database, input: CreateStaticCr
       `Provider '${provider.key}' has no static credential verification recipe`,
     );
   }
-  const [installation] = await Promise.all([
-    assertInstallation(db, input.orgId, input.installationItemId, input.providerKey),
-    assertPrincipal(db, input.orgId, input.principalId),
-  ]);
+  const existing = input.reconnectConnectionId
+    ? await db.connectorConnection.findFirst({
+        where: {
+          id: input.reconnectConnectionId,
+          orgId: input.orgId,
+          providerKey: input.providerKey,
+          principalId: input.principalId,
+        },
+        select: { id: true, config: true },
+      })
+    : undefined;
+  if (input.reconnectConnectionId && !existing) throw new ConnectorConnectionNotFoundError();
   const credentials = validateCredentialFields(provider.credentialFields, input.credentials);
-  const config = { ...installationConfig(installation.body), ...input.config };
+  const config = validateConfigFields(provider.configFields, {
+    ...(existing ? declaredConfig(provider, existing.config) : {}),
+    ...input.config,
+  });
   const baseUrl = interpolate(provider.transport.baseUrl, {
     ...(Object.keys(config).length > 0 ? { config } : {}),
     credentials,
@@ -799,56 +877,127 @@ export async function createStaticCredential(db: Database, input: CreateStaticCr
   if (!verified) throw new CredentialVerificationError();
 
   const payload = { ...credentials, raw: { ...credentials } };
-  return storeCredential(db, {
+  return storeConnection(db, {
     orgId: input.orgId,
-    installationItemId: input.installationItemId,
+    providerKey: input.providerKey,
     principalId: input.principalId,
     mode: provider.authMode,
+    config,
     ciphertext: encryptEnvelope(payload, input.masterKey),
+    ...(input.label !== undefined ? { label: input.label } : {}),
+    ...(existing ? { connectionId: existing.id } : {}),
   });
 }
 
-export async function listConnectorCredentials(
+export async function updateConnectorConnectionLabel(
+  db: Database,
+  input: { orgId: string; connectionId: string; label: string | null; principalId?: string },
+) {
+  const updated = await db.connectorConnection.updateMany({
+    where: {
+      id: input.connectionId,
+      orgId: input.orgId,
+      ...(input.principalId ? { principalId: input.principalId } : {}),
+    },
+    data: { label: input.label },
+  });
+  if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
+  return db.connectorConnection.findUniqueOrThrow({
+    where: { id: input.connectionId },
+    select: publicConnectionSelect(),
+  });
+}
+
+// Derive a display label from the provider's hoisted token-response metadata
+// (an account or workspace name) when the connection has no explicit label.
+// Config itself never leaves the server; only the derived string does.
+function metadataLabel(
+  catalog: ProviderCatalog,
+  providerKey: string,
+  config: Prisma.JsonValue,
+): string | undefined {
+  const provider = catalog.find(({ key }) => key === providerKey);
+  const stored = connectionConfig(config);
+  for (const key of provider?.auth.tokenResponseMetadata ?? []) {
+    const value = stored[key];
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+export async function listConnectorConnections(
   db: Database,
   orgId: string,
-  installationItemId: string,
+  providerKey?: string,
   now = new Date(),
+  principalId?: string,
+  catalog: ProviderCatalog = defaultCatalog,
 ) {
-  const credentials = await db.connectorCredential.findMany({
-    where: { orgId, installationItemId },
-    select: publicCredentialSelect(),
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-  return credentials.map((credential) => ({
-    ...credential,
-    ...connectorCredentialValidity(credential, now),
+  const [connections, installations] = await Promise.all([
+    db.connectorConnection.findMany({
+      where: {
+        orgId,
+        ...(providerKey ? { providerKey } : {}),
+        ...(principalId ? { principalId } : {}),
+      },
+      select: { ...publicConnectionSelect(), config: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    // No principal filter here: bindings only surface when their connectionId
+    // matches a listed connection, and binding validation already ties a
+    // connection's principal to the scopes it may serve.
+    db.item.findMany({
+      where: { orgId, kind: "connector", status: { not: "archived" } },
+      select: { id: true, scopeId: true, body: true },
+    }),
+  ]);
+  const bindings = new Map<string, Array<{ id: string; scopeId: string }>>();
+  for (const installation of installations) {
+    if (
+      typeof installation.body !== "object" ||
+      installation.body === null ||
+      Array.isArray(installation.body)
+    ) {
+      continue;
+    }
+    const connectionId = installation.body.connectionId;
+    if (typeof connectionId !== "string") continue;
+    const current = bindings.get(connectionId) ?? [];
+    current.push({ id: installation.id, scopeId: installation.scopeId });
+    bindings.set(connectionId, current);
+  }
+  return connections.map(({ config, ...connection }) => ({
+    ...connection,
+    label: connection.label ?? metadataLabel(catalog, connection.providerKey, config) ?? null,
+    installations: bindings.get(connection.id) ?? [],
+    ...connectorConnectionValidity(connection, now),
   }));
 }
 
-export function connectorCredentialValidity(
-  credential: { revokedAt: Date | null; expiresAt: Date | null; refreshExhausted: boolean },
+export function connectorConnectionValidity(
+  connection: { revokedAt: Date | null; expiresAt: Date | null; refreshExhausted: boolean },
   now = new Date(),
 ) {
-  const isRevoked = credential.revokedAt !== null;
-  const isExpired = credential.expiresAt !== null && credential.expiresAt <= now;
+  const isRevoked = connection.revokedAt !== null;
+  const isExpired = connection.expiresAt !== null && connection.expiresAt <= now;
   return {
     isRevoked,
     isExpired,
-    isValid: !isRevoked && !isExpired && !credential.refreshExhausted,
+    isValid: !isRevoked && !isExpired && !connection.refreshExhausted,
   };
 }
 
-export async function revokeConnectorCredential(
+export async function revokeConnectorConnection(
   db: Database,
   orgId: string,
-  installationItemId: string,
-  credentialId: string,
+  connectionId: string,
+  principalId?: string,
 ) {
   const revokedAt = new Date();
-  const result = await db.connectorCredential.updateMany({
-    where: { id: credentialId, orgId, installationItemId },
+  const result = await db.connectorConnection.updateMany({
+    where: { id: connectionId, orgId, ...(principalId ? { principalId } : {}) },
     data: { revokedAt },
   });
-  if (result.count === 0) throw new ConnectorCredentialNotFoundError();
-  return { id: credentialId, revokedAt };
+  if (result.count === 0) throw new ConnectorConnectionNotFoundError();
+  return { id: connectionId, revokedAt };
 }

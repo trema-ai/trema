@@ -26,17 +26,18 @@ pnpm install
 
 ## Configure
 
-The server reads its environment from the process and from `apps/server/.env`. A dedicated deployment needs four values:
+The server reads its environment from the process and from `apps/server/.env`. A dedicated deployment needs five values:
 
 ```sh
 # apps/server/.env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trema
 TREMA_AUTH_SECRET=<at least 32 random characters>
+TREMA_CREDENTIAL_MASTER_KEY=<base64-encoded 32-byte key>
 TREMA_AUTH_BASE_URL=https://trema.example.com
 TREMA_WEB_ORIGINS=https://trema.example.com
 ```
 
-Generate the secret with `openssl rand -base64 33`. Every variable, with its default and behavior, is in the [configuration reference](/configuration).
+Generate the authentication secret with `openssl rand -base64 33`. Generate the credential master key with `openssl rand -base64 32`. Every variable, with its default and behavior, is in the [configuration reference](/configuration).
 
 ## Database
 

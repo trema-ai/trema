@@ -26,6 +26,7 @@ export type CatalogProvider = {
   authMode: string;
   transport: { type: "mcp" | "rest" };
   memberConnectable: boolean;
+  memberEnabled: boolean;
   configFields: Record<string, FieldDescriptor>;
   credentialFields: Record<string, FieldDescriptor>;
   toolManifest?: Array<{ name: string; description: string; sensitivity: Sensitivity }>;
@@ -40,30 +41,37 @@ export type Scope = {
   ownerId: string | null;
 };
 
-export type CredentialSummary = {
+export type ConnectorConnection = {
   id: string;
   principalId: string;
-  principalName: string;
+  providerKey: string;
   mode: string;
+  label: string | null;
+  providerScopes: string[];
   isRevoked: boolean;
   isExpired: boolean;
   isValid: boolean;
+  refreshExhausted: boolean;
   expiresAt: string | null;
+  revokedAt: string | null;
   createdAt: string;
+  updatedAt: string;
+  installations: Array<{ id: string; scopeId: string }>;
 };
 
 export type ConnectorInstallation = {
   id: string;
   scopeId: string;
   catalogKey: string;
+  connectionId: string;
   enabledTools: "all" | string[];
   sensitivityOverrides: Record<string, Sensitivity>;
   syncedTools: Array<{ name: string; description?: string; sensitivity: Sensitivity }>;
-  config: Record<string, string | number | boolean>;
   status: "proposed" | "active" | "archived";
   updatedAt: string;
-  credentials: CredentialSummary[];
 };
+
+export type ConnectorMeta = { callbackUrl: string };
 
 export type Registration = {
   id: string;

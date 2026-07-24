@@ -123,25 +123,26 @@ enum ClientRegistrationSource {
 }
 
 model Org {
-  id                    String                @id @default(uuid(7))
-  name                  String
+  id                        String                      @id @default(uuid(7))
+  name                      String
   /// When false, DMs neither create nor resolve personal scopes.
-  personalScopesEnabled Boolean               @default(true)
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  principals            Principal[]
-  identityLinks         IdentityLink[]
-  scopes                Scope[]
-  grants                Grant[]
-  invites               Invite[]
-  serviceCredentials    ServiceCredential[]
-  auditLogs             AuditLog[]
-  bindings              Binding[]
-  items                 Item[]
-  itemVersions          ItemVersion[]
-  clientRegistrations   ClientRegistration[]
-  connectorCredentials  ConnectorCredential[]
-  connectorOAuthStates  ConnectorOAuthState[]
+  personalScopesEnabled     Boolean                     @default(true)
+  createdAt                 DateTime                    @default(now())
+  updatedAt                 DateTime                    @updatedAt
+  principals                Principal[]
+  identityLinks             IdentityLink[]
+  scopes                    Scope[]
+  grants                    Grant[]
+  invites                   Invite[]
+  serviceCredentials        ServiceCredential[]
+  auditLogs                 AuditLog[]
+  bindings                  Binding[]
+  items                     Item[]
+  itemVersions              ItemVersion[]
+  clientRegistrations       ClientRegistration[]
+  connectorConnections      ConnectorConnection[]
+  connectorOAuthStates      ConnectorOAuthState[]
+  connectorProviderSettings ConnectorProviderSettings[]
 }
 
 model Principal {
@@ -168,7 +169,7 @@ model Principal {
   confirmedItems            Item[]                @relation("ItemConfirmer")
   updatedItems              Item[]                @relation("ItemUpdater")
   authoredItemVersions      ItemVersion[]         @relation("ItemVersionAuthor")
-  connectorCredentials      ConnectorCredential[]
+  connectorConnections      ConnectorConnection[]
   connectorOAuthStates      ConnectorOAuthState[]
 
   @@unique([orgId, authId])
@@ -214,30 +215,28 @@ model Scope {
 }
 
 model Item {
-  id                   String                @id @default(uuid(7))
-  orgId                String
-  scopeId              String
-  kind                 ItemKind
-  title                String
-  body                 Json
-  status               ItemStatus
-  disclosure           ItemDisclosure
-  createdById          String
-  sourceSessionId      String?
-  confirmedById        String?
-  updatedById          String?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  lastUsedAt           DateTime?
-  version              Int                   @default(1)
-  org                  Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  scope                Scope                 @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
-  createdBy            Principal             @relation("ItemCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
-  confirmedBy          Principal?            @relation("ItemConfirmer", fields: [orgId, confirmedById], references: [orgId, id], onDelete: Restrict)
-  updatedBy            Principal?            @relation("ItemUpdater", fields: [orgId, updatedById], references: [orgId, id], onDelete: Restrict)
-  versions             ItemVersion[]
-  connectorCredentials ConnectorCredential[]
-  connectorOAuthStates ConnectorOAuthState[]
+  id              String         @id @default(uuid(7))
+  orgId           String
+  scopeId         String
+  kind            ItemKind
+  title           String
+  body            Json
+  status          ItemStatus
+  disclosure      ItemDisclosure
+  createdById     String
+  sourceSessionId String?
+  confirmedById   String?
+  updatedById     String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  lastUsedAt      DateTime?
+  version         Int            @default(1)
+  org             Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope           Scope          @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  createdBy       Principal      @relation("ItemCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
+  confirmedBy     Principal?     @relation("ItemConfirmer", fields: [orgId, confirmedById], references: [orgId, id], onDelete: Restrict)
+  updatedBy       Principal?     @relation("ItemUpdater", fields: [orgId, updatedById], references: [orgId, id], onDelete: Restrict)
+  versions        ItemVersion[]
 
   @@unique([orgId, id])
   @@index([orgId, scopeId])
@@ -352,76 +351,93 @@ model AuditLog {
 }
 
 model ClientRegistration {
-  id                     String                   @id @default(uuid(7))
-  orgId                  String
-  providerKey            String
-  source                 ClientRegistrationSource
-  clientId               String?
-  clientSecretCiphertext String?
-  sharedRef              String?
-  adminConsentGranted    Boolean?
-  notes                  String?
-  createdAt              DateTime                 @default(now())
-  updatedAt              DateTime                 @updatedAt
-  org                    Org                      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  oauthStates            ConnectorOAuthState[]
+  id                      String                   @id @default(uuid(7))
+  orgId                   String
+  providerKey             String
+  source                  ClientRegistrationSource
+  clientId                String?
+  clientSecretCiphertext  String?
+  tokenEndpointAuthMethod String?
+  sharedRef               String?
+  adminConsentGranted     Boolean?
+  notes                   String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  org                     Org                      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  oauthStates             ConnectorOAuthState[]
 
   @@unique([orgId, providerKey, source])
   @@unique([orgId, id])
   @@index([orgId])
 }
 
-model ConnectorCredential {
-  id                 String    @id @default(uuid(7))
+model ConnectorConnection {
+  id                 String                @id @default(uuid(7))
   orgId              String
-  installationItemId String
+  providerKey        String
   principalId        String
   mode               String
+  config             Json
   ciphertext         String
-  providerScopes     String[]  @default([])
+  providerScopes     String[]              @default([])
+  label              String?
   expiresAt          DateTime?
   revokedAt          DateTime?
   lastRefreshSuccess DateTime?
   lastRefreshFailure DateTime?
-  refreshAttempts    Int       @default(0)
-  refreshExhausted   Boolean   @default(false)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  org                Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  installation       Item      @relation(fields: [orgId, installationItemId], references: [orgId, id], onDelete: Cascade)
-  principal          Principal @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  refreshAttempts    Int                   @default(0)
+  refreshExhausted   Boolean               @default(false)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  org                Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  principal          Principal             @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  oauthStates        ConnectorOAuthState[]
 
-  @@unique([installationItemId, principalId])
-  @@index([orgId, installationItemId])
+  @@index([orgId, providerKey])
   @@index([orgId, principalId])
 }
 
 model ConnectorOAuthState {
-  id                 String             @id @default(uuid(7))
-  orgId              String
-  providerKey        String
-  registrationId     String
-  installationItemId String
-  principalId        String
-  stateHash          String             @unique
-  codeVerifier       String
-  providerScopes     String[]           @default([])
+  id             String               @id @default(uuid(7))
+  orgId          String
+  providerKey    String
+  registrationId String
+  connectionId   String?
+  principalId    String
+  stateHash      String               @unique
+  codeVerifier   String
+  config         Json
+  label          String?
+  providerScopes String[]             @default([])
   // mcp_oauth only: the token endpoint and RFC 8707 resource discovered before
   // the redirect, persisted so the callback can complete the exchange without
   // re-running discovery. Null for oauth2_code, whose token URL comes from the
   // provider catalog.
-  tokenEndpoint      String?
-  resource           String?
-  returnTo           String?
-  expiresAt          DateTime
-  createdAt          DateTime           @default(now())
-  org                Org                @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  registration       ClientRegistration @relation(fields: [orgId, registrationId], references: [orgId, id], onDelete: Cascade)
-  installation       Item               @relation(fields: [orgId, installationItemId], references: [orgId, id], onDelete: Cascade)
-  principal          Principal          @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  tokenEndpoint  String?
+  resource       String?
+  returnTo       String?
+  expiresAt      DateTime
+  createdAt      DateTime             @default(now())
+  org            Org                  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  registration   ClientRegistration   @relation(fields: [orgId, registrationId], references: [orgId, id], onDelete: Cascade)
+  connection     ConnectorConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  principal      Principal            @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
 
   @@index([orgId, registrationId])
-  @@index([orgId, installationItemId])
+  @@index([connectionId])
   @@index([orgId, principalId])
   @@index([expiresAt])
+}
+
+model ConnectorProviderSettings {
+  id            String   @id @default(uuid(7))
+  orgId         String
+  providerKey   String
+  memberEnabled Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  org           Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, providerKey])
+  @@index([orgId])
 }

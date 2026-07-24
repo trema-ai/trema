@@ -37,24 +37,25 @@ export {
 export {
   buildOAuthAuthorizationUrl,
   ConnectorCatalogDefectError,
-  ConnectorCredentialNotFoundError,
+  ConnectorConnectionNotFoundError,
   type ConnectorFetch,
   ConnectorInstallationError,
   CredentialVerificationError,
   completeOAuthCallback,
   connectorCallbackUrl,
-  connectorCredentialValidity,
+  connectorConnectionValidity,
   consumeOAuthState,
-  createStaticCredential,
+  createStaticConnection,
   hashOAuthState,
-  listConnectorCredentials,
+  listConnectorConnections,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
   OAuthTokenExchangeError,
-  revokeConnectorCredential,
+  revokeConnectorConnection,
   StaticCredentialValidationError,
   startOAuthConnect,
   UnsupportedConnectorAuthModeError,
+  updateConnectorConnectionLabel,
 } from "#/services/connectors/connect.js";
 export {
   type ArchiveConnectorInstallationInput,
@@ -70,6 +71,7 @@ export {
   type ListConnectorInstallationsInput,
   listConnectorInstallations,
   type ResolvedInstallationTool,
+  requireMemberConnectorAccess,
   resolveInstallationTools,
   type Sensitivity,
   type SyncedTool,
@@ -106,6 +108,11 @@ export {
   resolveStoredClientRegistration,
   validateRegistrationFields,
 } from "#/services/connectors/registrations.js";
+export {
+  ConnectorProviderSettingsError,
+  listConnectorProviderSettings,
+  updateConnectorProviderSettings,
+} from "#/services/connectors/settings.js";
 export {
   ConnectorSyncTransportError,
   createStreamableHttpMcpClient,

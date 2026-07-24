@@ -10,16 +10,21 @@ const catalog = loadProviderCatalog([githubProvider, notionMcpProvider]);
 const bodySchema = createConnectorInstallationBodySchema(catalog);
 const github = catalog.find(({ key }) => key === "github")!;
 const notion = catalog.find(({ key }) => key === "notion")!;
+const connectionId = "00000000-0000-4000-8000-000000000001";
 
 describe("connector installation body", () => {
   it("accepts valid REST and pre/post-sync MCP bodies", () => {
     expect(
-      bodySchema.safeParse({ catalogKey: "github", enabledTools: ["get_issue"] }).success,
+      bodySchema.safeParse({ catalogKey: "github", connectionId, enabledTools: ["get_issue"] })
+        .success,
     ).toBe(true);
-    expect(bodySchema.safeParse({ catalogKey: "notion", enabledTools: "all" }).success).toBe(true);
+    expect(
+      bodySchema.safeParse({ catalogKey: "notion", connectionId, enabledTools: "all" }).success,
+    ).toBe(true);
     expect(
       bodySchema.safeParse({
         catalogKey: "notion",
+        connectionId,
         enabledTools: ["search_pages"],
         syncedTools: [{ name: "search_pages", sensitivity: "read" }],
       }).success,
@@ -30,68 +35,59 @@ describe("connector installation body", () => {
     expect(
       bodySchema.safeParse({
         catalogKey: "github",
+        connectionId,
         enabledTools: [],
         syncedTools: [{ name: "get_issue", sensitivity: "read" }],
       }).success,
     ).toBe(false);
-    expect(bodySchema.safeParse({ catalogKey: "missing", enabledTools: "all" }).success).toBe(
-      false,
-    );
+    expect(
+      bodySchema.safeParse({ catalogKey: "missing", connectionId, enabledTools: "all" }).success,
+    ).toBe(false);
   });
 
   it("enforces explicit allowlists against REST manifests and MCP synced tools", () => {
     expect(
-      bodySchema.safeParse({ catalogKey: "github", enabledTools: ["not_a_github_tool"] }).success,
+      bodySchema.safeParse({
+        catalogKey: "github",
+        connectionId,
+        enabledTools: ["not_a_github_tool"],
+      }).success,
     ).toBe(false);
     expect(
       bodySchema.safeParse({
         catalogKey: "notion",
+        connectionId,
         enabledTools: ["missing_from_sync"],
         syncedTools: [{ name: "search_pages", sensitivity: "read" }],
       }).success,
     ).toBe(false);
     expect(
-      bodySchema.safeParse({ catalogKey: "notion", enabledTools: ["before_first_sync"] }).success,
-    ).toBe(false);
-    expect(bodySchema.safeParse({ catalogKey: "notion", enabledTools: [] }).success).toBe(true);
-  });
-
-  it("accepts providerScopes drawn from the provider's availableScopes vocabulary", () => {
-    expect(
       bodySchema.safeParse({
-        catalogKey: "github",
-        enabledTools: "all",
-        providerScopes: ["repo", "read:org"],
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: ["before_first_sync"],
       }).success,
+    ).toBe(false);
+    expect(
+      bodySchema.safeParse({ catalogKey: "notion", connectionId, enabledTools: [] }).success,
     ).toBe(true);
   });
 
-  it("rejects a providerScope absent from the provider's availableScopes", () => {
+  it("keeps connection config and provider scopes off installations", () => {
     expect(
       bodySchema.safeParse({
         catalogKey: "github",
+        connectionId,
         enabledTools: "all",
-        providerScopes: ["repo", "not_a_real_scope"],
+        providerScopes: ["repo", "read:org"],
       }).success,
     ).toBe(false);
-  });
-
-  it("rejects duplicate providerScopes", () => {
     expect(
       bodySchema.safeParse({
         catalogKey: "github",
+        connectionId,
         enabledTools: "all",
-        providerScopes: ["repo", "repo"],
-      }).success,
-    ).toBe(false);
-  });
-
-  it("rejects providerScopes on a provider that is not oauth2_code", () => {
-    expect(
-      bodySchema.safeParse({
-        catalogKey: "notion",
-        enabledTools: "all",
-        providerScopes: ["anything"],
+        config: { tenant: "example" },
       }).success,
     ).toBe(false);
   });
@@ -100,13 +96,16 @@ describe("connector installation body", () => {
 describe("resolveInstallationTools", () => {
   it("distinguishes all-tools intent from an explicit list", () => {
     expect(
-      resolveInstallationTools(github, { catalogKey: "github", enabledTools: "all" }).map(
-        ({ name }) => name,
-      ),
+      resolveInstallationTools(github, {
+        catalogKey: "github",
+        connectionId,
+        enabledTools: "all",
+      }).map(({ name }) => name),
     ).toEqual(github.toolManifest.map(({ name }) => name));
     expect(
       resolveInstallationTools(github, {
         catalogKey: "github",
+        connectionId,
         enabledTools: ["get_issue"],
       }).map(({ name }) => name),
     ).toEqual(["get_issue"]);
@@ -116,6 +115,7 @@ describe("resolveInstallationTools", () => {
     expect(
       resolveInstallationTools(notion, {
         catalogKey: "notion",
+        connectionId,
         enabledTools: "all",
         syncedTools: [{ name: "delete_page", sensitivity: "destructive" }],
         sensitivityOverrides: { delete_page: "write" },
@@ -131,6 +131,7 @@ describe("resolveInstallationTools", () => {
     expect(
       resolveInstallationTools(incompleteProvider, {
         catalogKey: "github",
+        connectionId,
         enabledTools: "all",
       })[0]?.sensitivity,
     ).toBe("destructive");

@@ -1,29 +1,25 @@
 import { randomUUID } from "node:crypto";
-
 import { call } from "@orpc/server";
-import type { ProviderDefInput } from "@trema/connectors";
-import { githubProvider } from "@trema/connectors";
+import { githubProvider, loadProviderCatalog } from "@trema/connectors";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "#/app.js";
 import { createAuth } from "#/lib/auth/index.js";
-import { decryptEnvelope } from "#/lib/crypto/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
 import { createPrismaClient } from "#/lib/db/index.js";
 import { parseEnv } from "#/lib/env/schema.js";
 import { connectorsRouter } from "#/rpc/connectors.js";
 import { orgRouter } from "#/rpc/org.js";
 import {
-  ClientRegistrationConflictError,
-  ConnectorCatalogDefectError,
-  CredentialVerificationError,
+  ConnectorConnectionNotFoundError,
   completeOAuthCallback,
+  consumeOAuthState,
   createClientRegistration,
-  createStaticCredential,
+  createStaticConnection,
   hashOAuthState,
-  loadProviderCatalog,
-  NoClientRegistrationError,
+  listConnectorConnections,
+  type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
-  resolveClientRegistration,
   startOAuthConnect,
 } from "#/services/connectors/index.js";
 
@@ -31,54 +27,6 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const masterKey = Buffer.alloc(32, 23).toString("base64");
-
-// An api_key REST provider with a POST verification recipe. Linear is now an
-// MCP-only provider, so this inline fixture stands in for the api_key +
-// GraphQL-verification shape these credential tests exercise.
-const apiKeyProvider = {
-  key: "linear",
-  displayName: "Linear",
-  description: "Access issues, projects, and comments in Linear workspaces.",
-  categories: ["project-management"],
-  docsUrl: "https://linear.app/developers/graphql",
-  authMode: "api_key",
-  auth: { defaultScopes: [] },
-  configFields: {},
-  credentialFields: {
-    apiKey: {
-      type: "string",
-      title: "API key",
-      description: "A Linear personal API key.",
-      secret: true,
-    },
-  },
-  transport: {
-    type: "rest",
-    baseUrl: "https://api.linear.app",
-    authHeader: `\${credentials.apiKey}`,
-    verification: {
-      method: "POST",
-      endpoints: ["/graphql"],
-      body: { query: "{ viewer { id } }" },
-    },
-  },
-  toolManifest: [
-    {
-      name: "search_issues",
-      description: "Search Linear issues using a GraphQL query.",
-      method: "POST",
-      path: "/graphql",
-      paramsSchema: {
-        type: "object",
-        properties: { query: { type: "string" }, variables: { type: "object" } },
-        required: ["query"],
-      },
-      sensitivity: "read",
-    },
-  ],
-  memberConnectable: false,
-} satisfies ProviderDefInput;
-
 const oauthCatalog = loadProviderCatalog([
   {
     ...githubProvider,
@@ -86,104 +34,12 @@ const oauthCatalog = loadProviderCatalog([
       ...githubProvider.auth,
       pkce: true,
       tokenRequestAuthMethod: "body" as const,
-      tokenResponseMetadata: ["custom"],
-    },
-  },
-]);
-const linearCatalog = loadProviderCatalog([apiKeyProvider]);
-const basicCatalog = loadProviderCatalog([
-  {
-    ...apiKeyProvider,
-    key: "basic_test",
-    displayName: "Basic Test",
-    authMode: "basic" as const,
-    auth: { defaultScopes: [] },
-    credentialFields: {
-      username: { type: "string" as const, title: "Username", secret: true },
-      password: { type: "string" as const, title: "Password", secret: true },
-    },
-    transport: {
-      type: "rest" as const,
-      baseUrl: "https://basic.example.test",
-      verification: { method: "GET" as const, endpoints: ["/me"] },
+      tokenResponseMetadata: ["account_name"],
     },
   },
 ]);
 
-// An mcp_oauth provider whose credential is minted by discovery + dynamic
-// client registration rather than a pre-configured OAuth app.
-const mcpProvider = {
-  key: "notion",
-  displayName: "Notion",
-  description: "Access Notion pages and databases via the official MCP server.",
-  categories: ["knowledge-management"],
-  docsUrl: "https://developers.notion.com/docs/mcp",
-  authMode: "mcp_oauth",
-  auth: { defaultScopes: [] },
-  configFields: {},
-  credentialFields: {},
-  transport: { type: "mcp", serverUrl: "https://mcp.notion.test/mcp" },
-  memberConnectable: true,
-} satisfies ProviderDefInput;
-const mcpCatalog = loadProviderCatalog([mcpProvider]);
-
-const MCP_AS_ORIGIN = "https://auth.notion.test";
-
-// A single stub answering every HTTP step of the mcp_oauth flow: the
-// unauthenticated probe, RFC 9728 protected-resource metadata, RFC 8414
-// authorization-server metadata, RFC 7591 dynamic client registration, and the
-// token exchange. `registerCalls` proves DCR runs at most once.
-function mcpFlowFetch() {
-  const state = { registerCalls: 0 };
-  const fn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const method = init?.method ?? "GET";
-    const json = (data: unknown) =>
-      new Response(JSON.stringify(data), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    if (url.includes("oauth-protected-resource")) {
-      return json({
-        resource: "https://mcp.notion.test/mcp",
-        authorization_servers: [`${MCP_AS_ORIGIN}/`],
-        scopes_supported: ["read", "write"],
-      });
-    }
-    if (url.includes("oauth-authorization-server") || url.includes("openid-configuration")) {
-      return json({
-        issuer: `${MCP_AS_ORIGIN}/`,
-        authorization_endpoint: `${MCP_AS_ORIGIN}/authorize`,
-        token_endpoint: `${MCP_AS_ORIGIN}/token`,
-        registration_endpoint: `${MCP_AS_ORIGIN}/register`,
-        response_types_supported: ["code"],
-        code_challenge_methods_supported: ["S256"],
-      });
-    }
-    if (url.endsWith("/register") && method === "POST") {
-      state.registerCalls += 1;
-      return json({
-        client_id: "notion-dcr-client",
-        redirect_uris: ["https://auth.trema.example/connect/callback"],
-        token_endpoint_auth_method: "none",
-      });
-    }
-    if (url.endsWith("/token") && method === "POST") {
-      return json({
-        access_token: "notion-access-token",
-        refresh_token: "notion-refresh-token",
-        token_type: "bearer",
-        scope: "read",
-        expires_in: 3600,
-      });
-    }
-    return new Response(null, { status: 401 });
-  });
-  return { fetch: fn as unknown as typeof globalThis.fetch, state };
-}
-
-integration("connector registrations and credentials", () => {
+integration("connector connection flows", () => {
   const db = createPrismaClient(databaseUrl);
   const env = parseEnv({
     NODE_ENV: "test",
@@ -204,609 +60,783 @@ integration("connector registrations and credentials", () => {
     await db.$disconnect();
   });
 
-  async function fixture(providerKey: string) {
+  async function signUp(name: string) {
     const email = `${randomUUID()}@example.com`;
     const response = await auth.api.signUpEmail({
-      body: { name: "Connector Owner", email, password: "integration-password" },
+      body: { name, email, password: "integration-password" },
       asResponse: true,
     });
     const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
     if (!cookie) throw new Error("Sign-up did not return a session cookie");
+    const user = await db.user.findUniqueOrThrow({ where: { email } });
     const context = { db, auth, env, headers: new Headers({ cookie }) };
-    const membership = await call(orgRouter.create, { name: "Connector Org" }, { context });
-    const scope = await db.scope.findFirstOrThrow({
+    return { user, context };
+  }
+
+  async function createOrg() {
+    const owner = await signUp("Connector Owner");
+    const membership = await call(
+      orgRouter.create,
+      { name: "Connector Integration Org" },
+      { context: owner.context },
+    );
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId: membership.org.id, kind: "agent" },
+    });
+    const orgScope = await db.scope.findFirstOrThrow({
       where: { orgId: membership.org.id, kind: "org" },
     });
-    const installation = await db.item.create({
-      data: {
-        orgId: membership.org.id,
-        scopeId: scope.id,
-        kind: "connector",
-        title: `${providerKey} installation`,
-        body: { catalogKey: providerKey, enabledTools: [] },
-        status: "active",
-        disclosure: "retrieved",
-        createdById: membership.principal.id,
-      },
-    });
-    return { ...membership, context, scope, installation };
-  }
-
-  async function customerRegistration(orgId: string, catalog = oauthCatalog) {
-    return createClientRegistration(db, {
-      orgId,
+    await createClientRegistration(db, {
+      orgId: membership.org.id,
       providerKey: "github",
       source: "customer",
-      clientId: "customer-client",
-      clientSecret: "customer-secret",
+      clientId: "github-client",
+      clientSecret: "github-secret",
       masterKey,
-      catalog,
+    });
+    return { ...owner, ...membership, agent, orgScope };
+  }
+
+  async function addMember(orgId: string, orgScopeId: string, name: string) {
+    const signedUp = await signUp(name);
+    const principal = await db.principal.create({
+      data: {
+        orgId,
+        kind: "human",
+        authId: signedUp.user.id,
+        displayName: name,
+        email: signedUp.user.email,
+      },
+    });
+    await Promise.all([
+      db.grant.create({
+        data: { orgId, principalId: principal.id, scopeId: orgScopeId, role: "member" },
+      }),
+      db.session.updateMany({
+        where: { userId: signedUp.user.id },
+        data: { activeOrgId: orgId },
+      }),
+    ]);
+    const personalScope = await db.scope.create({
+      data: { orgId, kind: "personal", name, ownerId: principal.id },
+    });
+    return { ...signedUp, principal, personalScope };
+  }
+
+  async function storedConnection(orgId: string, principalId: string, providerKey = "github") {
+    return db.connectorConnection.create({
+      data: {
+        orgId,
+        principalId,
+        providerKey,
+        mode: "oauth2_code",
+        config: {},
+        ciphertext: encryptEnvelope({ accessToken: "test-token" }, masterKey),
+      },
     });
   }
 
-  it("atomically consumes OAuth state once and rejects expired state", async () => {
-    const org = await fixture("github");
-    await customerRegistration(org.org.id);
+  function tokenFetch(
+    payload: Record<string, unknown> = {
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      expires_in: 3600,
+      scope: "repo,read:org",
+      account_name: "octo-org",
+    },
+  ) {
+    return vi.fn(
+      async () =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+  }
+
+  async function start(
+    orgId: string,
+    options: {
+      returnTo?: string;
+      reconnectConnectionId?: string;
+      providerScopes?: string[];
+    } = {},
+  ) {
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId, kind: "agent" },
+      select: { id: true },
+    });
     const started = await startOAuthConnect(db, {
-      orgId: org.org.id,
+      orgId,
+      principalId: agent.id,
       providerKey: "github",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      returnTo: "https://app.trema.example/connectors",
       masterKey,
       catalog: oauthCatalog,
+      ...(options.returnTo ? { returnTo: options.returnTo } : {}),
+      ...(options.reconnectConnectionId
+        ? { reconnectConnectionId: options.reconnectConnectionId }
+        : {}),
+      ...(options.providerScopes ? { providerScopes: options.providerScopes } : {}),
     });
-    const authorizationUrl = new URL(started.authorizationUrl);
-    const state = authorizationUrl.searchParams.get("state");
-    expect(state).toBeTruthy();
-    const tokenFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      expect(String(init?.body)).toContain("code_verifier=");
-      return new Response(
-        JSON.stringify({
-          access_token: "oauth-access-token",
-          refresh_token: "oauth-refresh-token",
-          expires_in: 3600,
-          token_type: "bearer",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+    return new URL(started.authorizationUrl).searchParams.get("state")!;
+  }
+
+  it("derives the organization agent principal server-side for admin OAuth", async () => {
+    const org = await createOrg();
+    const started = await call(
+      connectorsRouter.connect.startOAuth,
+      {
+        providerKey: "github",
+        returnTo: "https://app.trema.example/settings/connectors/github",
+        providerScopes: ["repo", "read:org"],
+      },
+      { context: org.context },
+    );
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    const pending = await db.connectorOAuthState.findUniqueOrThrow({
+      where: { stateHash: hashOAuthState(state) },
     });
+    expect(pending).toMatchObject({
+      orgId: org.org.id,
+      providerKey: "github",
+      principalId: org.agent.id,
+      connectionId: null,
+      config: {},
+      providerScopes: ["repo", "read:org"],
+    });
+    expect(pending.principalId).not.toBe(org.principal.id);
+
     const completed = await completeOAuthCallback(db, {
-      state: state!,
+      state,
       code: "authorization-code",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
       catalog: oauthCatalog,
-      fetch: tokenFetch,
+      fetch: tokenFetch(),
     });
-    expect(completed.returnTo).toBe("https://app.trema.example/connectors");
-    expect(tokenFetch).toHaveBeenCalledTimes(1);
-
-    await expect(
-      completeOAuthCallback(db, {
-        state: state!,
-        code: "replayed-code",
-        authBaseUrl: env.TREMA_AUTH_BASE_URL,
-        masterKey,
-        catalog: oauthCatalog,
-        fetch: tokenFetch,
-      }),
-    ).rejects.toBeInstanceOf(OAuthStateSingleUseError);
-    expect(tokenFetch).toHaveBeenCalledTimes(1);
-
-    const oldNow = new Date(Date.now() - 20 * 60 * 1000);
-    const expired = await startOAuthConnect(db, {
-      orgId: org.org.id,
+    expect(completed.connection).toMatchObject({
       providerKey: "github",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      masterKey,
-      catalog: oauthCatalog,
-      now: oldNow,
+      principalId: org.agent.id,
+      providerScopes: ["repo", "read:org"],
     });
-    const expiredState = new URL(expired.authorizationUrl).searchParams.get("state");
-    await expect(
-      completeOAuthCallback(db, {
-        state: expiredState!,
-        code: "expired-code",
-        authBaseUrl: env.TREMA_AUTH_BASE_URL,
-        masterKey,
-        catalog: oauthCatalog,
-        fetch: tokenFetch,
-      }),
-    ).rejects.toBeInstanceOf(OAuthStateExpiredError);
-    expect(tokenFetch).toHaveBeenCalledTimes(1);
+    const stored = await db.connectorConnection.findUniqueOrThrow({
+      where: { id: completed.connection.id },
+    });
+    expect(stored.config).toEqual({ account_name: "octo-org" });
+    expect(decryptEnvelope<Record<string, unknown>>(stored.ciphertext, masterKey)).toMatchObject({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      raw: { access_token: "access-token", account_name: "octo-org" },
+    });
+
+    // The list derives a display label from the hoisted account name without
+    // leaking config; an explicit rename overrides it.
+    const [listed] = await listConnectorConnections(
+      db,
+      org.org.id,
+      "github",
+      new Date(),
+      undefined,
+      oauthCatalog,
+    );
+    expect(listed?.label).toBe("octo-org");
+    expect(JSON.stringify(listed)).not.toMatch(/"config"|account_name/);
+    const renamed = await call(
+      connectorsRouter.connections.update,
+      { connectionId: completed.connection.id, label: "Primary org" },
+      { context: org.context },
+    );
+    expect(renamed.label).toBe("Primary org");
   });
 
-  it("guards the callback route against an external return URL", async () => {
-    const org = await fixture("github");
-    await customerRegistration(org.org.id);
-    const started = await startOAuthConnect(db, {
-      orgId: org.org.id,
-      providerKey: "github",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      returnTo: "https://attacker.example/collect",
-      masterKey,
-      catalog: oauthCatalog,
-    });
-    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
-    const app = createApp({ db, auth, env });
-    const response = await app.request(
-      `/connect/callback?state=${encodeURIComponent(state)}&error=access_denied`,
+  it("derives the caller principal for member OAuth after both access gates pass", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "OAuth Member");
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "github", memberEnabled: true },
+      { context: org.context },
     );
 
+    const started = await call(
+      connectorsRouter.member.connect.startOAuth,
+      {
+        providerKey: "github",
+        returnTo: "https://app.trema.example/customize?tab=connections",
+      },
+      { context: member.context },
+    );
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await expect(
+      db.connectorOAuthState.findUniqueOrThrow({
+        where: { stateHash: hashOAuthState(state) },
+      }),
+    ).resolves.toMatchObject({
+      orgId: org.org.id,
+      providerKey: "github",
+      principalId: member.principal.id,
+      connectionId: null,
+    });
+  });
+
+  it("allows member OAuth by default and rejects it once disabled or below the ceiling", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "Gated Member");
+    const returnTo = "https://app.trema.example/customize?tab=connections";
+
+    // memberConnectable is the ceiling and member access defaults on, so a
+    // member may connect github without any admin opt-in.
+    const started = await call(
+      connectorsRouter.member.connect.startOAuth,
+      { providerKey: "github", returnTo },
+      { context: member.context },
+    );
+    expect(started.authorizationUrl).toContain("https://");
+
+    // An explicit opt-out closes it.
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "github", memberEnabled: false },
+      { context: org.context },
+    );
+    await expect(
+      call(
+        connectorsRouter.member.connect.startOAuth,
+        { providerKey: "github", returnTo },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("not enabled for member connections"),
+    });
+
+    // A provider below the ceiling is never member-connectable.
+    await expect(
+      call(
+        connectorsRouter.member.connect.startOAuth,
+        { providerKey: "stripe", returnTo },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("not enabled for member connections"),
+    });
+  });
+
+  it("lists and revokes only the caller's connections", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "Connection Member");
+    const other = await addMember(org.org.id, org.orgScope.id, "Other Connection Member");
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "github", memberEnabled: true },
+      { context: org.context },
+    );
+    const ownConnection = await storedConnection(org.org.id, member.principal.id);
+    const otherConnection = await storedConnection(org.org.id, other.principal.id);
+    const installation = await call(
+      connectorsRouter.member.installations.create,
+      {
+        scopeId: member.personalScope.id,
+        catalogKey: "github",
+        connectionId: ownConnection.id,
+      },
+      { context: member.context },
+    );
+
+    const listed = await call(
+      connectorsRouter.member.connections.list,
+      {},
+      { context: member.context },
+    );
+    expect(listed).toEqual([
+      expect.objectContaining({
+        id: ownConnection.id,
+        principalId: member.principal.id,
+        installations: [{ id: installation.id, scopeId: member.personalScope.id }],
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toMatch(/ciphertext|test-token|config/);
+
+    await expect(
+      call(
+        connectorsRouter.member.connections.revoke,
+        { connectionId: otherConnection.id },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      call(
+        connectorsRouter.member.connect.startOAuth,
+        {
+          providerKey: "github",
+          reconnectConnectionId: otherConnection.id,
+          returnTo: "https://app.trema.example/customize?tab=connections",
+        },
+        { context: member.context },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: otherConnection.id } }),
+    ).resolves.toMatchObject({ revokedAt: null });
+
+    await expect(
+      call(
+        connectorsRouter.member.connections.revoke,
+        { connectionId: ownConnection.id },
+        { context: member.context },
+      ),
+    ).resolves.toMatchObject({ id: ownConnection.id });
+  });
+
+  it("appends connected=<connectionId> to the safe callback redirect", async () => {
+    const org = await createOrg();
+    const returnTo = "https://app.trema.example/settings/connectors/github?from=list";
+    const state = await start(org.org.id, { returnTo });
+    const app = createApp({ db, auth, env, connectorFetch: tokenFetch() });
+    const response = await app.request(
+      `https://auth.trema.example/connect/callback?state=${encodeURIComponent(state)}&code=ok`,
+    );
     expect(response.status).toBe(302);
     const redirect = new URL(response.headers.get("location")!);
-    expect(redirect.origin).toBe("https://app.trema.example");
-    expect(redirect.searchParams.get("connector_error")).toBe("provider_error");
-    expect(redirect.toString()).not.toContain("attacker.example");
+    expect(redirect.origin + redirect.pathname).toBe(
+      "https://app.trema.example/settings/connectors/github",
+    );
+    expect(redirect.searchParams.get("from")).toBe("list");
+    const connectionId = redirect.searchParams.get("connected");
+    expect(connectionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    await expect(
+      db.connectorConnection.findUnique({ where: { id: connectionId! } }),
+    ).resolves.not.toBeNull();
   });
 
-  it("resolves customer before platform, then platform, then a typed error", async () => {
-    const org = await fixture("github");
-    await createClientRegistration(db, {
-      orgId: org.org.id,
-      providerKey: "github",
-      source: "platform",
-      sharedRef: "hosted-github",
-      catalog: oauthCatalog,
+  it("completes dynamic MCP OAuth, redirects with the connection, and syncs installation tools", async () => {
+    const org = await createOrg();
+    const orgScope = await db.scope.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "org" },
     });
-    const customer = await customerRegistration(org.org.id);
-    const platformApps = {
-      get: vi.fn(() => ({ clientId: "platform-client", clientSecret: "platform-secret" })),
-    };
-
-    await expect(
-      resolveClientRegistration(db, org.org.id, "github", platformApps, masterKey),
-    ).resolves.toMatchObject({ source: "customer", clientId: "customer-client" });
-    expect(platformApps.get).not.toHaveBeenCalled();
-
-    await db.clientRegistration.delete({ where: { id: customer.id } });
-    await expect(
-      resolveClientRegistration(db, org.org.id, "github", platformApps, masterKey),
-    ).resolves.toMatchObject({ source: "platform", clientId: "platform-client" });
-
-    await db.clientRegistration.deleteMany({ where: { orgId: org.org.id } });
-    await expect(
-      resolveClientRegistration(db, org.org.id, "github", platformApps, masterKey),
-    ).rejects.toBeInstanceOf(NoClientRegistrationError);
-  });
-
-  it("decrypts the retained raw token response while no DB or list output exposes plaintext", async () => {
-    const org = await fixture("github");
-    await customerRegistration(org.org.id);
-    const started = await startOAuthConnect(db, {
-      orgId: org.org.id,
-      providerKey: "github",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      masterKey,
-      catalog: oauthCatalog,
-    });
-    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
-    await completeOAuthCallback(db, {
-      state,
-      code: "code",
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      masterKey,
-      catalog: oauthCatalog,
-      fetch: async () =>
-        new Response(
-          JSON.stringify({
-            access_token: "plaintext-access-token",
-            refresh_token: "plaintext-refresh-token",
-            custom: "retained-metadata",
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-    });
-
-    const stored = await db.connectorCredential.findFirstOrThrow({
-      where: { installationItemId: org.installation.id },
-    });
-    expect(JSON.stringify(stored)).not.toContain("plaintext-access-token");
-    // Response omitted `scope`, so the requested (default) scopes are recorded.
-    expect(stored.providerScopes).toEqual(["read:user", "repo"]);
-    expect(decryptEnvelope(stored.ciphertext, masterKey)).toEqual({
-      accessToken: "plaintext-access-token",
-      refreshToken: "plaintext-refresh-token",
-      raw: {
-        access_token: "plaintext-access-token",
-        refresh_token: "plaintext-refresh-token",
-        custom: "retained-metadata",
+    const callbackUrl = "https://auth.trema.example/connect/callback";
+    const mcpServerUrl = "https://mcp.notion.com/mcp";
+    const authorizationServerUrl = "https://mcp.notion.com";
+    const tokenEndpoint = `${authorizationServerUrl}/token`;
+    const connectorFetch = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("oauth-protected-resource")) {
+          return new Response(
+            JSON.stringify({
+              resource: mcpServerUrl,
+              authorization_servers: [authorizationServerUrl],
+              scopes_supported: ["default"],
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("oauth-authorization-server") || url.includes("openid-configuration")) {
+          return new Response(
+            JSON.stringify({
+              issuer: authorizationServerUrl,
+              authorization_endpoint: `${authorizationServerUrl}/authorize`,
+              token_endpoint: tokenEndpoint,
+              registration_endpoint: `${authorizationServerUrl}/register`,
+              response_types_supported: ["code"],
+              grant_types_supported: ["authorization_code", "refresh_token"],
+              code_challenge_methods_supported: ["S256"],
+              token_endpoint_auth_methods_supported: [
+                "client_secret_basic",
+                "client_secret_post",
+                "none",
+              ],
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === `${authorizationServerUrl}/register`) {
+          const registration = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          expect(registration).toMatchObject({
+            redirect_uris: [callbackUrl],
+            token_endpoint_auth_method: "none",
+          });
+          return new Response(
+            JSON.stringify({
+              client_id: "notion-dynamic-client",
+              client_secret: "notion-dynamic-secret",
+              redirect_uris: [callbackUrl],
+              token_endpoint_auth_method: "client_secret_post",
+              grant_types: ["authorization_code", "refresh_token"],
+              response_types: ["code"],
+            }),
+            { status: 201, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === tokenEndpoint) {
+          const headers = new Headers(init?.headers);
+          const body = new URLSearchParams(String(init?.body));
+          if (
+            headers.has("Authorization") ||
+            body.get("client_id") !== "notion-dynamic-client" ||
+            body.get("client_secret") !== "notion-dynamic-secret"
+          ) {
+            return new Response(
+              JSON.stringify({
+                error: "invalid_client",
+                error_description: "client_secret_post is required",
+              }),
+              { status: 401, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          expect(body.get("grant_type")).toBe("authorization_code");
+          expect(body.get("code")).toBe("notion-authorization-code");
+          expect(body.get("redirect_uri")).toBe(callbackUrl);
+          expect(body.get("resource")).toBe(mcpServerUrl);
+          expect(body.get("code_verifier")).toBeTruthy();
+          return new Response(
+            JSON.stringify({
+              access_token: "notion-access-token",
+              refresh_token: "notion-refresh-token",
+              token_type: "bearer",
+              expires_in: 3600,
+              scope: "default",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(null, { status: url === mcpServerUrl ? 401 : 404 });
       },
-    });
-    const installation = await db.item.findUniqueOrThrow({ where: { id: org.installation.id } });
-    expect(installation.body).toMatchObject({
-      config: { custom: "retained-metadata" },
-    });
-
-    const registrations = await call(
-      connectorsRouter.registrations.list,
-      {},
-      { context: org.context },
-    );
-    const credentials = await call(
-      connectorsRouter.credentials.list,
-      { installationItemId: org.installation.id },
-      { context: org.context },
-    );
-    expect(JSON.stringify(registrations)).not.toMatch(/clientSecret|ciphertext|customer-secret/);
-    expect(JSON.stringify(credentials)).not.toMatch(/ciphertext|plaintext-access-token/);
-
-    await call(
-      connectorsRouter.credentials.revoke,
-      { installationItemId: org.installation.id, credentialId: stored.id },
-      { context: org.context },
-    );
-    const revoked = await call(
-      connectorsRouter.credentials.list,
-      { installationItemId: org.installation.id },
-      { context: org.context },
-    );
-    expect(revoked[0]).toMatchObject({ isRevoked: true, isValid: false });
-  });
-
-  it("requests the installation's scope override and records the granted scopes", async () => {
-    const org = await fixture("github");
-    await customerRegistration(org.org.id);
-    // Override the installed scopes with a subset of GitHub's availableScopes.
-    await db.item.update({
-      where: { id: org.installation.id },
-      data: { body: { catalogKey: "github", enabledTools: [], providerScopes: ["repo"] } },
-    });
+    ) as unknown as typeof globalThis.fetch;
 
     const started = await startOAuthConnect(db, {
       orgId: org.org.id,
-      providerKey: "github",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
-      catalog: oauthCatalog,
+      returnTo: "https://app.trema.example/settings/connectors/notion?from=list",
+      fetch: connectorFetch,
     });
-    const authorizationUrl = new URL(started.authorizationUrl);
-    // The authorization request asks for the override, not the defaults.
-    expect(authorizationUrl.searchParams.get("scope")).toBe("repo");
-    const state = authorizationUrl.searchParams.get("state")!;
-
-    // GitHub returns the granted set as a comma-separated string.
-    await completeOAuthCallback(db, {
-      state,
-      code: "code",
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      masterKey,
-      catalog: oauthCatalog,
-      fetch: async () =>
-        new Response(JSON.stringify({ access_token: "token", scope: "repo,read:org" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-    });
-    const stored = await db.connectorCredential.findFirstOrThrow({
-      where: { installationItemId: org.installation.id },
-    });
-    expect(stored.providerScopes).toEqual(["repo", "read:org"]);
-  });
-
-  it("records granted scopes from a space-separated token response", async () => {
-    const org = await fixture("github");
-    await customerRegistration(org.org.id);
-    const started = await startOAuthConnect(db, {
-      orgId: org.org.id,
-      providerKey: "github",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      masterKey,
-      catalog: oauthCatalog,
-    });
-    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
-    await completeOAuthCallback(db, {
-      state,
-      code: "code",
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      masterKey,
-      catalog: oauthCatalog,
-      fetch: async () =>
-        new Response(JSON.stringify({ access_token: "token", scope: "read:user repo gist" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-    });
-    const stored = await db.connectorCredential.findFirstOrThrow({
-      where: { installationItemId: org.installation.id },
-    });
-    expect(stored.providerScopes).toEqual(["read:user", "repo", "gist"]);
-  });
-
-  it("stores only verified static credentials and rejects missing verification recipes", async () => {
-    const org = await fixture("linear");
-    const okFetch = vi.fn(
-      async (_url: string | URL | Request, _init?: RequestInit) =>
-        new Response(null, { status: 200 }),
-    );
-    const created = await createStaticCredential(db, {
-      orgId: org.org.id,
-      providerKey: "linear",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      credentials: { apiKey: "verified-linear-key" },
-      masterKey,
-      catalog: linearCatalog,
-      fetch: okFetch,
-    });
-    expect(created.mode).toBe("api_key");
-    expect(okFetch).toHaveBeenCalledTimes(1);
-    const requestInit = okFetch.mock.calls[0]?.[1];
-    expect(new Headers(requestInit?.headers).get("authorization")).toBe("verified-linear-key");
-    expect(new Headers(requestInit?.headers).get("content-type")).toBe("application/json");
-    expect(requestInit?.body).toBe(JSON.stringify({ query: "{ viewer { id } }" }));
-
-    const basicInstallation = await db.item.create({
-      data: {
-        orgId: org.org.id,
-        scopeId: org.scope.id,
-        kind: "connector",
-        title: "Basic installation",
-        body: { catalogKey: "basic_test", enabledTools: [] },
-        status: "active",
-        disclosure: "retrieved",
-        createdById: org.principal.id,
-      },
-    });
-    const basicFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        `Basic ${Buffer.from("basic-user:basic-password").toString("base64")}`,
-      );
-      return new Response(null, { status: 200 });
-    });
-    await createStaticCredential(db, {
-      orgId: org.org.id,
-      providerKey: "basic_test",
-      installationItemId: basicInstallation.id,
-      principalId: org.principal.id,
-      credentials: { username: "basic-user", password: "basic-password" },
-      masterKey,
-      catalog: basicCatalog,
-      fetch: basicFetch,
-    });
-    expect(basicFetch).toHaveBeenCalledOnce();
-
+    const authorization = new URL(started.authorizationUrl);
+    const state = authorization.searchParams.get("state");
+    expect(state).toBeTruthy();
+    expect(authorization.searchParams.get("client_id")).toBe("notion-dynamic-client");
+    expect(authorization.searchParams.get("resource")).toBe(mcpServerUrl);
     await expect(
-      createStaticCredential(db, {
-        orgId: org.org.id,
-        providerKey: "linear",
-        installationItemId: org.installation.id,
-        principalId: org.principal.id,
-        credentials: { apiKey: "rejected-linear-key" },
-        masterKey,
-        catalog: linearCatalog,
-        fetch: async () => new Response(null, { status: 401 }),
+      db.connectorOAuthState.findUniqueOrThrow({
+        where: { stateHash: hashOAuthState(state!) },
       }),
-    ).rejects.toBeInstanceOf(CredentialVerificationError);
-    const afterUnauthorized = await db.connectorCredential.findMany({
-      where: { installationItemId: org.installation.id },
-    });
-    expect(afterUnauthorized).toHaveLength(1);
-    expect(decryptEnvelope(afterUnauthorized[0]!.ciphertext, masterKey)).not.toEqual(
-      expect.objectContaining({ apiKey: "rejected-linear-key" }),
-    );
-
-    const noVerificationCatalog = loadProviderCatalog([
-      {
-        ...apiKeyProvider,
-        transport: { ...apiKeyProvider.transport, verification: undefined },
-      },
-    ]);
-    await expect(
-      createStaticCredential(db, {
-        orgId: org.org.id,
-        providerKey: "linear",
-        installationItemId: org.installation.id,
-        principalId: org.principal.id,
-        credentials: { apiKey: "unverified-linear-key" },
-        masterKey,
-        catalog: noVerificationCatalog,
-        fetch: okFetch,
-      }),
-    ).rejects.toBeInstanceOf(ConnectorCatalogDefectError);
-    expect(okFetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("replaces the customer registration in place, keeping its id", async () => {
-    const org = await fixture("github");
-    const first = await customerRegistration(org.org.id);
-    await expect(customerRegistration(org.org.id)).rejects.toBeInstanceOf(
-      ClientRegistrationConflictError,
-    );
-
-    const replaced = await createClientRegistration(db, {
-      orgId: org.org.id,
-      providerKey: "github",
-      source: "customer",
-      clientId: "rotated-client",
-      clientSecret: "rotated-secret",
-      masterKey,
-      catalog: oauthCatalog,
-      replace: true,
-    });
-    expect(replaced.id).toBe(first.id);
-    expect(replaced.clientId).toBe("rotated-client");
-
-    const row = await db.clientRegistration.findUniqueOrThrow({ where: { id: first.id } });
-    expect(row.clientSecretCiphertext).not.toBeNull();
-    expect(decryptEnvelope(row.clientSecretCiphertext as string, masterKey)).toBe("rotated-secret");
-  });
-
-  it("mints an mcp_oauth credential via discovery + one-time dynamic registration", async () => {
-    const org = await fixture("notion");
-    const { fetch: mcpFetch, state } = mcpFlowFetch();
-
-    const started = await startOAuthConnect(db, {
+    ).resolves.toMatchObject({
       orgId: org.org.id,
       providerKey: "notion",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      returnTo: "https://app.trema.example/connectors",
-      masterKey,
-      catalog: mcpCatalog,
-      fetch: mcpFetch,
+      principalId: org.agent.id,
+      connectionId: null,
+      config: {},
+      providerScopes: ["default"],
+      tokenEndpoint,
+      resource: mcpServerUrl,
+    });
+    await expect(
+      db.clientRegistration.findFirstOrThrow({
+        where: { orgId: org.org.id, providerKey: "notion", source: "dynamic" },
+      }),
+    ).resolves.toMatchObject({
+      clientId: "notion-dynamic-client",
+      tokenEndpointAuthMethod: "client_secret_post",
     });
 
-    // Dynamic client registration ran once and persisted a public "dynamic" row.
-    expect(state.registerCalls).toBe(1);
-    const registrations = await db.clientRegistration.findMany({
-      where: { orgId: org.org.id, providerKey: "notion" },
-    });
-    expect(registrations).toHaveLength(1);
-    expect(registrations[0]).toMatchObject({
-      source: "dynamic",
-      clientId: "notion-dcr-client",
-      clientSecretCiphertext: null,
-    });
-
-    const authorizationUrl = new URL(started.authorizationUrl);
-    expect(`${authorizationUrl.origin}${authorizationUrl.pathname}`).toBe(
-      `${MCP_AS_ORIGIN}/authorize`,
+    const app = createApp({ db, auth, env, connectorFetch });
+    const callback = await app.request(
+      `https://auth.trema.example/connect/callback?state=${encodeURIComponent(state!)}&code=notion-authorization-code`,
     );
-    expect(authorizationUrl.searchParams.get("resource")).toBe("https://mcp.notion.test/mcp");
-    expect(authorizationUrl.searchParams.get("scope")).toBe("read write");
-    expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(authorizationUrl.searchParams.get("client_id")).toBe("notion-dcr-client");
-    const oauthState = authorizationUrl.searchParams.get("state")!;
+    expect(callback.status).toBe(302);
+    const redirect = new URL(callback.headers.get("location")!);
+    expect(redirect.origin + redirect.pathname).toBe(
+      "https://app.trema.example/settings/connectors/notion",
+    );
+    expect(redirect.searchParams.get("from")).toBe("list");
+    expect(redirect.searchParams.has("connector_error")).toBe(false);
+    const connectionId = redirect.searchParams.get("connected");
+    expect(connectionId).toBeTruthy();
 
-    // The discovered token endpoint and resource survive the redirect.
-    const pending = await db.connectorOAuthState.findUniqueOrThrow({
-      where: { stateHash: hashOAuthState(oauthState) },
-    });
-    expect(pending.tokenEndpoint).toBe(`${MCP_AS_ORIGIN}/token`);
-    expect(pending.resource).toBe("https://mcp.notion.test/mcp");
-    expect(pending.providerScopes).toEqual(["read", "write"]);
-
-    const completed = await completeOAuthCallback(db, {
-      state: oauthState,
-      code: "notion-auth-code",
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      masterKey,
-      catalog: mcpCatalog,
-      fetch: mcpFetch,
-    });
-    expect(completed.returnTo).toBe("https://app.trema.example/connectors");
-
-    const stored = await db.connectorCredential.findFirstOrThrow({
-      where: { installationItemId: org.installation.id },
-    });
-    expect(stored.mode).toBe("mcp_oauth");
-    // The token response narrowed the granted scope to "read".
-    expect(stored.providerScopes).toEqual(["read"]);
-    expect(JSON.stringify(stored)).not.toContain("notion-access-token");
-    expect(decryptEnvelope(stored.ciphertext, masterKey)).toMatchObject({
-      accessToken: "notion-access-token",
-      refreshToken: "notion-refresh-token",
-    });
-    expect(stored.expiresAt).not.toBeNull();
-
-    // A second connect reuses the stored dynamic registration; no re-registration.
-    const second = await startOAuthConnect(db, {
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: connectionId! } }),
+    ).resolves.toMatchObject({
       orgId: org.org.id,
       providerKey: "notion",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
+      principalId: org.agent.id,
+      mode: "mcp_oauth",
+      config: {},
+      providerScopes: ["default"],
+    });
+
+    const reconnectStarted = await startOAuthConnect(db, {
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
-      catalog: mcpCatalog,
-      fetch: mcpFetch,
+      returnTo: "https://app.trema.example/settings/connectors/notion",
+      reconnectConnectionId: connectionId!,
+      fetch: connectorFetch,
     });
-    expect(new URL(second.authorizationUrl).searchParams.get("client_id")).toBe(
-      "notion-dcr-client",
+    const reconnectState = new URL(reconnectStarted.authorizationUrl).searchParams.get("state");
+    expect(reconnectState).toBeTruthy();
+    const reconnectCallback = await app.request(
+      `https://auth.trema.example/connect/callback?state=${encodeURIComponent(reconnectState!)}&code=notion-authorization-code`,
     );
-    expect(state.registerCalls).toBe(1);
-    const afterSecond = await db.clientRegistration.findMany({
-      where: { orgId: org.org.id, providerKey: "notion" },
-    });
-    expect(afterSecond).toHaveLength(1);
-  });
+    const reconnectRedirect = new URL(reconnectCallback.headers.get("location")!);
+    expect(reconnectRedirect.searchParams.get("connected")).toBe(connectionId);
+    expect(reconnectRedirect.searchParams.has("connector_error")).toBe(false);
+    const registrationCalls = vi
+      .mocked(connectorFetch)
+      .mock.calls.filter(([input]) => String(input) === `${authorizationServerUrl}/register`);
+    expect(registrationCalls).toHaveLength(1);
+    await expect(
+      db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "notion" } }),
+    ).resolves.toBe(1);
 
-  it("syncs MCP tools on connect via the callback route, tolerating sync failure", async () => {
-    const org = await fixture("notion");
-    const { fetch: mcpFetch } = mcpFlowFetch();
-    const app = createApp({
-      db,
-      auth,
-      env,
-      connectorFetch: mcpFetch,
-      mcpClientFactory: async () => ({
+    const clientFactory = vi.fn(async ({ serverUrl, authorization }) => {
+      expect(serverUrl).toBe(mcpServerUrl);
+      expect(authorization).toBe("Bearer notion-access-token");
+      return {
         listTools: async () => ({
           tools: [
             {
-              name: "search_pages",
-              description: "Search pages.",
+              name: "notion-search",
+              description: "Search the connected Notion workspace",
               annotations: { readOnlyHint: true },
             },
           ],
         }),
         close: async () => {},
-      }),
-    });
-
-    const started = await startOAuthConnect(db, {
-      orgId: org.org.id,
-      providerKey: "notion",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      returnTo: "https://app.trema.example/connectors",
-      masterKey,
-      fetch: mcpFetch,
-    });
-    const state = new URL(started.authorizationUrl).searchParams.get("state") ?? "";
-
-    const response = await app.request(
-      `/connect/callback?state=${encodeURIComponent(state)}&code=notion-code`,
+      };
+    }) satisfies McpClientFactory;
+    const installation = await call(
+      connectorsRouter.installations.create,
+      {
+        scopeId: orgScope.id,
+        catalogKey: "notion",
+        connectionId: connectionId!,
+        enabledTools: "all",
+      },
+      { context: { ...org.context, mcpClientFactory: clientFactory } },
     );
-    expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("https://app.trema.example/connectors");
-
-    const item = await db.item.findUniqueOrThrow({
-      where: { orgId_id: { orgId: org.org.id, id: org.installation.id } },
+    const storedInstallation = await db.item.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
     });
-    const body = item.body as { syncedTools?: unknown };
-    expect(body.syncedTools).toEqual([
-      { name: "search_pages", description: "Search pages.", sensitivity: "read" },
-    ]);
+    expect(storedInstallation.body).toMatchObject({
+      catalogKey: "notion",
+      connectionId,
+      enabledTools: "all",
+      syncedTools: [
+        {
+          name: "notion-search",
+          description: "Search the connected Notion workspace",
+          sensitivity: "read",
+        },
+      ],
+    });
+    expect(clientFactory).toHaveBeenCalledOnce();
+  });
 
-    // A failing MCP server still redirects; the credential survives for a manual sync.
-    const failing = createApp({
-      db,
-      auth,
-      env,
-      connectorFetch: mcpFetch,
-      mcpClientFactory: async () => {
-        throw new Error("mcp server unreachable");
+  it("reconnects in place and clears revocation and refresh exhaustion", async () => {
+    const org = await createOrg();
+    const firstState = await start(org.org.id);
+    const first = await completeOAuthCallback(db, {
+      state: firstState,
+      code: "first",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      catalog: oauthCatalog,
+      fetch: tokenFetch(),
+    });
+    await db.connectorConnection.update({
+      where: { id: first.connection.id },
+      data: {
+        revokedAt: new Date(),
+        refreshExhausted: true,
+        refreshAttempts: 9,
+        lastRefreshFailure: new Date(),
       },
     });
-    const second = await startOAuthConnect(db, {
-      orgId: org.org.id,
-      providerKey: "notion",
-      installationItemId: org.installation.id,
-      principalId: org.principal.id,
-      authBaseUrl: env.TREMA_AUTH_BASE_URL,
-      returnTo: "https://app.trema.example/connectors",
-      masterKey,
-      fetch: mcpFetch,
+
+    const reconnectState = await start(org.org.id, {
+      reconnectConnectionId: first.connection.id,
+      providerScopes: ["repo"],
     });
-    const secondState = new URL(second.authorizationUrl).searchParams.get("state") ?? "";
-    const secondResponse = await failing.request(
-      `/connect/callback?state=${encodeURIComponent(secondState)}&code=notion-code`,
+    const pending = await db.connectorOAuthState.findUniqueOrThrow({
+      where: { stateHash: hashOAuthState(reconnectState) },
+    });
+    expect(pending.connectionId).toBe(first.connection.id);
+    const second = await completeOAuthCallback(db, {
+      state: reconnectState,
+      code: "second",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      catalog: oauthCatalog,
+      fetch: tokenFetch({
+        access_token: "replacement-token",
+        scope: "repo",
+        account_name: "octo-org",
+      }),
+    });
+    expect(second.connection.id).toBe(first.connection.id);
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: first.connection.id } }),
+    ).resolves.toMatchObject({
+      revokedAt: null,
+      refreshExhausted: false,
+      refreshAttempts: 0,
+      lastRefreshFailure: null,
+      providerScopes: ["repo"],
+    });
+    await expect(
+      db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "github" } }),
+    ).resolves.toBe(1);
+  });
+
+  it("collapses a re-connect of the same account but keeps distinct workspaces apart", async () => {
+    const org = await createOrg();
+    const complete = (state: string, code: string, accountName: string) =>
+      completeOAuthCallback(db, {
+        state,
+        code,
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: oauthCatalog,
+        fetch: tokenFetch({ access_token: `token-${accountName}`, account_name: accountName }),
+      });
+
+    const first = await complete(await start(org.org.id), "first", "octo-org");
+    // A fresh connect (no reconnectConnectionId) that lands on the same account
+    // updates the existing connection rather than minting a duplicate.
+    const same = await complete(await start(org.org.id), "second", "octo-org");
+    expect(same.connection.id).toBe(first.connection.id);
+    // A different workspace becomes its own connection.
+    const other = await complete(await start(org.org.id), "third", "hooli");
+    expect(other.connection.id).not.toBe(first.connection.id);
+
+    const connections = await db.connectorConnection.findMany({
+      where: { orgId: org.org.id, providerKey: "github" },
+    });
+    expect(connections).toHaveLength(2);
+    expect(
+      new Set(connections.map((row) => (row.config as { account_name?: string }).account_name)),
+    ).toEqual(new Set(["octo-org", "hooli"]));
+  });
+
+  it("creates verified static connections for the agent and exposes metadata only", async () => {
+    const org = await createOrg();
+    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer rk_test_secret");
+      return new Response("{}", { status: 200 });
+    });
+    const created = await call(
+      connectorsRouter.connect.createStatic,
+      {
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_test_secret" },
+      },
+      { context: { ...org.context, connectorFetch: fetch } },
     );
-    expect(secondResponse.status).toBe(302);
-    expect(secondResponse.headers.get("location")).toBe("https://app.trema.example/connectors");
+    const stored = await db.connectorConnection.findUniqueOrThrow({
+      where: { id: created.id },
+    });
+    expect(stored).toMatchObject({
+      providerKey: "stripe",
+      principalId: org.agent.id,
+      mode: "api_key",
+      config: {},
+    });
+
+    const listed = await call(
+      connectorsRouter.connections.list,
+      { providerKey: "stripe" },
+      { context: org.context },
+    );
+    expect(listed).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        providerKey: "stripe",
+        principalId: org.agent.id,
+        isValid: true,
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toMatch(/rk_test_secret|ciphertext|config/);
+  });
+
+  it("reconnects a static connection in place instead of creating a duplicate", async () => {
+    const org = await createOrg();
+    const okFetch = async () => new Response("{}", { status: 200 });
+    const first = await createStaticConnection(db, {
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "stripe",
+      config: {},
+      credentials: { apiKey: "rk_old_secret" },
+      masterKey,
+      fetch: okFetch,
+    });
+    await db.connectorConnection.update({
+      where: { id: first.id },
+      data: { revokedAt: new Date(), refreshExhausted: true, refreshAttempts: 3 },
+    });
+    const second = await createStaticConnection(db, {
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "stripe",
+      config: {},
+      credentials: { apiKey: "rk_new_secret" },
+      reconnectConnectionId: first.id,
+      masterKey,
+      fetch: okFetch,
+    });
+    expect(second.id).toBe(first.id);
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: first.id } }),
+    ).resolves.toMatchObject({
+      revokedAt: null,
+      refreshExhausted: false,
+      refreshAttempts: 0,
+    });
+    await expect(
+      db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "stripe" } }),
+    ).resolves.toBe(1);
+    await expect(
+      createStaticConnection(db, {
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_new_secret" },
+        reconnectConnectionId: "00000000-0000-7000-8000-000000000000",
+        masterKey,
+        fetch: okFetch,
+      }),
+    ).rejects.toBeInstanceOf(ConnectorConnectionNotFoundError);
+  });
+
+  it("consumes OAuth state once and rejects expired state", async () => {
+    const org = await createOrg();
+    const state = await start(org.org.id);
+    await expect(consumeOAuthState(db, state)).resolves.toMatchObject({ orgId: org.org.id });
+    await expect(consumeOAuthState(db, state)).rejects.toBeInstanceOf(OAuthStateSingleUseError);
+
+    const expired = await startOAuthConnect(db, {
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "github",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      catalog: oauthCatalog,
+      now: new Date("2026-01-01T00:00:00Z"),
+    });
+    const expiredState = new URL(expired.authorizationUrl).searchParams.get("state")!;
+    await expect(
+      consumeOAuthState(db, expiredState, new Date("2026-01-01T00:16:00Z")),
+    ).rejects.toBeInstanceOf(OAuthStateExpiredError);
   });
 });

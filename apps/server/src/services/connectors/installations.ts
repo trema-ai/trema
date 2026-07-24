@@ -3,7 +3,8 @@ import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import { z } from "zod";
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
-import { connectorCredentialValidity } from "#/services/connectors/connect.js";
+import type { ConnectorFetch } from "#/services/connectors/connect.js";
+import type { McpClientFactory } from "#/services/connectors/sync.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
 export const sensitivitySchema = z.enum(sensitivities);
@@ -19,6 +20,7 @@ export const syncedToolSchema = z
 const installationBodyShape = z
   .object({
     catalogKey: z.string().trim().min(1),
+    connectionId: z.uuid(),
     enabledTools: z.union([
       z.literal("all"),
       z.array(z.string().trim().min(1)).refine((names) => new Set(names).size === names.length, {
@@ -26,13 +28,6 @@ const installationBodyShape = z
       }),
     ]),
     sensitivityOverrides: z.record(z.string().trim().min(1), sensitivitySchema).optional(),
-    providerScopes: z
-      .array(z.string().trim().min(1))
-      .refine((scopes) => new Set(scopes).size === scopes.length, {
-        message: "providerScopes cannot contain duplicate scopes",
-      })
-      .optional(),
-    config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     syncedTools: z
       .array(syncedToolSchema)
       .refine((tools) => new Set(tools.map(({ name }) => name)).size === tools.length, {
@@ -62,27 +57,6 @@ export function createConnectorInstallationBodySchema(catalog: ProviderCatalog =
         path: ["syncedTools"],
         message: "REST connector installations cannot contain syncedTools",
       });
-    }
-
-    if (body.providerScopes !== undefined) {
-      if (provider.authMode !== "oauth2_code") {
-        context.addIssue({
-          code: "custom",
-          path: ["providerScopes"],
-          message: `Provider '${provider.key}' does not support OAuth scope selection`,
-        });
-      } else if (provider.auth.availableScopes) {
-        const available = new Set(provider.auth.availableScopes);
-        for (const [index, scope] of body.providerScopes.entries()) {
-          if (!available.has(scope)) {
-            context.addIssue({
-              code: "custom",
-              path: ["providerScopes", index],
-              message: `Scope '${scope}' is not available from provider '${provider.key}'`,
-            });
-          }
-        }
-      }
     }
 
     if (Array.isArray(body.enabledTools)) {
@@ -154,9 +128,31 @@ export class ConnectorInstallationNotFoundError extends Error {
 export class ConnectorMemberConnectabilityError extends Error {
   readonly code = "member_connection_not_allowed";
 
-  constructor(providerKey: string) {
-    super(`Provider '${providerKey}' cannot be installed in a personal scope`);
+  constructor(
+    providerKey: string,
+    message = `Provider '${providerKey}' cannot be installed in a personal scope`,
+  ) {
+    super(message);
     this.name = "ConnectorMemberConnectabilityError";
+  }
+}
+
+type MemberConnectorAccessDb = Pick<Prisma.TransactionClient, "connectorProviderSettings">;
+
+// Member access defaults to enabled: the catalog's memberConnectable is the
+// ceiling, and the per-org settings row only records an explicit opt-out.
+export async function requireMemberConnectorAccess(
+  db: MemberConnectorAccessDb,
+  input: { orgId: string; provider: ProviderDef; errorMessage?: string },
+) {
+  const settings = await db.connectorProviderSettings.findUnique({
+    where: {
+      orgId_providerKey: { orgId: input.orgId, providerKey: input.provider.key },
+    },
+    select: { memberEnabled: true },
+  });
+  if (!input.provider.memberConnectable || settings?.memberEnabled === false) {
+    throw new ConnectorMemberConnectabilityError(input.provider.key, input.errorMessage);
   }
 }
 
@@ -197,15 +193,8 @@ export async function listConnectorInstallations(
       },
       ...(!input.includeArchived ? { status: { not: "archived" } } : {}),
     },
-    include: {
-      connectorCredentials: {
-        include: { principal: { select: { displayName: true } } },
-        orderBy: { createdAt: "asc" },
-      },
-    },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
   });
-  const now = input.now ?? new Date();
 
   return installations.map((installation) => {
     const body = parseBody(installation.body, catalog);
@@ -213,25 +202,12 @@ export async function listConnectorInstallations(
       id: installation.id,
       scopeId: installation.scopeId,
       catalogKey: body.catalogKey,
+      connectionId: body.connectionId,
       enabledTools: body.enabledTools,
       sensitivityOverrides: body.sensitivityOverrides ?? {},
-      providerScopes: body.providerScopes ?? [],
       syncedTools: body.syncedTools ?? [],
-      config: body.config ?? {},
       status: installation.status,
       updatedAt: installation.updatedAt,
-      credentials: installation.connectorCredentials.map((credential) => {
-        return {
-          id: credential.id,
-          principalId: credential.principalId,
-          principalName: credential.principal.displayName,
-          mode: credential.mode,
-          providerScopes: credential.providerScopes,
-          ...connectorCredentialValidity(credential, now),
-          expiresAt: credential.expiresAt,
-          createdAt: credential.createdAt,
-        };
-      }),
     };
   });
 }
@@ -256,16 +232,7 @@ export async function archiveConnectorInstallation(
       },
     });
     if (!existing) throw new ConnectorInstallationNotFoundError();
-    const archivedAt = input.now ?? new Date();
     let installation = existing;
-    const revoked = await transaction.connectorCredential.updateMany({
-      where: {
-        orgId: input.orgId,
-        installationItemId: existing.id,
-        revokedAt: null,
-      },
-      data: { revokedAt: archivedAt },
-    });
 
     if (existing.status !== "archived") {
       await transaction.itemVersion.create({
@@ -289,13 +256,10 @@ export async function archiveConnectorInstallation(
         actorPrincipalId: input.actorPrincipalId,
         action: "connector.installation.archive",
         subject: installation.id,
-        payload: {
-          revokedCredentials: revoked.count,
-          version: installation.version,
-        },
+        payload: { version: installation.version },
       },
     });
-    return { installation, revokedCredentials: revoked.count };
+    return { installation };
   });
 }
 
@@ -304,10 +268,71 @@ export interface CreateConnectorInstallationInput {
   actorPrincipalId: string;
   scopeId: string;
   catalogKey: string;
-  enabledTools: "all" | string[];
+  connectionId: string;
+  enabledTools?: "all" | string[];
   sensitivityOverrides?: Record<string, Sensitivity>;
-  providerScopes?: string[];
+  masterKey?: string;
+  clientFactory?: McpClientFactory;
+  fetch?: ConnectorFetch;
   catalog?: ProviderCatalog;
+}
+
+type BindingValidationDb = Pick<
+  Prisma.TransactionClient,
+  "connectorConnection" | "connectorProviderSettings" | "principal" | "scope"
+>;
+
+async function validateBinding(
+  db: BindingValidationDb,
+  input: {
+    orgId: string;
+    scopeId: string;
+    connectionId: string;
+    provider: ProviderDef;
+  },
+) {
+  const [scope, connection, agent] = await Promise.all([
+    db.scope.findFirst({
+      where: { id: input.scopeId, orgId: input.orgId },
+      select: { id: true, kind: true, ownerId: true },
+    }),
+    db.connectorConnection.findFirst({
+      where: { id: input.connectionId, orgId: input.orgId },
+      select: { id: true, providerKey: true, principalId: true, revokedAt: true },
+    }),
+    db.principal.findFirst({
+      where: { orgId: input.orgId, kind: "agent", deactivatedAt: null },
+      select: { id: true },
+    }),
+  ]);
+  if (!scope) throw new ConnectorInstallationValidationError("Installation scope not found");
+  if (!connection) {
+    throw new ConnectorInstallationValidationError("Connector connection not found");
+  }
+  if (connection.providerKey !== input.provider.key) {
+    throw new ConnectorInstallationValidationError(
+      "Connector connection provider does not match the installation",
+    );
+  }
+  if (connection.revokedAt) {
+    throw new ConnectorInstallationValidationError("Connector connection is revoked");
+  }
+  if (scope.kind === "personal") {
+    await requireMemberConnectorAccess(db, {
+      orgId: input.orgId,
+      provider: input.provider,
+    });
+    if (!scope.ownerId || connection.principalId !== scope.ownerId) {
+      throw new ConnectorInstallationValidationError(
+        "Personal installations must use the scope owner's connection",
+      );
+    }
+  } else if (!agent || connection.principalId !== agent.id) {
+    throw new ConnectorInstallationValidationError(
+      "Organization and shared installations must use the organization agent's connection",
+    );
+  }
+  return scope;
 }
 
 export async function createConnectorInstallation(
@@ -324,30 +349,27 @@ export async function createConnectorInstallation(
   const body = parseBody(
     {
       catalogKey: input.catalogKey,
-      enabledTools: input.enabledTools,
+      connectionId: input.connectionId,
+      enabledTools: input.enabledTools ?? "all",
       ...(input.sensitivityOverrides ? { sensitivityOverrides: input.sensitivityOverrides } : {}),
-      ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
     },
     catalog,
   );
 
-  const [scope, actor] = await Promise.all([
-    db.scope.findFirst({
-      where: { id: input.scopeId, orgId: input.orgId },
-      select: { id: true, kind: true },
-    }),
-    db.principal.findFirst({
-      where: { id: input.actorPrincipalId, orgId: input.orgId },
-      select: { id: true },
-    }),
-  ]);
-  if (!scope) throw new ConnectorInstallationValidationError("Installation scope not found");
-  if (!actor) throw new ConnectorInstallationValidationError("Installation actor not found");
-  if (scope.kind === "personal" && !provider.memberConnectable) {
-    throw new ConnectorMemberConnectabilityError(provider.key);
-  }
-
-  return db.$transaction(async (transaction) => {
+  const installation = await db.$transaction(async (transaction) => {
+    const [scope, actor] = await Promise.all([
+      validateBinding(transaction, {
+        orgId: input.orgId,
+        scopeId: input.scopeId,
+        connectionId: input.connectionId,
+        provider,
+      }),
+      transaction.principal.findFirst({
+        where: { id: input.actorPrincipalId, orgId: input.orgId },
+        select: { id: true },
+      }),
+    ]);
+    if (!actor) throw new ConnectorInstallationValidationError("Installation actor not found");
     const installation = await transaction.item.create({
       data: {
         orgId: input.orgId,
@@ -370,21 +392,43 @@ export async function createConnectorInstallation(
         payload: {
           scopeId: installation.scopeId,
           catalogKey: provider.key,
+          connectionId: body.connectionId,
           enabledTools: body.enabledTools,
         },
       },
     });
     return installation;
   });
+  if (provider.transport.type === "mcp") {
+    const { syncConnectorInstallation } = await import("#/services/connectors/sync.js");
+    const sync = syncConnectorInstallation(db, {
+      orgId: input.orgId,
+      actorPrincipalId: input.actorPrincipalId,
+      installationItemId: installation.id,
+      ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+      ...(input.clientFactory ? { clientFactory: input.clientFactory } : {}),
+      ...(input.fetch ? { fetch: input.fetch } : {}),
+      catalog,
+    }).catch(() => undefined);
+    let syncTimer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      sync,
+      new Promise<void>((resolve) => {
+        syncTimer = setTimeout(resolve, 8000);
+      }),
+    ]);
+    clearTimeout(syncTimer);
+  }
+  return installation;
 }
 
 export interface UpdateConnectorInstallationInput {
   orgId: string;
   actorPrincipalId: string;
   installationItemId: string;
+  connectionId?: string;
   enabledTools?: "all" | string[];
   sensitivityOverrides?: Record<string, Sensitivity>;
-  providerScopes?: string[];
   catalog?: ProviderCatalog;
 }
 
@@ -399,17 +443,29 @@ export async function updateConnectorInstallation(
     });
     if (!existing) throw new ConnectorInstallationNotFoundError();
     const current = parseBody(existing.body, catalog);
+    const provider = catalog.find(({ key }) => key === current.catalogKey);
+    if (!provider) {
+      throw new ConnectorInstallationValidationError(
+        `Unknown connector provider: ${current.catalogKey}`,
+      );
+    }
     const body = parseBody(
       {
         ...current,
+        ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
         ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
         ...(input.sensitivityOverrides !== undefined
           ? { sensitivityOverrides: input.sensitivityOverrides }
           : {}),
-        ...(input.providerScopes !== undefined ? { providerScopes: input.providerScopes } : {}),
       },
       catalog,
     );
+    await validateBinding(transaction, {
+      orgId: input.orgId,
+      scopeId: existing.scopeId,
+      connectionId: body.connectionId,
+      provider,
+    });
     const changed = JSON.stringify(body) !== JSON.stringify(current);
 
     if (changed) {
@@ -445,6 +501,7 @@ export async function updateConnectorInstallation(
         payload: {
           changed,
           enabledTools: body.enabledTools,
+          connectionId: body.connectionId,
           sensitivityOverrides: body.sensitivityOverrides ?? {},
           version: installation.version,
         },

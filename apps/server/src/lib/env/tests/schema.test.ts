@@ -4,11 +4,13 @@ import { parseEnv } from "#/lib/env/schema.js";
 
 describe("parseEnv", () => {
   const authSecret = "a-development-auth-secret-with-32-characters";
+  const credentialMasterKey = Buffer.alloc(32, 1).toString("base64");
 
   it("parses values and applies defaults", () => {
     const result = parseEnv({
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/trema",
       TREMA_AUTH_SECRET: authSecret,
+      TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
     });
 
     expect(result).toEqual({
@@ -21,6 +23,7 @@ describe("parseEnv", () => {
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
       TREMA_PASSWORD_AUTH_ENABLED: true,
+      TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
     });
     expect(Object.isFrozen(result)).toBe(true);
   });
@@ -32,6 +35,7 @@ describe("parseEnv", () => {
       HOST: "0.0.0.0",
       PORT: "8080",
       TREMA_AUTH_SECRET: authSecret,
+      TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
     });
 
     expect(result).toEqual({
@@ -44,6 +48,7 @@ describe("parseEnv", () => {
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
       TREMA_PASSWORD_AUTH_ENABLED: true,
+      TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
     });
   });
 
@@ -59,7 +64,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: "false",
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
-      TREMA_CREDENTIAL_MASTER_KEY: "credential-master-key",
+      TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
       TREMA_OIDC_ISSUER: "https://idp.example.com",
       TREMA_OIDC_CLIENT_ID: "oidc-client",
       TREMA_OIDC_CLIENT_SECRET: "oidc-secret",
@@ -74,7 +79,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: false,
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
-      TREMA_CREDENTIAL_MASTER_KEY: "credential-master-key",
+      TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
       TREMA_OIDC_ISSUER: "https://idp.example.com",
       TREMA_OIDC_CLIENT_ID: "oidc-client",
       TREMA_OIDC_CLIENT_SECRET: "oidc-secret",
@@ -84,6 +89,7 @@ describe("parseEnv", () => {
   it("treats empty optional settings as unset", () => {
     const result = parseEnv({
       DATABASE_URL: "postgresql://localhost/trema",
+      TREMA_MODE: "hosted",
       TREMA_AUTH_SECRET: authSecret,
       TREMA_GOOGLE_CLIENT_ID: "",
       TREMA_GOOGLE_CLIENT_SECRET: "",
@@ -102,6 +108,30 @@ describe("parseEnv", () => {
     expect(result.TREMA_OIDC_ISSUER).toBeUndefined();
   });
 
+  it.each([undefined, ""])(
+    "requires a credential master key in dedicated mode when the value is %s",
+    (credentialMasterKey) => {
+      expect(() =>
+        parseEnv({
+          DATABASE_URL: "postgresql://localhost/trema",
+          TREMA_MODE: "dedicated",
+          TREMA_AUTH_SECRET: authSecret,
+          TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
+        }),
+      ).toThrow("TREMA_CREDENTIAL_MASTER_KEY is required when TREMA_MODE is dedicated");
+    },
+  );
+
+  it("allows a hosted deployment without a credential master key", () => {
+    const result = parseEnv({
+      DATABASE_URL: "postgresql://localhost/trema",
+      TREMA_MODE: "hosted",
+      TREMA_AUTH_SECRET: authSecret,
+    });
+
+    expect(result.TREMA_CREDENTIAL_MASTER_KEY).toBeUndefined();
+  });
+
   it.each([
     ["TREMA_GOOGLE_CLIENT_ID", "google-client"],
     ["TREMA_GOOGLE_CLIENT_SECRET", "google-secret"],
@@ -109,6 +139,7 @@ describe("parseEnv", () => {
     expect(() =>
       parseEnv({
         DATABASE_URL: "postgresql://localhost/trema",
+        TREMA_MODE: "hosted",
         TREMA_AUTH_SECRET: authSecret,
         [key]: value,
       }),
@@ -123,6 +154,7 @@ describe("parseEnv", () => {
     expect(() =>
       parseEnv({
         DATABASE_URL: "postgresql://localhost/trema",
+        TREMA_MODE: "hosted",
         TREMA_AUTH_SECRET: authSecret,
         [key]: value,
       }),
@@ -183,6 +215,8 @@ describe("parseEnv", () => {
       "TREMA_PASSWORD_AUTH_ENABLED",
     ],
   ])("rejects invalid input", (input, message) => {
-    expect(() => parseEnv(input)).toThrow(message);
+    expect(() => parseEnv({ TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey, ...input })).toThrow(
+      message,
+    );
   });
 });

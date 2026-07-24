@@ -19,6 +19,7 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const authSecret = "cli-integration-secret-at-least-32-characters";
+const credentialMasterKey = Buffer.alloc(32, 3).toString("base64");
 
 function environment(mode: "hosted" | "dedicated" = "dedicated"): Environment {
   return parseEnv({
@@ -26,6 +27,7 @@ function environment(mode: "hosted" | "dedicated" = "dedicated"): Environment {
     DATABASE_URL: databaseUrl,
     TREMA_AUTH_SECRET: authSecret,
     TREMA_MODE: mode,
+    ...(mode === "dedicated" ? { TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey } : {}),
   });
 }
 

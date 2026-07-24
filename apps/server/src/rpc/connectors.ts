@@ -1,6 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { fieldDescriptorSchema } from "@trema/connectors";
 import { z } from "zod";
+import type { Database } from "#/lib/db/index.js";
 import { orgScoped, requireCapability } from "#/rpc/builders.js";
 import { authorize } from "#/services/authorize/index.js";
 import {
@@ -9,35 +10,45 @@ import {
   ClientRegistrationNotFoundError,
   ClientRegistrationValidationError,
   ConnectorCatalogDefectError,
-  ConnectorCredentialNotFoundError,
+  ConnectorConnectionNotFoundError,
   ConnectorInstallationError,
   ConnectorInstallationNotFoundError,
   ConnectorInstallationValidationError,
   ConnectorMemberConnectabilityError,
   ConnectorProviderNotFoundError,
+  ConnectorProviderSettingsError,
   ConnectorSyncTransportError,
   CredentialVerificationError,
   connectorCallbackUrl,
   createClientRegistration,
   createConnectorInstallation,
-  createStaticCredential,
+  createStaticConnection,
   deleteClientRegistration,
   listClientRegistrations,
-  listConnectorCredentials,
+  listConnectorConnections,
   listConnectorInstallations,
+  listConnectorProviderSettings,
   loadProviderCatalog,
   McpOAuthDiscoveryError,
   NoClientRegistrationError,
-  revokeConnectorCredential,
+  requireMemberConnectorAccess,
+  revokeConnectorConnection,
   StaticCredentialValidationError,
   sensitivities,
   startOAuthConnect,
   syncConnectorInstallation,
   UnsupportedConnectorAuthModeError,
+  updateConnectorConnectionLabel,
   updateConnectorInstallation,
+  updateConnectorProviderSettings,
 } from "#/services/connectors/index.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
+const sensitivitySchema = z.enum(sensitivities);
+const enabledToolsSchema = z.union([z.literal("all"), z.array(z.string().trim().min(1))]);
+const sensitivityOverridesSchema = z.record(z.string().trim().min(1), sensitivitySchema);
+const configSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
+
 const registrationSchema = z.object({
   id: z.uuid(),
   providerKey: z.string(),
@@ -64,11 +75,44 @@ function serializeRegistration(registration: Awaited<ReturnType<typeof createCli
   };
 }
 
-const credentialSchema = z.object({
+const installationSchema = z.object({
   id: z.uuid(),
-  installationItemId: z.uuid(),
+  scopeId: z.uuid(),
+  kind: z.literal("connector"),
+  title: z.string(),
+  body: z.json(),
+  status: z.enum(["proposed", "active", "archived"]),
+  disclosure: z.enum(["standing", "retrieved"]),
+  createdById: z.uuid(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  version: z.number().int().positive(),
+});
+
+function serializeInstallation(
+  installation: Awaited<ReturnType<typeof createConnectorInstallation>>,
+) {
+  return {
+    id: installation.id,
+    scopeId: installation.scopeId,
+    kind: "connector" as const,
+    title: installation.title,
+    body: installation.body as z.infer<typeof installationSchema>["body"],
+    status: installation.status,
+    disclosure: installation.disclosure,
+    createdById: installation.createdById,
+    createdAt: installation.createdAt.toISOString(),
+    updatedAt: installation.updatedAt.toISOString(),
+    version: installation.version,
+  };
+}
+
+const connectionSchema = z.object({
+  id: z.uuid(),
+  providerKey: z.string(),
   principalId: z.uuid(),
   mode: z.string(),
+  label: z.string().nullable(),
   providerScopes: z.array(z.string()),
   expiresAt: z.string().nullable(),
   revokedAt: z.string().nullable(),
@@ -81,33 +125,43 @@ const credentialSchema = z.object({
   isRevoked: z.boolean(),
   isExpired: z.boolean(),
   isValid: z.boolean(),
+  installations: z.array(z.object({ id: z.uuid(), scopeId: z.uuid() })),
 });
 
-const credentialSummarySchema = z.object({
-  id: z.uuid(),
-  principalId: z.uuid(),
-  principalName: z.string(),
-  mode: z.string(),
-  providerScopes: z.array(z.string()),
-  isRevoked: z.boolean(),
-  isExpired: z.boolean(),
-  isValid: z.boolean(),
-  expiresAt: z.string().nullable(),
-  createdAt: z.string(),
-});
+const connectionUpdateSchema = z.object({ id: z.uuid(), label: z.string().nullable() });
 
-type ListedCredential = Awaited<ReturnType<typeof listConnectorCredentials>>[number];
+type ListedConnection = Awaited<ReturnType<typeof listConnectorConnections>>[number];
 
-function serializeCredential(credential: ListedCredential) {
+function serializeConnection(connection: ListedConnection) {
   return {
-    ...credential,
-    expiresAt: credential.expiresAt?.toISOString() ?? null,
-    revokedAt: credential.revokedAt?.toISOString() ?? null,
-    lastRefreshSuccess: credential.lastRefreshSuccess?.toISOString() ?? null,
-    lastRefreshFailure: credential.lastRefreshFailure?.toISOString() ?? null,
-    createdAt: credential.createdAt.toISOString(),
-    updatedAt: credential.updatedAt.toISOString(),
+    ...connection,
+    expiresAt: connection.expiresAt?.toISOString() ?? null,
+    revokedAt: connection.revokedAt?.toISOString() ?? null,
+    lastRefreshSuccess: connection.lastRefreshSuccess?.toISOString() ?? null,
+    lastRefreshFailure: connection.lastRefreshFailure?.toISOString() ?? null,
+    createdAt: connection.createdAt.toISOString(),
+    updatedAt: connection.updatedAt.toISOString(),
   };
+}
+
+async function orgAgentPrincipalId(db: Database, orgId: string) {
+  const principal = await db.principal.findFirst({
+    where: { orgId, kind: "agent", deactivatedAt: null },
+    select: { id: true },
+  });
+  if (!principal) throw new ConnectorInstallationError("Organization agent principal not found");
+  return principal.id;
+}
+
+async function requireMemberProvider(db: Database, orgId: string, providerKey: string) {
+  const provider = loadProviderCatalog().find((candidate) => candidate.key === providerKey);
+  if (!provider) throw new ConnectorProviderNotFoundError(providerKey);
+  await requireMemberConnectorAccess(db, {
+    orgId,
+    provider,
+    errorMessage: `Provider '${provider.key}' is not enabled for member connections`,
+  });
+  return provider;
 }
 
 function throwConnectorError(error: unknown): never {
@@ -117,7 +171,8 @@ function throwConnectorError(error: unknown): never {
     error instanceof ConnectorInstallationValidationError ||
     error instanceof StaticCredentialValidationError ||
     error instanceof UnsupportedConnectorAuthModeError ||
-    error instanceof ConnectorCatalogDefectError
+    error instanceof ConnectorCatalogDefectError ||
+    error instanceof ConnectorProviderSettingsError
   ) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
@@ -126,7 +181,7 @@ function throwConnectorError(error: unknown): never {
   }
   if (
     error instanceof ClientRegistrationNotFoundError ||
-    error instanceof ConnectorCredentialNotFoundError ||
+    error instanceof ConnectorConnectionNotFoundError ||
     error instanceof ConnectorInstallationNotFoundError ||
     error instanceof ConnectorProviderNotFoundError
   ) {
@@ -214,13 +269,14 @@ const listRegistrations = requireCapability("manage_connectors")
         registration.clientSecretCiphertext !== null,
       ]),
     );
-
     return Promise.all(
       registrations.map(async (registration) => {
         let isUsable =
-          registration.source !== "platform" &&
-          registration.clientId !== null &&
-          hasSecret.get(registration.id) === true;
+          registration.source === "dynamic"
+            ? registration.clientId !== null
+            : registration.source === "customer" &&
+              registration.clientId !== null &&
+              hasSecret.get(registration.id) === true;
         if (registration.source === "platform" && registration.sharedRef && context.platformApps) {
           isUsable = Boolean(await context.platformApps.get(registration.sharedRef));
         }
@@ -265,42 +321,6 @@ const installationScoped = orgScoped.use(async ({ context, next }, input) => {
   return next({ context: { authorizedScopeId: item.scopeId } });
 });
 
-const sensitivitySchema = z.enum(sensitivities);
-const enabledToolsSchema = z.union([z.literal("all"), z.array(z.string().trim().min(1))]);
-const sensitivityOverridesSchema = z.record(z.string().trim().min(1), sensitivitySchema);
-const providerScopesSchema = z.array(z.string().trim().min(1));
-const installationSchema = z.object({
-  id: z.uuid(),
-  scopeId: z.uuid(),
-  kind: z.literal("connector"),
-  title: z.string(),
-  body: z.json(),
-  status: z.enum(["proposed", "active", "archived"]),
-  disclosure: z.enum(["standing", "retrieved"]),
-  createdById: z.uuid(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  version: z.number().int().positive(),
-});
-
-function serializeInstallation(
-  installation: Awaited<ReturnType<typeof createConnectorInstallation>>,
-) {
-  return {
-    id: installation.id,
-    scopeId: installation.scopeId,
-    kind: "connector" as const,
-    title: installation.title,
-    body: installation.body as z.infer<typeof installationSchema>["body"],
-    status: installation.status,
-    disclosure: installation.disclosure,
-    createdById: installation.createdById,
-    createdAt: installation.createdAt.toISOString(),
-    updatedAt: installation.updatedAt.toISOString(),
-    version: installation.version,
-  };
-}
-
 const createInstallation = requireCapability("manage_connectors", {
   scopeId: (input) => (input as { scopeId?: string }).scopeId,
 })
@@ -308,16 +328,16 @@ const createInstallation = requireCapability("manage_connectors", {
     method: "POST",
     path: "/connector-installations",
     summary: "Create a connector installation",
-    description: "Install a catalog provider into an authorized context scope.",
+    description: "Bind a connector connection into an authorized context scope.",
     tags: ["Connectors"],
   })
   .input(
     z.object({
       scopeId: z.uuid(),
       catalogKey: z.string().trim().min(1),
-      enabledTools: enabledToolsSchema,
+      connectionId: z.uuid(),
+      enabledTools: enabledToolsSchema.optional(),
       sensitivityOverrides: sensitivityOverridesSchema.optional(),
-      providerScopes: providerScopesSchema.optional(),
     }),
   )
   .output(installationSchema)
@@ -329,11 +349,16 @@ const createInstallation = requireCapability("manage_connectors", {
           actorPrincipalId: context.principal.id,
           scopeId: input.scopeId,
           catalogKey: input.catalogKey,
-          enabledTools: input.enabledTools,
+          connectionId: input.connectionId,
+          ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
           ...(input.sensitivityOverrides
             ? { sensitivityOverrides: input.sensitivityOverrides }
             : {}),
-          ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+            : {}),
+          ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+          ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
         }),
       );
     } catch (error) {
@@ -346,22 +371,22 @@ const updateInstallation = installationScoped
     method: "PATCH",
     path: "/connector-installations/{installationItemId}",
     summary: "Update a connector installation",
-    description: "Update only tool intent and sensitivity overrides for an installation.",
+    description: "Update its connection, tool intent, or sensitivity overrides.",
     tags: ["Connectors"],
   })
   .input(
     z
       .object({
         installationItemId: z.uuid(),
+        connectionId: z.uuid().optional(),
         enabledTools: enabledToolsSchema.optional(),
         sensitivityOverrides: sensitivityOverridesSchema.optional(),
-        providerScopes: providerScopesSchema.optional(),
       })
       .refine(
         (input) =>
+          input.connectionId !== undefined ||
           input.enabledTools !== undefined ||
-          input.sensitivityOverrides !== undefined ||
-          input.providerScopes !== undefined,
+          input.sensitivityOverrides !== undefined,
         { message: "At least one editable field is required" },
       ),
   )
@@ -373,11 +398,11 @@ const updateInstallation = installationScoped
           orgId: context.org.id,
           actorPrincipalId: context.principal.id,
           installationItemId: input.installationItemId,
+          ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
           ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
           ...(input.sensitivityOverrides !== undefined
             ? { sensitivityOverrides: input.sensitivityOverrides }
             : {}),
-          ...(input.providerScopes !== undefined ? { providerScopes: input.providerScopes } : {}),
         }),
       );
     } catch (error) {
@@ -389,6 +414,7 @@ const listedInstallationSchema = z.object({
   id: z.uuid(),
   scopeId: z.uuid(),
   catalogKey: z.string(),
+  connectionId: z.uuid(),
   enabledTools: enabledToolsSchema,
   sensitivityOverrides: sensitivityOverridesSchema,
   syncedTools: z.array(
@@ -398,10 +424,8 @@ const listedInstallationSchema = z.object({
       sensitivity: sensitivitySchema,
     }),
   ),
-  config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
   status: z.enum(["proposed", "active", "archived"]),
   updatedAt: z.string(),
-  credentials: z.array(credentialSummarySchema),
 });
 
 const listInstallations = requireCapability("manage_connectors", {
@@ -411,16 +435,10 @@ const listInstallations = requireCapability("manage_connectors", {
     method: "GET",
     path: "/connector-installations",
     summary: "List connector installations",
-    description:
-      "List manageable organization and shared-scope installations with credential status.",
+    description: "List manageable organization and shared-scope connection bindings.",
     tags: ["Connectors"],
   })
-  .input(
-    z.object({
-      scopeId: z.uuid().optional(),
-      includeArchived: z.boolean().optional(),
-    }),
-  )
+  .input(z.object({ scopeId: z.uuid().optional(), includeArchived: z.boolean().optional() }))
   .output(z.array(listedInstallationSchema))
   .handler(async ({ context, input }) =>
     (
@@ -432,11 +450,6 @@ const listInstallations = requireCapability("manage_connectors", {
     ).map((installation) => ({
       ...installation,
       updatedAt: installation.updatedAt.toISOString(),
-      credentials: installation.credentials.map((credential) => ({
-        ...credential,
-        expiresAt: credential.expiresAt?.toISOString() ?? null,
-        createdAt: credential.createdAt.toISOString(),
-      })),
     })),
   );
 
@@ -445,16 +458,11 @@ const archiveInstallation = installationScoped
     method: "POST",
     path: "/connector-installations/{installationItemId}/archive",
     summary: "Archive a connector installation",
-    description: "Archive an installation and revoke all of its active credentials.",
+    description: "Archive one scope binding without revoking its connection.",
     tags: ["Connectors"],
   })
   .input(z.object({ installationItemId: z.uuid() }))
-  .output(
-    z.object({
-      installation: installationSchema,
-      revokedCredentials: z.number().int().nonnegative(),
-    }),
-  )
+  .output(z.object({ installation: installationSchema }))
   .handler(async ({ context, input }) => {
     try {
       const result = await archiveConnectorInstallation(context.db, {
@@ -462,114 +470,10 @@ const archiveInstallation = installationScoped
         actorPrincipalId: context.principal.id,
         installationItemId: input.installationItemId,
       });
-      return {
-        installation: serializeInstallation(result.installation),
-        revokedCredentials: result.revokedCredentials,
-      };
+      return { installation: serializeInstallation(result.installation) };
     } catch (error) {
       throwConnectorError(error);
     }
-  });
-
-const catalog = orgScoped
-  .route({
-    method: "GET",
-    path: "/connector-catalog",
-    summary: "List connector providers",
-    description: "List member-safe connector catalog metadata without auth recipes or URLs.",
-    tags: ["Connectors"],
-  })
-  .output(
-    z.array(
-      z.object({
-        key: z.string(),
-        displayName: z.string(),
-        description: z.string().optional(),
-        logoUrl: z.string().optional(),
-        categories: z.array(z.string()),
-        docsUrl: z.url(),
-        authMode: z.string(),
-        transport: z.object({ type: z.enum(["mcp", "rest"]) }),
-        memberConnectable: z.boolean(),
-        defaultScopes: z.array(z.string()),
-        availableScopes: z.array(z.string()).optional(),
-        configFields: z.record(z.string(), fieldDescriptorSchema),
-        credentialFields: z.record(z.string(), fieldDescriptorSchema),
-        toolManifest: z
-          .array(
-            z.object({
-              name: z.string(),
-              description: z.string(),
-              sensitivity: sensitivitySchema,
-            }),
-          )
-          .optional(),
-      }),
-    ),
-  )
-  .handler(() =>
-    loadProviderCatalog().map((provider) => ({
-      key: provider.key,
-      displayName: provider.displayName,
-      description: provider.description,
-      logoUrl: provider.logoUrl,
-      categories: provider.categories,
-      docsUrl: provider.docsUrl,
-      authMode: provider.authMode,
-      transport: { type: provider.transport.type },
-      memberConnectable: provider.memberConnectable,
-      defaultScopes: provider.auth.defaultScopes,
-      ...(provider.auth.availableScopes ? { availableScopes: provider.auth.availableScopes } : {}),
-      configFields: provider.configFields,
-      credentialFields: provider.credentialFields,
-      ...(provider.transport.type === "rest"
-        ? {
-            toolManifest: provider.toolManifest.map(({ name, description, sensitivity }) => ({
-              name,
-              description,
-              sensitivity,
-            })),
-          }
-        : {}),
-    })),
-  );
-
-const meta = requireCapability("manage_connectors")
-  .route({
-    method: "GET",
-    path: "/connectors/meta",
-    summary: "Get connector deployment metadata",
-    description: "Get the OAuth callback URL and principals available to connector credentials.",
-    tags: ["Connectors"],
-  })
-  .output(
-    z.object({
-      callbackUrl: z.url(),
-      principals: z.array(
-        z.object({
-          id: z.uuid(),
-          displayName: z.string(),
-          kind: z.enum(["human", "agent"]),
-        }),
-      ),
-    }),
-  )
-  .handler(async ({ context }) => {
-    const agent = await context.db.principal.findFirst({
-      where: { orgId: context.org.id, kind: "agent", deactivatedAt: null },
-      select: { id: true, displayName: true, kind: true },
-    });
-    return {
-      callbackUrl: connectorCallbackUrl(context.env.TREMA_AUTH_BASE_URL),
-      principals: [
-        {
-          id: context.principal.id,
-          displayName: context.principal.displayName,
-          kind: context.principal.kind,
-        },
-        ...(agent && agent.id !== context.principal.id ? [agent] : []),
-      ],
-    };
   });
 
 const syncInstallation = installationScoped
@@ -612,37 +516,159 @@ const syncInstallation = installationScoped
     }
   });
 
-const startOAuth = installationScoped
+const catalog = orgScoped
+  .route({
+    method: "GET",
+    path: "/connector-catalog",
+    summary: "List connector providers",
+    description: "List safe catalog metadata and effective member-access settings.",
+    tags: ["Connectors"],
+  })
+  .output(
+    z.array(
+      z.object({
+        key: z.string(),
+        displayName: z.string(),
+        description: z.string().optional(),
+        logoUrl: z.string().optional(),
+        categories: z.array(z.string()),
+        docsUrl: z.url(),
+        authMode: z.string(),
+        transport: z.object({ type: z.enum(["mcp", "rest"]) }),
+        memberConnectable: z.boolean(),
+        memberEnabled: z.boolean(),
+        defaultScopes: z.array(z.string()),
+        availableScopes: z.array(z.string()).optional(),
+        configFields: z.record(z.string(), fieldDescriptorSchema),
+        credentialFields: z.record(z.string(), fieldDescriptorSchema),
+        toolManifest: z
+          .array(
+            z.object({
+              name: z.string(),
+              description: z.string(),
+              sensitivity: sensitivitySchema,
+            }),
+          )
+          .optional(),
+      }),
+    ),
+  )
+  .handler(async ({ context }) => {
+    const settings = await listConnectorProviderSettings(context.db, context.org.id);
+    const memberEnabled = new Map(
+      settings.map((setting) => [setting.providerKey, setting.memberEnabled]),
+    );
+    return loadProviderCatalog().map((provider) => ({
+      key: provider.key,
+      displayName: provider.displayName,
+      description: provider.description,
+      logoUrl: provider.logoUrl,
+      categories: provider.categories,
+      docsUrl: provider.docsUrl,
+      authMode: provider.authMode,
+      transport: { type: provider.transport.type },
+      memberConnectable: provider.memberConnectable,
+      memberEnabled: provider.memberConnectable && memberEnabled.get(provider.key) !== false,
+      defaultScopes: provider.auth.defaultScopes,
+      ...(provider.auth.availableScopes ? { availableScopes: provider.auth.availableScopes } : {}),
+      configFields: provider.configFields,
+      credentialFields: provider.credentialFields,
+      ...(provider.transport.type === "rest"
+        ? {
+            toolManifest: provider.toolManifest.map(({ name, description, sensitivity }) => ({
+              name,
+              description,
+              sensitivity,
+            })),
+          }
+        : {}),
+    }));
+  });
+
+const meta = requireCapability("manage_connectors")
+  .route({
+    method: "GET",
+    path: "/connectors/meta",
+    summary: "Get connector deployment metadata",
+    description: "Get the deployment OAuth callback URL.",
+    tags: ["Connectors"],
+  })
+  .output(z.object({ callbackUrl: z.url() }))
+  .handler(({ context }) => ({
+    callbackUrl: connectorCallbackUrl(context.env.TREMA_AUTH_BASE_URL),
+  }));
+
+const updateProviderSettings = requireCapability("manage_connectors")
+  .route({
+    method: "PATCH",
+    path: "/connector-providers/{providerKey}/settings",
+    summary: "Update connector provider settings",
+    description: "Enable or disable member connections for one provider.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ providerKey: z.string().trim().min(1), memberEnabled: z.boolean() }))
+  .output(
+    z.object({
+      providerKey: z.string(),
+      memberEnabled: z.boolean(),
+      updatedAt: z.string(),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    try {
+      const settings = await updateConnectorProviderSettings(context.db, {
+        orgId: context.org.id,
+        providerKey: input.providerKey,
+        memberEnabled: input.memberEnabled,
+      });
+      return {
+        providerKey: settings.providerKey,
+        memberEnabled: settings.memberEnabled,
+        updatedAt: settings.updatedAt.toISOString(),
+      };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const startOAuth = requireCapability("manage_connectors")
   .route({
     method: "POST",
-    path: "/connector-installations/{installationItemId}/connect/oauth",
+    path: "/connector-connections/oauth",
     summary: "Start an OAuth connector flow",
-    description: "Create single-use OAuth state and return the provider authorization URL.",
+    description:
+      "Create single-use OAuth state for an organization-agent connection and return the provider authorization URL.",
     tags: ["Connectors"],
   })
   .input(
     z.object({
-      installationItemId: z.uuid(),
       providerKey: z.string().trim().min(1),
-      principalId: z.uuid(),
+      config: configSchema.optional(),
+      providerScopes: z.array(z.string().trim().min(1)).optional(),
+      label: z.string().trim().min(1).max(60).optional(),
       returnTo: z.url().optional(),
-      config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+      reconnectConnectionId: z.uuid().optional(),
     }),
   )
   .output(z.object({ authorizationUrl: z.url() }))
   .handler(async ({ context, input }) => {
     try {
+      const principalId = await orgAgentPrincipalId(context.db, context.org.id);
       return await startOAuthConnect(context.db, {
         orgId: context.org.id,
+        principalId,
         providerKey: input.providerKey,
-        installationItemId: input.installationItemId,
-        principalId: input.principalId,
         authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
+        ...(input.config ? { config: input.config } : {}),
+        ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+        ...(input.label ? { label: input.label } : {}),
+        ...(input.returnTo ? { returnTo: input.returnTo } : {}),
+        ...(input.reconnectConnectionId
+          ? { reconnectConnectionId: input.reconnectConnectionId }
+          : {}),
         ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
           ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
           : {}),
-        ...(input.returnTo ? { returnTo: input.returnTo } : {}),
-        ...(input.config ? { config: input.config } : {}),
         ...(context.platformApps ? { platformApps: context.platformApps } : {}),
         ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
       });
@@ -651,82 +677,90 @@ const startOAuth = installationScoped
     }
   });
 
-const createStatic = installationScoped
+const createStatic = requireCapability("manage_connectors")
   .route({
     method: "POST",
-    path: "/connector-installations/{installationItemId}/credentials",
-    summary: "Create a static connector credential",
-    description: "Validate, verify, and encrypt an API-key or basic credential.",
+    path: "/connector-connections/static",
+    summary: "Create a static connector connection",
+    description:
+      "Validate, verify, and encrypt an API-key or basic connection for the organization agent.",
     tags: ["Connectors"],
   })
   .input(
     z.object({
-      installationItemId: z.uuid(),
       providerKey: z.string().trim().min(1),
-      principalId: z.uuid(),
+      config: configSchema,
       credentials: z.record(z.string(), z.string()),
-      config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+      label: z.string().trim().min(1).max(60).optional(),
+      reconnectConnectionId: z.uuid().optional(),
     }),
   )
-  .output(credentialSchema)
+  .output(z.object({ id: z.uuid() }))
   .handler(async ({ context, input }) => {
     try {
-      const credential = await createStaticCredential(context.db, {
+      const principalId = await orgAgentPrincipalId(context.db, context.org.id);
+      const connection = await createStaticConnection(context.db, {
         orgId: context.org.id,
+        principalId,
         providerKey: input.providerKey,
-        installationItemId: input.installationItemId,
-        principalId: input.principalId,
+        config: input.config,
         credentials: input.credentials,
+        ...(input.label ? { label: input.label } : {}),
+        ...(input.reconnectConnectionId
+          ? { reconnectConnectionId: input.reconnectConnectionId }
+          : {}),
         ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
           ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
           : {}),
-        ...(input.config ? { config: input.config } : {}),
         ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
       });
-      return serializeCredential({
-        ...credential,
-        isRevoked: false,
-        isExpired: false,
-        isValid: true,
-      });
+      return { id: connection.id };
     } catch (error) {
       throwConnectorError(error);
     }
   });
 
-const listCredentials = installationScoped
+const listConnections = requireCapability("manage_connectors")
   .route({
     method: "GET",
-    path: "/connector-installations/{installationItemId}/credentials",
-    summary: "List connector credentials",
-    description: "List credential metadata, refresh bookkeeping, and validity flags only.",
+    path: "/connector-connections",
+    summary: "List connector connections",
+    description:
+      "List safe connection status metadata and bound installation ids without secret material.",
     tags: ["Connectors"],
   })
-  .input(z.object({ installationItemId: z.uuid() }))
-  .output(z.array(credentialSchema))
+  .input(z.object({ providerKey: z.string().trim().min(1).optional() }))
+  .output(z.array(connectionSchema))
   .handler(async ({ context, input }) =>
-    (await listConnectorCredentials(context.db, context.org.id, input.installationItemId)).map(
-      serializeCredential,
-    ),
+    (
+      await listConnectorConnections(
+        context.db,
+        context.org.id,
+        input.providerKey,
+        new Date(),
+        // Personal connections are managed by their owners in the main view;
+        // the admin area lists the agent's connections only.
+        await orgAgentPrincipalId(context.db, context.org.id),
+      )
+    ).map(serializeConnection),
   );
 
-const revokeCredential = installationScoped
+const revokeConnection = requireCapability("manage_connectors")
   .route({
     method: "POST",
-    path: "/connector-installations/{installationItemId}/credentials/{credentialId}/revoke",
-    summary: "Revoke a connector credential",
-    description: "Mark a connector credential revoked locally.",
+    path: "/connector-connections/{connectionId}/revoke",
+    summary: "Revoke a connector connection",
+    description: "Mark one connector connection revoked locally.",
     tags: ["Connectors"],
   })
-  .input(z.object({ installationItemId: z.uuid(), credentialId: z.uuid() }))
+  .input(z.object({ connectionId: z.uuid() }))
   .output(z.object({ id: z.uuid(), revokedAt: z.string() }))
   .handler(async ({ context, input }) => {
     try {
-      const result = await revokeConnectorCredential(
+      const result = await revokeConnectorConnection(
         context.db,
         context.org.id,
-        input.installationItemId,
-        input.credentialId,
+        input.connectionId,
       );
       return { id: result.id, revokedAt: result.revokedAt.toISOString() };
     } catch (error) {
@@ -734,9 +768,226 @@ const revokeCredential = installationScoped
     }
   });
 
+const updateConnection = requireCapability("manage_connectors")
+  .route({
+    method: "PATCH",
+    path: "/connector-connections/{connectionId}",
+    summary: "Update a connector connection",
+    description: "Rename one of the organization agent's connections.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ connectionId: z.uuid(), label: z.string().trim().min(1).max(60).nullable() }))
+  .output(connectionUpdateSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      const connection = await updateConnectorConnectionLabel(context.db, {
+        orgId: context.org.id,
+        connectionId: input.connectionId,
+        label: input.label,
+        principalId: await orgAgentPrincipalId(context.db, context.org.id),
+      });
+      return { id: connection.id, label: connection.label };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const memberStartOAuth = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-connections/oauth",
+    summary: "Start a member OAuth connector flow",
+    description:
+      "Create single-use OAuth state for the caller's connection and return the provider authorization URL.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      providerKey: z.string().trim().min(1),
+      config: configSchema.optional(),
+      providerScopes: z.array(z.string().trim().min(1)).optional(),
+      label: z.string().trim().min(1).max(60).optional(),
+      returnTo: z.url(),
+      reconnectConnectionId: z.uuid().optional(),
+    }),
+  )
+  .output(z.object({ authorizationUrl: z.url() }))
+  .handler(async ({ context, input }) => {
+    try {
+      await requireMemberProvider(context.db, context.org.id, input.providerKey);
+      return await startOAuthConnect(context.db, {
+        orgId: context.org.id,
+        principalId: context.principal.id,
+        providerKey: input.providerKey,
+        authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
+        ...(input.config ? { config: input.config } : {}),
+        ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+        ...(input.label ? { label: input.label } : {}),
+        returnTo: input.returnTo,
+        ...(input.reconnectConnectionId
+          ? { reconnectConnectionId: input.reconnectConnectionId }
+          : {}),
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+        ...(context.platformApps ? { platformApps: context.platformApps } : {}),
+        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+      });
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const memberCreateStatic = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-connections/static",
+    summary: "Create a member static connector connection",
+    description: "Validate, verify, and encrypt an API-key or basic connection for the caller.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      providerKey: z.string().trim().min(1),
+      config: configSchema,
+      credentials: z.record(z.string(), z.string()),
+      label: z.string().trim().min(1).max(60).optional(),
+      reconnectConnectionId: z.uuid().optional(),
+    }),
+  )
+  .output(z.object({ id: z.uuid() }))
+  .handler(async ({ context, input }) => {
+    try {
+      await requireMemberProvider(context.db, context.org.id, input.providerKey);
+      const connection = await createStaticConnection(context.db, {
+        orgId: context.org.id,
+        principalId: context.principal.id,
+        providerKey: input.providerKey,
+        config: input.config,
+        credentials: input.credentials,
+        ...(input.label ? { label: input.label } : {}),
+        ...(input.reconnectConnectionId
+          ? { reconnectConnectionId: input.reconnectConnectionId }
+          : {}),
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+      });
+      return { id: connection.id };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const memberListConnections = orgScoped
+  .route({
+    method: "GET",
+    path: "/member/connector-connections",
+    summary: "List the caller's connector connections",
+    description:
+      "List safe status metadata and personal installation ids for the caller's connections.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ providerKey: z.string().trim().min(1).optional() }))
+  .output(z.array(connectionSchema))
+  .handler(async ({ context, input }) =>
+    (
+      await listConnectorConnections(
+        context.db,
+        context.org.id,
+        input.providerKey,
+        new Date(),
+        context.principal.id,
+      )
+    ).map(serializeConnection),
+  );
+
+const memberRevokeConnection = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-connections/{connectionId}/revoke",
+    summary: "Revoke one of the caller's connector connections",
+    description: "Mark one caller-owned connector connection revoked locally.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ connectionId: z.uuid() }))
+  .output(z.object({ id: z.uuid(), revokedAt: z.string() }))
+  .handler(async ({ context, input }) => {
+    try {
+      // Ownership alone gates revocation: a member can always revoke their own
+      // connection, even after an admin disables member access for the provider.
+      const result = await revokeConnectorConnection(
+        context.db,
+        context.org.id,
+        input.connectionId,
+        context.principal.id,
+      );
+      return { id: result.id, revokedAt: result.revokedAt.toISOString() };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
+const memberCreateInstallation = orgScoped
+  .route({
+    method: "POST",
+    path: "/member/connector-installations",
+    summary: "Create a personal connector installation",
+    description:
+      "Bind one of the caller's connections into the caller's personal scope with all tools enabled.",
+    tags: ["Connectors"],
+  })
+  .input(
+    z.object({
+      scopeId: z.uuid(),
+      catalogKey: z.string().trim().min(1),
+      connectionId: z.uuid(),
+    }),
+  )
+  .output(installationSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      await requireMemberProvider(context.db, context.org.id, input.catalogKey);
+      const scope = await context.db.scope.findFirst({
+        where: {
+          id: input.scopeId,
+          orgId: context.org.id,
+          kind: "personal",
+          ownerId: context.principal.id,
+        },
+        select: { id: true },
+      });
+      if (!scope) {
+        throw new ORPCError("FORBIDDEN", {
+          message: "Members may only install connectors in their own personal scope",
+        });
+      }
+      return serializeInstallation(
+        await createConnectorInstallation(context.db, {
+          orgId: context.org.id,
+          actorPrincipalId: context.principal.id,
+          scopeId: scope.id,
+          catalogKey: input.catalogKey,
+          connectionId: input.connectionId,
+          enabledTools: "all",
+          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+            : {}),
+          ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+          ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof ORPCError) throw error;
+      throwConnectorError(error);
+    }
+  });
+
 export const connectorsRouter = {
   meta,
   catalog: { list: catalog },
+  providers: { updateSettings: updateProviderSettings },
   installations: {
     create: createInstallation,
     list: listInstallations,
@@ -750,5 +1001,10 @@ export const connectorsRouter = {
     delete: deleteRegistration,
   },
   connect: { startOAuth, createStatic },
-  credentials: { list: listCredentials, revoke: revokeCredential },
+  connections: { list: listConnections, revoke: revokeConnection, update: updateConnection },
+  member: {
+    connect: { startOAuth: memberStartOAuth, createStatic: memberCreateStatic },
+    connections: { list: memberListConnections, revoke: memberRevokeConnection },
+    installations: { create: memberCreateInstallation },
+  },
 };

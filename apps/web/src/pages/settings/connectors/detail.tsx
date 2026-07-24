@@ -1,15 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, KeyRound, RefreshCw, Settings2, Trash2, Unplug } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  ChevronDown,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Settings2,
+  Trash2,
+  Unplug,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
-
 import { CredentialStatusBadge } from "#/components/trema/credential-status-badge.tsx";
 import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { KeyValueList } from "#/components/trema/key-value-list.tsx";
 import { PageHeader } from "#/components/trema/page-header.tsx";
 import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { ScopeBadge } from "#/components/trema/scope-badge.tsx";
 import { SensitivityBadge } from "#/components/trema/sensitivity-badge.tsx";
 import { SettingRow, SettingsSection } from "#/components/trema/settings-section.tsx";
 import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
@@ -33,6 +39,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "#/components/ui/dialog.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "#/components/ui/dropdown-menu.tsx";
 import { Input } from "#/components/ui/input.tsx";
 import { Label } from "#/components/ui/label.tsx";
 import {
@@ -45,13 +57,16 @@ import {
 import { Switch } from "#/components/ui/switch.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
 import { scopeDisplayName } from "#/lib/scopes.ts";
+import {
+  OAuthConnectionDialog,
+  StaticConnectionDialog,
+} from "#/pages/settings/connectors/connection-dialogs.tsx";
 import { RegistrationDialog } from "#/pages/settings/connectors/registration-dialog.tsx";
 import {
-  authModeLabel,
   type CatalogProvider,
+  type ConnectorConnection,
   type ConnectorInstallation,
-  type CredentialSummary,
-  type FieldDescriptor,
+  type ConnectorMeta,
   messageFrom,
   providerLogo,
   type Registration,
@@ -59,38 +74,49 @@ import {
   type Sensitivity,
 } from "#/pages/settings/connectors/shared.tsx";
 
-type ConnectorMeta = {
-  callbackUrl: string;
-  principals: Array<{ id: string; displayName: string; kind: "human" | "agent" }>;
-};
-
 type DriftReport = { added: string[]; removed: string[]; changed: string[] };
 
 export function SettingsConnectorDetailPage() {
-  const { installationItemId = "" } = useParams();
+  const { providerKey = "" } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const catalog = useQuery(orpc.connectors.catalog.list.queryOptions({}));
+  const connections = useQuery(
+    orpc.connectors.connections.list.queryOptions({ input: { providerKey } }),
+  );
   const installations = useQuery(orpc.connectors.installations.list.queryOptions({ input: {} }));
   const scopes = useQuery(orpc.scopes.list.queryOptions({ input: {} }));
   const registrations = useQuery(orpc.connectors.registrations.list.queryOptions({}));
   const meta = useQuery(orpc.connectors.meta.queryOptions({}));
-  const installation = (installations.data as ConnectorInstallation[] | undefined)?.find(
-    (candidate) => candidate.id === installationItemId,
-  );
   const provider = (catalog.data as CatalogProvider[] | undefined)?.find(
-    (candidate) => candidate.key === installation?.catalogKey,
+    (candidate) => candidate.key === providerKey,
   );
-  const scope = (scopes.data as Scope[] | undefined)?.find(
-    (candidate) => candidate.id === installation?.scopeId,
+  const connectionRows = (connections.data ?? []) as ConnectorConnection[];
+  const installationRows = ((installations.data ?? []) as ConnectorInstallation[]).filter(
+    (installation) => installation.catalogKey === providerKey,
   );
-  const providerRegistrations = ((registrations.data ?? []) as Registration[]).filter(
-    (registration) => registration.providerKey === provider?.key,
+  const scopeRows = ((scopes.data ?? []) as Scope[]).filter(
+    (scope) => scope.kind === "org" || scope.kind === "shared",
   );
+  const registrationRows = ((registrations.data ?? []) as Registration[]).filter(
+    (registration) => registration.providerKey === providerKey,
+  );
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [staticOpen, setStaticOpen] = useState(false);
+  const [reconnect, setReconnect] = useState<ConnectorConnection>();
+  const [bindConnectionId, setBindConnectionId] = useState<string>();
+  const [registrationOpen, setRegistrationOpen] = useState(false);
   const error =
-    catalog.error ?? installations.error ?? scopes.error ?? registrations.error ?? meta.error;
+    catalog.error ??
+    connections.error ??
+    installations.error ??
+    scopes.error ??
+    registrations.error ??
+    meta.error;
   const pending =
     catalog.isPending ||
+    connections.isPending ||
     installations.isPending ||
     scopes.isPending ||
     registrations.isPending ||
@@ -98,14 +124,28 @@ export function SettingsConnectorDetailPage() {
 
   useEffect(() => {
     const connectorError = searchParams.get("connector_error");
-    if (!connectorError) return;
-    toast.error(`Connection failed: ${connectorError.replaceAll("_", " ")}`);
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      next.delete("connector_error");
-      return next;
-    });
+    if (connectorError) {
+      toast.error(`Connection failed: ${connectorError.replaceAll("_", " ")}`);
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.delete("connector_error");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+    const connected = searchParams.get("connected");
+    if (connected) setBindConnectionId(connected);
   }, [searchParams, setSearchParams]);
+
+  async function invalidate() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: orpc.connectors.connections.list.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.connectors.installations.list.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.connectors.catalog.list.key() }),
+    ]);
+  }
 
   if (pending) {
     return (
@@ -126,13 +166,13 @@ export function SettingsConnectorDetailPage() {
       </main>
     );
   }
-  if (!installation || !provider) {
+  if (!provider) {
     return (
       <main className="mx-auto w-full max-w-3xl p-4 sm:p-6 lg:p-8">
         <EmptyState
           icon={Unplug}
           title="Connector not found"
-          description="This installation may have been uninstalled."
+          description="This provider is not in the connector catalog."
           action={
             <Button onClick={() => navigate("/settings/connectors")}>Back to connectors</Button>
           }
@@ -140,386 +180,375 @@ export function SettingsConnectorDetailPage() {
       </main>
     );
   }
+  const oauth = provider.authMode === "oauth2_code" || provider.authMode === "mcp_oauth";
 
   return (
     <main className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
       <PageHeader
-        title={
-          <span className="flex items-center gap-3">
-            {providerLogo(provider, "size-9")}
-            {provider.displayName}
-          </span>
-        }
-        description={`Installed in ${scope ? scopeDisplayName(scope) : "this scope"}.`}
-        actions={
-          <Button variant="outline" onClick={() => navigate("/settings/connectors")}>
-            <ArrowLeft />
-            Connectors
-          </Button>
-        }
+        leading={providerLogo(provider, "size-10")}
+        title={provider.displayName}
+        description="Manage provider accounts, scope availability, and per-scope tools."
       />
       <div className="space-y-7">
-        <ToolsSection installation={installation} provider={provider} />
-        <CredentialsSection
-          installation={installation}
+        <ConnectionsSection
           provider={provider}
-          meta={meta.data as ConnectorMeta}
+          connections={connectionRows}
+          installations={installationRows}
+          scopes={scopeRows}
+          onConnect={() => (oauth ? setConnectOpen(true) : setStaticOpen(true))}
+          onReconnect={(connection) => {
+            setReconnect(connection);
+            if (oauth) setConnectOpen(true);
+            else setStaticOpen(true);
+          }}
+          onAddToScope={setBindConnectionId}
+          onChanged={invalidate}
         />
-        <ConnectorSettingsSection
-          installation={installation}
+        {provider.memberConnectable ? (
+          <MemberAccessSection provider={provider} onChanged={invalidate} />
+        ) : null}
+        {provider.authMode === "oauth2_code" ? (
+          <AppCredentialsSection
+            registrations={registrationRows}
+            onManage={() => setRegistrationOpen(true)}
+          />
+        ) : null}
+        <DangerZone
           provider={provider}
-          scope={scope}
-          registrations={providerRegistrations}
-          callbackUrl={(meta.data as ConnectorMeta).callbackUrl}
+          installations={installationRows}
+          connections={connectionRows}
+          onChanged={async () => {
+            await invalidate();
+            navigate("/settings/connectors");
+          }}
         />
       </div>
+      {oauth ? (
+        <OAuthConnectionDialog
+          provider={provider}
+          reconnect={reconnect}
+          open={connectOpen}
+          onOpenChange={(next) => {
+            setConnectOpen(next);
+            if (!next) setReconnect(undefined);
+          }}
+        />
+      ) : null}
+      <StaticConnectionDialog
+        provider={provider}
+        reconnect={reconnect}
+        open={staticOpen}
+        onOpenChange={(next) => {
+          setStaticOpen(next);
+          if (!next) setReconnect(undefined);
+        }}
+        onConnected={(connectionId) => {
+          void invalidate();
+          if (!reconnect) setBindConnectionId(connectionId);
+        }}
+      />
+      <ScopeBindingDialog
+        provider={provider}
+        connectionId={bindConnectionId}
+        scopes={scopeRows}
+        installations={installationRows}
+        open={bindConnectionId !== undefined}
+        onOpenChange={(next) => {
+          if (!next) {
+            setBindConnectionId(undefined);
+            setSearchParams(
+              (current) => {
+                const updated = new URLSearchParams(current);
+                updated.delete("connected");
+                return updated;
+              },
+              { replace: true },
+            );
+          }
+        }}
+        onChanged={invalidate}
+      />
+      <RegistrationDialog
+        provider={provider}
+        registrations={registrationRows}
+        callbackUrl={(meta.data as ConnectorMeta).callbackUrl}
+        open={registrationOpen}
+        onOpenChange={setRegistrationOpen}
+      />
     </main>
   );
 }
 
-function ToolsSection({
-  installation,
+function ConnectionsSection({
   provider,
+  connections,
+  installations,
+  scopes,
+  onConnect,
+  onReconnect,
+  onAddToScope,
+  onChanged,
 }: {
-  installation: ConnectorInstallation;
   provider: CatalogProvider;
+  connections: ConnectorConnection[];
+  installations: ConnectorInstallation[];
+  scopes: Scope[];
+  onConnect: () => void;
+  onReconnect: (connection: ConnectorConnection) => void;
+  onAddToScope: (connectionId: string) => void;
+  onChanged: () => Promise<void>;
 }) {
-  const queryClient = useQueryClient();
-  const availableTools =
-    provider.transport.type === "rest" ? (provider.toolManifest ?? []) : installation.syncedTools;
-  const [allTools, setAllTools] = useState(installation.enabledTools === "all");
-  const [enabledTools, setEnabledTools] = useState<string[]>(
-    installation.enabledTools === "all"
-      ? availableTools.map((tool) => tool.name)
-      : installation.enabledTools,
+  const [showRevoked, setShowRevoked] = useState(false);
+  const scopesById = new Map(scopes.map((scope) => [scope.id, scope]));
+  const active = connections.filter((connection) => !connection.isRevoked);
+  const revoked = connections.filter((connection) => connection.isRevoked);
+  const boundScopeIds = new Set(installations.map((installation) => installation.scopeId));
+  const canAddScope = scopes.some((scope) => !boundScopeIds.has(scope.id));
+  const group = (connection: ConnectorConnection) => (
+    <ConnectionGroup
+      key={connection.id}
+      provider={provider}
+      connection={connection}
+      bindings={installations.filter((installation) => installation.connectionId === connection.id)}
+      scopesById={scopesById}
+      canAddScope={canAddScope}
+      onReconnect={() => onReconnect(connection)}
+      onAddToScope={() => onAddToScope(connection.id)}
+      onChanged={onChanged}
+    />
   );
-  const [overrides, setOverrides] = useState<Record<string, Sensitivity>>(
-    installation.sensitivityOverrides,
-  );
-  const [report, setReport] = useState<DriftReport>();
-  const installationKey = orpc.connectors.installations.list.key();
-  useEffect(() => {
-    setAllTools(installation.enabledTools === "all");
-    setEnabledTools(
-      installation.enabledTools === "all"
-        ? availableTools.map((tool) => tool.name)
-        : installation.enabledTools,
-    );
-    setOverrides(installation.sensitivityOverrides);
-  }, [installation, availableTools]);
-
-  const save = useMutation({
-    mutationFn: () =>
-      rpcClient.connectors.installations.update({
-        installationItemId: installation.id,
-        enabledTools: allTools ? "all" : enabledTools,
-        sensitivityOverrides: overrides,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: installationKey });
-      toast.success("Connector tools updated");
-    },
-    onError: (cause) => toast.error(messageFrom(cause)),
-  });
-  const sync = useMutation({
-    mutationFn: () =>
-      rpcClient.connectors.installations.sync({
-        installationItemId: installation.id,
-      }),
-    onSuccess: async (result) => {
-      setReport(result.report);
-      await queryClient.invalidateQueries({ queryKey: installationKey });
-      toast.success("Connector tools synced");
-    },
-    onError: (cause) => toast.error(messageFrom(cause)),
-  });
-
   return (
-    <SettingsSection
-      title="Tools"
-      description="Choose the tools this connector exposes and adjust their sensitivity."
-    >
-      <SettingRow
-        label="All tools"
-        description="New tools are enabled automatically when this setting is on."
-        control={
-          <Switch
-            checked={allTools}
-            onCheckedChange={(checked) => {
-              setAllTools(checked);
-              if (!checked) setEnabledTools(availableTools.map((tool) => tool.name));
-            }}
-          />
-        }
-      />
-      <div className="divide-y">
-        {availableTools.length === 0 ? (
-          <div className="p-5 text-center text-meta text-muted-foreground">
-            {provider.transport.type === "mcp"
-              ? "Sync this connector to load its tools."
-              : "This connector has no tools."}
+    <section data-slot="settings-section">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-chrome font-medium text-foreground">Connections</h3>
+          <p className="mt-0.5 text-meta text-muted-foreground">
+            Accounts the agent acts as, and where each one is available. Connect more than one to
+            reach separate workspaces.
+          </p>
+        </div>
+        <Button onClick={onConnect}>
+          <Plus />
+          Connect
+        </Button>
+      </div>
+      <div className="mt-3 space-y-3">
+        {active.length === 0 ? (
+          <div className="rounded-md border bg-card px-4 py-5">
+            <EmptyState
+              title="Not connected"
+              description={`Authorize the ${provider.displayName} account the agent should act as.`}
+            />
           </div>
         ) : (
-          availableTools.map((tool) => {
-            const enabled = allTools || enabledTools.includes(tool.name);
-            const sensitivity = overrides[tool.name] ?? tool.sensitivity;
-            return (
-              <div
-                key={tool.name}
-                className="grid gap-3 px-4 py-3.5 sm:grid-cols-[1fr_auto_auto] sm:items-center"
-              >
-                <label
-                  htmlFor={`tool-enabled-${tool.name}`}
-                  className="flex min-w-0 items-start gap-3"
-                >
-                  <Checkbox
-                    id={`tool-enabled-${tool.name}`}
-                    checked={enabled}
-                    disabled={allTools}
-                    onCheckedChange={(checked) =>
-                      setEnabledTools((current) =>
-                        checked
-                          ? [...current, tool.name]
-                          : current.filter((name) => name !== tool.name),
-                      )
-                    }
-                  />
-                  <span className="min-w-0">
-                    <span className="block font-medium text-chrome">{tool.name}</span>
-                    <span className="block text-meta text-muted-foreground">
-                      {tool.description ?? "No description provided."}
-                    </span>
-                  </span>
-                </label>
-                <SensitivityBadge sensitivity={sensitivity} />
-                <Select
-                  value={sensitivity}
-                  onValueChange={(value) =>
-                    setOverrides((current) => ({
-                      ...current,
-                      [tool.name]: value as Sensitivity,
-                    }))
-                  }
-                >
-                  <SelectTrigger className="w-36" aria-label={`Sensitivity for ${tool.name}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="read">Read</SelectItem>
-                    <SelectItem value="write">Write</SelectItem>
-                    <SelectItem value="destructive">Destructive</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            );
-          })
+          active.map(group)
         )}
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
-        <div>{report ? <DriftReportView report={report} /> : null}</div>
-        <div className="flex gap-2">
-          {provider.transport.type === "mcp" ? (
-            <Button variant="outline" disabled={sync.isPending} onClick={() => sync.mutate()}>
-              <RefreshCw className={sync.isPending ? "animate-spin" : ""} />
-              {sync.isPending ? "Syncing…" : "Sync now"}
+        {revoked.length > 0 ? (
+          <div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => setShowRevoked((current) => !current)}
+            >
+              <ChevronDown className={showRevoked ? "rotate-180" : ""} />
+              {showRevoked ? "Hide revoked" : `Show revoked (${revoked.length})`}
             </Button>
-          ) : null}
-          <Button disabled={save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? "Saving…" : "Save tools"}
-          </Button>
-        </div>
-      </div>
-    </SettingsSection>
-  );
-}
-
-function DriftReportView({ report }: { report: DriftReport }) {
-  const changes = [
-    ...report.added.map((name) => ({ name, label: "Added" })),
-    ...report.removed.map((name) => ({ name, label: "Removed" })),
-    ...report.changed.map((name) => ({ name, label: "Changed" })),
-  ];
-  if (changes.length === 0)
-    return <p className="text-meta text-muted-foreground">No tool changes found.</p>;
-  return (
-    <div>
-      <p className="text-chrome font-medium">Tool changes</p>
-      <ul className="mt-1 space-y-1 text-meta">
-        {changes.map((change) => (
-          <li key={`${change.label}-${change.name}`}>
-            <span className="text-muted-foreground">{change.label}:</span> {change.name}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function CredentialsSection({
-  installation,
-  provider,
-  meta,
-}: {
-  installation: ConnectorInstallation;
-  provider: CatalogProvider;
-  meta: ConnectorMeta;
-}) {
-  const [staticOpen, setStaticOpen] = useState(false);
-  const [principalId, setPrincipalId] = useState(meta.principals[0]?.id ?? "");
-  const startOAuth = useMutation({
-    mutationFn: () =>
-      rpcClient.connectors.connect.startOAuth({
-        installationItemId: installation.id,
-        providerKey: provider.key,
-        principalId,
-        returnTo: window.location.href,
-      }),
-    onSuccess: ({ authorizationUrl }) => {
-      window.location.assign(authorizationUrl);
-    },
-    onError: (cause) => toast.error(messageFrom(cause)),
-  });
-  const isOAuth = ["oauth2_code", "mcp_oauth"].includes(provider.authMode);
-  const isStatic = ["api_key", "basic"].includes(provider.authMode);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const hasCredentials = installation.credentials.length > 0;
-
-  // Arriving from a fresh install of a static-auth provider (?connect=1),
-  // open the credential dialog directly instead of asking for another click.
-  useEffect(() => {
-    if (!searchParams.has("connect")) return;
-    setSearchParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.delete("connect");
-        return next;
-      },
-      { replace: true },
-    );
-    if (isStatic && !hasCredentials && principalId) setStaticOpen(true);
-  }, [searchParams, setSearchParams, isStatic, hasCredentials, principalId]);
-
-  return (
-    <SettingsSection
-      title="Credentials"
-      description="Credential values are encrypted and never shown here."
-    >
-      {installation.credentials.length === 0 ? (
-        <div className="px-4 py-5">
-          <EmptyState
-            icon={KeyRound}
-            title="Not connected"
-            description="Connect a principal to make this installation usable."
-          />
-        </div>
-      ) : (
-        installation.credentials.map((credential) => (
-          <CredentialRow
-            key={credential.id}
-            credential={credential}
-            installationId={installation.id}
-          />
-        ))
-      )}
-      {(isOAuth || isStatic) && meta.principals.length > 0 ? (
-        <div className="flex flex-wrap items-end justify-between gap-3 px-4 py-3.5">
-          <div className="w-full max-w-xs space-y-2">
-            <Label htmlFor="connector-principal">Connect as</Label>
-            <Select value={principalId} onValueChange={setPrincipalId}>
-              <SelectTrigger id="connector-principal" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {meta.principals.map((principal) => (
-                  <SelectItem key={principal.id} value={principal.id}>
-                    {principal.kind === "agent"
-                      ? "Agent (service)"
-                      : `${principal.displayName} (you)`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {showRevoked ? (
+              <div className="mt-2 space-y-3 opacity-75">{revoked.map(group)}</div>
+            ) : null}
           </div>
-          <Button
-            disabled={!principalId || startOAuth.isPending}
-            onClick={() => (isOAuth ? startOAuth.mutate() : setStaticOpen(true))}
-          >
-            {startOAuth.isPending ? "Starting…" : "Connect"}
-          </Button>
-        </div>
-      ) : null}
-      <StaticCredentialDialog
-        open={staticOpen}
-        onOpenChange={setStaticOpen}
-        installation={installation}
-        provider={provider}
-        principalId={principalId}
-      />
-    </SettingsSection>
-  );
-}
-
-function CredentialRow({
-  credential,
-  installationId,
-}: {
-  credential: CredentialSummary;
-  installationId: string;
-}) {
-  const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const key = orpc.connectors.installations.list.key();
-  const revoke = useMutation({
-    mutationFn: () =>
-      rpcClient.connectors.credentials.revoke({
-        installationItemId: installationId,
-        credentialId: credential.id,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: key });
-      setConfirmOpen(false);
-      toast.success("Credential revoked");
-    },
-    onError: (cause) => toast.error(messageFrom(cause)),
-  });
-  const status = credential.isValid ? "connected" : "expired";
-  const label = credential.isRevoked
-    ? "Revoked"
-    : credential.isExpired
-      ? "Expired"
-      : credential.isValid
-        ? "Connected"
-        : "Reconnect needed";
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-3.5">
-      <div>
-        <p className="font-medium text-chrome">{credential.principalName}</p>
-        <p className="mt-0.5 text-meta text-muted-foreground">
-          {authModeLabel(credential.mode)} · Created <RelativeTime date={credential.createdAt} />
-          {credential.expiresAt ? (
-            <>
-              {" "}
-              · Expires <RelativeTime date={credential.expiresAt} />
-            </>
-          ) : null}
-        </p>
-      </div>
-      <div className="flex items-center gap-3">
-        <CredentialStatusBadge status={status} label={label} />
-        {!credential.isRevoked ? (
-          <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
-            <Trash2 />
-            Revoke
-          </Button>
         ) : null}
       </div>
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+    </section>
+  );
+}
+
+function RenameConnectionDialog({
+  connection,
+  fallbackLabel,
+  open,
+  onOpenChange,
+  onChanged,
+}: {
+  connection: ConnectorConnection;
+  fallbackLabel: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [value, setValue] = useState(connection.label ?? "");
+  useEffect(() => {
+    if (open) setValue(connection.label ?? "");
+  }, [open, connection.label]);
+  const rename = useMutation({
+    mutationFn: () => {
+      const trimmed = value.trim();
+      return rpcClient.connectors.connections.update({
+        connectionId: connection.id,
+        label: trimmed.length > 0 ? trimmed : null,
+      });
+    },
+    onSuccess: async () => {
+      await onChanged();
+      onOpenChange(false);
+      toast.success("Connection renamed");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename connection</DialogTitle>
+          <DialogDescription>
+            A label helps tell accounts apart when a provider has more than one connected.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="my-4 space-y-2">
+          <Label htmlFor={`rename-${connection.id}`}>Label</Label>
+          <Input
+            id={`rename-${connection.id}`}
+            value={value}
+            maxLength={60}
+            placeholder={fallbackLabel}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={rename.isPending} onClick={() => rename.mutate()}>
+            {rename.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ConnectionGroup({
+  provider,
+  connection,
+  bindings,
+  scopesById,
+  canAddScope,
+  onReconnect,
+  onAddToScope,
+  onChanged,
+}: {
+  provider: CatalogProvider;
+  connection: ConnectorConnection;
+  bindings: ConnectorInstallation[];
+  scopesById: Map<string, Scope>;
+  canAddScope: boolean;
+  onReconnect: () => void;
+  onAddToScope: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const revoke = useMutation({
+    mutationFn: () => rpcClient.connectors.connections.revoke({ connectionId: connection.id }),
+    onSuccess: async () => {
+      await onChanged();
+      setConfirmRevoke(false);
+      toast.success("Connection revoked");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  const label = connection.label ?? provider.displayName;
+  const status = connection.isValid ? "connected" : connection.isRevoked ? "expired" : "missing";
+  const statusLabel = connection.isValid
+    ? "Connected"
+    : connection.isRevoked
+      ? "Revoked"
+      : "Reconnect needed";
+  const reason = connection.isRevoked ? (
+    <>Revoked {connection.revokedAt ? <RelativeTime date={connection.revokedAt} /> : null}</>
+  ) : connection.refreshExhausted ? (
+    "token refresh failing"
+  ) : connection.isExpired ? (
+    "token expired"
+  ) : null;
+  return (
+    <div className="divide-y rounded-md border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
+        <div className="min-w-0">
+          <p className="font-medium text-chrome">{label}</p>
+          <p className="mt-0.5 text-meta text-muted-foreground">
+            Connected <RelativeTime date={connection.createdAt} />
+            {reason ? <> · {reason}</> : null}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <CredentialStatusBadge status={status} label={statusLabel} />
+          {!connection.isValid ? (
+            <Button size="sm" variant="outline" onClick={onReconnect}>
+              <RefreshCw />
+              Reconnect
+            </Button>
+          ) : null}
+          {!connection.isRevoked ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" aria-label="Connection actions">
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setRenaming(true)}>Rename</DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" onSelect={() => setConfirmRevoke(true)}>
+                  Revoke connection
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+      </div>
+      <RenameConnectionDialog
+        connection={connection}
+        fallbackLabel={provider.displayName}
+        open={renaming}
+        onOpenChange={setRenaming}
+        onChanged={onChanged}
+      />
+      {bindings.map((binding) => (
+        <BindingRow
+          key={binding.id}
+          provider={provider}
+          installation={binding}
+          scope={scopesById.get(binding.scopeId)}
+          onChanged={onChanged}
+        />
+      ))}
+      {bindings.length === 0 || (connection.isValid && canAddScope) ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 py-2 pr-4 pl-9">
+          {bindings.length === 0 ? (
+            <p className="text-meta text-muted-foreground">Not available in any scope yet</p>
+          ) : (
+            <span />
+          )}
+          {connection.isValid && canAddScope ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground"
+              onClick={onAddToScope}
+            >
+              <Plus />
+              Add to scope
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <AlertDialog open={confirmRevoke} onOpenChange={setConfirmRevoke}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke this credential?</AlertDialogTitle>
+            <AlertDialogTitle>Revoke this connection?</AlertDialogTitle>
             <AlertDialogDescription>
-              This principal will no longer be able to use the connector with this credential.
+              Every scope bound to it will stop working until its binding uses another connection.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -529,7 +558,7 @@ function CredentialRow({
               disabled={revoke.isPending}
               onClick={() => revoke.mutate()}
             >
-              {revoke.isPending ? "Revoking…" : "Revoke credential"}
+              {revoke.isPending ? "Revoking…" : "Revoke"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -538,297 +567,101 @@ function CredentialRow({
   );
 }
 
-function StaticCredentialDialog({
-  open,
-  onOpenChange,
-  installation,
+function BindingRow({
   provider,
-  principalId,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  installation: ConnectorInstallation;
-  provider: CatalogProvider;
-  principalId: string;
-}) {
-  const queryClient = useQueryClient();
-  const initialValues = useMemo(
-    () =>
-      Object.fromEntries(
-        [
-          ...Object.entries(provider.configFields),
-          ...Object.entries(provider.credentialFields),
-        ].map(([name, descriptor]) => [
-          name,
-          String(installation.config[name] ?? descriptor.default ?? ""),
-        ]),
-      ),
-    [installation.config, provider],
-  );
-  const [values, setValues] = useState<Record<string, string>>(initialValues);
-  const [inlineError, setInlineError] = useState<string>();
-  const installationKey = orpc.connectors.installations.list.key();
-  useEffect(() => setValues(initialValues), [initialValues]);
-  const create = useMutation({
-    mutationFn: () =>
-      rpcClient.connectors.connect.createStatic({
-        installationItemId: installation.id,
-        providerKey: provider.key,
-        principalId,
-        credentials: Object.fromEntries(
-          Object.keys(provider.credentialFields).map((name) => [name, values[name] ?? ""]),
-        ),
-        ...(Object.keys(provider.configFields).length > 0
-          ? {
-              config: Object.fromEntries(
-                Object.keys(provider.configFields).map((name) => [name, values[name] ?? ""]),
-              ),
-            }
-          : {}),
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: installationKey });
-      setInlineError(undefined);
-      onOpenChange(false);
-      toast.success("Credential connected");
-    },
-    onError: (cause) => {
-      const message = messageFrom(cause);
-      setInlineError(message);
-      toast.error(message);
-    },
-  });
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setInlineError(undefined);
-    create.mutate();
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form onSubmit={submit} className="contents">
-          <DialogHeader>
-            <DialogTitle>Connect {provider.displayName}</DialogTitle>
-            <DialogDescription>
-              Enter the provider credentials. Secret values are write-only.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {inlineError ? (
-              <Alert variant="destructive">
-                <AlertDescription>{inlineError}</AlertDescription>
-              </Alert>
-            ) : null}
-            {Object.keys(provider.configFields).length > 0 ? (
-              <DescriptorFields
-                fields={provider.configFields}
-                values={values}
-                onChange={(name, value) => setValues((current) => ({ ...current, [name]: value }))}
-              />
-            ) : null}
-            <DescriptorFields
-              fields={provider.credentialFields}
-              values={values}
-              onChange={(name, value) => setValues((current) => ({ ...current, [name]: value }))}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button disabled={create.isPending}>
-              {create.isPending ? "Verifying…" : "Connect"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function DescriptorFields({
-  fields,
-  values,
-  onChange,
-}: {
-  fields: Record<string, FieldDescriptor>;
-  values: Record<string, string>;
-  onChange: (name: string, value: string) => void;
-}) {
-  return (
-    <>
-      {Object.entries(fields).flatMap(([name, descriptor]) => {
-        if (descriptor.automated) return [];
-        if (
-          descriptor.visibleWhen &&
-          values[descriptor.visibleWhen.field] !== descriptor.visibleWhen.equals
-        )
-          return [];
-        const inputId = `connector-field-${name}`;
-        return [
-          <div key={name} className="space-y-2">
-            <Label htmlFor={inputId}>
-              {descriptor.title}
-              {descriptor.optional ? " (optional)" : ""}
-            </Label>
-            {descriptor.enum ? (
-              <Select value={values[name] ?? ""} onValueChange={(value) => onChange(name, value)}>
-                <SelectTrigger id={inputId} className="w-full">
-                  <SelectValue placeholder={`Choose ${descriptor.title.toLowerCase()}`} />
-                </SelectTrigger>
-                <SelectContent>
-                  {descriptor.enum.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {value}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <div className="flex items-center rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring/50">
-                {descriptor.prefix ? (
-                  <span className="pl-3 text-meta text-muted-foreground">{descriptor.prefix}</span>
-                ) : null}
-                <Input
-                  id={inputId}
-                  type={descriptor.secret ? "password" : "text"}
-                  value={values[name] ?? ""}
-                  placeholder={descriptor.example}
-                  pattern={descriptor.pattern}
-                  required={!descriptor.optional}
-                  autoComplete={descriptor.secret ? "new-password" : undefined}
-                  className="border-0 shadow-none focus-visible:ring-0"
-                  onChange={(event) => onChange(name, event.target.value)}
-                />
-                {descriptor.suffix ? (
-                  <span className="pr-3 text-meta text-muted-foreground">{descriptor.suffix}</span>
-                ) : null}
-              </div>
-            )}
-            {descriptor.description ? (
-              <p className="text-meta text-muted-foreground">{descriptor.description}</p>
-            ) : null}
-          </div>,
-        ];
-      })}
-    </>
-  );
-}
-
-function ConnectorSettingsSection({
   installation,
-  provider,
   scope,
-  registrations,
-  callbackUrl,
+  onChanged,
 }: {
-  installation: ConnectorInstallation;
   provider: CatalogProvider;
-  scope: Scope | undefined;
-  registrations: Registration[];
-  callbackUrl: string;
+  installation: ConnectorInstallation;
+  scope?: Scope | undefined;
+  onChanged: () => Promise<void>;
 }) {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [registrationOpen, setRegistrationOpen] = useState(false);
-  const isOAuth = ["oauth2_code", "mcp_oauth"].includes(provider.authMode);
-  const resolvedRegistration =
-    registrations.find((registration) => registration.source === "customer") ??
-    registrations.find((registration) => registration.source === "dynamic") ??
-    registrations.find((registration) => registration.source === "platform");
+  const [configure, setConfigure] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [report, setReport] = useState<DriftReport>();
+  const total =
+    provider.transport.type === "rest"
+      ? (provider.toolManifest?.length ?? 0)
+      : installation.syncedTools.length;
+  const overrides = Object.keys(installation.sensitivityOverrides).length;
+  const summary = [
+    installation.enabledTools === "all"
+      ? "All tools"
+      : `${installation.enabledTools.length} of ${total} tools`,
+    overrides > 0 ? `${overrides} override${overrides === 1 ? "" : "s"}` : undefined,
+    provider.transport.type === "mcp" ? `${installation.syncedTools.length} synced` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const sync = useMutation({
+    mutationFn: () =>
+      rpcClient.connectors.installations.sync({ installationItemId: installation.id }),
+    onSuccess: async (result) => {
+      setReport(result.report);
+      await onChanged();
+      toast.success("Tools synced");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
   const archive = useMutation({
     mutationFn: () =>
-      rpcClient.connectors.installations.archive({
-        installationItemId: installation.id,
-      }),
+      rpcClient.connectors.installations.archive({ installationItemId: installation.id }),
     onSuccess: async () => {
-      toast.success("Connector uninstalled");
-      // Prefix key: also hits the scope-filtered list variants on the index page.
-      await queryClient.invalidateQueries({
-        queryKey: orpc.connectors.installations.list.key(),
-      });
-      navigate("/settings/connectors");
+      await onChanged();
+      setConfirmRemove(false);
+      toast.success("Removed from scope");
     },
-    onError: (cause) => toast.error(messageFrom(cause)),
+    onError: (error) => toast.error(messageFrom(error)),
   });
-  const configItems = Object.entries(installation.config);
-
   return (
-    <SettingsSection
-      title="Settings"
-      description="Review installation configuration and registration resolution."
-    >
-      <SettingRow
-        label="Installation"
-        orientation="stack"
-        control={
-          <KeyValueList
-            items={[
-              { label: "Catalog key", value: installation.catalogKey, mono: true },
-              {
-                label: "Scope",
-                value: (
-                  <ScopeBadge scope={scope ? scopeDisplayName(scope) : installation.scopeId} />
-                ),
-              },
-              {
-                label: "Registration",
-                value: resolvedRegistration
-                  ? `${resolvedRegistration.source} app`
-                  : provider.authMode === "oauth2_code"
-                    ? "Setup required"
-                    : provider.authMode === "mcp_oauth"
-                      ? "Registers on connect"
-                      : "Not required",
-              },
-              ...configItems.map(([key, value]) => ({
-                label: key,
-                value: String(value),
-                mono: true,
-              })),
-            ]}
-          />
-        }
-      />
-      {isOAuth ? (
-        <SettingRow
-          label="OAuth app"
-          description="The app at the provider that mints tokens for this connector."
-          control={
-            <Button variant="outline" onClick={() => setRegistrationOpen(true)}>
-              <Settings2 />
-              Manage
-            </Button>
-          }
-        />
-      ) : null}
-      <SettingRow
-        label="Uninstall connector"
-        description="Archive this installation and revoke all of its credentials."
-        control={
-          <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
-            <Unplug />
-            Uninstall
+    <div className="py-3 pr-4 pl-9">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-chrome">{scope ? scopeDisplayName(scope) : installation.scopeId}</p>
+          <p className="mt-0.5 text-meta text-muted-foreground">{summary}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="xs" variant="outline" onClick={() => setConfigure(true)}>
+            <Settings2 />
+            Configure tools
           </Button>
-        }
-      />
-      <RegistrationDialog
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" aria-label="Scope binding actions">
+                <MoreHorizontal className={sync.isPending ? "animate-pulse" : ""} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {provider.transport.type === "mcp" ? (
+                <DropdownMenuItem disabled={sync.isPending} onSelect={() => sync.mutate()}>
+                  <RefreshCw />
+                  Sync tools now
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem variant="destructive" onSelect={() => setConfirmRemove(true)}>
+                <Trash2 />
+                Remove from scope
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      {report ? <DriftReportView report={report} /> : null}
+      <ConfigureToolsDialog
         provider={provider}
-        registrations={registrations}
-        callbackUrl={callbackUrl}
-        open={registrationOpen}
-        onOpenChange={setRegistrationOpen}
+        installation={installation}
+        open={configure}
+        onOpenChange={setConfigure}
+        onChanged={onChanged}
       />
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Uninstall {provider.displayName}?</AlertDialogTitle>
+            <AlertDialogTitle>Remove this scope binding?</AlertDialogTitle>
             <AlertDialogDescription>
-              This archives the installation and revokes its credentials. Agents will lose access to
-              its tools in {scope ? scopeDisplayName(scope) : "this scope"}.
+              The installation is archived. Its connection remains available to other scopes.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -838,11 +671,431 @@ function ConnectorSettingsSection({
               disabled={archive.isPending}
               onClick={() => archive.mutate()}
             >
-              {archive.isPending ? "Uninstalling…" : "Uninstall connector"}
+              {archive.isPending ? "Removing…" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function ConfigureToolsDialog({
+  provider,
+  installation,
+  open,
+  onOpenChange,
+  onChanged,
+}: {
+  provider: CatalogProvider;
+  installation: ConnectorInstallation;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const available =
+    provider.transport.type === "rest" ? (provider.toolManifest ?? []) : installation.syncedTools;
+  const [search, setSearch] = useState("");
+  const [allTools, setAllTools] = useState(installation.enabledTools === "all");
+  const [enabled, setEnabled] = useState<string[]>(
+    installation.enabledTools === "all"
+      ? available.map((tool) => tool.name)
+      : installation.enabledTools,
+  );
+  const [overrides, setOverrides] = useState<Record<string, Sensitivity>>(
+    installation.sensitivityOverrides,
+  );
+  const [editingSensitivity, setEditingSensitivity] = useState<string>();
+  useEffect(() => {
+    if (!open) return;
+    setSearch("");
+    setEditingSensitivity(undefined);
+    setAllTools(installation.enabledTools === "all");
+    setEnabled(
+      installation.enabledTools === "all"
+        ? available.map((tool) => tool.name)
+        : installation.enabledTools,
+    );
+    setOverrides(installation.sensitivityOverrides);
+  }, [open, installation, available]);
+  const filtered = available.filter((tool) =>
+    `${tool.name} ${tool.description ?? ""}`.toLowerCase().includes(search.toLowerCase()),
+  );
+  const save = useMutation({
+    mutationFn: () =>
+      rpcClient.connectors.installations.update({
+        installationItemId: installation.id,
+        enabledTools: allTools ? "all" : enabled,
+        sensitivityOverrides: overrides,
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      onOpenChange(false);
+      toast.success("Tool configuration saved");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Configure tools</DialogTitle>
+          <DialogDescription>
+            Tool choices and sensitivity overrides apply only to this scope binding.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
+          <div className="rounded-md border">
+            <SettingRow
+              label="All tools"
+              description="New synced tools arrive enabled while this is on."
+              control={
+                <Switch
+                  checked={allTools}
+                  onCheckedChange={(checked) => {
+                    setAllTools(checked);
+                    if (!checked) setEnabled(available.map((tool) => tool.name));
+                  }}
+                />
+              }
+            />
+          </div>
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search tools"
+          />
+          <div className="divide-y rounded-md border">
+            {filtered.map((tool) => {
+              const initialSensitivity =
+                installation.sensitivityOverrides[tool.name] ?? tool.sensitivity;
+              const sensitivity = overrides[tool.name] ?? tool.sensitivity;
+              return (
+                <div
+                  key={tool.name}
+                  className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                >
+                  <label
+                    htmlFor={`tool-enabled-${installation.id}-${tool.name}`}
+                    className="flex min-w-0 items-start gap-3"
+                  >
+                    <Checkbox
+                      id={`tool-enabled-${installation.id}-${tool.name}`}
+                      checked={allTools || enabled.includes(tool.name)}
+                      disabled={allTools}
+                      onCheckedChange={(checked) =>
+                        setEnabled((current) =>
+                          checked
+                            ? [...current, tool.name]
+                            : current.filter((name) => name !== tool.name),
+                        )
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-medium text-chrome">{tool.name}</span>
+                      <span className="block truncate text-meta text-muted-foreground">
+                        {tool.description ?? "No description provided."}
+                      </span>
+                    </span>
+                  </label>
+                  {editingSensitivity === tool.name || sensitivity !== initialSensitivity ? (
+                    <Select
+                      value={sensitivity}
+                      onValueChange={(value) => {
+                        setOverrides((current) => ({
+                          ...current,
+                          [tool.name]: value as Sensitivity,
+                        }));
+                        setEditingSensitivity(undefined);
+                      }}
+                    >
+                      <SelectTrigger
+                        className="w-36"
+                        aria-label={`Sensitivity for ${tool.name}`}
+                        autoFocus
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="read">Read</SelectItem>
+                        <SelectItem value="write">Write</SelectItem>
+                        <SelectItem value="destructive">Destructive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <SensitivityBadge sensitivity={sensitivity} />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Edit sensitivity for ${tool.name}`}
+                        onClick={() => setEditingSensitivity(tool.name)}
+                      >
+                        <Pencil />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ScopeBindingDialog({
+  provider,
+  connectionId,
+  scopes,
+  installations,
+  open,
+  onOpenChange,
+  onChanged,
+}: {
+  provider: CatalogProvider;
+  connectionId?: string | undefined;
+  scopes: Scope[];
+  installations: ConnectorInstallation[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const boundScopeIds = new Set(installations.map((installation) => installation.scopeId));
+  const choices = scopes.filter((scope) => !boundScopeIds.has(scope.id));
+  const orgScope = choices.find((scope) => scope.kind === "org");
+  const [selected, setSelected] = useState<string[]>([]);
+  useEffect(() => {
+    if (open) setSelected(installations.length === 0 && orgScope ? [orgScope.id] : []);
+  }, [open, installations.length, orgScope]);
+  const bind = useMutation({
+    mutationFn: async () => {
+      if (!connectionId) throw new Error("Connection is required");
+      await Promise.all(
+        selected.map((scopeId) =>
+          rpcClient.connectors.installations.create({
+            scopeId,
+            catalogKey: provider.key,
+            connectionId,
+            enabledTools: "all",
+          }),
+        ),
+      );
+    },
+    onSuccess: async () => {
+      await onChanged();
+      onOpenChange(false);
+      toast.success(selected.length === 1 ? "Added to scope" : "Added to scopes");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add {provider.displayName} to scopes</DialogTitle>
+          <DialogDescription>
+            Each selected scope gets its own installation with all tools enabled.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border p-3">
+          {choices.length === 0 ? (
+            <p className="text-meta text-muted-foreground">
+              This provider is already in every scope.
+            </p>
+          ) : (
+            choices.map((scope) => (
+              <label
+                key={scope.id}
+                htmlFor={`binding-scope-${scope.id}`}
+                className="flex items-center gap-2"
+              >
+                <Checkbox
+                  id={`binding-scope-${scope.id}`}
+                  checked={selected.includes(scope.id)}
+                  onCheckedChange={(checked) =>
+                    setSelected((current) =>
+                      checked
+                        ? [...current, scope.id]
+                        : current.filter((scopeId) => scopeId !== scope.id),
+                    )
+                  }
+                />
+                {scopeDisplayName(scope)}
+              </label>
+            ))
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Skip
+          </Button>
+          <Button disabled={selected.length === 0 || bind.isPending} onClick={() => bind.mutate()}>
+            {bind.isPending ? "Adding…" : "Add to selected scopes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function MemberAccessSection({
+  provider,
+  onChanged,
+}: {
+  provider: CatalogProvider;
+  onChanged: () => Promise<void>;
+}) {
+  const update = useMutation({
+    mutationFn: (memberEnabled: boolean) =>
+      rpcClient.connectors.providers.updateSettings({
+        providerKey: provider.key,
+        memberEnabled,
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      toast.success("Member access updated");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  return (
+    <SettingsSection
+      title="Member access"
+      description="Allow members to connect this provider to their own personal scopes."
+    >
+      <SettingRow
+        label="Allow personal connections"
+        description="Members sign in with their own account; the agent acts as them in their personal scope. Enabled by default."
+        control={
+          <Switch
+            checked={provider.memberEnabled}
+            disabled={update.isPending}
+            onCheckedChange={(checked) => update.mutate(checked)}
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
+
+function AppCredentialsSection({
+  registrations,
+  onManage,
+}: {
+  registrations: Registration[];
+  onManage: () => void;
+}) {
+  const usable = registrations.some((registration) => registration.isUsable);
+  return (
+    <SettingsSection
+      title="App credentials"
+      description="The OAuth app identity used to mint provider tokens."
+    >
+      <SettingRow
+        label={usable ? "OAuth app configured" : "OAuth app needs setup"}
+        description={
+          usable
+            ? "A customer or platform registration is available."
+            : "Add a client id and secret before connecting."
+        }
+        control={
+          <Button variant="outline" onClick={onManage}>
+            Manage
+          </Button>
+        }
+      />
+    </SettingsSection>
+  );
+}
+
+function DangerZone({
+  provider,
+  installations,
+  connections,
+  onChanged,
+}: {
+  provider: CatalogProvider;
+  installations: ConnectorInstallation[];
+  connections: ConnectorConnection[];
+  onChanged: () => Promise<void>;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const disconnect = useMutation({
+    mutationFn: async () => {
+      await Promise.all([
+        ...installations.map((installation) =>
+          rpcClient.connectors.installations.archive({ installationItemId: installation.id }),
+        ),
+        ...connections
+          .filter((connection) => !connection.isRevoked)
+          .map((connection) =>
+            rpcClient.connectors.connections.revoke({ connectionId: connection.id }),
+          ),
+      ]);
+    },
+    onSuccess: async () => {
+      await onChanged();
+      toast.success(`${provider.displayName} disconnected`);
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  return (
+    <SettingsSection
+      title="Danger zone"
+      description="Remove every scope binding and revoke every connection. App credentials are kept."
+    >
+      <SettingRow
+        label={`Disconnect ${provider.displayName}`}
+        control={
+          <Button variant="destructive" onClick={() => setConfirm(true)}>
+            <Unplug />
+            Disconnect
+          </Button>
+        }
+      />
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect {provider.displayName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This archives all bindings and revokes all provider connections for the organization.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={disconnect.isPending}
+              onClick={() => disconnect.mutate()}
+            >
+              {disconnect.isPending ? "Disconnecting…" : `Disconnect ${provider.displayName}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </SettingsSection>
+  );
+}
+
+function DriftReportView({ report }: { report: DriftReport }) {
+  const changes = [
+    ...report.added.map((name) => `Added: ${name}`),
+    ...report.removed.map((name) => `Removed: ${name}`),
+    ...report.changed.map((name) => `Changed: ${name}`),
+  ];
+  return (
+    <div className="mt-3 rounded-md bg-muted/40 p-2 text-meta text-muted-foreground">
+      {changes.length === 0 ? "No tool changes found." : changes.join(" · ")}
+    </div>
   );
 }

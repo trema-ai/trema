@@ -38,12 +38,14 @@ export function RegistrationDialog({
   callbackUrl,
   open,
   onOpenChange,
+  onSaved,
 }: {
   provider: CatalogProvider;
   registrations: Registration[];
   callbackUrl: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSaved?: () => void;
 }) {
   const queryClient = useQueryClient();
   const customerApp = registrations.find((registration) => registration.source === "customer");
@@ -68,6 +70,7 @@ export function RegistrationDialog({
       await queryClient.invalidateQueries({ queryKey: registrationKey });
       setEditing(false);
       toast.success(`${provider.displayName} app saved`);
+      onSaved?.();
     },
     onError: (error) => toast.error(messageFrom(error)),
   });

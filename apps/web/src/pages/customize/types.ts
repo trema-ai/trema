@@ -40,6 +40,7 @@ export type ConnectorTool = {
 
 export type ConnectorBody = {
   catalogKey: string;
+  connectionId: string;
   enabledTools: "all" | string[];
   syncedTools?: ConnectorTool[];
   sensitivityOverrides?: Record<string, Sensitivity>;
@@ -55,16 +56,8 @@ export type CatalogEntry = {
   authMode: string;
   transport: { type: "mcp" | "rest" };
   memberConnectable: boolean;
+  memberEnabled: boolean;
   toolManifest?: ConnectorTool[];
-};
-
-export type ConnectorCredential = {
-  id: string;
-  principalId: string;
-  mode: string;
-  isRevoked: boolean;
-  isExpired: boolean;
-  isValid: boolean;
 };
 
 export type VersionAuthor = {

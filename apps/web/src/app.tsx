@@ -13,7 +13,6 @@ import { AuthenticatedAppShell, AuthenticatedProvider, HomePage, Loading } from 
 import { JoinPage } from "#/pages/join.tsx";
 import { ScopesPage } from "#/pages/scopes.tsx";
 import { SettingsAppearancePage } from "#/pages/settings/appearance.tsx";
-import { SettingsConnectorCatalogPage } from "#/pages/settings/connectors/catalog.tsx";
 import { SettingsConnectorDetailPage } from "#/pages/settings/connectors/detail.tsx";
 import { SettingsConnectorsPage } from "#/pages/settings/connectors/index.tsx";
 import { SettingsGeneralPage } from "#/pages/settings/general.tsx";
@@ -85,11 +84,7 @@ function AppRoutes() {
       <Route path="/settings/scopes" element={settings(<ScopesPage />, true)} />
       <Route path="/settings/connectors" element={settings(<SettingsConnectorsPage />, true)} />
       <Route
-        path="/settings/connectors/catalog"
-        element={settings(<SettingsConnectorCatalogPage />, true)}
-      />
-      <Route
-        path="/settings/connectors/:installationItemId"
+        path="/settings/connectors/:providerKey"
         element={settings(<SettingsConnectorDetailPage />, true)}
       />
       <Route path="/settings/*" element={settings(<Navigate to="/settings/profile" replace />)} />

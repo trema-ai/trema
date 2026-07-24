@@ -20,12 +20,7 @@ import {
   OAuthStateSingleUseError,
   OAuthTokenExchangeError,
   type PlatformAppDirectory,
-  syncConnectorInstallation,
 } from "./services/connectors/index.js";
-
-// A fresh connect should surface the MCP server's tools without a manual
-// sync click, but a slow provider must not hold the browser redirect hostage.
-const SYNC_ON_CONNECT_TIMEOUT_MS = 8000;
 
 export interface AppDependencies {
   db: Database;
@@ -62,6 +57,12 @@ function connectorErrorCode(error: unknown): string {
 function withConnectorError(url: string, code: string): string {
   const redirect = new URL(url);
   redirect.searchParams.set("connector_error", code);
+  return redirect.toString();
+}
+
+function withConnected(url: string, connectionId: string): string {
+  const redirect = new URL(url);
+  redirect.searchParams.set("connected", connectionId);
   return redirect.toString();
 }
 
@@ -131,27 +132,10 @@ export function createApp({
         ...(platformApps ? { platformApps } : {}),
       });
       returnTo = result.returnTo;
-      // Best-effort tool sync: MCP installations get their tools/list right
-      // away; REST providers reject sync by design and any failure is left
-      // for a manual sync — neither may break the redirect.
-      const sync = syncConnectorInstallation(db, {
-        orgId: result.orgId,
-        actorPrincipalId: result.credential.principalId,
-        installationItemId: result.credential.installationItemId,
-        ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
-        ...(connectorFetch ? { fetch: connectorFetch } : {}),
-        ...(mcpClientFactory ? { clientFactory: mcpClientFactory } : {}),
-      }).catch(() => undefined);
-      let syncTimer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        sync,
-        new Promise<void>((resolve) => {
-          syncTimer = setTimeout(resolve, SYNC_ON_CONNECT_TIMEOUT_MS);
-        }),
-      ]);
-      clearTimeout(syncTimer);
-      return context.redirect(safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS));
+      const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
+      return context.redirect(withConnected(destination, result.connection.id));
     } catch (error) {
+      console.error("Connector OAuth callback failed", error);
       const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
       return context.redirect(withConnectorError(destination, connectorErrorCode(error)));
     }

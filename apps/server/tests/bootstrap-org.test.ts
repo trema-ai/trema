@@ -16,6 +16,7 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const authSecret = "bootstrap-integration-secret-at-least-32-characters";
+const credentialMasterKey = Buffer.alloc(32, 2).toString("base64");
 
 function environment(mode: "hosted" | "dedicated", bootstrapToken?: string): Environment {
   return parseEnv({
@@ -24,6 +25,7 @@ function environment(mode: "hosted" | "dedicated", bootstrapToken?: string): Env
     TREMA_AUTH_SECRET: authSecret,
     TREMA_MODE: mode,
     TREMA_BOOTSTRAP_TOKEN: bootstrapToken,
+    ...(mode === "dedicated" ? { TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey } : {}),
   });
 }
 
@@ -324,6 +326,7 @@ integration("bootstrap and organizations", () => {
       DATABASE_URL: databaseUrl,
       TREMA_AUTH_SECRET: authSecret,
       TREMA_MODE: "dedicated",
+      TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
       TREMA_PASSWORD_AUTH_ENABLED: "false",
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
