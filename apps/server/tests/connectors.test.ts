@@ -16,6 +16,7 @@ import {
   createClientRegistration,
   createStaticConnection,
   hashOAuthState,
+  listConnectorConnections,
   type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
@@ -228,6 +229,25 @@ integration("connector connection flows", () => {
       refreshToken: "refresh-token",
       raw: { access_token: "access-token", account_name: "octo-org" },
     });
+
+    // The list derives a display label from the hoisted account name without
+    // leaking config; an explicit rename overrides it.
+    const [listed] = await listConnectorConnections(
+      db,
+      org.org.id,
+      "github",
+      new Date(),
+      undefined,
+      oauthCatalog,
+    );
+    expect(listed?.label).toBe("octo-org");
+    expect(JSON.stringify(listed)).not.toMatch(/"config"|account_name/);
+    const renamed = await call(
+      connectorsRouter.connections.update,
+      { connectionId: completed.connection.id, label: "Primary org" },
+      { context: org.context },
+    );
+    expect(renamed.label).toBe("Primary org");
   });
 
   it("derives the caller principal for member OAuth after both access gates pass", async () => {
@@ -260,11 +280,26 @@ integration("connector connection flows", () => {
     });
   });
 
-  it("rejects member OAuth unless the org setting and catalog ceiling both allow it", async () => {
+  it("allows member OAuth by default and rejects it once disabled or below the ceiling", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "Gated Member");
     const returnTo = "https://app.trema.example/customize?tab=connections";
 
+    // memberConnectable is the ceiling and member access defaults on, so a
+    // member may connect github without any admin opt-in.
+    const started = await call(
+      connectorsRouter.member.connect.startOAuth,
+      { providerKey: "github", returnTo },
+      { context: member.context },
+    );
+    expect(started.authorizationUrl).toContain("https://");
+
+    // An explicit opt-out closes it.
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "github", memberEnabled: false },
+      { context: org.context },
+    );
     await expect(
       call(
         connectorsRouter.member.connect.startOAuth,
@@ -275,6 +310,8 @@ integration("connector connection flows", () => {
       code: "FORBIDDEN",
       message: expect.stringContaining("not enabled for member connections"),
     });
+
+    // A provider below the ceiling is never member-connectable.
     await expect(
       call(
         connectorsRouter.member.connect.startOAuth,
@@ -658,6 +695,36 @@ integration("connector connection flows", () => {
     await expect(
       db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "github" } }),
     ).resolves.toBe(1);
+  });
+
+  it("collapses a re-connect of the same account but keeps distinct workspaces apart", async () => {
+    const org = await createOrg();
+    const complete = (state: string, code: string, accountName: string) =>
+      completeOAuthCallback(db, {
+        state,
+        code,
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: oauthCatalog,
+        fetch: tokenFetch({ access_token: `token-${accountName}`, account_name: accountName }),
+      });
+
+    const first = await complete(await start(org.org.id), "first", "octo-org");
+    // A fresh connect (no reconnectConnectionId) that lands on the same account
+    // updates the existing connection rather than minting a duplicate.
+    const same = await complete(await start(org.org.id), "second", "octo-org");
+    expect(same.connection.id).toBe(first.connection.id);
+    // A different workspace becomes its own connection.
+    const other = await complete(await start(org.org.id), "third", "hooli");
+    expect(other.connection.id).not.toBe(first.connection.id);
+
+    const connections = await db.connectorConnection.findMany({
+      where: { orgId: org.org.id, providerKey: "github" },
+    });
+    expect(connections).toHaveLength(2);
+    expect(
+      new Set(connections.map((row) => (row.config as { account_name?: string }).account_name)),
+    ).toEqual(new Set(["octo-org", "hooli"]));
   });
 
   it("creates verified static connections for the agent and exposes metadata only", async () => {

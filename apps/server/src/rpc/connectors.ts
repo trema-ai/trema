@@ -38,6 +38,7 @@ import {
   startOAuthConnect,
   syncConnectorInstallation,
   UnsupportedConnectorAuthModeError,
+  updateConnectorConnectionLabel,
   updateConnectorInstallation,
   updateConnectorProviderSettings,
 } from "#/services/connectors/index.js";
@@ -126,6 +127,8 @@ const connectionSchema = z.object({
   isValid: z.boolean(),
   installations: z.array(z.object({ id: z.uuid(), scopeId: z.uuid() })),
 });
+
+const connectionUpdateSchema = z.object({ id: z.uuid(), label: z.string().nullable() });
 
 type ListedConnection = Awaited<ReturnType<typeof listConnectorConnections>>[number];
 
@@ -565,7 +568,7 @@ const catalog = orgScoped
       authMode: provider.authMode,
       transport: { type: provider.transport.type },
       memberConnectable: provider.memberConnectable,
-      memberEnabled: provider.memberConnectable && memberEnabled.get(provider.key) === true,
+      memberEnabled: provider.memberConnectable && memberEnabled.get(provider.key) !== false,
       defaultScopes: provider.auth.defaultScopes,
       ...(provider.auth.availableScopes ? { availableScopes: provider.auth.availableScopes } : {}),
       configFields: provider.configFields,
@@ -642,6 +645,7 @@ const startOAuth = requireCapability("manage_connectors")
       providerKey: z.string().trim().min(1),
       config: configSchema.optional(),
       providerScopes: z.array(z.string().trim().min(1)).optional(),
+      label: z.string().trim().min(1).max(60).optional(),
       returnTo: z.url().optional(),
       reconnectConnectionId: z.uuid().optional(),
     }),
@@ -657,6 +661,7 @@ const startOAuth = requireCapability("manage_connectors")
         authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
         ...(input.config ? { config: input.config } : {}),
         ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+        ...(input.label ? { label: input.label } : {}),
         ...(input.returnTo ? { returnTo: input.returnTo } : {}),
         ...(input.reconnectConnectionId
           ? { reconnectConnectionId: input.reconnectConnectionId }
@@ -686,6 +691,7 @@ const createStatic = requireCapability("manage_connectors")
       providerKey: z.string().trim().min(1),
       config: configSchema,
       credentials: z.record(z.string(), z.string()),
+      label: z.string().trim().min(1).max(60).optional(),
       reconnectConnectionId: z.uuid().optional(),
     }),
   )
@@ -699,6 +705,7 @@ const createStatic = requireCapability("manage_connectors")
         providerKey: input.providerKey,
         config: input.config,
         credentials: input.credentials,
+        ...(input.label ? { label: input.label } : {}),
         ...(input.reconnectConnectionId
           ? { reconnectConnectionId: input.reconnectConnectionId }
           : {}),
@@ -761,6 +768,30 @@ const revokeConnection = requireCapability("manage_connectors")
     }
   });
 
+const updateConnection = requireCapability("manage_connectors")
+  .route({
+    method: "PATCH",
+    path: "/connector-connections/{connectionId}",
+    summary: "Update a connector connection",
+    description: "Rename one of the organization agent's connections.",
+    tags: ["Connectors"],
+  })
+  .input(z.object({ connectionId: z.uuid(), label: z.string().trim().min(1).max(60).nullable() }))
+  .output(connectionUpdateSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      const connection = await updateConnectorConnectionLabel(context.db, {
+        orgId: context.org.id,
+        connectionId: input.connectionId,
+        label: input.label,
+        principalId: await orgAgentPrincipalId(context.db, context.org.id),
+      });
+      return { id: connection.id, label: connection.label };
+    } catch (error) {
+      throwConnectorError(error);
+    }
+  });
+
 const memberStartOAuth = orgScoped
   .route({
     method: "POST",
@@ -775,6 +806,7 @@ const memberStartOAuth = orgScoped
       providerKey: z.string().trim().min(1),
       config: configSchema.optional(),
       providerScopes: z.array(z.string().trim().min(1)).optional(),
+      label: z.string().trim().min(1).max(60).optional(),
       returnTo: z.url(),
       reconnectConnectionId: z.uuid().optional(),
     }),
@@ -790,6 +822,7 @@ const memberStartOAuth = orgScoped
         authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
         ...(input.config ? { config: input.config } : {}),
         ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+        ...(input.label ? { label: input.label } : {}),
         returnTo: input.returnTo,
         ...(input.reconnectConnectionId
           ? { reconnectConnectionId: input.reconnectConnectionId }
@@ -818,6 +851,7 @@ const memberCreateStatic = orgScoped
       providerKey: z.string().trim().min(1),
       config: configSchema,
       credentials: z.record(z.string(), z.string()),
+      label: z.string().trim().min(1).max(60).optional(),
       reconnectConnectionId: z.uuid().optional(),
     }),
   )
@@ -831,6 +865,7 @@ const memberCreateStatic = orgScoped
         providerKey: input.providerKey,
         config: input.config,
         credentials: input.credentials,
+        ...(input.label ? { label: input.label } : {}),
         ...(input.reconnectConnectionId
           ? { reconnectConnectionId: input.reconnectConnectionId }
           : {}),
@@ -966,7 +1001,7 @@ export const connectorsRouter = {
     delete: deleteRegistration,
   },
   connect: { startOAuth, createStatic },
-  connections: { list: listConnections, revoke: revokeConnection },
+  connections: { list: listConnections, revoke: revokeConnection, update: updateConnection },
   member: {
     connect: { startOAuth: memberStartOAuth, createStatic: memberCreateStatic },
     connections: { list: memberListConnections, revoke: memberRevokeConnection },

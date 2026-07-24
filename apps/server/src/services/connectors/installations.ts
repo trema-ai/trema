@@ -139,6 +139,8 @@ export class ConnectorMemberConnectabilityError extends Error {
 
 type MemberConnectorAccessDb = Pick<Prisma.TransactionClient, "connectorProviderSettings">;
 
+// Member access defaults to enabled: the catalog's memberConnectable is the
+// ceiling, and the per-org settings row only records an explicit opt-out.
 export async function requireMemberConnectorAccess(
   db: MemberConnectorAccessDb,
   input: { orgId: string; provider: ProviderDef; errorMessage?: string },
@@ -149,7 +151,7 @@ export async function requireMemberConnectorAccess(
     },
     select: { memberEnabled: true },
   });
-  if (!input.provider.memberConnectable || settings?.memberEnabled !== true) {
+  if (!input.provider.memberConnectable || settings?.memberEnabled === false) {
     throw new ConnectorMemberConnectabilityError(input.provider.key, input.errorMessage);
   }
 }

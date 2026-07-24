@@ -152,7 +152,7 @@ integration("connector connections and installations", () => {
     );
     expect(catalog.find(({ key }) => key === "notion")).toMatchObject({
       memberConnectable: true,
-      memberEnabled: false,
+      memberEnabled: true,
       transport: { type: "mcp" },
     });
     await expect(call(connectorsRouter.meta, undefined, { context: org.context })).resolves.toEqual(
@@ -246,7 +246,7 @@ integration("connector connections and installations", () => {
     });
   });
 
-  it("requires both the catalog ceiling and memberEnabled for personal installations", async () => {
+  it("gates personal installations on the ceiling and the default-on member toggle", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "member");
     const personal = await db.scope.create({
@@ -267,23 +267,9 @@ integration("connector connections and installations", () => {
       principalId: member.principal.id,
       providerKey: "hubspot",
     });
-    await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "notion",
-          connectionId: memberNotion.id,
-        },
-        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
-      ),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
-    await call(
-      connectorsRouter.providers.updateSettings,
-      { providerKey: "notion", memberEnabled: true },
-      { context: org.context },
-    );
+    // hubspot is below the ceiling: never member-connectable, and its toggle
+    // cannot be turned on.
     await expect(
       call(
         connectorsRouter.providers.updateSettings,
@@ -303,6 +289,30 @@ integration("connector connections and installations", () => {
       ),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
+    // An explicit opt-out closes notion despite the ceiling allowing it.
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "notion", memberEnabled: false },
+      { context: org.context },
+    );
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "notion",
+          connectionId: memberNotion.id,
+        },
+        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // Re-enabling restores it (member access is on by default).
+    await call(
+      connectorsRouter.providers.updateSettings,
+      { providerKey: "notion", memberEnabled: true },
+      { context: org.context },
+    );
     await expect(
       call(
         connectorsRouter.installations.create,

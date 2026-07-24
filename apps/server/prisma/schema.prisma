@@ -407,6 +407,7 @@ model ConnectorOAuthState {
   stateHash      String               @unique
   codeVerifier   String
   config         Json
+  label          String?
   providerScopes String[]             @default([])
   // mcp_oauth only: the token endpoint and RFC 8707 resource discovered before
   // the redirect, persisted so the callback can complete the exchange without
@@ -432,7 +433,7 @@ model ConnectorProviderSettings {
   id            String   @id @default(uuid(7))
   orgId         String
   providerKey   String
-  memberEnabled Boolean  @default(false)
+  memberEnabled Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   org           Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)

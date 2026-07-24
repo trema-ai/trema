@@ -55,6 +55,7 @@ export {
   StaticCredentialValidationError,
   startOAuthConnect,
   UnsupportedConnectorAuthModeError,
+  updateConnectorConnectionLabel,
 } from "#/services/connectors/connect.js";
 export {
   type ArchiveConnectorInstallationInput,

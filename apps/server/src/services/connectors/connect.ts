@@ -178,6 +178,7 @@ export interface StartOAuthConnectInput {
   returnTo?: string;
   config?: Readonly<Record<string, string | number | boolean>>;
   providerScopes?: readonly string[];
+  label?: string;
   reconnectConnectionId?: string;
   catalog?: ProviderCatalog;
   platformApps?: PlatformAppDirectory;
@@ -293,6 +294,7 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
       stateHash: hashOAuthState(state),
       codeVerifier,
       config: config as Prisma.InputJsonValue,
+      ...(input.label !== undefined ? { label: input.label } : {}),
       providerScopes: requestedScopes,
       ...(input.returnTo !== undefined ? { returnTo: input.returnTo } : {}),
       expiresAt: new Date(now.getTime() + OAUTH_STATE_TTL_MS),
@@ -368,6 +370,7 @@ async function startMcpOAuthConnect(
       stateHash: hashOAuthState(state),
       codeVerifier,
       config: config as Prisma.InputJsonValue,
+      ...(input.label !== undefined ? { label: input.label } : {}),
       providerScopes: discovery.requestedScopes,
       tokenEndpoint: discovery.tokenEndpoint,
       resource: serverUrl,
@@ -422,6 +425,35 @@ function publicConnectionSelect() {
   } as const;
 }
 
+// A fresh connect that lands on an already-connected provider account must not
+// mint a duplicate. Account identity is only detectable through the provider's
+// hoisted token-response metadata; when every metadata value matches an active
+// connection's stored config, that connection is the same account.
+async function sameAccountConnectionId(
+  db: Database,
+  input: { orgId: string; providerKey: string; principalId: string },
+  metadata: Record<string, unknown> | undefined,
+): Promise<string | undefined> {
+  if (!metadata || Object.keys(metadata).length === 0) return undefined;
+  const candidates = await db.connectorConnection.findMany({
+    where: {
+      orgId: input.orgId,
+      providerKey: input.providerKey,
+      principalId: input.principalId,
+      revokedAt: null,
+    },
+    select: { id: true, config: true },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  });
+  const match = candidates.find((candidate) => {
+    const stored = connectionConfig(candidate.config);
+    return Object.entries(metadata).every(
+      ([key, value]) => JSON.stringify(stored[key]) === JSON.stringify(value),
+    );
+  });
+  return match?.id;
+}
+
 async function storeConnection(
   db: Database,
   input: {
@@ -432,6 +464,7 @@ async function storeConnection(
     config: Record<string, unknown>;
     ciphertext: string;
     connectionId?: string;
+    label?: string;
     expiresAt?: Date;
     providerScopes?: string[];
     metadata?: Record<string, unknown>;
@@ -440,10 +473,12 @@ async function storeConnection(
   const config = JSON.parse(
     JSON.stringify({ ...input.config, ...(input.metadata ?? {}) }),
   ) as Prisma.InputJsonValue;
-  if (input.connectionId) {
+  const connectionId =
+    input.connectionId ?? (await sameAccountConnectionId(db, input, input.metadata));
+  if (connectionId) {
     const updated = await db.connectorConnection.updateMany({
       where: {
-        id: input.connectionId,
+        id: connectionId,
         orgId: input.orgId,
         providerKey: input.providerKey,
         principalId: input.principalId,
@@ -452,6 +487,7 @@ async function storeConnection(
         mode: input.mode,
         config,
         ciphertext: input.ciphertext,
+        ...(input.label !== undefined ? { label: input.label } : {}),
         providerScopes: input.providerScopes ?? [],
         expiresAt: input.expiresAt ?? null,
         revokedAt: null,
@@ -463,7 +499,7 @@ async function storeConnection(
     });
     if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
     return db.connectorConnection.findUniqueOrThrow({
-      where: { id: input.connectionId },
+      where: { id: connectionId },
       select: publicConnectionSelect(),
     });
   }
@@ -475,6 +511,7 @@ async function storeConnection(
       mode: input.mode,
       config,
       ciphertext: input.ciphertext,
+      ...(input.label !== undefined ? { label: input.label } : {}),
       providerScopes: input.providerScopes ?? [],
       ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
     },
@@ -586,6 +623,7 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
     config: connectionConfig(oauthState.config),
     ciphertext: encryptEnvelope(payload, input.masterKey),
     ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
+    ...(oauthState.label ? { label: oauthState.label } : {}),
     providerScopes: grantedScopes,
     ...(expiresAt ? { expiresAt } : {}),
     metadata,
@@ -660,6 +698,7 @@ async function completeMcpOAuthCallback(
     config: connectionConfig(oauthState.config),
     ciphertext: encryptEnvelope(payload, input.masterKey),
     ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
+    ...(oauthState.label ? { label: oauthState.label } : {}),
     providerScopes: grantedScopes,
     ...(expiresAt ? { expiresAt } : {}),
   });
@@ -753,6 +792,7 @@ export interface CreateStaticConnectionInput {
   providerKey: string;
   credentials: Readonly<Record<string, unknown>>;
   config: Readonly<Record<string, string | number | boolean>>;
+  label?: string;
   reconnectConnectionId?: string;
   masterKey?: string;
   catalog?: ProviderCatalog;
@@ -844,8 +884,45 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
     mode: provider.authMode,
     config,
     ciphertext: encryptEnvelope(payload, input.masterKey),
+    ...(input.label !== undefined ? { label: input.label } : {}),
     ...(existing ? { connectionId: existing.id } : {}),
   });
+}
+
+export async function updateConnectorConnectionLabel(
+  db: Database,
+  input: { orgId: string; connectionId: string; label: string | null; principalId?: string },
+) {
+  const updated = await db.connectorConnection.updateMany({
+    where: {
+      id: input.connectionId,
+      orgId: input.orgId,
+      ...(input.principalId ? { principalId: input.principalId } : {}),
+    },
+    data: { label: input.label },
+  });
+  if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
+  return db.connectorConnection.findUniqueOrThrow({
+    where: { id: input.connectionId },
+    select: publicConnectionSelect(),
+  });
+}
+
+// Derive a display label from the provider's hoisted token-response metadata
+// (an account or workspace name) when the connection has no explicit label.
+// Config itself never leaves the server; only the derived string does.
+function metadataLabel(
+  catalog: ProviderCatalog,
+  providerKey: string,
+  config: Prisma.JsonValue,
+): string | undefined {
+  const provider = catalog.find(({ key }) => key === providerKey);
+  const stored = connectionConfig(config);
+  for (const key of provider?.auth.tokenResponseMetadata ?? []) {
+    const value = stored[key];
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
 }
 
 export async function listConnectorConnections(
@@ -854,6 +931,7 @@ export async function listConnectorConnections(
   providerKey?: string,
   now = new Date(),
   principalId?: string,
+  catalog: ProviderCatalog = defaultCatalog,
 ) {
   const [connections, installations] = await Promise.all([
     db.connectorConnection.findMany({
@@ -862,7 +940,7 @@ export async function listConnectorConnections(
         ...(providerKey ? { providerKey } : {}),
         ...(principalId ? { principalId } : {}),
       },
-      select: publicConnectionSelect(),
+      select: { ...publicConnectionSelect(), config: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     // No principal filter here: bindings only surface when their connectionId
@@ -888,8 +966,9 @@ export async function listConnectorConnections(
     current.push({ id: installation.id, scopeId: installation.scopeId });
     bindings.set(connectionId, current);
   }
-  return connections.map((connection) => ({
+  return connections.map(({ config, ...connection }) => ({
     ...connection,
+    label: connection.label ?? metadataLabel(catalog, connection.providerKey, config) ?? null,
     installations: bindings.get(connection.id) ?? [],
     ...connectorConnectionValidity(connection, now),
   }));

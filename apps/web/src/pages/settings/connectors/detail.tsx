@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Settings2,
@@ -45,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu.tsx";
 import { Input } from "#/components/ui/input.tsx";
+import { Label } from "#/components/ui/label.tsx";
 import {
   Select,
   SelectContent,
@@ -183,13 +185,9 @@ export function SettingsConnectorDetailPage() {
   return (
     <main className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
       <PageHeader
-        title={
-          <span className="flex items-center gap-3">
-            {providerLogo(provider, "size-9")}
-            {provider.displayName}
-          </span>
-        }
-        description={provider.description}
+        leading={providerLogo(provider, "size-10")}
+        title={provider.displayName}
+        description="Manage provider accounts, scope availability, and per-scope tools."
       />
       <div className="space-y-7">
         <ConnectionsSection
@@ -325,7 +323,8 @@ function ConnectionsSection({
         <div>
           <h3 className="text-chrome font-medium text-foreground">Connections</h3>
           <p className="mt-0.5 text-meta text-muted-foreground">
-            Accounts the agent acts as, and where each one is available.
+            Accounts the agent acts as, and where each one is available. Connect more than one to
+            reach separate workspaces; reconnecting the same account updates it in place.
           </p>
         </div>
         <Button onClick={onConnect}>
@@ -365,6 +364,70 @@ function ConnectionsSection({
   );
 }
 
+function RenameConnectionDialog({
+  connection,
+  fallbackLabel,
+  open,
+  onOpenChange,
+  onChanged,
+}: {
+  connection: ConnectorConnection;
+  fallbackLabel: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [value, setValue] = useState(connection.label ?? "");
+  useEffect(() => {
+    if (open) setValue(connection.label ?? "");
+  }, [open, connection.label]);
+  const rename = useMutation({
+    mutationFn: () => {
+      const trimmed = value.trim();
+      return rpcClient.connectors.connections.update({
+        connectionId: connection.id,
+        label: trimmed.length > 0 ? trimmed : null,
+      });
+    },
+    onSuccess: async () => {
+      await onChanged();
+      onOpenChange(false);
+      toast.success("Connection renamed");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename connection</DialogTitle>
+          <DialogDescription>
+            A label helps tell accounts apart when a provider has more than one connected.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="my-4 space-y-2">
+          <Label htmlFor={`rename-${connection.id}`}>Label</Label>
+          <Input
+            id={`rename-${connection.id}`}
+            value={value}
+            maxLength={60}
+            placeholder={fallbackLabel}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={rename.isPending} onClick={() => rename.mutate()}>
+            {rename.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ConnectionGroup({
   provider,
   connection,
@@ -385,6 +448,7 @@ function ConnectionGroup({
   onChanged: () => Promise<void>;
 }) {
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const revoke = useMutation({
     mutationFn: () => rpcClient.connectors.connections.revoke({ connectionId: connection.id }),
     onSuccess: async () => {
@@ -434,6 +498,7 @@ function ConnectionGroup({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setRenaming(true)}>Rename</DropdownMenuItem>
                 <DropdownMenuItem variant="destructive" onSelect={() => setConfirmRevoke(true)}>
                   Revoke connection
                 </DropdownMenuItem>
@@ -442,6 +507,13 @@ function ConnectionGroup({
           ) : null}
         </div>
       </div>
+      <RenameConnectionDialog
+        connection={connection}
+        fallbackLabel={provider.displayName}
+        open={renaming}
+        onOpenChange={setRenaming}
+        onChanged={onChanged}
+      />
       {bindings.map((binding) => (
         <BindingRow
           key={binding.id}
@@ -551,7 +623,7 @@ function BindingRow({
           <p className="mt-0.5 text-meta text-muted-foreground">{summary}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setConfigure(true)}>
+          <Button size="xs" variant="outline" onClick={() => setConfigure(true)}>
             <Settings2 />
             Configure tools
           </Button>
@@ -633,9 +705,11 @@ function ConfigureToolsDialog({
   const [overrides, setOverrides] = useState<Record<string, Sensitivity>>(
     installation.sensitivityOverrides,
   );
+  const [editingSensitivity, setEditingSensitivity] = useState<string>();
   useEffect(() => {
     if (!open) return;
     setSearch("");
+    setEditingSensitivity(undefined);
     setAllTools(installation.enabledTools === "all");
     setEnabled(
       installation.enabledTools === "all"
@@ -663,14 +737,14 @@ function ConfigureToolsDialog({
   });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Configure tools</DialogTitle>
           <DialogDescription>
             Tool choices and sensitivity overrides apply only to this scope binding.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
           <div className="rounded-md border">
             <SettingRow
               label="All tools"
@@ -693,11 +767,13 @@ function ConfigureToolsDialog({
           />
           <div className="divide-y rounded-md border">
             {filtered.map((tool) => {
+              const initialSensitivity =
+                installation.sensitivityOverrides[tool.name] ?? tool.sensitivity;
               const sensitivity = overrides[tool.name] ?? tool.sensitivity;
               return (
                 <div
                   key={tool.name}
-                  className="grid gap-3 px-3 py-3 sm:grid-cols-[1fr_auto_auto] sm:items-center"
+                  className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                 >
                   <label
                     htmlFor={`tool-enabled-${installation.id}-${tool.name}`}
@@ -722,25 +798,44 @@ function ConfigureToolsDialog({
                       </span>
                     </span>
                   </label>
-                  <SensitivityBadge sensitivity={sensitivity} />
-                  <Select
-                    value={sensitivity}
-                    onValueChange={(value) =>
-                      setOverrides((current) => ({
-                        ...current,
-                        [tool.name]: value as Sensitivity,
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-36">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="read">Read</SelectItem>
-                      <SelectItem value="write">Write</SelectItem>
-                      <SelectItem value="destructive">Destructive</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {editingSensitivity === tool.name || sensitivity !== initialSensitivity ? (
+                    <Select
+                      value={sensitivity}
+                      onValueChange={(value) => {
+                        setOverrides((current) => ({
+                          ...current,
+                          [tool.name]: value as Sensitivity,
+                        }));
+                        setEditingSensitivity(undefined);
+                      }}
+                    >
+                      <SelectTrigger
+                        className="w-36"
+                        aria-label={`Sensitivity for ${tool.name}`}
+                        autoFocus
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="read">Read</SelectItem>
+                        <SelectItem value="write">Write</SelectItem>
+                        <SelectItem value="destructive">Destructive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <SensitivityBadge sensitivity={sensitivity} />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Edit sensitivity for ${tool.name}`}
+                        onClick={() => setEditingSensitivity(tool.name)}
+                      >
+                        <Pencil />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -880,7 +975,7 @@ function MemberAccessSection({
     >
       <SettingRow
         label="Allow personal connections"
-        description="Members still authorize their own provider accounts."
+        description="Members sign in with their own account; the agent acts as them in their personal scope. Enabled by default."
         control={
           <Switch
             checked={provider.memberEnabled}
