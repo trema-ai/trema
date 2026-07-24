@@ -1,5 +1,6 @@
 import type { Role, ScopeKind } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import type { Sensitivity } from "#/services/connectors/index.js";
 
 export const sensitivityClasses = ["read", "write", "destructive"] as const;
@@ -96,10 +97,18 @@ export async function resolvePolicySnapshot(
   _db: Database,
   input: ResolvePolicySnapshotInput,
 ): Promise<PolicySnapshot> {
+  const decisions = defaultDecisions(input.scopeKind);
+  log.debug("Policy snapshot resolved", {
+    scopeId: input.scopeId,
+    scopeKind: input.scopeKind,
+    version: POLICY_SNAPSHOT_VERSION,
+    write: decisions.write.action,
+    destructive: decisions.destructive.action,
+  });
   return {
     version: POLICY_SNAPSHOT_VERSION,
     scopeId: input.scopeId,
     scopeChain: [...input.scopeChain],
-    decisions: defaultDecisions(input.scopeKind),
+    decisions,
   };
 }

@@ -2,6 +2,7 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import type { ContextSession, Scope } from "#/generated/prisma/client.js";
+import { log } from "#/lib/logger/index.js";
 import { serviceAuthed, sessionAuthed } from "#/rpc/builders.js";
 import {
   closeSession,
@@ -176,6 +177,9 @@ function throwSessionError(error: unknown): never {
 // reads as "not found" so a token cannot probe for other sessions.
 function assertSessionMatches(session: ContextSession, sessionId: string): void {
   if (session.id !== sessionId) {
+    log.warn("Session token does not match the requested session", {
+      requestedSessionId: sessionId,
+    });
     throw new ORPCError("NOT_FOUND", { message: "Session not found" });
   }
 }

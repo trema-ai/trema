@@ -8,6 +8,7 @@ import type {
   SessionMode,
 } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import { resolveLocation } from "#/services/bindings/index.js";
 import { type PolicySnapshot, resolvePolicySnapshot } from "#/services/policies/index.js";
 import {
@@ -172,7 +173,13 @@ async function resolveScope(db: Database, input: OpenSessionInput): Promise<Scop
   });
 
   if (resolved.kind === "scope") return resolved.scope;
+  // The surface id of the person who asked stays out of the log; the code and
+  // the surface are what an operator acts on.
   if (resolved.kind === "unlinked") {
+    log.warn("Session location unresolved", {
+      code: "identity_unlinked",
+      surface: resolved.surface,
+    });
     throw new SessionResolutionError(
       "identity_unlinked",
       `Surface user ${resolved.externalUserId} on ${resolved.surface} is not linked to a person`,
@@ -180,12 +187,21 @@ async function resolveScope(db: Database, input: OpenSessionInput): Promise<Scop
     );
   }
   if (resolved.kind === "personal_disabled") {
+    log.warn("Session location unresolved", {
+      code: "personal_scopes_disabled",
+      surface: input.surface,
+    });
     throw new SessionResolutionError(
       "personal_scopes_disabled",
       "Personal scopes are disabled for this organization",
       {},
     );
   }
+  log.warn("Session location unresolved", {
+    code: "location_unbound",
+    surface: input.surface,
+    locationRef: input.locationRef,
+  });
   throw new SessionResolutionError(
     "location_unbound",
     `Location ${input.surface}:${input.locationRef} is not bound to a scope`,
@@ -358,6 +374,28 @@ export async function openSession(
     return created;
   });
 
+  // Counts and the snapshot hash only: what the standing set says is context
+  // content and never reaches a log line.
+  log.info("Session opened", {
+    sessionId: session.id,
+    scopeId: scope.id,
+    mode,
+    surface: input.surface,
+    scopeChainLength: scopeChainIds.length,
+    standingItems: standing.included.length,
+    overflowItems: standing.overflowItemIds.length,
+    standingTokens: standing.usedTokens,
+    budgetTokens: standing.budgetTokens,
+    snapshotHash,
+  });
+  if (standing.overflowItemIds.length > 0) {
+    log.warn("Standing set cut by the token budget", {
+      sessionId: session.id,
+      overflowItems: standing.overflowItemIds.length,
+      budgetTokens: standing.budgetTokens,
+    });
+  }
+
   return { session, sessionToken, scopeChain, standing, policySnapshot, tools };
 }
 
@@ -398,9 +436,18 @@ export async function renewSession(
     const session = await transaction.contextSession.findFirst({
       where: { id: input.sessionId, orgId: input.orgId },
     });
-    if (!session) throw new SessionNotFoundError();
-    if (session.closedAt) throw new SessionClosedError();
-    if (isSessionExpired(session, now)) throw new SessionExpiredError();
+    if (!session) {
+      log.warn("Session renewal rejected", { sessionId: input.sessionId, reason: "not_found" });
+      throw new SessionNotFoundError();
+    }
+    if (session.closedAt) {
+      log.warn("Session renewal rejected", { sessionId: session.id, reason: "closed" });
+      throw new SessionClosedError();
+    }
+    if (isSessionExpired(session, now)) {
+      log.warn("Session renewal rejected", { sessionId: session.id, reason: "expired" });
+      throw new SessionExpiredError();
+    }
 
     // Guarded like close, so a close committing after the read above cannot
     // be raced into extending a closed session's lifetime.
@@ -408,7 +455,10 @@ export async function renewSession(
       where: { id: session.id, orgId: input.orgId, closedAt: null },
       data: { expiresAt: new Date(now.getTime() + SESSION_TOKEN_TTL_MS) },
     });
-    if (claimed.count !== 1) throw new SessionClosedError();
+    if (claimed.count !== 1) {
+      log.warn("Session renewal rejected", { sessionId: session.id, reason: "conflict" });
+      throw new SessionClosedError();
+    }
     const renewed = await transaction.contextSession.findUniqueOrThrow({
       where: { orgId_id: { orgId: input.orgId, id: session.id } },
     });
@@ -420,6 +470,10 @@ export async function renewSession(
         subject: session.id,
         payload: { expiresAt: renewed.expiresAt.toISOString() },
       },
+    });
+    log.info("Session renewed", {
+      sessionId: renewed.id,
+      expiresAt: renewed.expiresAt.toISOString(),
     });
     return renewed;
   });
@@ -441,8 +495,14 @@ export async function closeSession(
     const session = await transaction.contextSession.findFirst({
       where: { id: input.sessionId, orgId: input.orgId },
     });
-    if (!session) throw new SessionNotFoundError();
-    if (session.closedAt) throw new SessionClosedError();
+    if (!session) {
+      log.warn("Session close rejected", { sessionId: input.sessionId, reason: "not_found" });
+      throw new SessionNotFoundError();
+    }
+    if (session.closedAt) {
+      log.warn("Session close rejected", { sessionId: session.id, reason: "closed" });
+      throw new SessionClosedError();
+    }
 
     const claimed = await transaction.contextSession.updateMany({
       where: { id: session.id, orgId: input.orgId, closedAt: null },
@@ -451,7 +511,10 @@ export async function closeSession(
         ...(input.usage ? { usage: input.usage as Prisma.InputJsonValue } : {}),
       },
     });
-    if (claimed.count !== 1) throw new SessionClosedError();
+    if (claimed.count !== 1) {
+      log.warn("Session close rejected", { sessionId: session.id, reason: "conflict" });
+      throw new SessionClosedError();
+    }
 
     const closed = await transaction.contextSession.findUniqueOrThrow({
       where: { orgId_id: { orgId: input.orgId, id: session.id } },
@@ -467,6 +530,10 @@ export async function closeSession(
           usage: (input.usage ?? null) as Prisma.InputJsonValue,
         },
       },
+    });
+    log.info("Session closed", {
+      sessionId: closed.id,
+      usageReported: input.usage !== undefined,
     });
     return closed;
   });
