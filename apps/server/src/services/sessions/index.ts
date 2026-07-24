@@ -1,0 +1,473 @@
+import { createHash, randomBytes } from "node:crypto";
+
+import type {
+  ContextSession,
+  Prisma,
+  Principal,
+  Scope,
+  SessionMode,
+} from "#/generated/prisma/client.js";
+import type { Database } from "#/lib/db/index.js";
+import { resolveLocation } from "#/services/bindings/index.js";
+import { type PolicySnapshot, resolvePolicySnapshot } from "#/services/policies/index.js";
+import {
+  type AssembledStanding,
+  assembleStanding,
+  type StandingCandidate,
+} from "#/services/sessions/standing.js";
+
+export const SESSION_TOKEN_PREFIX = "trema_ses_";
+
+/** Session tokens live fifteen minutes. Renewal restarts the clock. */
+export const SESSION_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+export class SessionResolutionError extends Error {
+  constructor(
+    readonly code: "location_unbound" | "identity_unlinked" | "personal_scopes_disabled",
+    message: string,
+    readonly detail: Record<string, string> = {},
+  ) {
+    super(message);
+    this.name = "SessionResolutionError";
+  }
+}
+
+export class SessionValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionValidationError";
+  }
+}
+
+export class SessionNotFoundError extends Error {
+  constructor(message = "Session not found") {
+    super(message);
+    this.name = "SessionNotFoundError";
+  }
+}
+
+export class SessionAuthenticationError extends Error {
+  constructor() {
+    super("Invalid session token");
+    this.name = "SessionAuthenticationError";
+  }
+}
+
+export class SessionExpiredError extends Error {
+  readonly code = "session_expired";
+
+  constructor() {
+    super("Session token has expired");
+    this.name = "SessionExpiredError";
+  }
+}
+
+export class SessionClosedError extends Error {
+  readonly code = "session_closed";
+
+  constructor() {
+    super("Session is already closed");
+    this.name = "SessionClosedError";
+  }
+}
+
+export function isSessionToken(token: string): boolean {
+  return token.startsWith(SESSION_TOKEN_PREFIX) && token.length > SESSION_TOKEN_PREFIX.length;
+}
+
+export function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+function mintSessionToken(): string {
+  return `${SESSION_TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
+}
+
+/** The identity mode is a pure function of the scope kind. */
+export function deriveMode(scopeKind: Scope["kind"]): SessionMode {
+  return scopeKind === "personal" ? "delegated" : "service";
+}
+
+export type SessionRequester = { externalUserId: string } | { principalId: string };
+
+export interface OpenSessionInput {
+  orgId: string;
+  surface: string;
+  locationRef: string;
+  /** Marks a one-to-one conversation with the agent, which resolves to a personal scope. */
+  dm?: boolean;
+  threadRef?: string;
+  requester?: SessionRequester;
+  standingBudgetTokens?: number;
+  now?: Date;
+}
+
+export interface OpenSessionResult {
+  session: ContextSession;
+  sessionToken: string;
+  scopeChain: Scope[];
+  standing: AssembledStanding;
+  policySnapshot: PolicySnapshot;
+  tools: never[];
+}
+
+interface ResolvedRequester {
+  principalId: string | null;
+  externalRef: string | null;
+}
+
+async function resolveRequester(
+  db: Database,
+  orgId: string,
+  surface: string,
+  requester: SessionRequester | undefined,
+): Promise<ResolvedRequester> {
+  // A scheduled run has no requester at all.
+  if (!requester) return { principalId: null, externalRef: null };
+
+  if ("principalId" in requester) {
+    const principal = await db.principal.findFirst({
+      where: { id: requester.principalId, orgId },
+      select: { id: true, kind: true, deactivatedAt: true },
+    });
+    if (!principal) throw new SessionValidationError("Requester principal not found");
+    if (principal.kind !== "human") {
+      throw new SessionValidationError("Requester principal must be a human");
+    }
+    if (principal.deactivatedAt) {
+      throw new SessionValidationError("Requester principal is deactivated");
+    }
+    return { principalId: principal.id, externalRef: null };
+  }
+
+  const link = await db.identityLink.findUnique({
+    where: {
+      orgId_surface_externalUserId: { orgId, surface, externalUserId: requester.externalUserId },
+    },
+    include: { principal: { select: { id: true, kind: true } } },
+  });
+  // An unlinked surface user may still trigger work in a shared scope; the raw
+  // id is recorded so the audit trail names who asked.
+  if (link?.principal.kind !== "human") {
+    return { principalId: null, externalRef: requester.externalUserId };
+  }
+  return { principalId: link.principal.id, externalRef: requester.externalUserId };
+}
+
+async function resolveScope(db: Database, input: OpenSessionInput): Promise<Scope> {
+  const externalUserId =
+    input.requester && "externalUserId" in input.requester
+      ? input.requester.externalUserId
+      : undefined;
+  // A one-to-one conversation resolves through the sender's surface identity,
+  // so the harness must say who sent it.
+  if (input.dm && !externalUserId) {
+    throw new SessionValidationError("A direct-message session requires a surface requester");
+  }
+  const resolved = await resolveLocation(db, {
+    orgId: input.orgId,
+    surface: input.surface,
+    locationRef: input.locationRef,
+    ...(input.dm && externalUserId ? { dm: { externalUserId } } : {}),
+  });
+
+  if (resolved.kind === "scope") return resolved.scope;
+  if (resolved.kind === "unlinked") {
+    throw new SessionResolutionError(
+      "identity_unlinked",
+      `Surface user ${resolved.externalUserId} on ${resolved.surface} is not linked to a person`,
+      { surface: resolved.surface, externalUserId: resolved.externalUserId },
+    );
+  }
+  if (resolved.kind === "personal_disabled") {
+    throw new SessionResolutionError(
+      "personal_scopes_disabled",
+      "Personal scopes are disabled for this organization",
+      {},
+    );
+  }
+  throw new SessionResolutionError(
+    "location_unbound",
+    `Location ${input.surface}:${input.locationRef} is not bound to a scope`,
+    { surface: input.surface, locationRef: input.locationRef },
+  );
+}
+
+async function resolveScopeChain(db: Database, orgId: string, scope: Scope): Promise<Scope[]> {
+  if (scope.kind === "org") return [scope];
+  const orgScope = await db.scope.findFirst({ where: { orgId, kind: "org" } });
+  if (!orgScope) throw new SessionValidationError("Organization scope not found");
+  return [orgScope, scope];
+}
+
+async function resolveActingPrincipal(
+  db: Database,
+  orgId: string,
+  scope: Scope,
+  requester: ResolvedRequester,
+): Promise<Principal> {
+  if (scope.kind === "personal") {
+    if (!scope.ownerId) throw new SessionValidationError("Personal scope has no owner");
+    // A personal session acts as the human it belongs to, so only that human
+    // can open one.
+    if (requester.principalId && requester.principalId !== scope.ownerId) {
+      throw new SessionValidationError("Only a personal scope's owner can open a session in it");
+    }
+    if (!requester.principalId) {
+      throw new SessionValidationError("A personal session requires a linked requester");
+    }
+    const owner = await db.principal.findFirst({ where: { id: scope.ownerId, orgId } });
+    if (!owner) throw new SessionValidationError("Personal scope owner not found");
+    return owner;
+  }
+
+  const agent = await db.principal.findFirst({
+    where: { orgId, kind: "agent" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  if (!agent) throw new SessionValidationError("Organization has no agent principal");
+  return agent;
+}
+
+async function loadStandingCandidates(
+  db: Database,
+  orgId: string,
+  scopeChain: readonly string[],
+): Promise<StandingCandidate[]> {
+  return db.item.findMany({
+    where: {
+      orgId,
+      scopeId: { in: [...scopeChain] },
+      status: "active",
+      disclosure: "standing",
+    },
+    select: {
+      id: true,
+      scopeId: true,
+      kind: true,
+      version: true,
+      body: true,
+      lastUsedAt: true,
+      updatedAt: true,
+    },
+  });
+}
+
+/**
+ * Hash the resolved snapshot contents. Two sessions that resolve the same
+ * context share a hash, so a run can be traced to exactly what shaped it.
+ */
+export function hashSnapshot(input: {
+  mode: SessionMode;
+  scopeChain: readonly string[];
+  standing: AssembledStanding;
+  policySnapshot: PolicySnapshot;
+  tools: readonly unknown[];
+}): string {
+  const canonical = JSON.stringify({
+    mode: input.mode,
+    scopeChain: input.scopeChain,
+    instructions: input.standing.standing.instructions,
+    items: input.standing.included,
+    skillIndex: input.standing.standing.skillIndex,
+    policySnapshot: input.policySnapshot,
+    tools: input.tools,
+  });
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+export async function openSession(
+  db: Database,
+  input: OpenSessionInput,
+): Promise<OpenSessionResult> {
+  const now = input.now ?? new Date();
+  const scope = await resolveScope(db, input);
+  const requester = await resolveRequester(db, input.orgId, input.surface, input.requester);
+  const actingPrincipal = await resolveActingPrincipal(db, input.orgId, scope, requester);
+  const scopeChain = await resolveScopeChain(db, input.orgId, scope);
+  const scopeChainIds = scopeChain.map(({ id }) => id);
+  const mode = deriveMode(scope.kind);
+
+  const candidates = await loadStandingCandidates(db, input.orgId, scopeChainIds);
+  const standing = assembleStanding(candidates, {
+    scopeChain: scopeChainIds,
+    ...(input.standingBudgetTokens === undefined
+      ? {}
+      : { budgetTokens: input.standingBudgetTokens }),
+  });
+  const policySnapshot = await resolvePolicySnapshot(db, {
+    orgId: input.orgId,
+    scopeId: scope.id,
+    scopeChain: scopeChainIds,
+    scopeKind: scope.kind,
+  });
+  // Connector tool definitions join the session when the connector proxy
+  // reaches the data plane.
+  const tools: never[] = [];
+  const snapshotHash = hashSnapshot({
+    mode,
+    scopeChain: scopeChainIds,
+    standing,
+    policySnapshot,
+    tools,
+  });
+
+  const sessionToken = mintSessionToken();
+  const session = await db.$transaction(async (transaction) => {
+    const created = await transaction.contextSession.create({
+      data: {
+        orgId: input.orgId,
+        scopeId: scope.id,
+        surface: input.surface,
+        locationRef: input.locationRef,
+        ...(input.threadRef ? { threadRef: input.threadRef } : {}),
+        mode,
+        scopeChain: scopeChainIds,
+        actingPrincipalId: actingPrincipal.id,
+        requesterPrincipalId: requester.principalId,
+        requesterExternalRef: requester.externalRef,
+        standing: {
+          ...standing.standing,
+          budgetTokens: standing.budgetTokens,
+          usedTokens: standing.usedTokens,
+          items: standing.included,
+          overflowItemIds: standing.overflowItemIds,
+        } as unknown as Prisma.InputJsonValue,
+        policySnapshot: policySnapshot as unknown as Prisma.InputJsonValue,
+        snapshotHash,
+        tokenHash: hashSessionToken(sessionToken),
+        expiresAt: new Date(now.getTime() + SESSION_TOKEN_TTL_MS),
+      },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: actingPrincipal.id,
+        action: "session.open",
+        subject: created.id,
+        payload: {
+          scopeId: created.scopeId,
+          mode: created.mode,
+          surface: created.surface,
+          requesterPrincipalId: created.requesterPrincipalId,
+          requesterExternalRef: created.requesterExternalRef,
+          snapshotHash: created.snapshotHash,
+        },
+      },
+    });
+    return created;
+  });
+
+  return { session, sessionToken, scopeChain, standing, policySnapshot, tools };
+}
+
+/**
+ * Resolve a session token to its session. Expiry and closure are left to the
+ * caller: renewal refuses an expired session, while closing one still records
+ * its usage.
+ */
+export async function authenticateSession(
+  db: Database,
+  token: string,
+): Promise<ContextSession & { scope: Scope }> {
+  if (!isSessionToken(token)) throw new SessionAuthenticationError();
+  const session = await db.contextSession.findUnique({
+    where: { tokenHash: hashSessionToken(token) },
+    include: { scope: true },
+  });
+  if (!session) throw new SessionAuthenticationError();
+  return session;
+}
+
+export function isSessionExpired(session: ContextSession, now = new Date()): boolean {
+  return session.expiresAt.getTime() <= now.getTime();
+}
+
+export interface RenewSessionInput {
+  orgId: string;
+  sessionId: string;
+  now?: Date;
+}
+
+export async function renewSession(
+  db: Database,
+  input: RenewSessionInput,
+): Promise<ContextSession> {
+  const now = input.now ?? new Date();
+  return db.$transaction(async (transaction) => {
+    const session = await transaction.contextSession.findFirst({
+      where: { id: input.sessionId, orgId: input.orgId },
+    });
+    if (!session) throw new SessionNotFoundError();
+    if (session.closedAt) throw new SessionClosedError();
+    if (isSessionExpired(session, now)) throw new SessionExpiredError();
+
+    // Guarded like close, so a close committing after the read above cannot
+    // be raced into extending a closed session's lifetime.
+    const claimed = await transaction.contextSession.updateMany({
+      where: { id: session.id, orgId: input.orgId, closedAt: null },
+      data: { expiresAt: new Date(now.getTime() + SESSION_TOKEN_TTL_MS) },
+    });
+    if (claimed.count !== 1) throw new SessionClosedError();
+    const renewed = await transaction.contextSession.findUniqueOrThrow({
+      where: { orgId_id: { orgId: input.orgId, id: session.id } },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: session.actingPrincipalId,
+        action: "session.renew",
+        subject: session.id,
+        payload: { expiresAt: renewed.expiresAt.toISOString() },
+      },
+    });
+    return renewed;
+  });
+}
+
+export interface CloseSessionInput {
+  orgId: string;
+  sessionId: string;
+  usage?: Record<string, number | undefined>;
+  now?: Date;
+}
+
+export async function closeSession(
+  db: Database,
+  input: CloseSessionInput,
+): Promise<ContextSession> {
+  const now = input.now ?? new Date();
+  return db.$transaction(async (transaction) => {
+    const session = await transaction.contextSession.findFirst({
+      where: { id: input.sessionId, orgId: input.orgId },
+    });
+    if (!session) throw new SessionNotFoundError();
+    if (session.closedAt) throw new SessionClosedError();
+
+    const claimed = await transaction.contextSession.updateMany({
+      where: { id: session.id, orgId: input.orgId, closedAt: null },
+      data: {
+        closedAt: now,
+        ...(input.usage ? { usage: input.usage as Prisma.InputJsonValue } : {}),
+      },
+    });
+    if (claimed.count !== 1) throw new SessionClosedError();
+
+    const closed = await transaction.contextSession.findUniqueOrThrow({
+      where: { orgId_id: { orgId: input.orgId, id: session.id } },
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: session.actingPrincipalId,
+        action: "session.close",
+        subject: session.id,
+        payload: {
+          closedAt: now.toISOString(),
+          usage: (input.usage ?? null) as Prisma.InputJsonValue,
+        },
+      },
+    });
+    return closed;
+  });
+}

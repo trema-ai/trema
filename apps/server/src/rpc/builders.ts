@@ -14,6 +14,7 @@ import {
   resolveServiceCredential,
   ServiceCredentialAuthenticationError,
 } from "#/services/credentials/index.js";
+import { authenticateSession, SessionAuthenticationError } from "#/services/sessions/index.js";
 
 export interface RpcContext {
   db: Database;
@@ -79,6 +80,36 @@ export const serviceAuthed = pub.use(
       }
     }),
     { security: [{ serviceCredential: [] }] },
+  ),
+);
+
+// Session-token authentication for the session protocol itself. The middleware
+// only proves possession of the token; each route decides what an expired or
+// closed session may still do.
+export const sessionAuthed = pub.use(
+  oo.spec(
+    pub.middleware(async ({ context, next }) => {
+      const authorization = context.headers.get("authorization");
+      const match = authorization?.match(/^Bearer (\S+)$/);
+      if (!match) {
+        throw new ORPCError("UNAUTHORIZED", {
+          message: "Session token required",
+        });
+      }
+
+      try {
+        const session = await authenticateSession(context.db, match[1]!);
+        return next({ context: { contextSession: session } });
+      } catch (error) {
+        if (error instanceof SessionAuthenticationError) {
+          throw new ORPCError("UNAUTHORIZED", {
+            message: "Invalid session token",
+          });
+        }
+        throw error;
+      }
+    }),
+    { security: [{ sessionToken: [] }] },
   ),
 );
 
