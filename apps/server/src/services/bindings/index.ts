@@ -1,5 +1,6 @@
 import type { Scope } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import { ensurePersonalScope } from "#/services/scopes/index.js";
 import { isKnownSurface } from "#/services/surfaces/index.js";
 
@@ -63,6 +64,7 @@ async function existingBindingMessage(
 
 export async function createBinding(db: Database, input: CreateBindingInput) {
   if (!isKnownSurface(input.surface)) {
+    log.warn("Unknown binding surface", { surface: input.surface });
     throw new UnknownSurfaceError(`Unknown surface: ${input.surface}`);
   }
 
@@ -70,9 +72,11 @@ export async function createBinding(db: Database, input: CreateBindingInput) {
     where: { id: input.scopeId, orgId: input.orgId },
   });
   if (!target) {
+    log.warn("Binding target scope not found", { scopeId: input.scopeId });
     throw new BindingNotFoundError("Binding target scope not found");
   }
   if (target.kind === "personal") {
+    log.warn("Invalid binding target", { scopeId: input.scopeId, kind: target.kind });
     throw new BindingTargetError("Personal scopes cannot be explicit binding targets");
   }
 
@@ -86,11 +90,12 @@ export async function createBinding(db: Database, input: CreateBindingInput) {
     },
   });
   if (existing) {
+    log.warn("Binding conflict", { surface: input.surface, bindingId: existing.id });
     throw new BindingConflictError(await existingBindingMessage(db, input));
   }
 
   try {
-    return await db.$transaction(async (transaction) => {
+    const binding = await db.$transaction(async (transaction) => {
       const binding = await transaction.binding.create({
         data: {
           orgId: input.orgId,
@@ -114,8 +119,15 @@ export async function createBinding(db: Database, input: CreateBindingInput) {
       });
       return binding;
     });
+    log.info("Binding created", {
+      bindingId: binding.id,
+      surface: binding.surface,
+      scopeId: binding.scopeId,
+    });
+    return binding;
   } catch (error) {
     if (isUniqueViolation(error)) {
+      log.warn("Binding conflict", { surface: input.surface });
       throw new BindingConflictError(await existingBindingMessage(db, input));
     }
     throw error;
@@ -146,7 +158,7 @@ export interface DeleteBindingInput {
 }
 
 export async function deleteBinding(db: Database, input: DeleteBindingInput) {
-  return db.$transaction(async (transaction) => {
+  const binding = await db.$transaction(async (transaction) => {
     const binding = await transaction.binding.findFirst({
       where: { id: input.bindingId, orgId: input.orgId },
     });
@@ -171,6 +183,8 @@ export async function deleteBinding(db: Database, input: DeleteBindingInput) {
     });
     return binding;
   });
+  log.info("Binding removed", { bindingId: binding.id, surface: binding.surface });
+  return binding;
 }
 
 export interface ResolveLocationInput {

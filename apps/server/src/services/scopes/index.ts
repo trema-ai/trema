@@ -1,5 +1,6 @@
 import type { Prisma, Scope, ScopeKind } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 
 type ScopeDatabase = Database | Prisma.TransactionClient;
 
@@ -62,7 +63,7 @@ export async function ensurePersonalScope(
 }
 
 export async function createSharedScope(db: Database, input: CreateSharedScopeInput) {
-  return db.$transaction(async (transaction) => {
+  const scope = await db.$transaction(async (transaction) => {
     const scope = await transaction.scope.create({
       data: { orgId: input.orgId, kind: "shared", name: input.name },
     });
@@ -77,6 +78,8 @@ export async function createSharedScope(db: Database, input: CreateSharedScopeIn
     });
     return scope;
   });
+  log.info("Scope created", { scopeId: scope.id, kind: scope.kind });
+  return scope;
 }
 
 export async function listScopes(db: Database, orgId: string, kind?: ScopeKind) {
@@ -93,6 +96,7 @@ export async function getScope(db: Database, orgId: string, scopeId: string) {
     select: { id: true, kind: true, name: true, ownerId: true },
   });
   if (!scope) {
+    log.warn("Scope resolution failed", { scopeId });
     throw new ScopeNotFoundError("Scope not found");
   }
   return scope;
@@ -153,7 +157,7 @@ export interface RenameSharedScopeInput {
 }
 
 export async function renameSharedScope(db: Database, input: RenameSharedScopeInput) {
-  return db.$transaction(async (transaction) => {
+  const scope = await db.$transaction(async (transaction) => {
     const existing = await transaction.scope.findFirst({
       where: { id: input.scopeId, orgId: input.orgId },
     });
@@ -179,4 +183,6 @@ export async function renameSharedScope(db: Database, input: RenameSharedScopeIn
     });
     return scope;
   });
+  log.info("Scope renamed", { scopeId: scope.id });
+  return scope;
 }

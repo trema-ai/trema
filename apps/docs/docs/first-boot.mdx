@@ -12,10 +12,10 @@ The token comes from one of two places:
 - `TREMA_BOOTSTRAP_TOKEN`, when you set it
 - generated at first start, otherwise
 
-A generated token is printed to the server log exactly once:
+A generated token is printed to the server log exactly once, in the [configured log format](/configuration#logging):
 
 ```
-Bootstrap token: <token>
+time=2026-07-24T10:00:00.000Z level=info msg="Bootstrap token generated" bootstrapToken=<token>
 ```
 
 Only a hash of the token is stored. The log line is the only place a generated token appears.

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
+
 import { serveStatic } from "@hono/node-server/serve-static";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
-import { onError } from "@orpc/server";
+import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -8,8 +10,10 @@ import { cors } from "hono/cors";
 import type { Auth } from "./lib/auth/index.js";
 import type { Database } from "./lib/db/index.js";
 import type { Environment } from "./lib/env/schema.js";
+import { log, withLogger } from "./lib/logger/index.js";
 import { generateOpenApiDocument, OPENAPI_PREFIX } from "./openapi.js";
 import { router } from "./router.js";
+import type { RpcContext } from "./rpc/builders.js";
 import {
   type ConnectorFetch,
   completeOAuthCallback,
@@ -66,6 +70,49 @@ function withConnected(url: string, connectionId: string): string {
   return redirect.toString();
 }
 
+// Probes run on a timer; their lines would drown the log at info.
+const PROBE_PATHS = new Set(["/health", "/ready"]);
+
+// A client can trigger UNAUTHORIZED or FORBIDDEN at will, so those must not
+// reach the error level or a stack trace: `procedureInterceptor` already reports
+// them at warn. Only a failure the server owns is an incident.
+function reportUnexpected(message: string) {
+  return (error: unknown): void => {
+    if (error instanceof ORPCError && error.status < 500) return;
+    log.error(message, { error });
+  };
+}
+
+// Runs around every procedure call, so the procedure name reaches every line a
+// handler or service logs. Interceptors sit outside the middleware chain, which
+// keeps procedure context typing untouched.
+function procedureInterceptor({
+  path,
+  next,
+}: {
+  path: readonly string[];
+  next: () => Promise<unknown>;
+}): Promise<unknown> {
+  const startedAt = performance.now();
+  return withLogger(log.child({ procedure: path.join(".") }), async () => {
+    try {
+      const result = await next();
+      log.debug("Procedure completed", { durationMs: Math.round(performance.now() - startedAt) });
+      return result;
+    } catch (error) {
+      // Defined failures (FORBIDDEN, CONFLICT) are outcomes, not incidents;
+      // onError logs the unexpected ones with their stack.
+      if (error instanceof ORPCError) {
+        log.warn("Procedure rejected", {
+          code: error.code,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+      }
+      throw error;
+    }
+  });
+}
+
 export function createApp({
   db,
   auth,
@@ -75,19 +122,45 @@ export function createApp({
   platformApps,
 }: AppDependencies): Hono {
   const app = new Hono();
-  const rpcHandler = new RPCHandler(router, {
-    interceptors: [
-      onError((error) => {
-        console.error(error);
-      }),
-    ],
+  const rpcHandler = new RPCHandler<RpcContext>(router, {
+    clientInterceptors: [procedureInterceptor],
+    interceptors: [onError(reportUnexpected("RPC request failed"))],
   });
-  const openApiHandler = new OpenAPIHandler(router, {
-    interceptors: [
-      onError((error) => {
-        console.error(error);
-      }),
-    ],
+  const openApiHandler = new OpenAPIHandler<RpcContext>(router, {
+    clientInterceptors: [procedureInterceptor],
+    interceptors: [onError(reportUnexpected("API request failed"))],
+  });
+
+  // First middleware, so every route below runs inside a request-scoped logger:
+  // anything a handler or service logs carries the requestId without passing it.
+  app.use("*", async (context, next) => {
+    const requestId = context.req.header("x-request-id") ?? randomUUID();
+    const method = context.req.method;
+    const path = context.req.path;
+    const startedAt = performance.now();
+
+    context.header("x-request-id", requestId);
+
+    await withLogger(log.child({ requestId, method, path }), async () => {
+      try {
+        await next();
+      } catch (error) {
+        // Hono has not built a response yet, so there is no status to report.
+        log.error("Request failed", {
+          error,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+        throw error;
+      }
+
+      const details = {
+        status: context.res.status,
+        durationMs: Math.round(performance.now() - startedAt),
+      };
+      if (context.res.status >= 500) log.error("Request failed", details);
+      else if (PROBE_PATHS.has(path)) log.debug("Request handled", details);
+      else log.info("Request handled", details);
+    });
   });
 
   app.get("/health", (context) => {
@@ -99,7 +172,7 @@ export function createApp({
       await db.$queryRaw`SELECT 1`;
       return context.json({ ok: true });
     } catch (error) {
-      console.error(error);
+      log.error("Readiness check failed", { error });
       return context.json({ ok: false }, 503);
     }
   });
@@ -135,9 +208,13 @@ export function createApp({
       const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
       return context.redirect(withConnected(destination, result.connection.id));
     } catch (error) {
-      console.error("Connector OAuth callback failed", error);
+      const code = connectorErrorCode(error);
+      // An expired or replayed state is a user revisiting a stale callback link,
+      // and the service already logged why; only an unclassified failure is ours.
+      if (code === "connect_failed") log.error("Connector OAuth callback failed", { error });
+      else log.warn("Connector OAuth callback failed", { code });
       const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
-      return context.redirect(withConnectorError(destination, connectorErrorCode(error)));
+      return context.redirect(withConnectorError(destination, code));
     }
   });
 

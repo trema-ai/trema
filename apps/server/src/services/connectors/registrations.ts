@@ -2,6 +2,7 @@ import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import type { ClientRegistrationSource } from "#/generated/prisma/client.js";
 import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 
 const defaultCatalog = loadProviderCatalog();
 type ClientRegistrationDatabase = Pick<Database, "clientRegistration">;
@@ -134,7 +135,7 @@ export async function createClientRegistration(db: Database, input: CreateClient
   };
 
   if (input.replace) {
-    return db.clientRegistration.upsert({
+    const registration = await db.clientRegistration.upsert({
       where: {
         orgId_providerKey_source: {
           orgId: input.orgId,
@@ -151,10 +152,12 @@ export async function createClientRegistration(db: Database, input: CreateClient
       update: values,
       select: registrationMetadataSelect,
     });
+    log.info("Client registration replaced", { provider: input.providerKey, kind: input.source });
+    return registration;
   }
 
   try {
-    return await db.clientRegistration.create({
+    const registration = await db.clientRegistration.create({
       data: {
         orgId: input.orgId,
         providerKey: input.providerKey,
@@ -163,8 +166,11 @@ export async function createClientRegistration(db: Database, input: CreateClient
       },
       select: registrationMetadataSelect,
     });
+    log.info("Client registration stored", { provider: input.providerKey, kind: input.source });
+    return registration;
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") {
+      log.warn("Client registration conflict", { provider: input.providerKey, kind: input.source });
       throw new ClientRegistrationConflictError();
     }
     throw error;
@@ -181,7 +187,11 @@ export function listClientRegistrations(db: Database, orgId: string) {
 
 export async function deleteClientRegistration(db: Database, orgId: string, id: string) {
   const result = await db.clientRegistration.deleteMany({ where: { id, orgId } });
-  if (result.count === 0) throw new ClientRegistrationNotFoundError();
+  if (result.count === 0) {
+    log.warn("Client registration not found", { registrationId: id });
+    throw new ClientRegistrationNotFoundError();
+  }
+  log.info("Client registration deleted", { registrationId: id });
   return { id };
 }
 

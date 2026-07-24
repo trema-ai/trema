@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
+import { type Logger, log } from "#/lib/logger/index.js";
 
 const BOOTSTRAP_TOKEN_ID = "bootstrap";
 const BOOTSTRAP_ADVISORY_LOCK = 8_451_772_003;
@@ -31,10 +32,12 @@ export function verifyBootstrapToken(token: string, persistedHash: string): bool
 
 export async function takeBootstrapLock(transaction: Prisma.TransactionClient): Promise<void> {
   await transaction.$executeRaw`SELECT pg_advisory_xact_lock(${BOOTSTRAP_ADVISORY_LOCK})`;
+  log.debug("Bootstrap lock acquired");
 }
 
 export async function requireNoOrganizations(transaction: Prisma.TransactionClient): Promise<void> {
   if ((await transaction.org.count()) !== 0) {
+    log.warn("Bootstrap rejected", { reason: "organization_exists" });
     throw new BootstrapConflictError();
   }
 }
@@ -42,7 +45,7 @@ export async function requireNoOrganizations(transaction: Prisma.TransactionClie
 export interface InitializeBootstrapDependencies {
   db: Database;
   env: Environment;
-  log?: (message: string) => void;
+  logger?: Logger;
   generateToken?: () => string;
 }
 
@@ -69,6 +72,7 @@ export async function mintBootstrapToken({
       create: { id: BOOTSTRAP_TOKEN_ID, tokenHash: hashBootstrapToken(token) },
       update: { tokenHash: hashBootstrapToken(token) },
     });
+    log.info("Bootstrap token minted");
     return token;
   });
 }
@@ -76,7 +80,7 @@ export async function mintBootstrapToken({
 export async function initializeBootstrap({
   db,
   env,
-  log = console.info,
+  logger = log,
   generateToken = () => randomBytes(32).toString("base64url"),
 }: InitializeBootstrapDependencies): Promise<InitializeBootstrapResult> {
   if (env.TREMA_MODE !== "dedicated" || (await db.org.count()) !== 0) {
@@ -101,6 +105,7 @@ export async function initializeBootstrap({
           tokenHash: hashBootstrapToken(env.TREMA_BOOTSTRAP_TOKEN),
         },
       });
+      log.info("Bootstrap token stored from configuration");
       return undefined;
     }
 
@@ -108,6 +113,7 @@ export async function initializeBootstrap({
       where: { id: BOOTSTRAP_TOKEN_ID },
     });
     if (existing) {
+      log.info("Bootstrap token kept");
       return undefined;
     }
 
@@ -122,7 +128,8 @@ export async function initializeBootstrap({
   });
 
   if (generatedToken) {
-    log(`Bootstrap token: ${generatedToken}`);
+    // The only time the token is readable: it is stored as a hash.
+    logger.info("Bootstrap token generated", { bootstrapToken: generatedToken });
   }
 
   return generatedToken ? { generatedToken } : {};

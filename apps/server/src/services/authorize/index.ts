@@ -1,5 +1,6 @@
 import type { Principal, Role } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 
 export const capabilities = [
   "read",
@@ -56,6 +57,7 @@ export async function authorize(
   db: Database,
 ): Promise<boolean> {
   if (principal.kind === "agent") {
+    log.debug("Authorization denied", { capability, reason: "agent_principal" });
     return false;
   }
 
@@ -64,6 +66,7 @@ export async function authorize(
     select: { id: true, kind: true, ownerId: true },
   });
   if (!scope) {
+    log.debug("Authorization denied", { capability, scopeId, reason: "scope_not_found" });
     return false;
   }
 
@@ -80,6 +83,7 @@ export async function authorize(
       select: { id: true },
     });
     if (!orgScope) {
+      log.debug("Authorization denied", { capability, scopeId, reason: "org_scope_not_found" });
       return false;
     }
     scopeIds.push(orgScope.id);

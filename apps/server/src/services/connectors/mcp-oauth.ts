@@ -15,6 +15,7 @@ import type {
 import type { ClientRegistrationSource } from "#/generated/prisma/client.js";
 import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import {
   ClientRegistrationNotFoundError,
   NoClientRegistrationError,
@@ -106,6 +107,7 @@ export async function discoverMcpAuthServer(
       ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
     });
   } catch (error) {
+    log.warn("MCP OAuth discovery failed", { error });
     throw new McpOAuthDiscoveryError(
       `Could not discover the authorization server for ${serverUrl}: ${
         error instanceof Error ? error.message : "unknown error"
@@ -233,20 +235,27 @@ export async function resolveMcpClientRegistration(
   if (existing) return existing;
 
   if (!input.discovery.registrationEndpoint) {
+    log.warn("MCP client registration unavailable", { provider: input.providerKey });
     throw new NoClientRegistrationError(input.providerKey);
   }
 
-  const registered = await registerClient(input.discovery.authorizationServerUrl, {
-    ...(input.discovery.metadata ? { metadata: input.discovery.metadata } : {}),
-    clientMetadata: {
-      client_name: TREMA_CLIENT_NAME,
-      redirect_uris: [input.callbackUrl],
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-    },
-    ...(input.fetch ? { fetchFn: input.fetch } : {}),
-  });
+  let registered: Awaited<ReturnType<typeof registerClient>>;
+  try {
+    registered = await registerClient(input.discovery.authorizationServerUrl, {
+      ...(input.discovery.metadata ? { metadata: input.discovery.metadata } : {}),
+      clientMetadata: {
+        client_name: TREMA_CLIENT_NAME,
+        redirect_uris: [input.callbackUrl],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      },
+      ...(input.fetch ? { fetchFn: input.fetch } : {}),
+    });
+  } catch (error) {
+    log.warn("MCP dynamic client registration failed", { provider: input.providerKey, error });
+    throw error;
+  }
 
   const row = await db.clientRegistration.create({
     data: {
@@ -289,13 +298,19 @@ export async function resolveStoredMcpClientRegistration(
   const registration = await db.clientRegistration.findFirst({
     where: { id: input.registrationId, orgId: input.orgId },
   });
-  if (!registration) throw new ClientRegistrationNotFoundError();
+  if (!registration) {
+    log.warn("MCP client registration not found");
+    throw new ClientRegistrationNotFoundError();
+  }
 
   if (registration.source === "platform") {
     const app = registration.sharedRef
       ? await input.platformApps.get(registration.sharedRef)
       : undefined;
-    if (!app) throw new NoClientRegistrationError(registration.providerKey);
+    if (!app) {
+      log.warn("MCP client registration unavailable", { provider: registration.providerKey });
+      throw new NoClientRegistrationError(registration.providerKey);
+    }
     return {
       registrationId: registration.id,
       source: registration.source,
@@ -305,7 +320,10 @@ export async function resolveStoredMcpClientRegistration(
   }
 
   const resolved = usableStored(registration, input.masterKey);
-  if (!resolved) throw new NoClientRegistrationError(registration.providerKey);
+  if (!resolved) {
+    log.warn("MCP client registration unavailable", { provider: registration.providerKey });
+    throw new NoClientRegistrationError(registration.providerKey);
+  }
   return resolved;
 }
 

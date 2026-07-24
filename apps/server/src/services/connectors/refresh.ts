@@ -2,8 +2,14 @@ import type { ProviderDef } from "@trema/connectors";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 
 import type { ConnectorConnection, Prisma } from "#/generated/prisma/client.js";
-import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
+import {
+  CredentialDecryptionError,
+  CredentialEncryptionConfigError,
+  decryptEnvelope,
+  encryptEnvelope,
+} from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import { ConnectorConnectionNotFoundError } from "#/services/connectors/connect.js";
 import {
   discoverMcpAuthServer,
@@ -112,7 +118,13 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 }
 
 function credentialPayload(connection: ConnectorConnection, masterKey: string | undefined) {
-  const value = decryptEnvelope<unknown>(connection.ciphertext, masterKey);
+  let value: unknown;
+  try {
+    value = decryptEnvelope<unknown>(connection.ciphertext, masterKey);
+  } catch (error) {
+    log.error("Connector credential decryption failed", { connectionId: connection.id, error });
+    throw error;
+  }
   const payload = recordValue(value);
   if (!payload) {
     throw new ConnectorReconnectRequiredError(connection.id, connection.providerKey, "expired");
@@ -367,7 +379,12 @@ async function exchangeRefreshToken(
       clientId = client.clientId;
       clientSecret = client.clientSecret;
     }
-  } catch {
+  } catch (error) {
+    log.warn("Connector refresh request preparation failed", {
+      connectionId: connection.id,
+      provider: connection.providerKey,
+      error,
+    });
     return { ok: false };
   }
 
@@ -390,7 +407,12 @@ async function exchangeRefreshToken(
     } else {
       return { ok: false };
     }
-  } catch {
+  } catch (error) {
+    log.warn("Connector refresh request preparation failed", {
+      connectionId: connection.id,
+      provider: connection.providerKey,
+      error,
+    });
     return { ok: false };
   }
 
@@ -408,7 +430,12 @@ async function exchangeRefreshToken(
       body,
       signal: AbortSignal.timeout(10_000),
     });
-  } catch {
+  } catch (error) {
+    log.warn("Connector refresh token request failed", {
+      connectionId: connection.id,
+      provider: connection.providerKey,
+      error,
+    });
     return { ok: false };
   }
 
@@ -550,6 +577,10 @@ async function resolveConnectionCredentialInternal(
           return { state: "missing_refresh_token" as const, connection, payload };
         }
 
+        log.debug("Connector token refresh attempted", {
+          connectionId: connection.id,
+          provider: connection.providerKey,
+        });
         const exchange = await exchangeRefreshToken(
           transaction,
           connection,
@@ -559,9 +590,29 @@ async function resolveConnectionCredentialInternal(
           now,
         );
         if (!exchange.ok) {
+          const isNewFailureWindow = connection.refreshFailureStartedAt === null;
+          const wasAlreadyExhausted = connection.refreshExhausted;
           const failureStartedAt = connection.refreshFailureStartedAt ?? now;
           const refreshExhausted =
             now.getTime() - failureStartedAt.getTime() >= REFRESH_FAILURE_BUDGET_MS;
+          log.warn("Connector token refresh failed", {
+            connectionId: connection.id,
+            provider: connection.providerKey,
+            ...(exchange.status !== undefined ? { status: exchange.status } : {}),
+            ...(exchange.code !== undefined ? { reason: exchange.code } : {}),
+          });
+          if (isNewFailureWindow) {
+            log.warn("Connector refresh failure window opened", {
+              connectionId: connection.id,
+              provider: connection.providerKey,
+            });
+          }
+          if (refreshExhausted && !wasAlreadyExhausted) {
+            log.warn("Connector connection marked invalid", {
+              connectionId: connection.id,
+              provider: connection.providerKey,
+            });
+          }
           const failed = await transaction.connectorConnection.update({
             where: { id: connection.id },
             data: {
@@ -579,6 +630,12 @@ async function resolveConnectionCredentialInternal(
           };
         }
 
+        if (connection.lastRefreshFailure !== null) {
+          log.info("Connector refresh failure window closed", {
+            connectionId: connection.id,
+            provider: connection.providerKey,
+          });
+        }
         const nextPayload: ConnectionCredentialPayload = {
           accessToken: exchange.accessToken,
           refreshToken: exchange.refreshToken ?? refreshToken(payload),
@@ -595,6 +652,10 @@ async function resolveConnectionCredentialInternal(
             refreshAttempts: 0,
             refreshExhausted: false,
           },
+        });
+        log.info("Connector token refreshed", {
+          connectionId: connection.id,
+          provider: connection.providerKey,
         });
         return { state: "refreshed" as const, connection: refreshed, payload: nextPayload };
       },
@@ -634,7 +695,17 @@ async function resolveConnectionCredentialInternal(
   } catch (error) {
     if (error instanceof ConnectorReconnectRequiredError) throw error;
     if (isDistributedLockTimeout(error)) {
+      log.warn("Connector refresh lock timed out", { connectionId: input.connectionId });
       return resolveAfterLockTimeout(db, input, provider, now);
+    }
+    if (
+      !(error instanceof CredentialDecryptionError) &&
+      !(error instanceof CredentialEncryptionConfigError)
+    ) {
+      log.error("Connector token refresh failed unexpectedly", {
+        connectionId: input.connectionId,
+        error,
+      });
     }
     throw error;
   }

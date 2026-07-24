@@ -11,3 +11,6 @@ OAuth
 [Pp]laintext
 nonces?
 PKCE
+[Ss]tdout
+[Ss]tderr
+[Ll]ogfmt
