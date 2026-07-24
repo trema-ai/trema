@@ -1,0 +1,45 @@
+# Curation for the Vercel REST provider toolManifest.
+#
+# Spec: Vercel OpenAPI 3 document
+#   https://openapi.vercel.sh
+# Retrieved: 2026-07-24
+#
+# Regenerate with:
+#   corepack pnpm --filter @trema/connectors openapi-to-manifest -- https://openapi.vercel.sh --curation openapi-curations/vercel.yaml --format ts
+tools:
+  - operationId: getAuthUser
+    name: get_current_user
+    description: Get the Vercel user associated with the access token.
+    sensitivity: read
+  - operationId: getTeams
+    name: list_teams
+    description: List teams accessible to the connected Vercel user.
+    sensitivity: read
+  - operationId: getProjects
+    name: list_projects
+    description: List Vercel projects for the current account or selected team.
+    sensitivity: read
+  - operationId: getProject
+    name: get_project
+    description: Get a Vercel project by id or name.
+    sensitivity: read
+  - operationId: getDeployments
+    name: list_deployments
+    description: List deployments for the current account, team, or project.
+    sensitivity: read
+  - operationId: getDeployment
+    name: get_deployment
+    description: Get one deployment by id or URL.
+    sensitivity: read
+  - operationId: createDeployment
+    name: create_deployment
+    description: Create a Vercel deployment from source files or a Git repository.
+    sensitivity: write
+  - operationId: cancelDeployment
+    name: cancel_deployment
+    description: Cancel an in-progress Vercel deployment.
+    sensitivity: destructive
+  - operationId: getDomains
+    name: list_domains
+    description: List domains for the current Vercel account or selected team.
+    sensitivity: read

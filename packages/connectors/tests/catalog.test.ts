@@ -12,15 +12,34 @@ describe("loadProviderCatalog", () => {
     const catalog = loadProviderCatalog();
 
     expect(catalog.map(({ key, authMode }) => ({ key, authMode }))).toEqual([
+      { key: "airtable", authMode: "mcp_oauth" },
+      { key: "apollo", authMode: "mcp_oauth" },
       { key: "asana", authMode: "mcp_oauth" },
+      { key: "box", authMode: "oauth2_code" },
+      { key: "canva", authMode: "oauth2_code" },
+      { key: "clickup", authMode: "mcp_oauth" },
+      { key: "docusign", authMode: "oauth2_code" },
+      { key: "dropbox", authMode: "oauth2_code" },
       { key: "figma", authMode: "oauth2_code" },
+      { key: "gamma", authMode: "api_key" },
       { key: "github", authMode: "oauth2_code" },
+      { key: "granola", authMode: "mcp_oauth" },
       { key: "hubspot", authMode: "oauth2_code" },
+      { key: "intercom", authMode: "oauth2_code" },
       { key: "linear", authMode: "mcp_oauth" },
+      { key: "lucid", authMode: "oauth2_code" },
+      { key: "miro", authMode: "oauth2_code" },
+      { key: "monday", authMode: "mcp_oauth" },
+      { key: "n8n", authMode: "api_key" },
+      { key: "netsuite", authMode: "oauth2_code" },
       { key: "notion", authMode: "mcp_oauth" },
+      { key: "posthog", authMode: "api_key" },
       { key: "sentry", authMode: "mcp_oauth" },
       { key: "slack", authMode: "oauth2_code" },
       { key: "stripe", authMode: "api_key" },
+      { key: "supabase", authMode: "mcp_oauth" },
+      { key: "vercel", authMode: "api_key" },
+      { key: "zapier", authMode: "oauth2_code" },
       { key: "zendesk", authMode: "oauth2_code" },
     ]);
 
@@ -38,7 +57,27 @@ describe("loadProviderCatalog", () => {
     // No <key>_mcp duals: where the vendor MCP server is dominated by the
     // REST integration (identity model, scopes, coverage), only REST ships.
     expect(catalog.some(({ key }) => key.endsWith("_mcp"))).toBe(false);
-    expect(restKeys).toEqual(["figma", "github", "hubspot", "slack", "stripe", "zendesk"]);
+    expect(restKeys).toEqual([
+      "box",
+      "canva",
+      "docusign",
+      "dropbox",
+      "figma",
+      "gamma",
+      "github",
+      "hubspot",
+      "intercom",
+      "lucid",
+      "miro",
+      "n8n",
+      "netsuite",
+      "posthog",
+      "slack",
+      "stripe",
+      "vercel",
+      "zapier",
+      "zendesk",
+    ]);
   });
 
   it("declares only documented stable token-response account identities", () => {
@@ -50,15 +89,34 @@ describe("loadProviderCatalog", () => {
     );
 
     expect(identities).toEqual({
+      airtable: [],
+      apollo: [],
       asana: ["data.gid"],
+      box: [],
+      canva: [],
+      clickup: [],
+      docusign: [],
+      dropbox: [],
       figma: ["user_id_string"],
+      gamma: [],
       github: [],
+      granola: [],
       hubspot: ["hub_id"],
+      intercom: [],
       linear: [],
+      lucid: [],
+      miro: [],
+      monday: [],
+      n8n: [],
+      netsuite: [],
       notion: ["workspace_id", "user_id"],
+      posthog: [],
       sentry: [],
       slack: ["team.id"],
       stripe: [],
+      supabase: [],
+      vercel: [],
+      zapier: [],
       zendesk: [],
     });
   });
