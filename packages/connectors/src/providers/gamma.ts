@@ -24,7 +24,7 @@ export const gammaProvider = {
   transport: {
     type: "rest",
     baseUrl: "https://public-api.gamma.app",
-    authHeader: `x-api-key: \${credentials.apiKey}`,
+    authHeaders: { "x-api-key": `\${credentials.apiKey}` },
     // Gamma publishes a reference, rather than a stable OpenAPI 3 document.
     verification: { method: "GET", endpoints: ["/v1.0/folders"] },
   },

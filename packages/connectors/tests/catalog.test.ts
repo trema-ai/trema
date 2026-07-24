@@ -121,6 +121,50 @@ describe("loadProviderCatalog", () => {
     });
   });
 
+  it("declares provider-specific OAuth client authentication methods", () => {
+    const catalog = loadProviderCatalog();
+
+    expect(catalog.find(({ key }) => key === "box")?.auth.tokenRequestAuthMethod).toBe("body");
+    expect(catalog.find(({ key }) => key === "miro")?.auth.tokenRequestAuthMethod).toBe("body");
+  });
+
+  it("uses Canva's JSON URL-upload endpoints", () => {
+    const canva = loadProviderCatalog().find(({ key }) => key === "canva");
+
+    expect(
+      canva?.toolManifest
+        .filter(({ name }) => name.includes("asset_upload"))
+        .map(({ name, path }) => ({ name, path })),
+    ).toEqual([
+      { name: "create_asset_upload_from_url", path: "/url-asset-uploads" },
+      { name: "get_asset_upload_from_url", path: "/url-asset-uploads/{jobId}" },
+    ]);
+  });
+
+  it("uses Lucid's documented folder and document field names", () => {
+    const lucid = loadProviderCatalog().find(({ key }) => key === "lucid");
+    const createFolder = lucid?.toolManifest.find(({ name }) => name === "create_folder");
+    const updateDocument = lucid?.toolManifest.find(({ name }) => name === "update_document");
+
+    expect(createFolder?.paramsSchema.required).toEqual(["name", "type"]);
+    expect(createFolder?.paramsSchema.properties).not.toHaveProperty("title");
+    expect(updateDocument?.paramsSchema.properties).toHaveProperty("classificationId");
+    expect(updateDocument?.paramsSchema.properties).not.toHaveProperty("classification");
+  });
+
+  it("allows DocuSign accounts to select their regional API base URI", () => {
+    const docusign = loadProviderCatalog().find(({ key }) => key === "docusign");
+
+    expect(docusign?.transport).toMatchObject({
+      type: "rest",
+      baseUrl: `\${config.apiBaseUrl}/restapi/v2.1`,
+    });
+    expect(docusign?.configFields.apiBaseUrl).toMatchObject({
+      optional: true,
+      default: "https://www.docusign.net",
+    });
+  });
+
   it("accepts a catalog whose defaultScopes are all within availableScopes", () => {
     const provider = structuredClone(githubProvider) as ProviderDefInput;
     provider.auth.availableScopes = ["read:user", "repo", "gist"];

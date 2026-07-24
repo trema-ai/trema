@@ -886,9 +886,19 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
         credentials,
       }),
     );
+  } else if (provider.transport.authHeaders) {
+    for (const [header, value] of Object.entries(provider.transport.authHeaders)) {
+      headers.set(
+        header,
+        interpolate(value, {
+          ...(Object.keys(config).length > 0 ? { config } : {}),
+          credentials,
+        }),
+      );
+    }
   } else {
     throw new ConnectorCatalogDefectError(
-      `Provider '${provider.key}' has no API-key authHeader template`,
+      `Provider '${provider.key}' has no API-key authentication header template`,
     );
   }
 

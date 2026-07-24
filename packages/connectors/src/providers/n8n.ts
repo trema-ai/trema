@@ -18,7 +18,7 @@ export const n8nProvider = {
       title: "Instance URL",
       description: "The base URL of the n8n instance.",
       example: "https://your-instance.app.n8n.cloud",
-      pattern: "^https?://[^\\s]+[^/\\s]$",
+      pattern: "^https://[^\\s]+[^/\\s]$",
     },
   },
   credentialFields: {
@@ -32,7 +32,7 @@ export const n8nProvider = {
   transport: {
     type: "rest",
     baseUrl: `\${config.baseUrl}/api/v1`,
-    authHeader: `X-N8N-API-KEY: \${credentials.apiKey}`,
+    authHeaders: { "X-N8N-API-KEY": `\${credentials.apiKey}` },
     // n8n serves API documentation from each instance rather than a stable public OpenAPI 3 URL.
     verification: { method: "GET", endpoints: ["/workflows?limit=1"] },
   },

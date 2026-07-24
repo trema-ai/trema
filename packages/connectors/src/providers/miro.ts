@@ -38,6 +38,8 @@ export const miroProvider = {
       "team:write",
       "webcam:record",
     ],
+    // Miro requires the client credentials in the token request parameters.
+    tokenRequestAuthMethod: "body",
   },
   configFields: {},
   credentialFields: {},

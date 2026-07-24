@@ -30,6 +30,8 @@ export const boxProvider = {
       "root_readwrite",
       "sign_requests.readwrite",
     ],
+    // Box requires the client credentials in the form-encoded token request.
+    tokenRequestAuthMethod: "body",
   },
   configFields: {},
   credentialFields: {},

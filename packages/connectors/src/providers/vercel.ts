@@ -17,7 +17,6 @@ export const vercelProvider = {
       type: "string",
       title: "Access token",
       description: "A Vercel access token with access to the required account or team.",
-      pattern: "^vcp_[A-Za-z0-9]+$",
       secret: true,
     },
   },

@@ -86,7 +86,7 @@ export const lucidProvider = {
         properties: {
           title: { type: "string" },
           product: { type: "string", enum: ["lucidchart", "lucidspark"] },
-          parent: { type: "string" },
+          parent: { oneOf: [{ type: "integer" }, { type: "string" }] },
           content: { type: "object" },
         },
         required: ["title", "product"],
@@ -103,8 +103,8 @@ export const lucidProvider = {
         properties: {
           id: { type: "string" },
           title: { type: "string" },
-          parent: { type: "string" },
-          classification: { type: "string" },
+          parent: { oneOf: [{ type: "integer" }, { type: "string" }, { type: "null" }] },
+          classificationId: { oneOf: [{ type: "string" }, { type: "null" }] },
         },
         required: ["id"],
       },
@@ -128,8 +128,13 @@ export const lucidProvider = {
       path: "/v1/folders",
       paramsSchema: {
         type: "object",
-        properties: { title: { type: "string" }, parent: { type: "string" } },
-        required: ["title"],
+        properties: {
+          name: { type: "string" },
+          type: { type: "string", enum: ["folder", "team"] },
+          parent: { oneOf: [{ type: "integer" }, { type: "string" }] },
+          appFolder: { type: "boolean" },
+        },
+        required: ["name", "type"],
       },
       sensitivity: "write",
     },

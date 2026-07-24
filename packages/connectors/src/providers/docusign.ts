@@ -18,6 +18,16 @@ export const docusignProvider = {
     tokenRequestAuthMethod: "basic",
   },
   configFields: {
+    apiBaseUrl: {
+      type: "string",
+      title: "API base URI",
+      description:
+        "The account base_uri reported by DocuSign OAuth user info. Override the default for regional production accounts.",
+      example: "https://na4.docusign.net",
+      pattern: "^https://[A-Za-z0-9.-]+\\.docusign\\.net$",
+      optional: true,
+      default: "https://www.docusign.net",
+    },
     accountId: {
       type: "string",
       title: "Account ID",
@@ -28,7 +38,7 @@ export const docusignProvider = {
   credentialFields: {},
   transport: {
     type: "rest",
-    baseUrl: "https://www.docusign.net/restapi/v2.1",
+    baseUrl: `\${config.apiBaseUrl}/restapi/v2.1`,
     // DocuSign publishes API references but no single stable public OpenAPI 3 document.
     verification: { method: "GET", endpoints: [`/accounts/\${config.accountId}`] },
   },
