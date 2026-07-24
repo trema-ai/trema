@@ -319,12 +319,12 @@ function ConnectionsSection({
   );
   return (
     <section data-slot="settings-section">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-chrome font-medium text-foreground">Connections</h3>
           <p className="mt-0.5 text-meta text-muted-foreground">
             Accounts the agent acts as, and where each one is available. Connect more than one to
-            reach separate workspaces; reconnecting the same account updates it in place.
+            reach separate workspaces.
           </p>
         </div>
         <Button onClick={onConnect}>
@@ -332,7 +332,7 @@ function ConnectionsSection({
           Connect
         </Button>
       </div>
-      <div className="mt-2 space-y-3">
+      <div className="mt-3 space-y-3">
         {active.length === 0 ? (
           <div className="rounded-md border bg-card px-4 py-5">
             <EmptyState

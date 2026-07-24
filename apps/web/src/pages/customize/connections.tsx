@@ -18,6 +18,14 @@ import {
   AlertDialogTitle,
 } from "#/components/ui/alert-dialog.tsx";
 import { Button } from "#/components/ui/button.tsx";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "#/components/ui/card.tsx";
 import { Skeleton } from "#/components/ui/skeleton.tsx";
 import { orpc, rpcClient } from "#/lib/api.ts";
 import type { ConnectorBody, Item, Scope } from "#/pages/customize/types.ts";
@@ -30,6 +38,7 @@ import {
   authModeLabel,
   type CatalogProvider,
   type ConnectorConnection,
+  categoryLabel,
   messageFrom,
   providerLogo,
 } from "#/pages/settings/connectors/shared.tsx";
@@ -173,9 +182,10 @@ export function ConnectionsTab({
 
   if (loading || catalog.isPending || (ownPersonal && memberConnections.isPending)) {
     return (
-      <div className="space-y-3">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-24 w-full" />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {[1, 2, 3].map((key) => (
+          <Skeleton key={key} className="h-40 w-full" />
+        ))}
       </div>
     );
   }
@@ -220,7 +230,7 @@ export function ConnectionsTab({
             />
           </div>
         ) : (
-          <div className="divide-y overflow-hidden rounded-md border bg-card">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {eligibleConnections.map((connection) => {
               const provider = entryByKey.get(connection.providerKey);
               return provider ? (
@@ -257,7 +267,7 @@ export function ConnectionsTab({
             />
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {available.map((provider) => (
               <AvailableConnectionCard
                 key={provider.key}
@@ -327,20 +337,38 @@ function ReadOnlyConnections({
           />
         </div>
       ) : (
-        <div className="divide-y overflow-hidden rounded-md border bg-card">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {installations.map((item) => {
             const body = item.body as ConnectorBody;
+            const provider = entries.get(body.catalogKey);
             return (
-              <div key={item.id} className="px-4 py-3">
-                <p className="font-medium text-chrome">
-                  {entries.get(body.catalogKey)?.displayName ?? item.title}
-                </p>
-                <p className="mt-0.5 text-meta text-muted-foreground">
-                  {body.enabledTools === "all"
-                    ? "All tools"
-                    : `${body.enabledTools.length} enabled tools`}
-                </p>
-              </div>
+              <Card key={item.id} className="gap-2 py-4 shadow-xs">
+                <CardHeader className="px-4">
+                  <div className="flex items-center gap-2">
+                    {provider ? providerLogo(provider) : null}
+                    <div className="min-w-0">
+                      <CardTitle>{provider?.displayName ?? item.title}</CardTitle>
+                      {provider ? (
+                        <p className="mt-0.5 text-meta text-muted-foreground">
+                          {categoryLabel(provider.categories)}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="px-4">
+                  {provider ? (
+                    <CardDescription>
+                      {provider.description ?? "No description available."}
+                    </CardDescription>
+                  ) : null}
+                  <p className="mt-2 text-meta text-muted-foreground">
+                    {body.enabledTools === "all"
+                      ? "All tools"
+                      : `${body.enabledTools.length} enabled tools`}
+                  </p>
+                </CardContent>
+              </Card>
             );
           })}
         </div>
@@ -377,22 +405,36 @@ function AvailableConnectionCard({
   onConnect: () => void;
 }) {
   return (
-    <div className="flex flex-col rounded-md border bg-card p-4">
-      <div className="flex items-start gap-3">
-        {providerLogo(provider)}
-        <div className="min-w-0">
-          <p className="font-medium text-chrome">{provider.displayName}</p>
-          {provider.description ? (
-            <p className="mt-1 line-clamp-2 text-meta text-muted-foreground">
-              {provider.description}
+    <Card
+      className="cursor-pointer gap-2 py-4 shadow-xs transition-colors hover:bg-muted/40"
+      onClick={onConnect}
+    >
+      <CardHeader className="px-4">
+        <div className="flex items-center gap-2">
+          {providerLogo(provider)}
+          <div className="min-w-0">
+            <CardTitle>{provider.displayName}</CardTitle>
+            <p className="mt-0.5 text-meta text-muted-foreground">
+              {categoryLabel(provider.categories)}
             </p>
-          ) : null}
+          </div>
         </div>
-      </div>
-      <Button className="mt-4 self-end" size="sm" onClick={onConnect}>
-        Connect
-      </Button>
-    </div>
+        <CardAction>
+          <Button
+            size="xs"
+            onClick={(event) => {
+              event.stopPropagation();
+              onConnect();
+            }}
+          >
+            Connect
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="px-4">
+        <CardDescription>{provider.description ?? "No description available."}</CardDescription>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -434,41 +476,57 @@ function PersonalConnectionRow({
         : "Connected";
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-3.5">
-      <div className="min-w-0">
-        <p className="font-medium text-chrome">{connection.label ?? provider.displayName}</p>
-        <p className="mt-0.5 text-meta text-muted-foreground">
-          {authModeLabel(connection.mode)} · Connected <RelativeTime date={connection.createdAt} />
-          {connection.expiresAt ? (
-            <>
-              {" "}
-              · Expires <RelativeTime date={connection.expiresAt} />
-            </>
-          ) : null}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <CredentialStatusBadge
-          status={connection.isValid ? "connected" : "expired"}
-          label={statusLabel}
-        />
-        {connection.isValid && !isBound ? (
-          <Button size="sm" variant="outline" onClick={onBind}>
-            Finish setup
-          </Button>
-        ) : null}
-        {!connection.isValid ? (
-          <Button size="sm" variant="outline" onClick={onReconnect}>
-            <RefreshCw />
-            Reconnect
-          </Button>
-        ) : null}
-        {!connection.isRevoked ? (
-          <Button size="sm" variant="destructive" onClick={() => setConfirm(true)}>
-            Revoke
-          </Button>
-        ) : null}
-      </div>
+    <>
+      <Card className="gap-2 py-4 shadow-xs">
+        <CardHeader className="px-4">
+          <div className="flex items-center gap-2">
+            {providerLogo(provider)}
+            <div className="min-w-0">
+              <CardTitle>{connection.label ?? provider.displayName}</CardTitle>
+              <p className="mt-0.5 text-meta text-muted-foreground">
+                {categoryLabel(provider.categories)}
+              </p>
+            </div>
+          </div>
+          <CardAction>
+            <CredentialStatusBadge
+              status={connection.isValid ? "connected" : "expired"}
+              label={statusLabel}
+            />
+          </CardAction>
+        </CardHeader>
+        <CardContent className="px-4">
+          <CardDescription>{provider.description ?? "No description available."}</CardDescription>
+          <p className="mt-2 text-meta text-muted-foreground">
+            {authModeLabel(connection.mode)} · Connected{" "}
+            <RelativeTime date={connection.createdAt} />
+            {connection.expiresAt ? (
+              <>
+                {" "}
+                · Expires <RelativeTime date={connection.expiresAt} />
+              </>
+            ) : null}
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {connection.isValid && !isBound ? (
+              <Button size="xs" variant="outline" onClick={onBind}>
+                Finish setup
+              </Button>
+            ) : null}
+            {!connection.isValid ? (
+              <Button size="xs" variant="outline" onClick={onReconnect}>
+                <RefreshCw />
+                Reconnect
+              </Button>
+            ) : null}
+            {!connection.isRevoked ? (
+              <Button size="xs" variant="destructive" onClick={() => setConfirm(true)}>
+                Revoke
+              </Button>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -489,6 +547,6 @@ function PersonalConnectionRow({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }

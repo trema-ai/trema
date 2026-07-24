@@ -19,7 +19,6 @@ import { PageHeader } from "#/components/trema/page-header.tsx";
 import { ReasoningBlock } from "#/components/trema/reasoning-block.tsx";
 import { RelativeTime } from "#/components/trema/relative-time.tsx";
 import { type RunState, RunStateBadge } from "#/components/trema/run-state-badge.tsx";
-import { ScopeBadge } from "#/components/trema/scope-badge.tsx";
 import { SegmentDivider } from "#/components/trema/segment-divider.tsx";
 import { SensitivityBadge } from "#/components/trema/sensitivity-badge.tsx";
 import { SettingRow, SettingsSection } from "#/components/trema/settings-section.tsx";
@@ -438,14 +437,6 @@ function BadgesSection() {
               <CredentialStatusBadge status={status} />
             </Variant>
           ))}
-        </Row>
-        <Row>
-          <Variant label="ScopeBadge short">
-            <ScopeBadge scope="org/support" />
-          </Variant>
-          <Variant label="ScopeBadge long path">
-            <ScopeBadge scope="org/engineering/platform/runtime" />
-          </Variant>
         </Row>
       </div>
     </Section>
