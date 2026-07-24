@@ -6,6 +6,7 @@ import type { Database } from "#/lib/db/index.js";
 import type { ConnectorFetch } from "#/services/connectors/connect.js";
 import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
 import type { McpClientFactory } from "#/services/connectors/sync.js";
+import { indexItemSafely } from "#/services/search/index.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
 export const sensitivitySchema = z.enum(sensitivities);
@@ -401,6 +402,7 @@ export async function createConnectorInstallation(
     });
     return installation;
   });
+  await indexItemSafely(db, installation);
   if (provider.transport.type === "mcp") {
     const { syncConnectorInstallation } = await import("#/services/connectors/sync.js");
     const sync = syncConnectorInstallation(db, {
@@ -440,7 +442,7 @@ export async function updateConnectorInstallation(
   input: UpdateConnectorInstallationInput,
 ) {
   const catalog = input.catalog ?? defaultCatalog;
-  return db.$transaction(async (transaction) => {
+  const updated = await db.$transaction(async (transaction) => {
     const existing = await transaction.item.findFirst({
       where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
     });
@@ -512,4 +514,6 @@ export async function updateConnectorInstallation(
     });
     return installation;
   });
+  await indexItemSafely(db, updated);
+  return updated;
 }

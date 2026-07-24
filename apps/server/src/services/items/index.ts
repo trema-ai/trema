@@ -5,6 +5,7 @@ import {
   type ConnectorInstallationBody,
   connectorInstallationBodySchema,
 } from "#/services/connectors/installations.js";
+import { indexItemSafely } from "#/services/search/index.js";
 
 export const memoryTypes = ["fact", "preference", "rule", "procedure"] as const;
 export type MemoryType = (typeof memoryTypes)[number];
@@ -192,7 +193,7 @@ export async function createItem(db: Database, input: CreateItemInput) {
   const status = statusForWriter(writer.kind, input.kind, body);
   const disclosure = input.disclosure ?? disclosureForItem(input.kind, body);
 
-  return db.$transaction(async (transaction) => {
+  const created = await db.$transaction(async (transaction) => {
     if (input.kind === "instruction" && status === "active") {
       await assertNoActiveInstruction(transaction, input.orgId, input.scopeId);
     }
@@ -236,6 +237,8 @@ export async function createItem(db: Database, input: CreateItemInput) {
     });
     return item;
   });
+  await indexItemSafely(db, created);
+  return created;
 }
 
 export async function getItem(db: Database, orgId: string, itemId: string) {
@@ -291,7 +294,7 @@ function jsonEqual(left: unknown, right: unknown): boolean {
 }
 
 export async function updateItem(db: Database, input: UpdateItemInput) {
-  return db.$transaction(async (transaction) => {
+  const updated = await db.$transaction(async (transaction) => {
     const existing = await transaction.item.findFirst({
       where: { id: input.itemId, orgId: input.orgId },
     });
@@ -345,6 +348,8 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
     });
     return item;
   });
+  await indexItemSafely(db, updated);
+  return updated;
 }
 
 export interface TransitionItemInput {

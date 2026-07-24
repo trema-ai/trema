@@ -17,7 +17,7 @@ import {
   updateItem,
 } from "#/services/items/index.js";
 
-const itemKindSchema = z
+export const itemKindSchema = z
   .enum(["memory", "skill", "instruction", "connector", "conversation"])
   .describe("The item kind.");
 const itemStatusSchema = z

@@ -7447,6 +7447,119 @@
         ]
       }
     },
+    "/items/search": {
+      "get": {
+        "operationId": "search.items",
+        "summary": "Search items",
+        "description": "Rank active items in the requested scopes against a full-text query. Titles outrank bodies. Results carry an excerpt, never the item body.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The search query. Supports web-search operators."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "scopeIds",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "description": "The scopes to search. Each must be readable by the caller."
+            },
+            "style": "deepObject",
+            "explode": true,
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 50,
+              "exclusiveMinimum": 0,
+              "description": "The maximum number of results. Defaults to 20 and caps at 50."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The matching item's unique ID. A UUID (version 7)."
+                      },
+                      "kind": {
+                        "enum": [
+                          "memory",
+                          "skill",
+                          "instruction",
+                          "connector",
+                          "conversation"
+                        ],
+                        "type": "string",
+                        "description": "The matching item's kind."
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "The matching item's title."
+                      },
+                      "snippet": {
+                        "type": "string",
+                        "description": "A bounded excerpt of the matching body text, as plain text."
+                      },
+                      "score": {
+                        "type": "number",
+                        "description": "The full-text rank. Higher scores match better."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "title",
+                      "snippet",
+                      "score"
+                    ],
+                    "description": "One full-text item match. The item body is never included."
+                  },
+                  "description": "The ranked matches, best first."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/service-credentials": {
       "post": {
         "operationId": "serviceCredentials.create",
