@@ -33,6 +33,9 @@ function providerTemplates(provider: ProviderDef): NamedTemplate[] {
     if (provider.transport.authHeader) {
       templates.push({ field: "transport.authHeader", value: provider.transport.authHeader });
     }
+    for (const [header, value] of Object.entries(provider.transport.authHeaders ?? {})) {
+      templates.push({ field: `transport.authHeaders.${header}`, value });
+    }
     for (const [index, endpoint] of (provider.transport.verification?.endpoints ?? []).entries()) {
       templates.push({ field: `transport.verification.endpoints[${index}]`, value: endpoint });
     }
