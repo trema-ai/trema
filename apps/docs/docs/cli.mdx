@@ -7,6 +7,8 @@ The `trema` command provides host-level recovery and maintenance tools. Run thes
 
 The command runs `serve` when you omit a command name.
 
+These commands report in plain text: progress on stdout, errors on stderr. The exception is `trema serve`, which starts the server and from then on emits [structured log records](/configuration#logging).
+
 ## Serve Trema
 
 Run `trema serve` to start the server. You can also run `trema` with no arguments.

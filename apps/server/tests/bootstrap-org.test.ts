@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import { call } from "@orpc/server";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createAuth } from "#/lib/auth/index.js";
 import { createPrismaClient } from "#/lib/db/index.js";
 import { type Environment, parseEnv } from "#/lib/env/schema.js";
+import { createLogger } from "#/lib/logger/index.js";
 import { bootstrapRouter } from "#/rpc/bootstrap.js";
 import { configRouter } from "#/rpc/config.js";
 import { orgRouter } from "#/rpc/org.js";
@@ -212,24 +213,25 @@ integration("bootstrap and organizations", () => {
   it("generates, logs once, and persists only the hash of a startup token", async () => {
     const generatedToken = "generated-bootstrap-token";
     const env = environment("dedicated");
-    const log = vi.fn();
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
 
     const initialized = await initializeBootstrap({
       db,
       env,
-      log,
+      logger,
       generateToken: () => generatedToken,
     });
     await initializeBootstrap({
       db,
       env,
-      log,
+      logger,
       generateToken: () => "must-not-replace-token",
     });
 
     expect(initialized).toEqual({ generatedToken });
-    expect(log).toHaveBeenCalledOnce();
-    expect(log).toHaveBeenCalledWith(`Bootstrap token: ${generatedToken}`);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`msg="Bootstrap token generated" bootstrapToken=${generatedToken}`);
     const persisted = await db.bootstrapToken.findUniqueOrThrow({
       where: { id: "bootstrap" },
     });

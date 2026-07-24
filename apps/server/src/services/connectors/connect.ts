@@ -9,6 +9,7 @@ import {
 import type { ConnectorOAuthState, Prisma } from "#/generated/prisma/client.js";
 import { encryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import {
   buildMcpAuthorizationRequest,
   discoverMcpAuthServer,
@@ -306,6 +307,10 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
       expiresAt: new Date(now.getTime() + OAUTH_STATE_TTL_MS),
     },
   });
+  log.debug("OAuth state minted", {
+    provider: input.providerKey,
+    ...(existing ? { connectionId: existing.id } : {}),
+  });
 
   return { authorizationUrl };
 }
@@ -384,6 +389,10 @@ async function startMcpOAuthConnect(
       expiresAt: new Date(now.getTime() + OAUTH_STATE_TTL_MS),
     },
   });
+  log.debug("OAuth state minted", {
+    provider: input.providerKey,
+    ...(existing ? { connectionId: existing.id } : {}),
+  });
 
   return { authorizationUrl };
 }
@@ -400,8 +409,15 @@ export async function consumeOAuthState(
     RETURNING *
   `;
   const consumed = rows[0];
-  if (!consumed) throw new OAuthStateSingleUseError();
-  if (consumed.expiresAt <= now) throw new OAuthStateExpiredError();
+  if (!consumed) {
+    log.warn("OAuth state reused or invalid");
+    throw new OAuthStateSingleUseError();
+  }
+  if (consumed.expiresAt <= now) {
+    log.warn("OAuth state expired", { provider: consumed.providerKey });
+    throw new OAuthStateExpiredError();
+  }
+  log.debug("OAuth state consumed", { provider: consumed.providerKey });
   return consumed;
 }
 
@@ -460,7 +476,9 @@ async function connectionMetadata(
   try {
     return { ...metadata, ...(await hook({ tokenResponse, config })) };
   } catch {
-    // Hooks receive raw token responses; do not propagate any error detail.
+    // Hooks receive raw token responses; do not propagate any error detail,
+    // including to the log, since a hook error may embed the raw response.
+    log.warn("Connector post-connection hook failed", { provider: provider.key });
     throw new OAuthTokenExchangeError();
   }
 }
@@ -570,12 +588,13 @@ async function storeConnection(
       },
     });
     if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
+    log.info("Connector connection updated", { connectionId, provider: input.providerKey });
     return db.connectorConnection.findUniqueOrThrow({
       where: { id: connectionId },
       select: publicConnectionSelect(),
     });
   }
-  return db.connectorConnection.create({
+  const created = await db.connectorConnection.create({
     data: {
       orgId: input.orgId,
       providerKey: input.providerKey,
@@ -589,6 +608,11 @@ async function storeConnection(
     },
     select: publicConnectionSelect(),
   });
+  log.info("Connector connection created", {
+    connectionId: created.id,
+    provider: input.providerKey,
+  });
+  return created;
 }
 
 export interface CompleteOAuthCallbackInput {
@@ -649,20 +673,34 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
   let response: Response;
   try {
     response = await (input.fetch ?? globalThis.fetch)(tokenUrl, { method: "POST", headers, body });
-  } catch {
+  } catch (error) {
+    log.warn("OAuth token exchange failed", { provider: provider.key, error });
     throw new OAuthTokenExchangeError();
   }
-  if (!response.ok) throw new OAuthTokenExchangeError();
+  if (!response.ok) {
+    log.warn("OAuth token exchange failed", { provider: provider.key, status: response.status });
+    throw new OAuthTokenExchangeError();
+  }
 
   let raw: Record<string, unknown>;
   try {
     raw = recordFromJson(await response.json());
   } catch (error) {
+    // A parse failure quotes the body it choked on, and that body is a token
+    // response — the reason is all that can safely be logged.
+    log.warn("OAuth token exchange failed", {
+      provider: provider.key,
+      reason: "malformed_token_response",
+    });
     if (error instanceof OAuthTokenExchangeError) throw error;
     throw new OAuthTokenExchangeError();
   }
   const accessToken = raw.access_token;
   if (typeof accessToken !== "string" || accessToken.length === 0) {
+    log.warn("OAuth token exchange failed", {
+      provider: provider.key,
+      reason: "missing_access_token",
+    });
     throw new OAuthTokenExchangeError();
   }
   const refreshToken = typeof raw.refresh_token === "string" ? raw.refresh_token : undefined;
@@ -718,6 +756,10 @@ async function completeMcpOAuthCallback(
   if (!oauthState.tokenEndpoint || !oauthState.resource) {
     // A well-formed mcp_oauth state always persists these; their absence means
     // the state was not produced by startMcpOAuthConnect.
+    log.warn("OAuth token exchange failed", {
+      provider: provider.key,
+      reason: "invalid_state",
+    });
     throw new OAuthTokenExchangeError();
   }
   const client = await resolveStoredMcpClientRegistration(db, {
@@ -739,11 +781,16 @@ async function completeMcpOAuthCallback(
       ...(input.fetch ? { fetch: input.fetch } : {}),
     });
   } catch (error) {
+    log.warn("OAuth token exchange failed", { provider: provider.key, error });
     throw new OAuthTokenExchangeError(error);
   }
 
   const accessToken = tokens.access_token;
   if (typeof accessToken !== "string" || accessToken.length === 0) {
+    log.warn("OAuth token exchange failed", {
+      provider: provider.key,
+      reason: "missing_access_token",
+    });
     throw new OAuthTokenExchangeError();
   }
   const refreshToken = typeof tokens.refresh_token === "string" ? tokens.refresh_token : undefined;
@@ -968,7 +1015,10 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
       // Try any remaining verification endpoints before rejecting creation.
     }
   }
-  if (!verified) throw new CredentialVerificationError();
+  if (!verified) {
+    log.warn("Connector credential verification failed", { provider: provider.key });
+    throw new CredentialVerificationError();
+  }
 
   const payload = { ...credentials, raw: { ...credentials } };
   return storeConnection(db, {
@@ -996,6 +1046,7 @@ export async function updateConnectorConnectionLabel(
     data: { label: input.label },
   });
   if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
+  log.info("Connector connection label updated", { connectionId: input.connectionId });
   return db.connectorConnection.findUniqueOrThrow({
     where: { id: input.connectionId },
     select: publicConnectionSelect(),
@@ -1093,5 +1144,6 @@ export async function revokeConnectorConnection(
     data: { revokedAt },
   });
   if (result.count === 0) throw new ConnectorConnectionNotFoundError();
+  log.info("Connector connection revoked", { connectionId });
   return { id: connectionId, revokedAt };
 }
