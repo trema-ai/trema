@@ -57,6 +57,14 @@ const environmentSchema = z
     TREMA_OIDC_CLIENT_SECRET: optionalString,
   })
   .superRefine((value, context) => {
+    if (value.TREMA_MODE === "dedicated" && !value.TREMA_CREDENTIAL_MASTER_KEY) {
+      context.addIssue({
+        code: "custom",
+        message: "TREMA_CREDENTIAL_MASTER_KEY is required when TREMA_MODE is dedicated",
+        path: ["TREMA_CREDENTIAL_MASTER_KEY"],
+      });
+    }
+
     const google = [value.TREMA_GOOGLE_CLIENT_ID, value.TREMA_GOOGLE_CLIENT_SECRET];
     if (google.some(Boolean) && !google.every(Boolean)) {
       context.addIssue({

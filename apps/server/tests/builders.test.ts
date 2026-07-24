@@ -17,6 +17,7 @@ integration("orgScoped", () => {
   const env = parseEnv({
     NODE_ENV: "test",
     DATABASE_URL: databaseUrl,
+    TREMA_MODE: "hosted",
     TREMA_AUTH_SECRET: "integration-test-auth-secret-at-least-32-characters",
   });
   const auth = createAuth({

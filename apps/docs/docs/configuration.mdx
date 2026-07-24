@@ -44,7 +44,7 @@ Set `TREMA_PASSWORD_AUTH_ENABLED=false` to remove the email-and-password form. C
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `TREMA_CREDENTIAL_MASTER_KEY` | No | unset | Base64-encoded 32-byte key that encrypts connector credentials and OAuth client secrets at rest. Required before connecting any tool; generate with `openssl rand -base64 32`. See [credential security](/credential-security). |
+| `TREMA_CREDENTIAL_MASTER_KEY` | Dedicated mode | unset | Base64-encoded 32-byte key that encrypts connector credentials and OAuth client secrets at rest. A dedicated deployment refuses to start without it. Generate it with `openssl rand -base64 32`. See [credential security](/credential-security). |
 
 ## Web app
 

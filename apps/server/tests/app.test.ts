@@ -11,6 +11,7 @@ import { parseEnv } from "#/lib/env/schema.js";
 const environment = parseEnv({
   NODE_ENV: "test",
   DATABASE_URL: "postgresql://localhost/trema_test",
+  TREMA_MODE: "hosted",
   TREMA_AUTH_SECRET: "app-test-auth-secret-at-least-32-characters",
 });
 
@@ -147,6 +148,7 @@ describe("server", () => {
     const env = parseEnv({
       NODE_ENV: "test",
       DATABASE_URL: "postgresql://localhost/trema_test",
+      TREMA_MODE: "hosted",
       TREMA_AUTH_SECRET: "app-test-auth-secret-at-least-32-characters",
       TREMA_WEB_DIST: root,
     });
