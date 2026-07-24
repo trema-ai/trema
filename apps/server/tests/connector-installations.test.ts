@@ -537,8 +537,14 @@ integration("connector connections and installations", () => {
         { context: { ...org.context, mcpClientFactory: factory } },
       ),
     ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-      message: expect.stringContaining("unavailable"),
+      code: "PRECONDITION_FAILED",
+      data: {
+        code: "reconnect_needed",
+        reconnectNeeded: true,
+        connectionId: bound.id,
+        providerKey: "notion",
+        reason: "revoked",
+      },
     });
     expect(calls).toEqual(["Bearer bound-token"]);
   });

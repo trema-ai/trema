@@ -17,6 +17,7 @@ import {
   ConnectorMemberConnectabilityError,
   ConnectorProviderNotFoundError,
   ConnectorProviderSettingsError,
+  ConnectorReconnectRequiredError,
   ConnectorSyncTransportError,
   CredentialVerificationError,
   connectorCallbackUrl,
@@ -190,6 +191,20 @@ function throwConnectorError(error: unknown): never {
   if (error instanceof NoClientRegistrationError) {
     throw new ORPCError("PRECONDITION_FAILED", { message: error.message });
   }
+  if (error instanceof ConnectorReconnectRequiredError) {
+    throw new ORPCError("PRECONDITION_FAILED", {
+      message: error.message,
+      data: {
+        code: error.code,
+        reconnectNeeded: error.reconnectNeeded,
+        connectionId: error.connectionId,
+        providerKey: error.providerKey,
+        reason: error.reason,
+        ...(error.providerStatus === undefined ? {} : { providerStatus: error.providerStatus }),
+        ...(error.providerCode === undefined ? {} : { providerCode: error.providerCode }),
+      },
+    });
+  }
   if (error instanceof ClientRegistrationConflictError) {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
@@ -359,6 +374,7 @@ const createInstallation = requireCapability("manage_connectors", {
             : {}),
           ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
           ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+          ...(context.platformApps ? { platformApps: context.platformApps } : {}),
         }),
       );
     } catch (error) {
@@ -506,6 +522,7 @@ const syncInstallation = installationScoped
           : {}),
         ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
         ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+        ...(context.platformApps ? { platformApps: context.platformApps } : {}),
       });
       return {
         installation: serializeInstallation(result.installation),
@@ -976,6 +993,7 @@ const memberCreateInstallation = orgScoped
             : {}),
           ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
           ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+          ...(context.platformApps ? { platformApps: context.platformApps } : {}),
         }),
       );
     } catch (error) {

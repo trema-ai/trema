@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   githubProvider,
+  googleIdTokenIdentity,
   loadProviderCatalog,
   ProviderCatalogValidationError,
   type ProviderDefInput,
@@ -84,5 +85,79 @@ describe("provider catalog validation", () => {
     expect(() => loadProviderCatalog([githubInput(), githubInput()])).toThrowError(
       /Duplicate provider key 'github'/,
     );
+  });
+
+  it("accepts a per-tool base URL whose placeholder is declared", () => {
+    const provider = githubInput();
+    const tool = provider.toolManifest?.[0];
+    if (!tool) throw new Error("GitHub fixture requires a tool");
+    provider.configFields = {
+      apiHost: { type: "string", title: "API host", description: "Provider API host" },
+    };
+    provider.toolManifest = [
+      {
+        ...tool,
+        baseUrl: `https://\${config.apiHost}`,
+      },
+    ];
+
+    expect(() => loadProviderCatalog([provider])).not.toThrow();
+  });
+
+  it("rejects a per-tool base URL whose placeholder is undeclared", () => {
+    const provider = githubInput();
+    const tool = provider.toolManifest?.[0];
+    if (!tool) throw new Error("GitHub fixture requires a tool");
+    provider.toolManifest = [
+      {
+        ...tool,
+        baseUrl: `https://\${config.missingHost}`,
+      },
+    ];
+
+    expect(() => loadProviderCatalog([provider])).toThrowError(ProviderCatalogValidationError);
+    expect(() => loadProviderCatalog([provider])).toThrowError(
+      /toolManifest\[0\]\.baseUrl has invalid placeholder 'config\.missingHost'/,
+    );
+  });
+});
+
+describe("google_id_token_identity", () => {
+  function idToken(claims: Record<string, unknown>) {
+    return [
+      Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+      Buffer.from(JSON.stringify(claims)).toString("base64url"),
+      "signature",
+    ].join(".");
+  }
+
+  it("returns only the non-secret Google identity claims", () => {
+    const token = idToken({ sub: "google-subject", email: "ada@example.com", hd: "example.com" });
+
+    expect(
+      googleIdTokenIdentity({
+        tokenResponse: {
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          id_token: token,
+        },
+        config: {},
+      }),
+    ).toEqual({ sub: "google-subject", email: "ada@example.com", hd: "example.com" });
+  });
+
+  it("ignores missing or malformed id tokens without exposing token values", () => {
+    const missing = googleIdTokenIdentity({
+      tokenResponse: { access_token: "access-token" },
+      config: {},
+    });
+    const malformed = googleIdTokenIdentity({
+      tokenResponse: { id_token: "not-a-jwt", access_token: "access-token" },
+      config: {},
+    });
+
+    expect(missing).toEqual({});
+    expect(malformed).toEqual({});
+    expect(JSON.stringify({ missing, malformed })).not.toContain("access-token");
   });
 });

@@ -1,0 +1,96 @@
+# Curation for the Google Workspace REST provider toolManifest.
+#
+# Gmail provenance spec: APIs.guru's OpenAPI conversion of the Google Gmail
+# discovery document:
+#   https://api.apis.guru/v2/specs/googleapis.com/gmail/v1/openapi.json
+# Calendar and Drive discovery documents have separate APIs.guru conversions:
+#   https://api.apis.guru/v2/specs/googleapis.com/calendar/v3/openapi.json
+#   https://api.apis.guru/v2/specs/googleapis.com/drive/v3/openapi.json
+# This curated manifest combines the three Google Workspace products because
+# they share one OAuth consent flow and account identity.
+# Retrieved: 2026-07-24
+#
+# The manifest in src/providers/google_workspace.ts is hand-authored and
+# hand-trimmed. Generate only as a discovery aid, then preserve the specific
+# fields, scopes, Gmail host overrides, and sensitivity classifications below.
+tools:
+  - method: GET
+    path: /gmail/v1/users/me/messages
+    name: search_messages
+    description: Search Gmail messages by query.
+    sensitivity: read
+  - method: GET
+    path: /gmail/v1/users/me/messages/{id}
+    name: get_message
+    description: Get one Gmail message.
+    sensitivity: read
+  - method: GET
+    path: /gmail/v1/users/me/threads/{id}
+    name: get_thread
+    description: Get one Gmail thread.
+    sensitivity: read
+  - method: GET
+    path: /gmail/v1/users/me/labels
+    name: list_labels
+    description: List Gmail labels.
+    sensitivity: read
+  - method: POST
+    path: /gmail/v1/users/me/drafts
+    name: create_draft
+    description: Create a Gmail draft.
+    sensitivity: write
+  - method: POST
+    path: /gmail/v1/users/me/messages/send
+    name: send_message
+    description: Send a Gmail message.
+    sensitivity: write
+  - method: GET
+    path: /calendar/v3/users/me/calendarList
+    name: list_calendars
+    description: List Google calendars.
+    sensitivity: read
+  - method: GET
+    path: /calendar/v3/calendars/{calendarId}/events
+    name: list_events
+    description: List Google Calendar events.
+    sensitivity: read
+  - method: GET
+    path: /calendar/v3/calendars/{calendarId}/events/{eventId}
+    name: get_event
+    description: Get a Google Calendar event.
+    sensitivity: read
+  - method: POST
+    path: /calendar/v3/freeBusy
+    name: check_availability
+    description: Check calendar availability.
+    sensitivity: read
+  - method: POST
+    path: /calendar/v3/calendars/{calendarId}/events
+    name: create_event
+    description: Create a Google Calendar event.
+    sensitivity: write
+  - method: PATCH
+    path: /calendar/v3/calendars/{calendarId}/events/{eventId}
+    name: update_event
+    description: Update a Google Calendar event.
+    sensitivity: write
+  - method: DELETE
+    path: /calendar/v3/calendars/{calendarId}/events/{eventId}
+    name: delete_event
+    description: Delete a Google Calendar event.
+    sensitivity: destructive
+  - method: GET
+    path: /drive/v3/files
+    name: search_files
+    description: Search Google Drive files.
+    sensitivity: read
+  - method: GET
+    path: /drive/v3/files/{fileId}
+    name: get_file_metadata
+    description: Get Google Drive file metadata.
+    sensitivity: read
+  - method: GET
+    path: /drive/v3/files/{fileId}/export
+    name: export_file
+    description: Export a Google Workspace file.
+    sensitivity: read

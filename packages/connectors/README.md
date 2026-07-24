@@ -38,6 +38,11 @@ tools:
 
 Review the output before committing: trim descriptions, drop parameters the model does not need, and check sensitivity classes. `loadProviderCatalog` validates every entry at startup — template placeholders must reference declared config or credential fields, and hook names must exist in the registry.
 
+Use `tool.baseUrl` only when an operation lives on a different API host than
+`transport.baseUrl`. The optional URL replaces the transport base URL for that
+tool. It accepts the same `${config.*}` and `${credentials.*}` placeholders as
+the transport URL, and catalog validation checks every placeholder.
+
 ## Tests
 
 ```sh

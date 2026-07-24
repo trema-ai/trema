@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
-import { githubProvider, loadProviderCatalog } from "@trema/connectors";
+import { githubProvider, googleWorkspaceProvider, loadProviderCatalog } from "@trema/connectors";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "#/app.js";
 import { createAuth } from "#/lib/auth/index.js";
@@ -50,6 +50,7 @@ const metadataOnlyOAuthCatalog = loadProviderCatalog([
     },
   },
 ]);
+const googleWorkspaceOAuthCatalog = loadProviderCatalog([googleWorkspaceProvider]);
 
 integration("connector connection flows", () => {
   const db = createPrismaClient(databaseUrl);
@@ -166,6 +167,14 @@ integration("connector connection flows", () => {
     );
   }
 
+  function googleIdToken(claims: Record<string, unknown>) {
+    return [
+      Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+      Buffer.from(JSON.stringify(claims)).toString("base64url"),
+      "signature",
+    ].join(".");
+  }
+
   async function start(
     orgId: string,
     options: {
@@ -190,6 +199,23 @@ integration("connector connection flows", () => {
         ? { reconnectConnectionId: options.reconnectConnectionId }
         : {}),
       ...(options.providerScopes ? { providerScopes: options.providerScopes } : {}),
+    });
+    return new URL(started.authorizationUrl).searchParams.get("state")!;
+  }
+
+  async function startGoogleWorkspace(orgId: string, reconnectConnectionId?: string) {
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId, kind: "agent" },
+      select: { id: true },
+    });
+    const started = await startOAuthConnect(db, {
+      orgId,
+      principalId: agent.id,
+      providerKey: "google_workspace",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      catalog: googleWorkspaceOAuthCatalog,
+      ...(reconnectConnectionId ? { reconnectConnectionId } : {}),
     });
     return new URL(started.authorizationUrl).searchParams.get("state")!;
   }
@@ -759,6 +785,55 @@ integration("connector connection flows", () => {
     expect(
       new Set(connections.map((row) => (row.config as { account_name?: string }).account_name)),
     ).toEqual(new Set(["octo-org", "hooli"]));
+  });
+
+  it("hoists Google id-token identity before same-account matching on reconnect", async () => {
+    const org = await createOrg();
+    await createClientRegistration(db, {
+      orgId: org.org.id,
+      providerKey: "google_workspace",
+      source: "customer",
+      clientId: "google-client",
+      clientSecret: "google-secret",
+      masterKey,
+    });
+    const claims = { sub: "google-subject", email: "ada@example.com", hd: "example.com" };
+    const complete = (state: string, accessToken: string) =>
+      completeOAuthCallback(db, {
+        state,
+        code: "google-authorization-code",
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: googleWorkspaceOAuthCatalog,
+        fetch: tokenFetch({ access_token: accessToken, id_token: googleIdToken(claims) }),
+      });
+
+    const first = await complete(await startGoogleWorkspace(org.org.id), "first-google-token");
+    await expect(
+      listConnectorConnections(
+        db,
+        org.org.id,
+        "google_workspace",
+        new Date(),
+        undefined,
+        googleWorkspaceOAuthCatalog,
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: first.connection.id, label: "ada@example.com" }),
+    ]);
+    // A fresh OAuth connect has no connection id to fall back to, so this
+    // assertion proves the hook ran before same-account matching.
+    const matched = await complete(await startGoogleWorkspace(org.org.id), "second-google-token");
+    expect(matched.connection.id).toBe(first.connection.id);
+
+    const explicitReconnect = await complete(
+      await startGoogleWorkspace(org.org.id, first.connection.id),
+      "replacement-google-token",
+    );
+    expect(explicitReconnect.connection.id).toBe(first.connection.id);
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: first.connection.id } }),
+    ).resolves.toMatchObject({ config: claims });
   });
 
   it("keeps fresh connections distinct when a provider declares metadata but no identity", async () => {

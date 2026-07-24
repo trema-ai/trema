@@ -1,6 +1,7 @@
 import { asanaProvider } from "#/providers/asana.js";
 import { figmaProvider } from "#/providers/figma.js";
 import { githubProvider } from "#/providers/github.js";
+import { googleWorkspaceProvider } from "#/providers/google_workspace.js";
 import { hubspotProvider } from "#/providers/hubspot.js";
 import { linearProvider } from "#/providers/linear.js";
 import { notionMcpProvider } from "#/providers/notion-mcp.js";
@@ -14,6 +15,7 @@ export {
   asanaProvider,
   figmaProvider,
   githubProvider,
+  googleWorkspaceProvider,
   hubspotProvider,
   linearProvider,
   notionMcpProvider,
@@ -27,6 +29,7 @@ export const providerDefinitions = [
   asanaProvider,
   figmaProvider,
   githubProvider,
+  googleWorkspaceProvider,
   hubspotProvider,
   linearProvider,
   notionMcpProvider,

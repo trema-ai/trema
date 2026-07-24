@@ -1,6 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { FieldDescriptor, ProviderDef } from "@trema/connectors";
-import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
+import {
+  interpolate,
+  loadProviderCatalog,
+  type ProviderCatalog,
+  providerHookRegistry,
+} from "@trema/connectors";
 import type { ConnectorOAuthState, Prisma } from "#/generated/prisma/client.js";
 import { encryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
@@ -21,6 +26,7 @@ import {
 
 const defaultCatalog = loadProviderCatalog();
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
+const CONSERVATIVE_OAUTH_TOKEN_LIFETIME_MS = 60 * 60 * 1000;
 
 export type ConnectorFetch = typeof globalThis.fetch;
 
@@ -433,6 +439,32 @@ export function extractTokenResponseMetadata(
   );
 }
 
+async function connectionMetadata(
+  provider: ProviderDef,
+  tokenResponse: Readonly<Record<string, unknown>>,
+  config: Readonly<Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+  const metadata = extractTokenResponseMetadata(provider, tokenResponse);
+  const hookName = provider.hooks?.postConnection;
+  if (!hookName) return metadata;
+
+  const hook = providerHookRegistry[hookName];
+  if (!hook) {
+    // Catalog loading rejects this, but retain a safe guard for an injected
+    // catalog and never expose the token response in an error.
+    throw new ConnectorCatalogDefectError(
+      `Provider '${provider.key}' has an unknown post-connection hook`,
+    );
+  }
+
+  try {
+    return { ...metadata, ...(await hook({ tokenResponse, config })) };
+  } catch {
+    // Hooks receive raw token responses; do not propagate any error detail.
+    throw new OAuthTokenExchangeError();
+  }
+}
+
 function publicConnectionSelect() {
   return {
     id: true,
@@ -532,6 +564,7 @@ async function storeConnection(
         revokedAt: null,
         lastRefreshSuccess: null,
         lastRefreshFailure: null,
+        refreshFailureStartedAt: null,
         refreshAttempts: 0,
         refreshExhausted: false,
       },
@@ -642,8 +675,10 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
   const expiresAt =
     expiresIn !== undefined && Number.isFinite(expiresIn) && expiresIn >= 0
       ? new Date(now.getTime() + expiresIn * 1000)
-      : undefined;
-  const metadata = extractTokenResponseMetadata(provider, raw);
+      : refreshToken
+        ? new Date(now.getTime() + CONSERVATIVE_OAUTH_TOKEN_LIFETIME_MS)
+        : undefined;
+  const metadata = await connectionMetadata(provider, raw, connectionConfig(oauthState.config));
   const grantedScopes = parseGrantedScopes(
     raw.scope,
     oauthState.providerScopes,
@@ -717,7 +752,9 @@ async function completeMcpOAuthCallback(
     Number.isFinite(tokens.expires_in) &&
     tokens.expires_in >= 0
       ? new Date(now.getTime() + tokens.expires_in * 1000)
-      : undefined;
+      : refreshToken
+        ? new Date(now.getTime() + CONSERVATIVE_OAUTH_TOKEN_LIFETIME_MS)
+        : undefined;
   const grantedScopes = parseGrantedScopes(
     tokens.scope,
     oauthState.providerScopes,
@@ -728,7 +765,11 @@ async function completeMcpOAuthCallback(
     ...(refreshToken ? { refreshToken } : {}),
     raw: tokens as Record<string, unknown>,
   };
-  const metadata = extractTokenResponseMetadata(provider, tokens as Record<string, unknown>);
+  const metadata = await connectionMetadata(
+    provider,
+    tokens as Record<string, unknown>,
+    connectionConfig(oauthState.config),
+  );
   const connection = await storeConnection(db, {
     orgId: oauthState.orgId,
     providerKey: oauthState.providerKey,

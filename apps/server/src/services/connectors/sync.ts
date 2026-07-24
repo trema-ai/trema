@@ -2,7 +2,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import type { Prisma } from "#/generated/prisma/client.js";
-import { decryptEnvelope } from "#/lib/crypto/index.js";
 import type { Database } from "#/lib/db/index.js";
 import {
   type ConnectorInstallationBody,
@@ -11,6 +10,8 @@ import {
   type Sensitivity,
   type SyncedTool,
 } from "#/services/connectors/installations.js";
+import { resolveConnectionCredential } from "#/services/connectors/refresh.js";
+import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
 
 const defaultCatalog = loadProviderCatalog();
 
@@ -139,15 +140,19 @@ interface CredentialPayload {
   accessToken?: unknown;
   access_token?: unknown;
   token?: unknown;
-  raw?: Record<string, unknown>;
+  raw?: unknown;
 }
 
 function bearerToken(payload: CredentialPayload): string | undefined {
+  const raw =
+    typeof payload.raw === "object" && payload.raw !== null && !Array.isArray(payload.raw)
+      ? (payload.raw as Record<string, unknown>)
+      : undefined;
   for (const value of [
     payload.accessToken,
     payload.access_token,
     payload.token,
-    payload.raw?.access_token,
+    raw?.access_token,
   ]) {
     if (typeof value === "string" && value.length > 0) return value;
   }
@@ -160,39 +165,25 @@ async function resolveBearerToken(
   connectionId: string,
   masterKey: string | undefined,
   now: Date,
+  catalog: ProviderCatalog,
+  platformApps: PlatformAppDirectory | undefined,
+  fetch: typeof globalThis.fetch | undefined,
 ): Promise<{
   token: string | undefined;
   config: Record<string, string | number | boolean>;
 }> {
-  const connection = await db.connectorConnection.findFirst({
-    where: {
-      id: connectionId,
-      orgId,
-      revokedAt: null,
-      refreshExhausted: false,
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-    },
+  const resolved = await resolveConnectionCredential(db, {
+    orgId,
+    connectionId,
+    ...(masterKey ? { masterKey } : {}),
+    catalog,
+    ...(platformApps ? { platformApps } : {}),
+    ...(fetch ? { fetch } : {}),
+    now,
   });
-  if (!connection) {
-    throw new ConnectorSyncTransportError("Connector connection is unavailable");
-  }
-  const rawConfig =
-    typeof connection.config === "object" &&
-    connection.config !== null &&
-    !Array.isArray(connection.config)
-      ? connection.config
-      : {};
-  const config = Object.fromEntries(
-    Object.entries(rawConfig).filter(
-      (entry): entry is [string, string | number | boolean] =>
-        typeof entry[1] === "string" ||
-        typeof entry[1] === "number" ||
-        typeof entry[1] === "boolean",
-    ),
-  );
   return {
-    token: bearerToken(decryptEnvelope<CredentialPayload>(connection.ciphertext, masterKey)),
-    config,
+    token: bearerToken(resolved.credential),
+    config: resolved.config,
   };
 }
 
@@ -203,6 +194,7 @@ export interface SyncConnectorInstallationInput {
   masterKey?: string;
   catalog?: ProviderCatalog;
   clientFactory?: McpClientFactory;
+  platformApps?: PlatformAppDirectory;
   fetch?: typeof globalThis.fetch;
   now?: Date;
 }
@@ -231,6 +223,9 @@ export async function syncConnectorInstallation(
     body.connectionId,
     input.masterKey,
     input.now ?? new Date(),
+    catalog,
+    input.platformApps,
+    input.fetch,
   );
   const serverUrl = interpolate(provider.transport.serverUrl, { config: resolved.config });
   const client = await (input.clientFactory ?? createStreamableHttpMcpClient)({

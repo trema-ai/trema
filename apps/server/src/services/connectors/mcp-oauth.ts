@@ -182,15 +182,22 @@ export interface ResolveMcpClientRegistrationInput {
   fetch?: FetchLike;
 }
 
-// Resolve the client registration for an mcp_oauth connect: prefer a
-// pre-registered customer app, then a previously persisted dynamic
-// registration, then a platform app. When none exists and the authorization
-// server advertises a registration endpoint, perform RFC 7591 dynamic client
-// registration and persist it as a "dynamic" ClientRegistration for reuse.
-export async function resolveMcpClientRegistration(
-  db: Database,
-  input: ResolveMcpClientRegistrationInput,
-): Promise<ResolvedMcpClient> {
+type McpClientRegistrationReadDatabase = Pick<Database, "clientRegistration">;
+
+export interface ResolveExistingMcpClientRegistrationInput {
+  orgId: string;
+  providerKey: string;
+  platformApps: PlatformAppDirectory;
+  masterKey?: string;
+}
+
+// Refresh must reuse the client identity that was selected (and, for DCR,
+// persisted) during connect. It deliberately never performs a new dynamic
+// registration: losing the existing registration is a reconnect condition.
+export async function resolveExistingMcpClientRegistration(
+  db: McpClientRegistrationReadDatabase,
+  input: ResolveExistingMcpClientRegistrationInput,
+): Promise<ResolvedMcpClient | undefined> {
   const registrations = await db.clientRegistration.findMany({
     where: { orgId: input.orgId, providerKey: input.providerKey },
   });
@@ -202,17 +209,28 @@ export async function resolveMcpClientRegistration(
   }
 
   const platform = registrations.find((candidate) => candidate.source === "platform");
-  if (platform?.sharedRef) {
-    const app = await input.platformApps.get(platform.sharedRef);
-    if (app) {
-      return {
-        registrationId: platform.id,
-        source: platform.source,
-        clientId: app.clientId,
-        clientSecret: app.clientSecret,
-      };
-    }
-  }
+  if (!platform?.sharedRef) return undefined;
+  const app = await input.platformApps.get(platform.sharedRef);
+  if (!app) return undefined;
+  return {
+    registrationId: platform.id,
+    source: platform.source,
+    clientId: app.clientId,
+    clientSecret: app.clientSecret,
+  };
+}
+
+// Resolve the client registration for an mcp_oauth connect: prefer a
+// pre-registered customer app, then a previously persisted dynamic
+// registration, then a platform app. When none exists and the authorization
+// server advertises a registration endpoint, perform RFC 7591 dynamic client
+// registration and persist it as a "dynamic" ClientRegistration for reuse.
+export async function resolveMcpClientRegistration(
+  db: Database,
+  input: ResolveMcpClientRegistrationInput,
+): Promise<ResolvedMcpClient> {
+  const existing = await resolveExistingMcpClientRegistration(db, input);
+  if (existing) return existing;
 
   if (!input.discovery.registrationEndpoint) {
     throw new NoClientRegistrationError(input.providerKey);

@@ -15,6 +15,7 @@ describe("loadProviderCatalog", () => {
       { key: "asana", authMode: "mcp_oauth" },
       { key: "figma", authMode: "oauth2_code" },
       { key: "github", authMode: "oauth2_code" },
+      { key: "google_workspace", authMode: "oauth2_code" },
       { key: "hubspot", authMode: "oauth2_code" },
       { key: "linear", authMode: "mcp_oauth" },
       { key: "notion", authMode: "mcp_oauth" },
@@ -38,7 +39,15 @@ describe("loadProviderCatalog", () => {
     // No <key>_mcp duals: where the vendor MCP server is dominated by the
     // REST integration (identity model, scopes, coverage), only REST ships.
     expect(catalog.some(({ key }) => key.endsWith("_mcp"))).toBe(false);
-    expect(restKeys).toEqual(["figma", "github", "hubspot", "slack", "stripe", "zendesk"]);
+    expect(restKeys).toEqual([
+      "figma",
+      "github",
+      "google_workspace",
+      "hubspot",
+      "slack",
+      "stripe",
+      "zendesk",
+    ]);
   });
 
   it("declares only documented stable token-response account identities", () => {
@@ -53,6 +62,7 @@ describe("loadProviderCatalog", () => {
       asana: ["data.gid"],
       figma: ["user_id_string"],
       github: [],
+      google_workspace: ["sub"],
       hubspot: ["hub_id"],
       linear: [],
       notion: ["workspace_id", "user_id"],

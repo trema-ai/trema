@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
 import type { ConnectorFetch } from "#/services/connectors/connect.js";
+import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
 import type { McpClientFactory } from "#/services/connectors/sync.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
@@ -273,6 +274,7 @@ export interface CreateConnectorInstallationInput {
   sensitivityOverrides?: Record<string, Sensitivity>;
   masterKey?: string;
   clientFactory?: McpClientFactory;
+  platformApps?: PlatformAppDirectory;
   fetch?: ConnectorFetch;
   catalog?: ProviderCatalog;
 }
@@ -407,6 +409,7 @@ export async function createConnectorInstallation(
       installationItemId: installation.id,
       ...(input.masterKey ? { masterKey: input.masterKey } : {}),
       ...(input.clientFactory ? { clientFactory: input.clientFactory } : {}),
+      ...(input.platformApps ? { platformApps: input.platformApps } : {}),
       ...(input.fetch ? { fetch: input.fetch } : {}),
       catalog,
     }).catch(() => undefined);

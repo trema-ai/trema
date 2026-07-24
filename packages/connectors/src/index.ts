@@ -4,6 +4,9 @@ export {
   ProviderCatalogValidationError,
 } from "#/catalog.js";
 export {
+  googleIdTokenIdentity,
+  type PostConnectionHook,
+  type PostConnectionHookInput,
   type ProviderHook,
   type ProviderHookRegistry,
   providerHookRegistry,
