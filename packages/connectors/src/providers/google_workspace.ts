@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 const gmailReadonly = "https://www.googleapis.com/auth/gmail.readonly";
 const gmailCompose = "https://www.googleapis.com/auth/gmail.compose";

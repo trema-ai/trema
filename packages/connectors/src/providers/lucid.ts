@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Lucid's MCP is a developer-documentation server, not a workspace-data API,
 // so this provider uses the production REST API for documents and folders.

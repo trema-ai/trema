@@ -8,7 +8,7 @@ import {
   ProviderCatalogValidationError,
   type ProviderDefInput,
   providerDefSchema,
-} from "#/index.js";
+} from "#connectors/index.js";
 
 function githubInput(): ProviderDefInput {
   return structuredClone(githubProvider) as ProviderDefInput;

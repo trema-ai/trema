@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Miro's MCP server is a deliberate abstraction rather than a full REST API
 // mirror, so the REST API supplies the complete board-management integration.

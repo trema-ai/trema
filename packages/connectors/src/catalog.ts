@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { type ProviderHookRegistry, providerHookRegistry } from "#/hooks.js";
-import { providerDefinitions } from "#/providers/index.js";
-import { type ProviderDef, type ProviderDefInput, providerDefSchema } from "#/schema.js";
-import { extractPlaceholders } from "#/templates.js";
+import { type ProviderHookRegistry, providerHookRegistry } from "#connectors/hooks.js";
+import { providerDefinitions } from "#connectors/providers/index.js";
+import { type ProviderDef, type ProviderDefInput, providerDefSchema } from "#connectors/schema.js";
+import { extractPlaceholders } from "#connectors/templates.js";
 
 export type ProviderCatalog = readonly Readonly<ProviderDef>[];
 
