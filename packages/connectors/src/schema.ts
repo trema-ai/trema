@@ -51,6 +51,10 @@ export const authRecipeSchema = z
     pkce: z.boolean().default(true),
     tokenRequestAuthMethod: z.enum(["basic", "body", "private_key_jwt"]).optional(),
     tokenResponseMetadata: z.array(z.string().trim().min(1)).optional(),
+    // Stable token-response field paths that together identify a provider
+    // account. Dot-delimited paths address nested response objects. Unlike
+    // display metadata, these fields may be used to reconnect in place.
+    accountIdentityFields: z.array(z.string().trim().min(1)).min(1).optional(),
     tokenExpirationBuffer: z.number().int().nonnegative().optional(),
   })
   .strict();

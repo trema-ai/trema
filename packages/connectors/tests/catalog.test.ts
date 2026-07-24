@@ -41,6 +41,28 @@ describe("loadProviderCatalog", () => {
     expect(restKeys).toEqual(["figma", "github", "hubspot", "slack", "stripe", "zendesk"]);
   });
 
+  it("declares only documented stable token-response account identities", () => {
+    const identities = Object.fromEntries(
+      loadProviderCatalog().map((provider) => [
+        provider.key,
+        provider.auth.accountIdentityFields ?? [],
+      ]),
+    );
+
+    expect(identities).toEqual({
+      asana: ["data.gid"],
+      figma: ["user_id_string"],
+      github: [],
+      hubspot: ["hub_id"],
+      linear: [],
+      notion: ["workspace_id", "user_id"],
+      sentry: [],
+      slack: ["team.id"],
+      stripe: [],
+      zendesk: [],
+    });
+  });
+
   it("accepts a catalog whose defaultScopes are all within availableScopes", () => {
     const provider = structuredClone(githubProvider) as ProviderDefInput;
     provider.auth.availableScopes = ["read:user", "repo", "gist"];

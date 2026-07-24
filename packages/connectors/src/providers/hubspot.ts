@@ -191,6 +191,8 @@ export const hubspotProvider = {
       "timeline",
       "transactional-email",
     ],
+    // The token response's Hub ID is the stable ID of the selected account.
+    accountIdentityFields: ["hub_id"],
   },
   configFields: {},
   credentialFields: {},

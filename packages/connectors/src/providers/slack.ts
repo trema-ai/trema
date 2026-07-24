@@ -155,6 +155,7 @@ export const slackProvider = {
     // Slack's v2 OAuth flow does not support PKCE.
     pkce: false,
     tokenResponseMetadata: ["bot_user_id"],
+    accountIdentityFields: ["team.id"],
   },
   configFields: {},
   credentialFields: {},

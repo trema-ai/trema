@@ -8,6 +8,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import {
   buildOAuthAuthorizationUrl,
+  extractTokenResponseMetadata,
   parseGrantedScopes,
   requestedOAuthScopes,
 } from "#/services/connectors/connect.js";
@@ -24,6 +25,31 @@ const baseProvider = {
   ...githubProvider,
   auth: { ...githubProvider.auth, pkce: true },
 };
+
+describe("token response metadata", () => {
+  it("extracts explicit nested account identity paths without hoisting their siblings", () => {
+    const provider = loadProviderCatalog([
+      {
+        ...baseProvider,
+        auth: {
+          ...baseProvider.auth,
+          tokenResponseMetadata: ["display_name"],
+          accountIdentityFields: ["account.id"],
+        },
+      },
+    ])[0]!;
+
+    expect(
+      extractTokenResponseMetadata(provider, {
+        display_name: "Example",
+        account: { id: "acct-123", mutable_name: "Renamed later" },
+      }),
+    ).toEqual({
+      display_name: "Example",
+      "account.id": "acct-123",
+    });
+  });
+});
 
 describe("OAuth authorization URL construction", () => {
   it("uses the deployment callback, scopes, state, and an S256 PKCE challenge", () => {
@@ -390,6 +416,7 @@ describe("exchangeMcpAuthorizationCode", () => {
         token_type: "bearer",
         scope: "read",
         expires_in: 3600,
+        workspace_id: "workspace-123",
       });
     }) as unknown as typeof globalThis.fetch;
 
@@ -405,6 +432,7 @@ describe("exchangeMcpAuthorizationCode", () => {
 
     expect(tokens.access_token).toBe("mcp-access-token");
     expect(tokens.scope).toBe("read");
+    expect(tokens.workspace_id).toBe("workspace-123");
   });
 
   it("uses Basic auth when the registration carries a secret", async () => {

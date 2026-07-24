@@ -343,8 +343,23 @@ export async function exchangeMcpAuthorizationCode(input: {
   codeVerifier: string;
   callbackUrl: string;
   fetch?: FetchLike;
-}): Promise<OAuthTokens> {
-  return exchangeAuthorization(input.tokenEndpoint, {
+}): Promise<OAuthTokens & Record<string, unknown>> {
+  let rawTokens: Record<string, unknown> = {};
+  const fetchFn: FetchLike = async (...args) => {
+    const response = await (input.fetch ?? globalThis.fetch)(...args);
+    if (response.ok) {
+      try {
+        const raw: unknown = await response.clone().json();
+        if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+          rawTokens = raw as Record<string, unknown>;
+        }
+      } catch {
+        // The SDK reports malformed successful responses consistently.
+      }
+    }
+    return response;
+  };
+  const tokens = await exchangeAuthorization(input.tokenEndpoint, {
     // Only token_endpoint is read from metadata here; the endpoint was
     // validated as https during discovery.
     metadata: { token_endpoint: input.tokenEndpoint } as AuthorizationServerMetadata,
@@ -353,6 +368,10 @@ export async function exchangeMcpAuthorizationCode(input: {
     codeVerifier: input.codeVerifier,
     redirectUri: input.callbackUrl,
     resource: new URL(input.resource),
-    ...(input.fetch ? { fetchFn: input.fetch } : {}),
+    fetchFn,
   });
+  // The SDK validates and strips provider extensions. Preserve those extensions
+  // for explicit account identity fields while letting validated OAuth values
+  // win over their raw representations.
+  return { ...rawTokens, ...tokens };
 }

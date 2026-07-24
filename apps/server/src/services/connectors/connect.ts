@@ -406,6 +406,33 @@ function recordFromJson(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function tokenResponseValue(response: Readonly<Record<string, unknown>>, path: string): unknown {
+  let value: unknown = response;
+  for (const segment of path.split(".")) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return undefined;
+    }
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return value;
+}
+
+export function extractTokenResponseMetadata(
+  provider: ProviderDef,
+  response: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const fields = new Set([
+    ...(provider.auth.tokenResponseMetadata ?? []),
+    ...(provider.auth.accountIdentityFields ?? []),
+  ]);
+  return Object.fromEntries(
+    [...fields].flatMap((field) => {
+      const value = tokenResponseValue(response, field);
+      return value === undefined ? [] : [[field, value]];
+    }),
+  );
+}
+
 function publicConnectionSelect() {
   return {
     id: true,
@@ -425,16 +452,26 @@ function publicConnectionSelect() {
   } as const;
 }
 
-// A fresh connect that lands on an already-connected provider account must not
-// mint a duplicate. Account identity is only detectable through the provider's
-// hoisted token-response metadata; when every metadata value matches an active
-// connection's stored config, that connection is the same account.
+// A fresh connect may replace an already-connected provider account only when
+// the provider explicitly declares stable identity fields and the response
+// supplies every one. Arbitrary token metadata is never account identity.
 async function sameAccountConnectionId(
   db: Database,
   input: { orgId: string; providerKey: string; principalId: string },
   metadata: Record<string, unknown> | undefined,
+  identityFields: readonly string[] | undefined,
 ): Promise<string | undefined> {
-  if (!metadata || Object.keys(metadata).length === 0) return undefined;
+  if (
+    !metadata ||
+    !identityFields ||
+    identityFields.length === 0 ||
+    !identityFields.every(
+      (field) =>
+        Object.hasOwn(metadata, field) && metadata[field] !== null && metadata[field] !== undefined,
+    )
+  ) {
+    return undefined;
+  }
   const candidates = await db.connectorConnection.findMany({
     where: {
       orgId: input.orgId,
@@ -447,8 +484,8 @@ async function sameAccountConnectionId(
   });
   const match = candidates.find((candidate) => {
     const stored = connectionConfig(candidate.config);
-    return Object.entries(metadata).every(
-      ([key, value]) => JSON.stringify(stored[key]) === JSON.stringify(value),
+    return identityFields.every(
+      (field) => JSON.stringify(stored[field]) === JSON.stringify(metadata[field]),
     );
   });
   return match?.id;
@@ -468,13 +505,15 @@ async function storeConnection(
     expiresAt?: Date;
     providerScopes?: string[];
     metadata?: Record<string, unknown>;
+    accountIdentityFields?: readonly string[];
   },
 ) {
   const config = JSON.parse(
     JSON.stringify({ ...input.config, ...(input.metadata ?? {}) }),
   ) as Prisma.InputJsonValue;
   const connectionId =
-    input.connectionId ?? (await sameAccountConnectionId(db, input, input.metadata));
+    input.connectionId ??
+    (await sameAccountConnectionId(db, input, input.metadata, input.accountIdentityFields));
   if (connectionId) {
     const updated = await db.connectorConnection.updateMany({
       where: {
@@ -604,11 +643,7 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
     expiresIn !== undefined && Number.isFinite(expiresIn) && expiresIn >= 0
       ? new Date(now.getTime() + expiresIn * 1000)
       : undefined;
-  const metadata = Object.fromEntries(
-    (provider.auth.tokenResponseMetadata ?? [])
-      .filter((field) => raw[field] !== undefined)
-      .map((field) => [field, raw[field]]),
-  );
+  const metadata = extractTokenResponseMetadata(provider, raw);
   const grantedScopes = parseGrantedScopes(
     raw.scope,
     oauthState.providerScopes,
@@ -627,6 +662,9 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
     providerScopes: grantedScopes,
     ...(expiresAt ? { expiresAt } : {}),
     metadata,
+    ...(provider.auth.accountIdentityFields
+      ? { accountIdentityFields: provider.auth.accountIdentityFields }
+      : {}),
   });
   return { connection, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
 }
@@ -690,6 +728,7 @@ async function completeMcpOAuthCallback(
     ...(refreshToken ? { refreshToken } : {}),
     raw: tokens as Record<string, unknown>,
   };
+  const metadata = extractTokenResponseMetadata(provider, tokens as Record<string, unknown>);
   const connection = await storeConnection(db, {
     orgId: oauthState.orgId,
     providerKey: oauthState.providerKey,
@@ -701,6 +740,10 @@ async function completeMcpOAuthCallback(
     ...(oauthState.label ? { label: oauthState.label } : {}),
     providerScopes: grantedScopes,
     ...(expiresAt ? { expiresAt } : {}),
+    metadata,
+    ...(provider.auth.accountIdentityFields
+      ? { accountIdentityFields: provider.auth.accountIdentityFields }
+      : {}),
   });
   return { connection, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
 }
