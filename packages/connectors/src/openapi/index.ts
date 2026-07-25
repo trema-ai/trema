@@ -6,11 +6,11 @@ export {
   type ManifestCurationInput,
   manifestCurationSchema,
   openApiSpecToToolManifest,
-} from "#/openapi/convert.js";
+} from "#connectors/openapi/convert.js";
 export {
   inlineRefs,
   OpenApiConversionError,
   type OpenApiDocument,
   parseOpenApiDocument,
   resolveRef,
-} from "#/openapi/document.js";
+} from "#connectors/openapi/document.js";

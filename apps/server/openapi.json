@@ -191,6 +191,324 @@
         ]
       }
     },
+    "/audit": {
+      "get": {
+        "operationId": "audit.list",
+        "summary": "List audit log entries",
+        "description": "List the active organization's audit log entries, newest first. Pass the returned cursor to read the next page.",
+        "tags": [
+          "Audit"
+        ],
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only return entries whose action matches this value exactly."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "actionPrefix",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only return entries whose action starts with this value, such as `invite.`."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "actorPrincipalId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Only return entries recorded for this acting principal. A UUID."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Only return entries recorded at or after this time. An ISO 8601 date-time."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Only return entries recorded at or before this time. An ISO 8601 date-time."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "How many entries to return. Defaults to 50."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The `nextCursor` of the previous page. Omit for the first page."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The entry's unique ID. A UUID (version 7)."
+                          },
+                          "action": {
+                            "type": "string",
+                            "description": "The recorded action, such as `grant.set_role` or `connector.installation.create`."
+                          },
+                          "subject": {
+                            "type": "string",
+                            "description": "The ID of the record the action changed."
+                          },
+                          "actor": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "description": "The acting principal's ID. A UUID (version 7)."
+                                  },
+                                  "displayName": {
+                                    "type": "string",
+                                    "description": "The name shown for the acting principal."
+                                  },
+                                  "kind": {
+                                    "enum": [
+                                      "human",
+                                      "agent"
+                                    ],
+                                    "type": "string",
+                                    "description": "Whether a person or the agent acted."
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "displayName",
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The principal that performed the action. Null when the system acted on its own."
+                          },
+                          "payload": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {},
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "type": "string"
+                                      },
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {},
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "type": "string"
+                                      },
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                }
+                              }
+                            ],
+                            "description": "The action-specific details recorded with the entry."
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "description": "When the action happened. An ISO 8601 date-time."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "action",
+                          "subject",
+                          "actor",
+                          "payload",
+                          "createdAt"
+                        ],
+                        "description": "One entry in the organization's audit log."
+                      },
+                      "description": "The page of entries, newest first."
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The cursor for the next page, or null when this is the last page."
+                    }
+                  },
+                  "required": [
+                    "entries",
+                    "nextCursor"
+                  ],
+                  "description": "A page of audit log entries."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/audit/actions": {
+      "get": {
+        "operationId": "audit.actions",
+        "summary": "List audit log actions",
+        "description": "List the distinct actions present in the active organization's audit log, so a client can offer them as filters.",
+        "tags": [
+          "Audit"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The distinct actions, in alphabetical order."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/bindings": {
       "post": {
         "operationId": "bindings.create",
@@ -3624,6 +3942,279 @@
                     "updatedAt",
                     "version"
                   ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/embedding-settings": {
+      "get": {
+        "operationId": "embeddings.settings.get",
+        "summary": "Get the embedding settings",
+        "description": "Read the organization's embedding endpoint and model. The stored API key is never returned; only whether one is set.",
+        "tags": [
+          "Embeddings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
+                    },
+                    "endpoint": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The base URL of the embeddings API, including the version path."
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The model that produces the vectors."
+                    },
+                    "hasApiKey": {
+                      "type": "boolean",
+                      "description": "Whether a stored API key accompanies the endpoint. The key itself is never returned."
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the settings last changed. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "endpoint",
+                    "model",
+                    "hasApiKey",
+                    "updatedAt"
+                  ],
+                  "description": "The organization's embedding settings. The API key is write-only."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "embeddings.settings.put",
+        "summary": "Set the embedding settings",
+        "description": "Point the organization at an OpenAI-compatible embeddings endpoint. Existing items keep their vectors until a reindex re-embeds them under the new model.",
+        "tags": [
+          "Embeddings"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The base URL of the embeddings API, including the version path, such as `https://api.openai.com/v1`."
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The model that produces the vectors."
+                  },
+                  "apiKey": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The API key, stored encrypted and never returned. Omit to keep the stored key; send null for an endpoint that needs none."
+                  }
+                },
+                "required": [
+                  "endpoint",
+                  "model"
+                ],
+                "description": "The embedding settings to store."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
+                    },
+                    "endpoint": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The base URL of the embeddings API, including the version path."
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The model that produces the vectors."
+                    },
+                    "hasApiKey": {
+                      "type": "boolean",
+                      "description": "Whether a stored API key accompanies the endpoint. The key itself is never returned."
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the settings last changed. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "endpoint",
+                    "model",
+                    "hasApiKey",
+                    "updatedAt"
+                  ],
+                  "description": "The organization's embedding settings. The API key is write-only."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "embeddings.settings.delete",
+        "summary": "Delete the embedding settings",
+        "description": "Stop embedding this organization's items. Search falls back to text matching. Stored vectors are left in place and are ignored until an endpoint is configured again.",
+        "tags": [
+          "Embeddings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ],
+                  "description": "The settings were removed."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/reindex": {
+      "post": {
+        "operationId": "embeddings.reindex",
+        "summary": "Rebuild the item search index",
+        "description": "Rebuild every item's search text, then embed the items that have no vector or whose vector came from an earlier model. Run it after changing the embedding settings.",
+        "tags": [
+          "Embeddings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "embedded": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items received a vector."
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items the endpoint could not embed."
+                    }
+                  },
+                  "required": [
+                    "embedded",
+                    "failed"
+                  ],
+                  "description": "What the reindex did."
                 }
               }
             }
@@ -8204,6 +8795,119 @@
                     "enabled"
                   ],
                   "description": "The organization's personal-scope policy."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/search": {
+      "get": {
+        "operationId": "search.items",
+        "summary": "Search items",
+        "description": "Rank active items in the requested scopes against a query. Text matching always applies, and an organization with embeddings configured also matches on meaning. Results carry an excerpt, never the item body.",
+        "tags": [
+          "Items"
+        ],
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The search query. Supports web-search operators."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "scopeIds",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "description": "The scopes to search. Each must be readable by the caller."
+            },
+            "style": "deepObject",
+            "explode": true,
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 50,
+              "exclusiveMinimum": 0,
+              "description": "The maximum number of results. Defaults to 20 and caps at 50."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "The matching item's unique ID. A UUID (version 7)."
+                      },
+                      "kind": {
+                        "enum": [
+                          "memory",
+                          "skill",
+                          "instruction",
+                          "connector",
+                          "conversation"
+                        ],
+                        "type": "string",
+                        "description": "The matching item's kind."
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "The matching item's title."
+                      },
+                      "snippet": {
+                        "type": "string",
+                        "description": "A bounded excerpt of the matching body text, as plain text."
+                      },
+                      "score": {
+                        "type": "number",
+                        "description": "The relevance score. Higher scores match better."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "title",
+                      "snippet",
+                      "score"
+                    ],
+                    "description": "One full-text item match. The item body is never included."
+                  },
+                  "description": "The ranked matches, best first."
                 }
               }
             }

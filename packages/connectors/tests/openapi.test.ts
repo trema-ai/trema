@@ -5,7 +5,7 @@ import {
   OpenApiConversionError,
   openApiSpecToToolManifest,
   parseOpenApiDocument,
-} from "#/index.js";
+} from "#connectors/index.js";
 
 const specJson = JSON.stringify({
   openapi: "3.0.3",

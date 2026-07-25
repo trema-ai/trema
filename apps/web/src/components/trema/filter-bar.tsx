@@ -1,7 +1,17 @@
-import { SearchIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
+import { Button } from "#/components/ui/button.tsx";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "#/components/ui/command.tsx";
 import { Input } from "#/components/ui/input.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "#/components/ui/popover.tsx";
 import {
   Select,
   SelectContent,
@@ -72,6 +82,82 @@ function FilterSelect({
   );
 }
 
+type FilterComboboxProps = FilterSelectProps & {
+  searchPlaceholder?: string;
+  emptyLabel?: string;
+};
+
+/* The searchable counterpart of FilterSelect, for option lists too long to scan. */
+function FilterCombobox({
+  label,
+  value,
+  onValueChange,
+  options,
+  allValue = "all",
+  searchPlaceholder,
+  emptyLabel = "No matches",
+}: FilterComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const active = value !== allValue;
+  const selected = options.find((option) => option.value === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          role="combobox"
+          aria-expanded={open}
+          aria-label={label}
+          data-slot="filter-combobox"
+          className={cn(
+            "max-w-64 justify-between border bg-card px-2.5 font-normal text-(length:--text-chrome) shadow-none hover:bg-card dark:bg-card dark:hover:bg-card",
+            active &&
+              "border-moss/40 bg-moss-soft text-foreground hover:bg-moss-soft dark:bg-moss-soft dark:hover:bg-moss-soft",
+          )}
+        >
+          <span className="truncate">{selected?.label ?? label}</span>
+          <ChevronDownIcon className="opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-0">
+        <Command
+          filter={(_itemValue, search, keywords) =>
+            (keywords ?? []).join(" ").toLowerCase().includes(search.trim().toLowerCase()) ? 1 : 0
+          }
+        >
+          <CommandInput
+            placeholder={searchPlaceholder ?? `Search ${label.toLowerCase()}…`}
+            className="text-(length:--text-chrome)"
+          />
+          <CommandList>
+            <CommandEmpty>{emptyLabel}</CommandEmpty>
+            <CommandGroup>
+              {options.map((option) => (
+                <CommandItem
+                  key={option.value}
+                  value={option.value}
+                  keywords={[option.label]}
+                  className="text-(length:--text-chrome)"
+                  onSelect={() => {
+                    onValueChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="truncate">{option.label}</span>
+                  {option.value === value ? <CheckIcon className="ml-auto size-3.5" /> : null}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 type FilterSearchProps = {
   value: string;
   onValueChange: (value: string) => void;
@@ -102,4 +188,4 @@ function FilterSearch({
   );
 }
 
-export { FilterBar, FilterSearch, FilterSelect };
+export { FilterBar, FilterCombobox, FilterSearch, FilterSelect };

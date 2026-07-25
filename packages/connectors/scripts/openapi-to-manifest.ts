@@ -25,7 +25,7 @@ import {
   openApiSpecToToolManifest,
   parseOpenApiDocument,
   type ToolDefinition,
-} from "#/index.js";
+} from "#connectors/index.js";
 
 interface CliOptions {
   spec: string;

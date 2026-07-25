@@ -11,6 +11,8 @@ export const capabilities = [
   "edit_policies",
   "manage_schedules",
   "manage_members",
+  "manage_models",
+  "read_audit",
   "manage_org",
 ] as const;
 
@@ -45,6 +47,18 @@ const capabilityRoleTable: Record<Capability, Record<Role, boolean>> = {
     viewer: false,
   },
   manage_members: {
+    owner: true,
+    admin: true,
+    member: false,
+    viewer: false,
+  },
+  manage_models: {
+    owner: true,
+    admin: true,
+    member: false,
+    viewer: false,
+  },
+  read_audit: {
     owner: true,
     admin: true,
     member: false,

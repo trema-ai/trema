@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // NetSuite MCP is an account-installed SuiteApp with an account-specific
 // service endpoint; this portable OAuth connector uses SuiteTalk REST instead.

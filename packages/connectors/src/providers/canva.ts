@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Canva's official MCP server requires an allowlisted redirect URI, so its
 // broadly available Connect REST API is the transport for this catalog entry.

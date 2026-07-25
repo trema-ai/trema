@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Vercel's official remote MCP server is beta and available only to approved
 // clients, so the GA REST API is the production transport for this provider.

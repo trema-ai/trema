@@ -9,7 +9,7 @@
     "declaration": false,
     "declarationMap": false,
     "paths": {
-      "#/*": ["./src/*"]
+      "#connectors/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]

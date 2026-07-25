@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Box's remote MCP server requires an administrator-configured integration
 // before it can connect; the OAuth REST API is available to regular users.

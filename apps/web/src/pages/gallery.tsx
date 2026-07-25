@@ -10,7 +10,12 @@ import { CredentialStatusBadge } from "#/components/trema/credential-status-badg
 import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
 import { EmptyState } from "#/components/trema/empty-state.tsx";
 import { ErrorItem } from "#/components/trema/error-item.tsx";
-import { FilterBar, FilterSearch, FilterSelect } from "#/components/trema/filter-bar.tsx";
+import {
+  FilterBar,
+  FilterCombobox,
+  FilterSearch,
+  FilterSelect,
+} from "#/components/trema/filter-bar.tsx";
 import { IdChip } from "#/components/trema/id-chip.tsx";
 import { KeyValueList } from "#/components/trema/key-value-list.tsx";
 import { LogLine } from "#/components/trema/log-line.tsx";
@@ -214,6 +219,29 @@ const tableColumns: DataTableColumn<RunRow>[] = [
     render: (row) => <span className="font-mono text-meta">{row.cost}</span>,
   },
   { key: "at", header: "Started", render: (row) => <RelativeTime date={row.at} /> },
+];
+
+const auditActionOptions = [
+  { value: "all", label: "All actions" },
+  ...[
+    "binding.delete",
+    "connector.installation.archive",
+    "connector.installation.create",
+    "connector.installation.sync",
+    "credential.revoke",
+    "grant.set_role",
+    "invite.create",
+    "invite.redeem",
+    "invite.revoke",
+    "item.activate",
+    "item.archive",
+    "item.create",
+    "org.rename",
+    "principal.deactivate",
+    "scope.create",
+    "session.close",
+    "session.open",
+  ].map((value) => ({ value, label: value })),
 ];
 
 const largeJson = Array.from({ length: 24 }, (_, index) => ({
@@ -845,6 +873,8 @@ function AdminSection() {
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("failed");
   const [connectorFilter, setConnectorFilter] = useState("all");
+  const [actionFilter, setActionFilter] = useState("all");
+  const [pickedActionFilter, setPickedActionFilter] = useState("connector.installation.create");
 
   return (
     <Section title="Admin grammar" bare>
@@ -918,6 +948,32 @@ function AdminSection() {
           </FilterBar>
           <p className="text-meta text-muted-foreground">
             FilterBar: the state filter is at a non-default value, so it shows the moss tint.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <FilterBar>
+            <FilterCombobox
+              label="Action"
+              value={actionFilter}
+              onValueChange={setActionFilter}
+              options={auditActionOptions}
+              searchPlaceholder="Search actions…"
+              emptyLabel="No actions match"
+            />
+            <FilterCombobox
+              label="Action"
+              value={pickedActionFilter}
+              onValueChange={setPickedActionFilter}
+              options={auditActionOptions}
+              searchPlaceholder="Search actions…"
+              emptyLabel="No actions match"
+            />
+          </FilterBar>
+          <p className="text-meta text-muted-foreground">
+            FilterCombobox: the searchable filter for long option lists. The first is at its
+            default; the second holds a pick, so it shows the moss tint. Typing matches anywhere in
+            the label.
           </p>
         </div>
 

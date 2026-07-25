@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Connects one Stripe account with a restricted API key. Nango's "stripe"
 // entry is Stripe Connect OAuth for platform apps — the wrong shape for an

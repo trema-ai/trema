@@ -4,6 +4,7 @@ import {
   Cable,
   LogOut,
   Monitor,
+  ScrollText,
   Settings,
   SlidersHorizontal,
   UserRound,
@@ -27,6 +28,7 @@ const adminItems = [
   { label: "Members", href: "/settings/members", icon: UsersRound },
   { label: "Scopes", href: "/settings/scopes", icon: SlidersHorizontal },
   { label: "Connectors", href: "/settings/connectors", icon: Cable },
+  { label: "Audit log", href: "/settings/audit", icon: ScrollText },
 ];
 
 function SettingsMenu({

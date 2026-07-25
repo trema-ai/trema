@@ -5,7 +5,7 @@ import {
   loadProviderCatalog,
   ProviderCatalogValidationError,
   type ProviderDefInput,
-} from "#/index.js";
+} from "#connectors/index.js";
 
 describe("loadProviderCatalog", () => {
   it("loads and freezes the shipped provider catalog", () => {

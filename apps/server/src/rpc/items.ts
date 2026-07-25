@@ -17,7 +17,7 @@ import {
   updateItem,
 } from "#/services/items/index.js";
 
-const itemKindSchema = z
+export const itemKindSchema = z
   .enum(["memory", "skill", "instruction", "connector", "conversation"])
   .describe("The item kind.");
 const itemStatusSchema = z
@@ -183,6 +183,9 @@ const create = requireCapability("write_items", {
         await createItem(context.db, {
           orgId: context.org.id,
           actorPrincipalId: context.principal.id,
+          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+            : {}),
           scopeId: input.scopeId,
           kind: input.kind,
           title: input.title,
@@ -307,6 +310,9 @@ const update = itemScoped("write_items")
         await updateItem(context.db, {
           orgId: context.org.id,
           actorPrincipalId: context.principal.id,
+          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+            : {}),
           itemId: input.id,
           ...(input.title !== undefined ? { title: input.title } : {}),
           ...(input.body !== undefined ? { body: input.body } : {}),

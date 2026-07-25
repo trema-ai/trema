@@ -7,7 +7,7 @@
     "declaration": true,
     "declarationMap": true,
     "paths": {
-      "#/*": ["./src/*"]
+      "#models/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],
