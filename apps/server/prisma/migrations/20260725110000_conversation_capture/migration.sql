@@ -35,13 +35,14 @@ CREATE TABLE "Message" (
 -- CreateTable
 -- Prisma cannot express a generated column, so "tsv" is written by hand, the
 -- same way "ItemSearchDoc" writes its own. A message has one field of prose,
--- so the vector carries no weights.
+-- so the vector carries no weights. The configuration is the language-neutral
+-- one "ItemSearchDoc" uses, so messages in any language index the same way.
 CREATE TABLE "MessageSearchDoc" (
     "messageId" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
     "text" TEXT NOT NULL,
     "tsv" tsvector GENERATED ALWAYS AS (
-        to_tsvector('english', coalesce("text", ''))
+        to_tsvector('trema_multilingual', coalesce("text", ''))
     ) STORED,
 
     CONSTRAINT "MessageSearchDoc_pkey" PRIMARY KEY ("orgId","messageId")

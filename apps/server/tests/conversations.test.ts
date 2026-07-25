@@ -187,7 +187,7 @@ integration("conversation capture", () => {
     const rows = await db.$queryRaw<{ text: string }[]>`
       SELECT d."text"
       FROM "MessageSearchDoc" d,
-           websearch_to_tsquery('english', ${query}) q
+           websearch_to_tsquery('trema_multilingual'::regconfig, ${query}) q
       WHERE d."orgId" = ${orgId} AND d."tsv" @@ q
       ORDER BY d."text"
     `;
