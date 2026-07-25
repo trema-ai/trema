@@ -26,6 +26,8 @@ export interface SearchItemsInput extends EmbeddingOptions {
   orgId: string;
   scopeIds: string[];
   query: string;
+  /** Restrict the search to these kinds. An empty or absent list searches all kinds. */
+  kinds?: ItemKind[];
   limit?: number;
 }
 
@@ -269,10 +271,16 @@ export async function backfillEmbeddings(
   return { embedded, failed };
 }
 
-async function lexicalCandidates(
-  db: Database,
-  input: { orgId: string; scopeIds: string[]; query: string },
-): Promise<string[]> {
+// An empty kind list means "every kind": the filter compares against the list
+// only when the caller asked for one, so one query serves both cases.
+interface CandidateFilters {
+  orgId: string;
+  scopeIds: string[];
+  kinds: string[];
+  query: string;
+}
+
+async function lexicalCandidates(db: Database, input: CandidateFilters): Promise<string[]> {
   const rows = await db.$queryRaw<Array<{ id: string }>>`
     SELECT i."id"
     FROM "ItemSearchDoc" d
@@ -281,6 +289,7 @@ async function lexicalCandidates(
     WHERE d."orgId" = ${input.orgId}
       AND i."scopeId" = ANY(${input.scopeIds}::text[])
       AND i."status" = 'active'::"ItemStatus"
+      AND (cardinality(${input.kinds}::text[]) = 0 OR i."kind"::text = ANY(${input.kinds}::text[]))
       AND d."tsv" @@ q
     ORDER BY ts_rank(d."tsv", q) DESC, i."id"
     LIMIT ${candidateLimit}
@@ -290,7 +299,7 @@ async function lexicalCandidates(
 
 async function vectorCandidates(
   db: Database,
-  input: { orgId: string; scopeIds: string[]; query: string; embedder: Embedder },
+  input: CandidateFilters & { embedder: Embedder },
 ): Promise<string[]> {
   const [vector] = await input.embedder.embed([input.query]);
   if (!vector) return [];
@@ -302,6 +311,7 @@ async function vectorCandidates(
     WHERE d."orgId" = ${input.orgId}
       AND i."scopeId" = ANY(${input.scopeIds}::text[])
       AND i."status" = 'active'::"ItemStatus"
+      AND (cardinality(${input.kinds}::text[]) = 0 OR i."kind"::text = ANY(${input.kinds}::text[]))
       AND d."embedding" IS NOT NULL
       AND d."embeddingModel" = ${input.embedder.model}
     ORDER BY d."embedding" <=> ${vectorLiteral(vector)}::vector, i."id"
@@ -353,7 +363,12 @@ export async function searchItems(
   const query = input.query.trim();
   if (!query || input.scopeIds.length === 0) return [];
   const limit = Math.min(input.limit ?? defaultLimit, maxLimit);
-  const filters = { orgId: input.orgId, scopeIds: input.scopeIds, query };
+  const filters: CandidateFilters = {
+    orgId: input.orgId,
+    scopeIds: input.scopeIds,
+    kinds: input.kinds ?? [],
+    query,
+  };
 
   const rankings = [await lexicalCandidates(db, filters)];
   try {
