@@ -122,6 +122,14 @@ enum ClientRegistrationSource {
   dynamic
 }
 
+/// The identity mode of a context session. It is a pure function of the scope
+/// kind the session opens against: personal scopes delegate, everything else
+/// acts as the organization's agent.
+enum SessionMode {
+  service
+  delegated
+}
+
 model Org {
   id                        String                      @id @default(uuid(7))
   name                      String
@@ -143,6 +151,7 @@ model Org {
   connectorConnections      ConnectorConnection[]
   connectorOAuthStates      ConnectorOAuthState[]
   connectorProviderSettings ConnectorProviderSettings[]
+  contextSessions           ContextSession[]
 }
 
 model Principal {
@@ -171,6 +180,8 @@ model Principal {
   authoredItemVersions      ItemVersion[]         @relation("ItemVersionAuthor")
   connectorConnections      ConnectorConnection[]
   connectorOAuthStates      ConnectorOAuthState[]
+  actedContextSessions      ContextSession[]      @relation("ContextSessionActor")
+  requestedContextSessions  ContextSession[]      @relation("ContextSessionRequester")
 
   @@unique([orgId, authId])
   @@unique([orgId, id])
@@ -209,9 +220,49 @@ model Scope {
   invites   Invite[]
   bindings  Binding[]
   items     Item[]
+  sessions  ContextSession[]
 
   @@unique([orgId, id])
   @@index([orgId, ownerId])
+}
+
+/// A context session: the handshake a harness opens before it reads context or
+/// calls tools. Distinct from `Session`, which is a browser sign-in session.
+/// The snapshot columns are pinned at open, so control-plane edits never alter
+/// a running session.
+model ContextSession {
+  id                   String      @id @default(uuid(7))
+  orgId                String
+  scopeId              String
+  surface              String
+  locationRef          String
+  threadRef            String?
+  mode                 SessionMode
+  /// Scope IDs in resolution order, widest first.
+  scopeChain           String[]    @default([])
+  actingPrincipalId    String
+  requesterPrincipalId String?
+  /// The raw surface id of a requester with no identity link.
+  requesterExternalRef String?
+  standing             Json
+  policySnapshot       Json
+  snapshotHash         String
+  tokenHash            String      @unique
+  expiresAt            DateTime
+  closedAt             DateTime?
+  usage                Json?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  org                  Org         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope                Scope       @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  actingPrincipal      Principal   @relation("ContextSessionActor", fields: [orgId, actingPrincipalId], references: [orgId, id], onDelete: Restrict)
+  requesterPrincipal   Principal?  @relation("ContextSessionRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Restrict)
+
+  @@unique([orgId, id])
+  @@index([orgId, scopeId])
+  @@index([orgId, actingPrincipalId])
+  @@index([orgId, requesterPrincipalId])
+  @@index([orgId, expiresAt])
 }
 
 model Item {

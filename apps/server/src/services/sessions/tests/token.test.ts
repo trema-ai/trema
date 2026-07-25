@@ -1,0 +1,38 @@
+import { createHash } from "node:crypto";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  deriveMode,
+  hashSessionToken,
+  isSessionToken,
+  SESSION_TOKEN_TTL_MS,
+} from "#/services/sessions/index.js";
+
+describe("session token helpers", () => {
+  it("accepts only non-empty tokens with the session prefix", () => {
+    expect(isSessionToken("trema_ses_secret")).toBe(true);
+    expect(isSessionToken("trema_ses_")).toBe(false);
+    expect(isSessionToken("trema_sc_secret")).toBe(false);
+  });
+
+  it("hashes tokens with SHA-256 as lowercase hex", () => {
+    const token = "trema_ses_example";
+    const expected = createHash("sha256").update(token, "utf8").digest("hex");
+
+    expect(hashSessionToken(token)).toBe(expected);
+    expect(hashSessionToken(token)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("lives fifteen minutes", () => {
+    expect(SESSION_TOKEN_TTL_MS).toBe(15 * 60 * 1000);
+  });
+});
+
+describe("identity mode derivation", () => {
+  it("delegates in personal scopes and acts as the agent everywhere else", () => {
+    expect(deriveMode("personal")).toBe("delegated");
+    expect(deriveMode("shared")).toBe("service");
+    expect(deriveMode("org")).toBe("service");
+  });
+});

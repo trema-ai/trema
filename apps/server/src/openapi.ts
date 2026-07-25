@@ -55,6 +55,13 @@ export function generateOpenApiDocument() {
           description:
             "An organization-scoped service credential. The secret is shown once at creation and acts as the principal the credential is bound to.",
         },
+        sessionToken: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "trema_ses_…",
+          description:
+            "A context session token. Opening a session returns it once; it expires after fifteen minutes and renewal extends it.",
+        },
       },
     },
     // The tag order and descriptions drive the docs sidebar sections. Every
@@ -95,6 +102,10 @@ export function generateOpenApiDocument() {
       {
         name: "Service credentials",
         description: "Machine credentials for calling Trema as an organization principal.",
+      },
+      {
+        name: "Sessions",
+        description: "The handshake a harness opens before it reads context or calls tools.",
       },
     ],
   });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { LOG_FORMATS, LOG_THRESHOLDS } from "#/lib/logger/index.js";
+import { DEFAULT_STANDING_BUDGET_TOKENS } from "#/services/sessions/standing.js";
 
 const postgresUrl = z
   .string()
@@ -55,6 +56,11 @@ const environmentSchema = z
     TREMA_TERMS_URL: optionalUrl,
     TREMA_PRIVACY_URL: optionalUrl,
     TREMA_BOOTSTRAP_TOKEN: optionalString,
+    TREMA_SESSION_STANDING_BUDGET_TOKENS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .default(DEFAULT_STANDING_BUDGET_TOKENS),
     TREMA_CREDENTIAL_MASTER_KEY: optionalString,
     TREMA_OIDC_ISSUER: optionalString,
     TREMA_OIDC_CLIENT_ID: optionalString,
