@@ -35,6 +35,10 @@ type Member = {
   principal: { id: string; displayName: string };
 };
 
+type ActorOption = { value: string; label: string };
+
+const allActors: ActorOption = { value: "all", label: "All actors" };
+
 const timeFormat = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
   month: "short",
@@ -66,7 +70,7 @@ function ActorName({ entry }: { entry: AuditEntry }) {
 
 export function SettingsAuditPage() {
   const [action, setAction] = useState("all");
-  const [actor, setActor] = useState("all");
+  const [actor, setActor] = useState<ActorOption>(allActors);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
@@ -79,7 +83,7 @@ export function SettingsAuditPage() {
     orpc.audit.list.infiniteOptions({
       input: (cursor: string | undefined) => ({
         ...(action === "all" ? {} : { action }),
-        ...(actor === "all" ? {} : { actorPrincipalId: actor }),
+        ...(actor.value === allActors.value ? {} : { actorPrincipalId: actor.value }),
         ...(rangeStart ? { from: rangeStart } : {}),
         ...(rangeEnd ? { to: rangeEnd } : {}),
         ...(cursor ? { cursor } : {}),
@@ -98,13 +102,27 @@ export function SettingsAuditPage() {
     { value: "all", label: "All actions" },
     ...(actions.data ?? []).map((value) => ({ value, label: value })),
   ];
-  const actorOptions = [
-    { value: "all", label: "All actors" },
-    ...((members.data ?? []) as Member[]).map((member) => ({
-      value: member.principal.id,
-      label: member.principal.displayName,
-    })),
-  ];
+  // Members plus every actor the loaded rows mention, so the agent principal and
+  // anyone no longer a member stay selectable.
+  const actorOptions = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const member of (members.data ?? []) as Member[]) {
+      names.set(member.principal.id, member.principal.displayName);
+    }
+    for (const entry of rows) {
+      if (entry.actor) names.set(entry.actor.id, entry.actor.displayName);
+    }
+    if (actor.value !== allActors.value) names.set(actor.value, actor.label);
+    return [
+      allActors,
+      ...[...names]
+        .map(([value, label]) => ({ value, label }))
+        .sort(
+          (left, right) =>
+            left.label.localeCompare(right.label) || left.value.localeCompare(right.value),
+        ),
+    ];
+  }, [members.data, rows, actor]);
   const error = entries.error ?? actions.error;
 
   const columns: DataTableColumn<AuditEntry>[] = [
@@ -161,8 +179,10 @@ export function SettingsAuditPage() {
           />
           <FilterCombobox
             label="Actor"
-            value={actor}
-            onValueChange={setActor}
+            value={actor.value}
+            onValueChange={(value) =>
+              setActor(actorOptions.find((option) => option.value === value) ?? allActors)
+            }
             options={actorOptions}
             searchPlaceholder="Search actors…"
             emptyLabel="No actors match"

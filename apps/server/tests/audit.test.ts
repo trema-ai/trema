@@ -147,6 +147,26 @@ integration("audit log query", () => {
     expect(byRange.entries.map((entry) => entry.action)).toEqual(["invite.revoke"]);
   });
 
+  it("applies an exact action and an action prefix together", async () => {
+    const org = await createOrg();
+    await record(org.org.id, "invite.create", { actorPrincipalId: org.principal.id });
+    await record(org.org.id, "invite.redeem", { actorPrincipalId: org.principal.id });
+
+    const both = await call(
+      auditRouter.list,
+      { action: "invite.create", actionPrefix: "invite." },
+      { context: org.context },
+    );
+    expect(both.entries.map((entry) => entry.action)).toEqual(["invite.create"]);
+
+    const contradictory = await call(
+      auditRouter.list,
+      { action: "org.rename", actionPrefix: "invite." },
+      { context: org.context },
+    );
+    expect(contradictory.entries).toEqual([]);
+  });
+
   it("rejects a range whose start is after its end", async () => {
     const org = await createOrg();
     await expect(

@@ -20,7 +20,7 @@ export async function listAuditEntries(db: Database, input: ListAuditEntriesInpu
     where: {
       orgId: input.orgId,
       ...(input.action ? { action: input.action } : {}),
-      ...(input.actionPrefix ? { action: { startsWith: input.actionPrefix } } : {}),
+      ...(input.actionPrefix ? { AND: [{ action: { startsWith: input.actionPrefix } }] } : {}),
       ...(input.actorPrincipalId ? { actorPrincipalId: input.actorPrincipalId } : {}),
       ...(input.from || input.to
         ? {
