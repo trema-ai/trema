@@ -1,21 +1,20 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModel } from "ai";
+import type { EmbeddingModel } from "ai";
 
-import type { OpenAICompatibleEndpoint } from "#models/endpoints.js";
+import type { OpenAICompatibleEmbeddingEndpoint } from "#models/embedding-port.js";
 
-export function resolveOpenAICompatible(input: {
+export function resolveOpenAICompatibleEmbeddingModel(input: {
   endpointName: string;
-  endpoint: OpenAICompatibleEndpoint;
+  endpoint: OpenAICompatibleEmbeddingEndpoint;
   modelId: string;
   fetch?: typeof globalThis.fetch;
-}): LanguageModel {
+}): EmbeddingModel {
   const provider = createOpenAICompatible({
     name: input.endpointName,
     baseURL: input.endpoint.baseUrl,
-    apiKey: input.endpoint.apiKey,
+    ...(input.endpoint.apiKey === undefined ? {} : { apiKey: input.endpoint.apiKey }),
     ...(input.endpoint.headers === undefined ? {} : { headers: input.endpoint.headers }),
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
-    includeUsage: true,
   });
-  return provider(input.modelId);
+  return provider.embeddingModel(input.modelId);
 }

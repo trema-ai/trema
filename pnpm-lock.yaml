@@ -63,6 +63,9 @@ importers:
       '@trema/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
+      '@trema/models':
+        specifier: workspace:*
+        version: link:../../packages/models
       better-auth:
         specifier: ^1.6.23
         version: 1.6.23(7a5983874bfb7937d716f41bf3b435d5)

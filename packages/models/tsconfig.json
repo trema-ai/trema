@@ -10,7 +10,7 @@
     "declarationMap": false,
     "paths": {
       "@trema/harness": ["../harness/src/index.ts"],
-      "#/*": ["./src/*"]
+      "#models/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
