@@ -1,0 +1,26 @@
+# Everything the build stage produces for itself, or must never see.
+**/node_modules
+**/dist
+**/.tsbuildinfo
+**/*.tsbuildinfo
+**/.turbo
+**/.cloudflare
+**/.blume
+
+.git
+.github
+.claude
+**/.env
+**/.env.*
+!**/.env.example
+
+# The docs app is not in the image, but pnpm needs every workspace manifest
+# for `--frozen-lockfile` to agree with the lockfile.
+apps/docs/**
+!apps/docs/package.json
+
+commercial
+cla
+**/tests
+**/*.test.ts
+**/coverage
