@@ -13,7 +13,7 @@ import {
   redeemInvite,
   revokeInvite,
   setMemberRole,
-} from "#/services/members/index.js";
+} from "#server/services/members/index.js";
 import { authed, pub, requireCapability } from "./builders.js";
 
 const roleSchema = z

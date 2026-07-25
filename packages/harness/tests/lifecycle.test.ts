@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { ThreadDispatchLock } from "#/dispatch/index.js";
-import type { LoopResult } from "#/loop/index.js";
-import { InMemoryEngine, InMemoryRunStore } from "#/memory/index.js";
-import { InfrastructureAbortError, RunLifecycle } from "#/run/index.js";
-import { FakeContextSession } from "#/testing/index.js";
+import { ThreadDispatchLock } from "#harness/dispatch/index.js";
+import type { LoopResult } from "#harness/loop/index.js";
+import { InMemoryEngine, InMemoryRunStore } from "#harness/memory/index.js";
+import { InfrastructureAbortError, RunLifecycle } from "#harness/run/index.js";
+import { FakeContextSession } from "#harness/testing/index.js";
 
 const usage = {
   inputTokens: 2,

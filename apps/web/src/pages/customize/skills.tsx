@@ -2,14 +2,14 @@ import { FileText, Wrench } from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { KeyValueList } from "#/components/trema/key-value-list.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { StatusDot } from "#/components/trema/status-dot.tsx";
-import { Skeleton } from "#/components/ui/skeleton.tsx";
-import { cn } from "#/lib/utils.ts";
-import { ArchiveItemButton, LifecycleActions } from "#/pages/customize/item-editor.tsx";
-import type { Item, SkillBody } from "#/pages/customize/types.ts";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { KeyValueList } from "#web/components/trema/key-value-list.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { StatusDot } from "#web/components/trema/status-dot.tsx";
+import { Skeleton } from "#web/components/ui/skeleton.tsx";
+import { cn } from "#web/lib/utils.ts";
+import { ArchiveItemButton, LifecycleActions } from "#web/pages/customize/item-editor.tsx";
+import type { Item, SkillBody } from "#web/pages/customize/types.ts";
 
 const statusTone = { active: "go", proposed: "wait", archived: "neutral" } as const;
 

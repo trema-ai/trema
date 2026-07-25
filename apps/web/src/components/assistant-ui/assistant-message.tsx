@@ -1,7 +1,7 @@
 import { MessagePartPrimitive, MessagePrimitive } from "@assistant-ui/react";
 
-import { MessageActionBar } from "#/components/assistant-ui/action-bar.tsx";
-import { MarkdownText } from "#/components/assistant-ui/markdown-text.tsx";
+import { MessageActionBar } from "#web/components/assistant-ui/action-bar.tsx";
+import { MarkdownText } from "#web/components/assistant-ui/markdown-text.tsx";
 
 /* Subtle pulsing dot shown while the assistant is still writing. */
 function StreamingDot() {

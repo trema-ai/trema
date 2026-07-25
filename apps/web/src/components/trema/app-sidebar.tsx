@@ -11,14 +11,14 @@ import {
   Zap,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
-import { Avatar, AvatarFallback } from "#/components/ui/avatar.tsx";
+import { Avatar, AvatarFallback } from "#web/components/ui/avatar.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu.tsx";
+} from "#web/components/ui/dropdown-menu.tsx";
 import {
   Sidebar,
   SidebarContent,
@@ -30,7 +30,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "#/components/ui/sidebar.tsx";
+} from "#web/components/ui/sidebar.tsx";
 
 type Organization = { id: string; name: string };
 type SessionSummary = { id: string; title: string };

@@ -2,8 +2,8 @@ import { Brain, MessageSquarePlus, Settings, Zap } from "lucide-react";
 import { type ComponentProps, type ReactNode, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AppSidebar, type SessionSummary } from "#/components/trema/app-sidebar.tsx";
-import { TopBar } from "#/components/trema/top-bar.tsx";
+import { AppSidebar, type SessionSummary } from "#web/components/trema/app-sidebar.tsx";
+import { TopBar } from "#web/components/trema/top-bar.tsx";
 import {
   CommandDialog,
   CommandEmpty,
@@ -12,8 +12,8 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from "#/components/ui/command.tsx";
-import { SidebarInset, SidebarProvider } from "#/components/ui/sidebar.tsx";
+} from "#web/components/ui/command.tsx";
+import { SidebarInset, SidebarProvider } from "#web/components/ui/sidebar.tsx";
 
 type AppShellProps = {
   children: ReactNode;

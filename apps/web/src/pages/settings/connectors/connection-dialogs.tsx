@@ -1,8 +1,8 @@
 import { useMutation } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "#/components/ui/button.tsx";
-import { Checkbox } from "#/components/ui/checkbox.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Checkbox } from "#web/components/ui/checkbox.tsx";
 import {
   Dialog,
   DialogContent,
@@ -10,16 +10,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "#/components/ui/dialog.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
-import { rpcClient } from "#/lib/api.ts";
+} from "#web/components/ui/dialog.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
+import { rpcClient } from "#web/lib/api.ts";
 import {
   type CatalogProvider,
   type ConnectorConnection,
   type FieldDescriptor,
   messageFrom,
-} from "#/pages/settings/connectors/shared.tsx";
+} from "#web/pages/settings/connectors/shared.tsx";
 
 function returnUrl() {
   const url = new URL(window.location.href);

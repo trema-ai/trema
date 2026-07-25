@@ -4,12 +4,12 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient, type Database } from "#/lib/db/index.js";
-import { type Environment, parseEnv } from "#/lib/env/schema.js";
-import { serveTrema } from "#/server.js";
-import { promote, resetPassword } from "#/services/admin/index.js";
-import { mintBootstrapToken } from "#/services/bootstrap/index.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient, type Database } from "#server/lib/db/index.js";
+import { type Environment, parseEnv } from "#server/lib/env/schema.js";
+import { serveTrema } from "#server/server.js";
+import { promote, resetPassword } from "#server/services/admin/index.js";
+import { mintBootstrapToken } from "#server/services/bootstrap/index.js";
 
 const USAGE = `Usage: trema [command]
 

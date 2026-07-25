@@ -1,7 +1,7 @@
 import { Search } from "lucide-react";
 import { useLocation } from "react-router";
 
-import { ThemeToggle } from "#/components/trema/theme-toggle.tsx";
+import { ThemeToggle } from "#web/components/trema/theme-toggle.tsx";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -9,10 +9,10 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from "#/components/ui/breadcrumb.tsx";
-import { Kbd } from "#/components/ui/kbd.tsx";
-import { Separator } from "#/components/ui/separator.tsx";
-import { SidebarTrigger } from "#/components/ui/sidebar.tsx";
+} from "#web/components/ui/breadcrumb.tsx";
+import { Kbd } from "#web/components/ui/kbd.tsx";
+import { Separator } from "#web/components/ui/separator.tsx";
+import { SidebarTrigger } from "#web/components/ui/sidebar.tsx";
 
 const pageNames: Record<string, string> = {
   "/": "Runs",

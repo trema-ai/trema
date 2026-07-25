@@ -1,4 +1,4 @@
-import type { ToolDef, TranscriptMessage, Usage } from "#/core/index.js";
+import type { ToolDef, TranscriptMessage, Usage } from "#harness/core/index.js";
 
 /** Instructions, rules, and available skills fixed for a context session. */
 export interface SessionStanding {

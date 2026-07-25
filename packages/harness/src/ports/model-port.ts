@@ -5,8 +5,8 @@ import type {
   ToolDef,
   TranscriptMessage,
   Usage,
-} from "#/core/index.js";
-import type { RunEventData } from "#/events/index.js";
+} from "#harness/core/index.js";
+import type { RunEventData } from "#harness/events/index.js";
 
 /** Requested provider reasoning level. */
 export type ThinkingLevel = "off" | "low" | "medium" | "high";

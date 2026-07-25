@@ -1,6 +1,6 @@
-import type { Prisma, Scope, ScopeKind } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type { Prisma, Scope, ScopeKind } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 
 type ScopeDatabase = Database | Prisma.TransactionClient;
 

@@ -11,13 +11,13 @@ import {
 } from "@trema/connectors";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Prisma } from "#/generated/prisma/client.js";
-import { createAuth } from "#/lib/auth/index.js";
-import { encryptEnvelope } from "#/lib/crypto/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { parseEnv } from "#/lib/env/schema.js";
-import { connectorsRouter } from "#/rpc/connectors.js";
-import { orgRouter } from "#/rpc/org.js";
+import type { Prisma } from "#server/generated/prisma/client.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { encryptEnvelope } from "#server/lib/crypto/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { parseEnv } from "#server/lib/env/schema.js";
+import { connectorsRouter } from "#server/rpc/connectors.js";
+import { orgRouter } from "#server/rpc/org.js";
 import {
   ConnectorApprovalRequiredError,
   ConnectorReconnectRequiredError,
@@ -27,7 +27,7 @@ import {
   ConnectorTransportError,
   executeConnectorTool,
   type McpClientFactory,
-} from "#/services/connectors/index.js";
+} from "#server/services/connectors/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

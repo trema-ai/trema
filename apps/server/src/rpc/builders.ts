@@ -1,21 +1,24 @@
 import { oo } from "@orpc/openapi";
 import { ORPCError, os } from "@orpc/server";
 
-import type { Auth } from "#/lib/auth/index.js";
-import type { Database } from "#/lib/db/index.js";
-import type { Environment } from "#/lib/env/schema.js";
-import { bindLogger, log } from "#/lib/logger/index.js";
-import { authorize, type Capability } from "#/services/authorize/index.js";
+import type { Auth } from "#server/lib/auth/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import type { Environment } from "#server/lib/env/schema.js";
+import { bindLogger, log } from "#server/lib/logger/index.js";
+import { authorize, type Capability } from "#server/services/authorize/index.js";
 import type {
   ConnectorFetch,
   McpClientFactory,
   PlatformAppDirectory,
-} from "#/services/connectors/index.js";
+} from "#server/services/connectors/index.js";
 import {
   resolveServiceCredential,
   ServiceCredentialAuthenticationError,
-} from "#/services/credentials/index.js";
-import { authenticateSession, SessionAuthenticationError } from "#/services/sessions/index.js";
+} from "#server/services/credentials/index.js";
+import {
+  authenticateSession,
+  SessionAuthenticationError,
+} from "#server/services/sessions/index.js";
 
 export interface RpcContext {
   db: Database;

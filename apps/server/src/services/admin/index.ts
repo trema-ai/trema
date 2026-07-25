@@ -1,7 +1,7 @@
-import type { Auth } from "#/lib/auth/index.js";
-import type { Database } from "#/lib/db/index.js";
-import type { Environment } from "#/lib/env/schema.js";
-import { log } from "#/lib/logger/index.js";
+import type { Auth } from "#server/lib/auth/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import type { Environment } from "#server/lib/env/schema.js";
+import { log } from "#server/lib/logger/index.js";
 
 export class AdminUserNotFoundError extends Error {
   constructor(email: string) {

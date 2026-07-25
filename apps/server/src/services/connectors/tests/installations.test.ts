@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
-} from "#/services/connectors/installations.js";
+} from "#server/services/connectors/installations.js";
 
 const catalog = loadProviderCatalog([githubProvider, notionMcpProvider]);
 const bodySchema = createConnectorInstallationBodySchema(catalog);

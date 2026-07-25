@@ -11,11 +11,7 @@
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,
-    "types": ["vite/client"],
-    "paths": {
-      "@trema/connectors": ["../../packages/connectors/src/index.ts"],
-      "#/*": ["./src/*"]
-    }
+    "types": ["vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
 }

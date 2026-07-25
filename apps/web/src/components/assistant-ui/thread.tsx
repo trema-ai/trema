@@ -1,10 +1,10 @@
 import { AuiIf, ThreadPrimitive } from "@assistant-ui/react";
 import { ArrowDown } from "lucide-react";
 
-import { AssistantMessage } from "#/components/assistant-ui/assistant-message.tsx";
-import { Composer } from "#/components/assistant-ui/composer.tsx";
-import { UserMessage } from "#/components/assistant-ui/user-message.tsx";
-import { Button } from "#/components/ui/button.tsx";
+import { AssistantMessage } from "#web/components/assistant-ui/assistant-message.tsx";
+import { Composer } from "#web/components/assistant-ui/composer.tsx";
+import { UserMessage } from "#web/components/assistant-ui/user-message.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 
 /*
  * The full chat surface: a centered 740px reading column on the card

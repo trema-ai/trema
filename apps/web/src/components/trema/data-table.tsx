@@ -1,15 +1,15 @@
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { Button } from "#/components/ui/button.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Pagination,
   PaginationContent,
   PaginationEllipsis,
   PaginationItem,
-} from "#/components/ui/pagination.tsx";
-import { Skeleton } from "#/components/ui/skeleton.tsx";
+} from "#web/components/ui/pagination.tsx";
+import { Skeleton } from "#web/components/ui/skeleton.tsx";
 import {
   Table,
   TableBody,
@@ -17,8 +17,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "#/components/ui/table.tsx";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/table.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type DataTableColumn<T> = {
   key: string;

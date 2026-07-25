@@ -11,7 +11,7 @@ import {
   extractTokenResponseMetadata,
   parseGrantedScopes,
   requestedOAuthScopes,
-} from "#/services/connectors/connect.js";
+} from "#server/services/connectors/connect.js";
 import {
   buildMcpAuthorizationRequest,
   discoverMcpAuthServer,
@@ -19,7 +19,7 @@ import {
   type McpAuthServer,
   McpOAuthDiscoveryError,
   type ResolvedMcpClient,
-} from "#/services/connectors/mcp-oauth.js";
+} from "#server/services/connectors/mcp-oauth.js";
 
 const baseProvider = {
   ...githubProvider,

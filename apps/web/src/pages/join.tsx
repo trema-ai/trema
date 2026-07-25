@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
-import { AuthLayout } from "#/components/trema/auth-layout.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { authClient, orpc, rpcClient } from "#/lib/api.ts";
-import { Loading } from "#/pages/home.tsx";
+import { AuthLayout } from "#web/components/trema/auth-layout.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { authClient, orpc, rpcClient } from "#web/lib/api.ts";
+import { Loading } from "#web/pages/home.tsx";
 
 export function JoinPage() {
   const session = authClient.useSession();

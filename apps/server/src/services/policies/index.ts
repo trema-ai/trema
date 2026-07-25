@@ -1,7 +1,7 @@
-import type { Role, ScopeKind } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import type { Sensitivity } from "#/services/connectors/index.js";
+import type { Role, ScopeKind } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import type { Sensitivity } from "#server/services/connectors/index.js";
 
 export const sensitivityClasses = ["read", "write", "destructive"] as const;
 

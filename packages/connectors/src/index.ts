@@ -2,7 +2,7 @@ export {
   loadProviderCatalog,
   type ProviderCatalog,
   ProviderCatalogValidationError,
-} from "#/catalog.js";
+} from "#connectors/catalog.js";
 export {
   googleIdTokenIdentity,
   type PostConnectionHook,
@@ -10,7 +10,7 @@ export {
   type ProviderHook,
   type ProviderHookRegistry,
   providerHookRegistry,
-} from "#/hooks.js";
+} from "#connectors/hooks.js";
 export {
   type ListedOperation,
   listOperations,
@@ -22,8 +22,8 @@ export {
   type OpenApiDocument,
   openApiSpecToToolManifest,
   parseOpenApiDocument,
-} from "#/openapi/index.js";
-export * from "#/providers/index.js";
+} from "#connectors/openapi/index.js";
+export * from "#connectors/providers/index.js";
 export {
   type AuthMode,
   type AuthRecipe,
@@ -45,10 +45,10 @@ export {
   type ToolDefinition,
   toolDefinitionSchema,
   transportSchema,
-} from "#/schema.js";
+} from "#connectors/schema.js";
 export {
   extractPlaceholders,
   interpolate,
   TemplateInterpolationError,
   type TemplateValues,
-} from "#/templates.js";
+} from "#connectors/templates.js";

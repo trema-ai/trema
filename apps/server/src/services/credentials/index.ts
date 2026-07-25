@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 
 export const SERVICE_CREDENTIAL_PREFIX = "trema_sc_";
 

@@ -1,9 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
-import type { Prisma } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import type { Environment } from "#/lib/env/schema.js";
-import { type Logger, log } from "#/lib/logger/index.js";
+import type { Prisma } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import type { Environment } from "#server/lib/env/schema.js";
+import { type Logger, log } from "#server/lib/logger/index.js";
 
 const BOOTSTRAP_TOKEN_ID = "bootstrap";
 const BOOTSTRAP_ADVISORY_LOCK = 8_451_772_003;

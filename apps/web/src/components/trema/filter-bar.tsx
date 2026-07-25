@@ -1,7 +1,7 @@
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { Button } from "#/components/ui/button.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Command,
   CommandEmpty,
@@ -9,17 +9,17 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "#/components/ui/command.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "#/components/ui/popover.tsx";
+} from "#web/components/ui/command.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "#web/components/ui/popover.tsx";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select.tsx";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/select.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type FilterBarProps = {
   children: ReactNode;

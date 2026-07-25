@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Intercom's official MCP server is limited to US-hosted workspaces. The REST
 // API supports US, EU, and AU workspaces, so it is the org-capable transport.

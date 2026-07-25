@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "#/lib/db/index.js";
+import type { Database } from "#server/lib/db/index.js";
 import {
   authorize,
   type Capability,
   capabilities,
   roleAllowsCapability,
   roles,
-} from "#/services/authorize/index.js";
+} from "#server/services/authorize/index.js";
 
 const expected: Record<Capability, Record<(typeof roles)[number], boolean>> = {
   read: { owner: true, admin: true, member: true, viewer: true },

@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const airtableProvider = {
   key: "airtable",

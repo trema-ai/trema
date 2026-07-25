@@ -1,25 +1,25 @@
 import type { ProviderDef, RestTransport, ToolDefinition } from "@trema/connectors";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
   type Sensitivity,
-} from "#/services/connectors/installations.js";
+} from "#server/services/connectors/installations.js";
 import {
   ConnectorReconnectRequiredError,
   type ResolvedConnectionCredential,
   resolveConnectionCredential,
-} from "#/services/connectors/refresh.js";
-import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
+} from "#server/services/connectors/refresh.js";
+import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
 import {
   createStreamableHttpMcpClient,
   type McpClientFactory,
   type McpToolCallResult,
-} from "#/services/connectors/sync.js";
+} from "#server/services/connectors/sync.js";
 
 const defaultCatalog = loadProviderCatalog();
 const MAX_ATTEMPTS = 3;

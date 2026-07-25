@@ -1,5 +1,5 @@
-import type { ToolCall, ToolDef, TranscriptMessage } from "#/core/index.js";
-import type { RunEventData } from "#/events/index.js";
+import type { ToolCall, ToolDef, TranscriptMessage } from "#harness/core/index.js";
+import type { RunEventData } from "#harness/events/index.js";
 import type {
   AfterToolCallHook,
   BeforeToolCallHook,
@@ -7,7 +7,7 @@ import type {
   ToolExecutionOptions,
   ToolExecutionResult,
   ToolExecutor,
-} from "#/ports/index.js";
+} from "#harness/ports/index.js";
 
 /** Calls, definitions, executor, and hooks for one assistant-ordered tool batch. */
 export interface ToolBatchInput {

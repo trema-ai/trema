@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Cable, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
-import { Button } from "#/components/ui/button.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Card,
   CardAction,
@@ -13,10 +13,10 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "#/components/ui/card.tsx";
-import { orpc } from "#/lib/api.ts";
-import { StaticConnectionDialog } from "#/pages/settings/connectors/connection-dialogs.tsx";
-import { RegistrationDialog } from "#/pages/settings/connectors/registration-dialog.tsx";
+} from "#web/components/ui/card.tsx";
+import { orpc } from "#web/lib/api.ts";
+import { StaticConnectionDialog } from "#web/pages/settings/connectors/connection-dialogs.tsx";
+import { RegistrationDialog } from "#web/pages/settings/connectors/registration-dialog.tsx";
 import {
   type CatalogProvider,
   type ConnectorConnection,
@@ -25,7 +25,7 @@ import {
   categoryLabel,
   providerLogo,
   type Registration,
-} from "#/pages/settings/connectors/shared.tsx";
+} from "#web/pages/settings/connectors/shared.tsx";
 
 type ProviderRow = {
   provider: CatalogProvider;

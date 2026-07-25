@@ -8,14 +8,14 @@ import {
   useState,
 } from "react";
 import { Navigate, useNavigate } from "react-router";
-import { AppShell } from "#/components/trema/app-shell.tsx";
-import type { SessionSummary } from "#/components/trema/app-sidebar.tsx";
-import { AuthLayout } from "#/components/trema/auth-layout.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
-import { authClient, orpc, rpcClient } from "#/lib/api.ts";
+import { AppShell } from "#web/components/trema/app-shell.tsx";
+import type { SessionSummary } from "#web/components/trema/app-sidebar.tsx";
+import { AuthLayout } from "#web/components/trema/auth-layout.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
+import { authClient, orpc, rpcClient } from "#web/lib/api.ts";
 
 type ViewerRole = "owner" | "admin" | "member" | "viewer";
 

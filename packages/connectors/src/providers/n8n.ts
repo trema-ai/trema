@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // n8n's official MCP server serves product documentation, not an n8n instance's
 // workflows or executions, so this provider uses the instance REST API.

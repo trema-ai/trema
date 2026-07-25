@@ -9,8 +9,8 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "#/components/ui/dialog.tsx";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/dialog.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
   return (

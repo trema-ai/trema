@@ -2,14 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { KeyValueList } from "#/components/trema/key-value-list.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { SettingRow, SettingsSection } from "#/components/trema/settings-section.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
-import { useAuthenticatedSession, useViewerRole } from "#/pages/home.tsx";
+import { KeyValueList } from "#web/components/trema/key-value-list.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { SettingRow, SettingsSection } from "#web/components/trema/settings-section.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
+import { useAuthenticatedSession, useViewerRole } from "#web/pages/home.tsx";
 
 export function SettingsGeneralPage() {
   const session = useAuthenticatedSession();

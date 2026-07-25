@@ -56,7 +56,7 @@ export {
   startOAuthConnect,
   UnsupportedConnectorAuthModeError,
   updateConnectorConnectionLabel,
-} from "#/services/connectors/connect.js";
+} from "#server/services/connectors/connect.js";
 export {
   ConnectorApprovalRequiredError,
   ConnectorSsrfRejectedError,
@@ -67,7 +67,7 @@ export {
   executeConnectorTool,
   type McpConnectorToolResult,
   type RestConnectorToolResult,
-} from "#/services/connectors/execute.js";
+} from "#server/services/connectors/execute.js";
 export {
   type ArchiveConnectorInstallationInput,
   archiveConnectorInstallation,
@@ -91,7 +91,7 @@ export {
   syncedToolSchema,
   type UpdateConnectorInstallationInput,
   updateConnectorInstallation,
-} from "#/services/connectors/installations.js";
+} from "#server/services/connectors/installations.js";
 export {
   buildMcpAuthorizationRequest,
   discoverMcpAuthServer,
@@ -103,7 +103,7 @@ export {
   resolveExistingMcpClientRegistration,
   resolveMcpClientRegistration,
   resolveStoredMcpClientRegistration,
-} from "#/services/connectors/mcp-oauth.js";
+} from "#server/services/connectors/mcp-oauth.js";
 export {
   CONSERVATIVE_TOKEN_LIFETIME_SECONDS,
   type ConnectionCredentialPayload,
@@ -115,7 +115,7 @@ export {
   type ResolveConnectionCredentialInput,
   type ResolvedConnectionCredential,
   resolveConnectionCredential,
-} from "#/services/connectors/refresh.js";
+} from "#server/services/connectors/refresh.js";
 export {
   ClientRegistrationConflictError,
   ClientRegistrationNotFoundError,
@@ -131,12 +131,12 @@ export {
   resolveClientRegistration,
   resolveStoredClientRegistration,
   validateRegistrationFields,
-} from "#/services/connectors/registrations.js";
+} from "#server/services/connectors/registrations.js";
 export {
   ConnectorProviderSettingsError,
   listConnectorProviderSettings,
   updateConnectorProviderSettings,
-} from "#/services/connectors/settings.js";
+} from "#server/services/connectors/settings.js";
 export {
   ConnectorSyncTransportError,
   createStreamableHttpMcpClient,
@@ -150,4 +150,4 @@ export {
   type SyncReport,
   sensitivityFromMcpAnnotations,
   syncConnectorInstallation,
-} from "#/services/connectors/sync.js";
+} from "#server/services/connectors/sync.js";

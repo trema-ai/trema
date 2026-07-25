@@ -8,7 +8,7 @@ import {
   type LoggerOptions,
   log,
   withLogger,
-} from "#/lib/logger/index.js";
+} from "#server/lib/logger/index.js";
 
 function collecting(options: Omit<LoggerOptions, "write" | "now"> = {}) {
   const lines: string[] = [];

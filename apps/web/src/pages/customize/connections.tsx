@@ -3,10 +3,10 @@ import { Cable, RefreshCw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { CredentialStatusBadge } from "#/components/trema/credential-status-badge.tsx";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
+import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,8 +16,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "#/components/ui/alert-dialog.tsx";
-import { Button } from "#/components/ui/button.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Card,
   CardAction,
@@ -25,15 +25,15 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "#/components/ui/card.tsx";
-import { Skeleton } from "#/components/ui/skeleton.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
-import type { ConnectorBody, Item, Scope } from "#/pages/customize/types.ts";
-import { useAuthenticatedSession } from "#/pages/home.tsx";
+} from "#web/components/ui/card.tsx";
+import { Skeleton } from "#web/components/ui/skeleton.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
+import type { ConnectorBody, Item, Scope } from "#web/pages/customize/types.ts";
+import { useAuthenticatedSession } from "#web/pages/home.tsx";
 import {
   OAuthConnectionDialog,
   StaticConnectionDialog,
-} from "#/pages/settings/connectors/connection-dialogs.tsx";
+} from "#web/pages/settings/connectors/connection-dialogs.tsx";
 import {
   authModeLabel,
   type CatalogProvider,
@@ -41,7 +41,7 @@ import {
   categoryLabel,
   messageFrom,
   providerLogo,
-} from "#/pages/settings/connectors/shared.tsx";
+} from "#web/pages/settings/connectors/shared.tsx";
 
 const oauthModes = new Set(["oauth2_code", "mcp_oauth"]);
 

@@ -1,15 +1,15 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { log } from "#/lib/logger/index.js";
+import { log } from "#server/lib/logger/index.js";
 import {
   BootstrapConflictError,
   getBootstrapTokenHash,
   requireNoOrganizations,
   takeBootstrapLock,
   verifyBootstrapToken,
-} from "#/services/bootstrap/index.js";
-import { createOrgWithOwner } from "#/services/org/index.js";
+} from "#server/services/bootstrap/index.js";
+import { createOrgWithOwner } from "#server/services/org/index.js";
 import { authed } from "./builders.js";
 
 const bootstrapResult = z

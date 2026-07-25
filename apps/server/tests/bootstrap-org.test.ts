@@ -3,15 +3,15 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { type Environment, parseEnv } from "#/lib/env/schema.js";
-import { createLogger } from "#/lib/logger/index.js";
-import { bootstrapRouter } from "#/rpc/bootstrap.js";
-import { configRouter } from "#/rpc/config.js";
-import { orgRouter } from "#/rpc/org.js";
-import { hashBootstrapToken, initializeBootstrap } from "#/services/bootstrap/index.js";
-import { createOrgWithOwner } from "#/services/org/index.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { type Environment, parseEnv } from "#server/lib/env/schema.js";
+import { createLogger } from "#server/lib/logger/index.js";
+import { bootstrapRouter } from "#server/rpc/bootstrap.js";
+import { configRouter } from "#server/rpc/config.js";
+import { orgRouter } from "#server/rpc/org.js";
+import { hashBootstrapToken, initializeBootstrap } from "#server/services/bootstrap/index.js";
+import { createOrgWithOwner } from "#server/services/org/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

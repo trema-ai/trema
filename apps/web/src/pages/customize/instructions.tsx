@@ -3,7 +3,7 @@ import { ChevronRight, MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,30 +13,30 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "#/components/ui/alert-dialog.tsx";
-import { Button } from "#/components/ui/button.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "#/components/ui/collapsible.tsx";
+} from "#web/components/ui/collapsible.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu.tsx";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#/components/ui/sheet.tsx";
-import { Skeleton } from "#/components/ui/skeleton.tsx";
-import { Textarea } from "#/components/ui/textarea.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
-import { ItemVersionHistory } from "#/pages/customize/item-editor.tsx";
+} from "#web/components/ui/dropdown-menu.tsx";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#web/components/ui/sheet.tsx";
+import { Skeleton } from "#web/components/ui/skeleton.tsx";
+import { Textarea } from "#web/components/ui/textarea.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
+import { ItemVersionHistory } from "#web/pages/customize/item-editor.tsx";
 import {
   type InstructionBody,
   type Item,
   messageFrom,
   type Scope,
-} from "#/pages/customize/types.ts";
+} from "#web/pages/customize/types.ts";
 
 export function InstructionsTab({
   items,

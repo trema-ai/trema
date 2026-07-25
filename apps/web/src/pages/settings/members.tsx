@@ -3,12 +3,12 @@ import { MoreHorizontal, Plus, RotateCcw, UsersRound, UserX, X } from "lucide-re
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 
-import { CopyButton } from "#/components/trema/copy-button.tsx";
-import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
+import { CopyButton } from "#web/components/trema/copy-button.tsx";
+import { DataTable, type DataTableColumn } from "#web/components/trema/data-table.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,9 +19,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "#/components/ui/alert-dialog.tsx";
-import { Badge } from "#/components/ui/badge.tsx";
-import { Button } from "#/components/ui/button.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Badge } from "#web/components/ui/badge.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Dialog,
   DialogClose,
@@ -30,24 +30,24 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "#/components/ui/dialog.tsx";
+} from "#web/components/ui/dialog.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
+} from "#web/components/ui/dropdown-menu.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
-import { useAuthenticatedSession } from "#/pages/home.tsx";
+} from "#web/components/ui/select.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
+import { useAuthenticatedSession } from "#web/pages/home.tsx";
 
 type Role = "owner" | "admin" | "member" | "viewer";
 

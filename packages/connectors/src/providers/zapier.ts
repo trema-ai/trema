@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Zapier MCP endpoints are user-created tool bundles with connection-specific
 // URLs, so the stable OAuth REST API is the catalog's shared transport.

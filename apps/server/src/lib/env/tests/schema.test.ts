@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseEnv } from "#/lib/env/schema.js";
+import { parseEnv } from "#server/lib/env/schema.js";
 
 describe("parseEnv", () => {
   const authSecret = "a-development-auth-secret-with-32-characters";

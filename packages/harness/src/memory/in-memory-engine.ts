@@ -1,4 +1,4 @@
-import type { Engine, EngineTask } from "#/ports/index.js";
+import type { Engine, EngineTask } from "#harness/ports/index.js";
 
 /** In-memory reference engine with serial execution per thread and concurrent execution across threads. */
 export class InMemoryEngine implements Engine {

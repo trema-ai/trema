@@ -5,8 +5,8 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "#/components/ui/collapsible.tsx";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/collapsible.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type ReasoningBlockProps = {
   redacted?: boolean;

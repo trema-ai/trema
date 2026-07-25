@@ -2,25 +2,25 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ScrollText } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { FilterBar, FilterCombobox } from "#/components/trema/filter-bar.tsx";
-import { IdChip } from "#/components/trema/id-chip.tsx";
-import { KeyValueList } from "#/components/trema/key-value-list.tsx";
-import { OutputViewer } from "#/components/trema/output-viewer.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { Input } from "#/components/ui/input.tsx";
+import { DataTable, type DataTableColumn } from "#web/components/trema/data-table.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { FilterBar, FilterCombobox } from "#web/components/trema/filter-bar.tsx";
+import { IdChip } from "#web/components/trema/id-chip.tsx";
+import { KeyValueList } from "#web/components/trema/key-value-list.tsx";
+import { OutputViewer } from "#web/components/trema/output-viewer.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Input } from "#web/components/ui/input.tsx";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "#/components/ui/sheet.tsx";
-import { orpc } from "#/lib/api.ts";
+} from "#web/components/ui/sheet.tsx";
+import { orpc } from "#web/lib/api.ts";
 
 type AuditEntry = {
   id: string;

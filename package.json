@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "smoke:dist": "node scripts/smoke-dist.mjs",
     "dev": "pnpm -r --parallel dev",
     "test": "pnpm -r test",
     "lint": "biome lint .",

@@ -1,12 +1,12 @@
 import { serve } from "@hono/node-server";
 
-import { createApp } from "#/app.js";
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import type { Environment } from "#/lib/env/schema.js";
-import { configureLogger, log } from "#/lib/logger/index.js";
-import { initializeBootstrap } from "#/services/bootstrap/index.js";
-import { loadProviderCatalog } from "#/services/connectors/index.js";
+import { createApp } from "#server/app.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import type { Environment } from "#server/lib/env/schema.js";
+import { configureLogger, log } from "#server/lib/logger/index.js";
+import { initializeBootstrap } from "#server/services/bootstrap/index.js";
+import { loadProviderCatalog } from "#server/services/connectors/index.js";
 
 export interface ServeDependencies {
   env: Environment;

@@ -3,15 +3,15 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { Role } from "#/generated/prisma/client.js";
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { parseEnv } from "#/lib/env/schema.js";
-import { bindingsRouter } from "#/rpc/bindings.js";
-import { orgRouter } from "#/rpc/org.js";
-import { scopesRouter } from "#/rpc/scopes.js";
-import { surfacesRouter } from "#/rpc/surfaces.js";
-import { resolveLocation } from "#/services/bindings/index.js";
+import type { Role } from "#server/generated/prisma/client.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { parseEnv } from "#server/lib/env/schema.js";
+import { bindingsRouter } from "#server/rpc/bindings.js";
+import { orgRouter } from "#server/rpc/org.js";
+import { scopesRouter } from "#server/rpc/scopes.js";
+import { surfacesRouter } from "#server/rpc/surfaces.js";
+import { resolveLocation } from "#server/services/bindings/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

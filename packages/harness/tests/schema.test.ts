@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { RunEventData } from "#/events/schema.js";
-import { parseRunEvent, RunEventSchema } from "#/events/schema.js";
+import type { RunEventData } from "#harness/events/schema.js";
+import { parseRunEvent, RunEventSchema } from "#harness/events/schema.js";
 
 const usage = {
   inputTokens: 2,

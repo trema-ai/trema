@@ -1,7 +1,7 @@
 import type * as React from "react";
 
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { cn } from "#/lib/utils.ts";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type SteeringNoteProps = {
   author: string;

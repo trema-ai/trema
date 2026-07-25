@@ -22,7 +22,7 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
 ## Logging
 
 - Server code logs through the ambient logger: `import { log } from
-  "#/lib/logger/index.js"`, then `log.info("Member invited", { inviteId })`
+  "#server/lib/logger/index.js"`, then `log.info("Member invited", { inviteId })`
   — message first, details second. Never take a logger parameter and
   never use `console` outside `src/cli.ts` (the CLI reports in plain
   text; only `trema serve` emits log records).

@@ -5,7 +5,7 @@ import {
   DEFAULT_STANDING_BUDGET_TOKENS,
   estimateTokens,
   type StandingCandidate,
-} from "#/services/sessions/standing.js";
+} from "#server/services/sessions/standing.js";
 
 const orgScopeId = "scope-org";
 const sharedScopeId = "scope-shared";

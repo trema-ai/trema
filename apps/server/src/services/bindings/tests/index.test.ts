@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "#/lib/db/index.js";
-import { createBinding, UnknownSurfaceError } from "#/services/bindings/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { createBinding, UnknownSurfaceError } from "#server/services/bindings/index.js";
 
 describe("createBinding", () => {
   it("rejects an unknown surface before querying the database", async () => {

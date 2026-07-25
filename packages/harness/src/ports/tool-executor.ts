@@ -1,4 +1,4 @@
-import type { ImageBlock, TextBlock, ToolCall, ToolDef } from "#/core/index.js";
+import type { ImageBlock, TextBlock, ToolCall, ToolDef } from "#harness/core/index.js";
 
 /** Durable result of one tool call. */
 export interface ToolExecutionResult {

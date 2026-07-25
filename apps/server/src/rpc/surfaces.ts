@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { surfaceCatalog } from "#/services/surfaces/index.js";
+import { surfaceCatalog } from "#server/services/surfaces/index.js";
 import { requireCapability } from "./builders.js";
 
 const surfaceSchema = z

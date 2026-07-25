@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultDecisions } from "#/services/policies/index.js";
+import { defaultDecisions } from "#server/services/policies/index.js";
 
 describe("default approval policy", () => {
   it("allows reads, gates writes, and gates destructive calls in shared scopes", () => {

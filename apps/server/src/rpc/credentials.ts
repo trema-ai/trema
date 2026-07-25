@@ -7,7 +7,7 @@ import {
   revokeServiceCredential,
   ServiceCredentialAlreadyRevokedError,
   ServiceCredentialNotFoundError,
-} from "#/services/credentials/index.js";
+} from "#server/services/credentials/index.js";
 import { requireCapability, serviceAuthed } from "./builders.js";
 
 const credentialSchema = z

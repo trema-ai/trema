@@ -1,7 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { authorize } from "#/services/authorize/index.js";
+import { authorize } from "#server/services/authorize/index.js";
 import {
   createSharedScope,
   getPersonalPolicy,
@@ -11,7 +11,7 @@ import {
   ScopeNotFoundError,
   ScopeNotRenameableError,
   setPersonalPolicy,
-} from "#/services/scopes/index.js";
+} from "#server/services/scopes/index.js";
 import { requireCapability } from "./builders.js";
 
 const scopeKindSchema = z

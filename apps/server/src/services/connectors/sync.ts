@@ -1,21 +1,21 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
-import type { Prisma } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type { Prisma } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   ConnectorInstallationNotFoundError,
   createConnectorInstallationBodySchema,
   type Sensitivity,
   type SyncedTool,
-} from "#/services/connectors/installations.js";
+} from "#server/services/connectors/installations.js";
 import {
   ConnectorReconnectRequiredError,
   resolveConnectionCredential,
-} from "#/services/connectors/refresh.js";
-import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
+} from "#server/services/connectors/refresh.js";
+import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
 
 const defaultCatalog = loadProviderCatalog();
 

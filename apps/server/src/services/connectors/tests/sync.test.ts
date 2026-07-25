@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { ConnectorInstallationBody } from "#/services/connectors/installations.js";
+import type { ConnectorInstallationBody } from "#server/services/connectors/installations.js";
 import {
   mapMcpTool,
   mergeSyncedTools,
   sensitivityFromMcpAnnotations,
-} from "#/services/connectors/sync.js";
+} from "#server/services/connectors/sync.js";
 
 const connectionId = "00000000-0000-4000-8000-000000000001";
 

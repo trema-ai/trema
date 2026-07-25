@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Wordmark } from "#/components/trema/wordmark.tsx";
+import { Wordmark } from "#web/components/trema/wordmark.tsx";
 
 export function AuthLayout({
   title,

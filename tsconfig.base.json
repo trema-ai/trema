@@ -6,6 +6,11 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
 
+    // Resolve the "development" condition in package.json imports/exports, so
+    // typecheck and dev tooling read package sources; builds consume dist via
+    // project references, which redirect referenced sources to declarations.
+    "customConditions": ["development"],
+
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

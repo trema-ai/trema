@@ -3,28 +3,28 @@ import { Brain } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { FilterBar, FilterSearch, FilterSelect } from "#/components/trema/filter-bar.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { StatusDot } from "#/components/trema/status-dot.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
+import { DataTable, type DataTableColumn } from "#web/components/trema/data-table.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { FilterBar, FilterSearch, FilterSelect } from "#web/components/trema/filter-bar.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { StatusDot } from "#web/components/trema/status-dot.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select.tsx";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs.tsx";
-import { orpc } from "#/lib/api.ts";
-import { ConnectionsTab } from "#/pages/customize/connections.tsx";
-import { InstructionsTab } from "#/pages/customize/instructions.tsx";
-import { ItemEditorSheet } from "#/pages/customize/item-editor.tsx";
-import { SkillsTab } from "#/pages/customize/skills.tsx";
-import { type Item, type MemoryBody, orderScopes, type Scope } from "#/pages/customize/types.ts";
-import { useAuthenticatedSession } from "#/pages/home.tsx";
+} from "#web/components/ui/select.tsx";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
+import { orpc } from "#web/lib/api.ts";
+import { ConnectionsTab } from "#web/pages/customize/connections.tsx";
+import { InstructionsTab } from "#web/pages/customize/instructions.tsx";
+import { ItemEditorSheet } from "#web/pages/customize/item-editor.tsx";
+import { SkillsTab } from "#web/pages/customize/skills.tsx";
+import { type Item, type MemoryBody, orderScopes, type Scope } from "#web/pages/customize/types.ts";
+import { useAuthenticatedSession } from "#web/pages/home.tsx";
 
 const statusTone = { active: "go", proposed: "wait", archived: "neutral" } as const;
 

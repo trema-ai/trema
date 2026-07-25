@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { RunState } from "#/core/run-state.js";
-import { canTransition, LEGAL_RUN_STATE_TRANSITIONS, RUN_STATES } from "#/core/run-state.js";
+import type { RunState } from "#harness/core/run-state.js";
+import { canTransition, LEGAL_RUN_STATE_TRANSITIONS, RUN_STATES } from "#harness/core/run-state.js";
 
 const expectedTransitions = new Set<string>([
   "queued:running",

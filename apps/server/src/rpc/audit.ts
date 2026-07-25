@@ -6,7 +6,7 @@ import {
   AUDIT_PAGE_SIZE,
   listAuditActions,
   listAuditEntries,
-} from "#/services/audit/index.js";
+} from "#server/services/audit/index.js";
 import { requireCapability } from "./builders.js";
 
 const auditActorSchema = z

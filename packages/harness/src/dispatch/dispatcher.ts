@@ -1,6 +1,6 @@
-import type { TranscriptMessage } from "#/core/index.js";
-import type { PrincipalRef } from "#/events/index.js";
-import type { QueuedInput, RunRecord, RunStore } from "#/ports/index.js";
+import type { TranscriptMessage } from "#harness/core/index.js";
+import type { PrincipalRef } from "#harness/events/index.js";
+import type { QueuedInput, RunRecord, RunStore } from "#harness/ports/index.js";
 import type { ThreadDispatchLock } from "./dispatch-lock.js";
 
 interface IntentBase {

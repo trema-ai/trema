@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ImageBlock, TextBlock, ToolCall, ToolDef } from "#/core/index.js";
-import { executeToolBatch } from "#/loop/tool-batch.js";
-import type { ToolExecutionResult, ToolExecutor } from "#/ports/index.js";
+import type { ImageBlock, TextBlock, ToolCall, ToolDef } from "#harness/core/index.js";
+import { executeToolBatch } from "#harness/loop/tool-batch.js";
+import type { ToolExecutionResult, ToolExecutor } from "#harness/ports/index.js";
 
 const calls: ToolCall[] = [
   { callId: "call-1", name: "first", input: { value: 1 } },

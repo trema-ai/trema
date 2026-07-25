@@ -1,11 +1,11 @@
 import { type FormEvent, type ReactNode, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
-import { AuthLayout, OrDivider } from "#/components/trema/auth-layout.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
-import { authClient } from "#/lib/api.ts";
+import { AuthLayout, OrDivider } from "#web/components/trema/auth-layout.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
+import { authClient } from "#web/lib/api.ts";
 
 type Providers = { password: boolean; google: boolean };
 type Legal = { termsUrl: string | null; privacyUrl: string | null };

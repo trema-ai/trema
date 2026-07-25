@@ -1,7 +1,7 @@
-import type { TranscriptMessage, Trigger, Usage } from "#/core/index.js";
-import type { ThreadDispatchLock } from "#/dispatch/index.js";
-import type { LoopResult } from "#/loop/index.js";
-import type { ContextSession, Engine, RunRecord, RunStore } from "#/ports/index.js";
+import type { TranscriptMessage, Trigger, Usage } from "#harness/core/index.js";
+import type { ThreadDispatchLock } from "#harness/dispatch/index.js";
+import type { LoopResult } from "#harness/loop/index.js";
+import type { ContextSession, Engine, RunRecord, RunStore } from "#harness/ports/index.js";
 
 /** Metadata and optional execution task for a new run. */
 export interface CreateRunInput {

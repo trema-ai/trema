@@ -7,8 +7,8 @@ import type * as React from "react";
 import { memo } from "react";
 import remarkGfm from "remark-gfm";
 
-import { CopyButton } from "#/components/trema/copy-button.tsx";
-import { cn } from "#/lib/utils.ts";
+import { CopyButton } from "#web/components/trema/copy-button.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 /*
  * Markdown renderer for assistant messages. Prose styles are written by
