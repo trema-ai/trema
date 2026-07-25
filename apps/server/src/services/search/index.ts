@@ -1,5 +1,6 @@
 import type { ItemKind } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 
 const defaultLimit = 20;
 const maxLimit = 50;
@@ -61,7 +62,9 @@ export async function indexItemSafely(db: Database, item: IndexableItem): Promis
   try {
     await indexItem(db, item);
   } catch (error) {
-    console.warn("Item search index write failed", { itemId: item.id, error });
+    // The orgId is what an operator feeds back to rebuildSearchIndex, so the
+    // failure line carries it even though a request already binds it.
+    log.warn("Item search index write failed", { itemId: item.id, orgId: item.orgId, error });
   }
 }
 
@@ -69,6 +72,7 @@ export async function rebuildSearchIndex(db: Database, orgId: string): Promise<v
   await db.itemSearchDoc.deleteMany({ where: { orgId } });
 
   let after: string | undefined;
+  let indexed = 0;
   for (;;) {
     const items = await db.item.findMany({
       where: { orgId, ...(after ? { id: { gt: after } } : {}) },
@@ -76,7 +80,7 @@ export async function rebuildSearchIndex(db: Database, orgId: string): Promise<v
       take: rebuildBatchSize,
       select: { id: true, kind: true, title: true, body: true },
     });
-    if (items.length === 0) return;
+    if (items.length === 0) break;
 
     await db.itemSearchDoc.createMany({
       data: items.map((item) => ({
@@ -86,8 +90,10 @@ export async function rebuildSearchIndex(db: Database, orgId: string): Promise<v
         content: searchableText(item.kind, item.body),
       })),
     });
+    indexed += items.length;
     after = items[items.length - 1]!.id;
   }
+  log.info("Item search index rebuilt", { orgId, itemCount: indexed });
 }
 
 export async function searchItems(
