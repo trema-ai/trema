@@ -529,4 +529,40 @@ integration("item embeddings and hybrid search", () => {
     expect(result).toEqual({ embedded: 32, failed: 0 });
     await expect(countVectors(org.org.id)).resolves.toBe(32);
   });
+
+  it("rescans rows embedded earlier in the run when the model changes", async () => {
+    const org = await createOrg();
+    await configure(org.org.id);
+    for (let index = 0; index < 33; index += 1) {
+      await createMemory(org, {
+        title: `Deploy note ${String(index).padStart(2, "0")}`,
+        content: "Deploy notes for the rollout.",
+        embedder: failingEmbedder,
+      });
+    }
+
+    // The first batch runs as model-a; every later batch reports model-b, so
+    // the rows the first batch wrote are stale again and must be rescanned.
+    let embedCalls = 0;
+    const switchingEmbedder: Embedder = {
+      get model() {
+        return embedCalls === 0 ? "model-a" : "model-b";
+      },
+      embed: async (texts) => {
+        embedCalls += 1;
+        return texts.map(fakeVector);
+      },
+    };
+
+    // 32 rows as model-a, then the 32 rescanned rows as model-b, then the one
+    // row the first pass never reached.
+    const result = await backfillEmbeddings(db, org.org.id, { embedder: switchingEmbedder });
+    expect(result).toEqual({ embedded: 65, failed: 0 });
+
+    const [staleRows] = await db.$queryRaw<[{ count: number }]>`
+      SELECT count(*)::int AS count FROM "ItemSearchDoc"
+      WHERE "orgId" = ${org.org.id} AND "embeddingModel" IS DISTINCT FROM 'model-b'
+    `;
+    expect(staleRows?.count).toBe(0);
+  });
 });

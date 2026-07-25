@@ -196,6 +196,7 @@ export async function backfillEmbeddings(
   let after = "";
   let embedded = 0;
   let failed = 0;
+  let lastModel: string | undefined;
   for (;;) {
     // Re-resolved every batch: when the settings change mid-run, the next
     // batch embeds under the new configuration, and a deleted settings row
@@ -203,11 +204,18 @@ export async function backfillEmbeddings(
     const embedder = await resolveEmbedder(db, orgId, options);
     if (!embedder) break;
 
+    // A model change mid-run restarts the scan: rows this run embedded under
+    // the earlier model sit behind the cursor and are stale again. The restart
+    // terminates, because re-embedded rows drop out of the filter below.
+    const model = embedder.model;
+    if (lastModel !== undefined && model !== lastModel) after = "";
+    lastModel = model;
+
     const rows = await db.$queryRaw<Array<{ itemId: string; title: string; content: string }>>`
       SELECT "itemId", "title", "content"
       FROM "ItemSearchDoc"
       WHERE "orgId" = ${orgId}
-        AND ("embedding" IS NULL OR "embeddingModel" IS DISTINCT FROM ${embedder.model})
+        AND ("embedding" IS NULL OR "embeddingModel" IS DISTINCT FROM ${model})
         AND "itemId" > ${after}
       ORDER BY "itemId"
       LIMIT ${embedBatchSize}
@@ -225,7 +233,7 @@ export async function backfillEmbeddings(
           failed += 1;
           continue;
         }
-        await writeEmbedding(db, { orgId, itemId: row.itemId, vector, model: embedder.model });
+        await writeEmbedding(db, { orgId, itemId: row.itemId, vector, model });
         embedded += 1;
       }
     } catch (error) {
