@@ -7,6 +7,8 @@ import { log } from "#server/lib/logger/index.js";
 import type { ConnectorFetch } from "#server/services/connectors/connect.js";
 import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
 import type { McpClientFactory } from "#server/services/connectors/sync.js";
+import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
+import { indexItemSafely } from "#server/services/search/index.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
 export const sensitivitySchema = z.enum(sensitivities);
@@ -269,7 +271,7 @@ export async function archiveConnectorInstallation(
   });
 }
 
-export interface CreateConnectorInstallationInput {
+export interface CreateConnectorInstallationInput extends EmbeddingOptions {
   orgId: string;
   actorPrincipalId: string;
   scopeId: string;
@@ -277,7 +279,6 @@ export interface CreateConnectorInstallationInput {
   connectionId: string;
   enabledTools?: "all" | string[];
   sensitivityOverrides?: Record<string, Sensitivity>;
-  masterKey?: string;
   clientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
   fetch?: ConnectorFetch;
@@ -412,6 +413,7 @@ export async function createConnectorInstallation(
     provider: provider.key,
     connectionId: body.connectionId,
   });
+  await indexItemSafely(db, installation, input);
   if (provider.transport.type === "mcp") {
     const { syncConnectorInstallation } = await import("#server/services/connectors/sync.js");
     const sync = syncConnectorInstallation(db, {
@@ -443,7 +445,7 @@ export async function createConnectorInstallation(
   return installation;
 }
 
-export interface UpdateConnectorInstallationInput {
+export interface UpdateConnectorInstallationInput extends EmbeddingOptions {
   orgId: string;
   actorPrincipalId: string;
   installationItemId: string;
@@ -458,7 +460,7 @@ export async function updateConnectorInstallation(
   input: UpdateConnectorInstallationInput,
 ) {
   const catalog = input.catalog ?? defaultCatalog;
-  return db.$transaction(async (transaction) => {
+  const updated = await db.$transaction(async (transaction) => {
     const existing = await transaction.item.findFirst({
       where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
     });
@@ -539,4 +541,6 @@ export async function updateConnectorInstallation(
     });
     return installation;
   });
+  await indexItemSafely(db, updated, input);
+  return updated;
 }

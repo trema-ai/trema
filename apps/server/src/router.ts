@@ -4,10 +4,12 @@ import { bootstrapRouter } from "./rpc/bootstrap.js";
 import { configRouter } from "./rpc/config.js";
 import { connectorsRouter } from "./rpc/connectors.js";
 import { serviceCredentialsRouter } from "./rpc/credentials.js";
+import { embeddingsRouter } from "./rpc/embeddings.js";
 import { itemsRouter } from "./rpc/items.js";
 import { membersRouter } from "./rpc/members.js";
 import { orgRouter } from "./rpc/org.js";
 import { scopesRouter } from "./rpc/scopes.js";
+import { searchRouter } from "./rpc/search.js";
 import { sessionsRouter } from "./rpc/sessions.js";
 import { surfacesRouter } from "./rpc/surfaces.js";
 import { systemRouter } from "./rpc/system.js";
@@ -18,10 +20,12 @@ export const router = {
   bindings: bindingsRouter,
   config: configRouter,
   connectors: connectorsRouter,
+  embeddings: embeddingsRouter,
   members: membersRouter,
   items: itemsRouter,
   org: orgRouter,
   scopes: scopesRouter,
+  search: searchRouter,
   serviceCredentials: serviceCredentialsRouter,
   sessions: sessionsRouter,
   system: systemRouter,
