@@ -50,6 +50,18 @@ export class DataPlaneItemNotFoundError extends DataPlaneToolError {
   }
 }
 
+/**
+ * A conversation the session may not read reports exactly like one that does
+ * not exist, for the same reason a hidden item does: a distinct refusal would
+ * tell a run that another person's thread is there.
+ */
+export class DataPlaneConversationNotFoundError extends DataPlaneToolError {
+  constructor(message = "Conversation not found") {
+    super("conversation_not_found", message);
+    this.name = "DataPlaneConversationNotFoundError";
+  }
+}
+
 export interface SearchContextInput extends EmbeddingOptions {
   query: string;
   kinds?: ItemKind[];

@@ -166,6 +166,7 @@ integration("data plane", () => {
     const client = await connect(opened.sessionToken);
     const listed = await client.listTools();
     expect(listed.tools.map(({ name }) => name).sort()).toEqual([
+      "fetch_transcript",
       "get_item",
       "save_memory",
       "search_context",

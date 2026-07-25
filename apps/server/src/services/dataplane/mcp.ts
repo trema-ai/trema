@@ -15,6 +15,11 @@ import {
   searchContext,
 } from "#/services/dataplane/index.js";
 import { saveMemory, updateMemory } from "#/services/dataplane/memory.js";
+import {
+  FETCH_TRANSCRIPT_DEFAULT_WINDOW,
+  FETCH_TRANSCRIPT_MAX_WINDOW,
+  fetchTranscript,
+} from "#/services/dataplane/transcript.js";
 import { ItemValidationError, memoryTypes } from "#/services/items/index.js";
 import {
   authenticateSession,
@@ -250,6 +255,116 @@ export function createDataPlaneServer(
           scopeId: item.scopeId,
           status: item.status,
           version: item.version,
+        };
+        return { content: textResult(structuredContent), structuredContent };
+      }),
+  );
+
+  server.registerTool(
+    "fetch_transcript",
+    {
+      title: "Fetch transcript",
+      description:
+        "Read part of a captured conversation, word for word. Use it when a summary is not enough — the exact wording, an error string, or what came just before or after a message. The window is bounded: ask for a place in the thread and read around it, then ask again to move.",
+      inputSchema: {
+        conversationId: z.string().min(1).describe("The conversation's ID."),
+        aroundSeq: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            "Centre the window on this message number, with about half the window before it. Omit it to read the end of the thread.",
+          ),
+        window: z
+          .number()
+          .int()
+          .min(1)
+          .max(FETCH_TRANSCRIPT_MAX_WINDOW)
+          .optional()
+          .describe(`How many messages to return. Defaults to ${FETCH_TRANSCRIPT_DEFAULT_WINDOW}.`),
+      },
+      outputSchema: {
+        conversationId: z.string().describe("The conversation's ID."),
+        surface: z.string().describe("The surface the conversation happened on."),
+        threadRef: z
+          .string()
+          .describe("The thread within the location. It repeats the location when there is none."),
+        participants: z
+          .array(
+            z.object({
+              principalId: z
+                .string()
+                .nullable()
+                .describe("The participant's principal ID, when they are linked to one."),
+              externalRef: z
+                .string()
+                .nullable()
+                .describe("The participant's raw surface id, when they have no link."),
+            }),
+          )
+          .describe("Everyone seen in the thread so far."),
+        messageCount: z.number().int().describe("How many messages the whole conversation holds."),
+        firstSeq: z
+          .number()
+          .int()
+          .nullable()
+          .describe("The first message number in the conversation. Null when it is empty."),
+        lastSeq: z
+          .number()
+          .int()
+          .nullable()
+          .describe("The last message number in the conversation. Null when it is empty."),
+        hasMoreBefore: z
+          .boolean()
+          .describe("Whether messages sit before this window. Ask again with a lower `aroundSeq`."),
+        hasMoreAfter: z
+          .boolean()
+          .describe("Whether messages sit after this window. Ask again with a higher `aroundSeq`."),
+        messages: z
+          .array(
+            z.object({
+              seq: z.number().int().describe("The message's place in the thread."),
+              sentAt: z.string().describe("When the message was sent. An ISO 8601 date-time."),
+              authorPrincipalId: z
+                .string()
+                .nullable()
+                .describe("The author's principal ID, when they are linked to one."),
+              authorExternalRef: z
+                .string()
+                .nullable()
+                .describe("The author's raw surface id, when they have no link."),
+              text: z.string().describe("What was said, word for word."),
+            }),
+          )
+          .describe("The window, oldest message first."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ conversationId, aroundSeq, window }) =>
+      runTool("fetch_transcript", async () => {
+        const transcript = await fetchTranscript(db, session, {
+          conversationId,
+          ...(aroundSeq === undefined ? {} : { aroundSeq }),
+          ...(window === undefined ? {} : { window }),
+        });
+        const structuredContent = {
+          conversationId: transcript.conversationId,
+          surface: transcript.surface,
+          threadRef: transcript.threadRef,
+          participants: transcript.participants,
+          messageCount: transcript.messageCount,
+          firstSeq: transcript.firstSeq,
+          lastSeq: transcript.lastSeq,
+          hasMoreBefore: transcript.hasMoreBefore,
+          hasMoreAfter: transcript.hasMoreAfter,
+          messages: transcript.messages.map((message) => ({
+            seq: message.seq,
+            sentAt: message.sentAt.toISOString(),
+            authorPrincipalId: message.authorPrincipalId,
+            authorExternalRef: message.authorExternalRef,
+            text: message.text,
+          })),
         };
         return { content: textResult(structuredContent), structuredContent };
       }),

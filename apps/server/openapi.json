@@ -9519,6 +9519,224 @@
         ]
       }
     },
+    "/sessions/{id}/messages": {
+      "post": {
+        "operationId": "sessions.messages",
+        "summary": "Report conversation messages",
+        "description": "Report the messages of the thread this session serves — the people's and the agent's. The thread is identified by the session's surface location, so repeated sessions on it extend one conversation. Reporting the same batch twice changes nothing.",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the session reporting the messages. A UUID."
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "messages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "surfaceMessageRef": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "The surface's own id for the message. It is the dedup key: reporting it again edits the stored message instead of adding a second one."
+                        },
+                        "operation": {
+                          "enum": [
+                            "upsert",
+                            "delete"
+                          ],
+                          "type": "string",
+                          "description": "`upsert` lands a new message or edits the one with this reference; `delete` removes it, for a message retracted on the surface. Defaults to `upsert`."
+                        },
+                        "author": {
+                          "type": "object",
+                          "properties": {
+                            "principalId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "The author's principal ID. A UUID."
+                            },
+                            "externalRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "The author's raw surface id. An id that is linked to a person also records the principal."
+                            }
+                          },
+                          "description": "Who said it. Required for `upsert`, ignored for `delete`."
+                        },
+                        "sentAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the message was sent. Required for `upsert`, ignored for `delete`."
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "What was said. Required for `upsert`, ignored for `delete`."
+                        }
+                      },
+                      "required": [
+                        "surfaceMessageRef"
+                      ],
+                      "description": "One reported message."
+                    },
+                    "description": "The messages to report, oldest first."
+                  }
+                },
+                "required": [
+                  "messages"
+                ],
+                "description": "A batch of messages to capture on the session's thread."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "conversationId": {
+                      "type": "string",
+                      "description": "The conversation the messages landed on."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The scope the conversation belongs to."
+                    },
+                    "threadRef": {
+                      "type": "string",
+                      "description": "The thread within the location. It repeats the location when there is none."
+                    },
+                    "created": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many messages were new."
+                    },
+                    "updated": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many stored messages the batch edited."
+                    },
+                    "unchanged": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many messages were already stored as reported."
+                    },
+                    "deleted": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many stored messages the batch removed."
+                    },
+                    "notFound": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many deletions named a message that was not stored."
+                    },
+                    "messageCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many messages the conversation holds after the batch."
+                    },
+                    "lastActivityAt": {
+                      "type": "string",
+                      "description": "The conversation's latest activity. An ISO 8601 date-time."
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "surfaceMessageRef": {
+                            "type": "string",
+                            "description": "The reference, as reported."
+                          },
+                          "outcome": {
+                            "enum": [
+                              "created",
+                              "updated",
+                              "unchanged",
+                              "deleted",
+                              "not_found"
+                            ],
+                            "type": "string",
+                            "description": "What became of this message."
+                          },
+                          "seq": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The message's place in the thread. Null when there was nothing to act on."
+                          }
+                        },
+                        "required": [
+                          "surfaceMessageRef",
+                          "outcome",
+                          "seq"
+                        ]
+                      },
+                      "description": "One result per reported message, in the order reported."
+                    }
+                  },
+                  "required": [
+                    "conversationId",
+                    "scopeId",
+                    "threadRef",
+                    "created",
+                    "updated",
+                    "unchanged",
+                    "deleted",
+                    "notFound",
+                    "messageCount",
+                    "lastActivityAt",
+                    "results"
+                  ],
+                  "description": "What the batch did to the conversation."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ]
+      }
+    },
     "/system/ping": {
       "get": {
         "operationId": "system.ping",

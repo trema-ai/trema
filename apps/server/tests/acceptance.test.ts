@@ -166,6 +166,58 @@ integration("acceptance", () => {
       body: { type: "fact", content: "Priya runs the release train and announces the freeze." },
     });
 
+    // The harness reports what was said in the thread it answered in.
+    const captureResponse = await app.fetch(
+      new Request(`${origin}/api/v1/sessions/${session.sessionId}/messages`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session.sessionToken}`,
+        },
+        body: JSON.stringify({
+          messages: [
+            {
+              surfaceMessageRef: "1700000000.0001",
+              author: { externalRef: "U-ASKS" },
+              sentAt: "2026-07-24T09:00:00.000Z",
+              text: "Who runs the release train?",
+            },
+            {
+              surfaceMessageRef: "1700000000.0002",
+              author: { externalRef: "U-AGENT" },
+              sentAt: "2026-07-24T09:00:12.000Z",
+              text: "Priya runs it and announces the freeze on Monday evening.",
+            },
+          ],
+        }),
+      }),
+    );
+    expect(captureResponse.status).toBe(200);
+    const captured = (await captureResponse.json()) as {
+      conversationId: string;
+      created: number;
+    };
+    expect(captured.created).toBe(2);
+
+    // The model can read the thread back, word for word.
+    const window = (await client.callTool({
+      name: "fetch_transcript",
+      arguments: { conversationId: captured.conversationId },
+    })) as CallToolResult;
+    expect(window.structuredContent).toMatchObject({
+      conversationId: captured.conversationId,
+      messageCount: 2,
+      firstSeq: 1,
+      lastSeq: 2,
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    });
+    const { messages } = window.structuredContent as { messages: { text: string }[] };
+    expect(messages.map(({ text }) => text)).toEqual([
+      "Who runs the release train?",
+      "Priya runs it and announces the freeze on Monday evening.",
+    ]);
+
     await client.close();
 
     // The run's usage lands on the session, and the whole exchange is in the
@@ -193,6 +245,8 @@ integration("acceptance", () => {
         "dataplane.search_context",
         "dataplane.get_item",
         "dataplane.save_memory",
+        "session.messages",
+        "dataplane.fetch_transcript",
         "session.close",
       ]),
     );

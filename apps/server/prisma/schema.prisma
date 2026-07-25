@@ -153,6 +153,8 @@ model Org {
   connectorProviderSettings ConnectorProviderSettings[]
   embeddingSettings         EmbeddingSettings?
   contextSessions           ContextSession[]
+  conversations             Conversation[]
+  messages                  Message[]
 }
 
 model Principal {
@@ -183,6 +185,7 @@ model Principal {
   connectorOAuthStates      ConnectorOAuthState[]
   actedContextSessions      ContextSession[]      @relation("ContextSessionActor")
   requestedContextSessions  ContextSession[]      @relation("ContextSessionRequester")
+  authoredMessages          Message[]             @relation("MessageAuthor")
 
   @@unique([orgId, authId])
   @@unique([orgId, id])
@@ -208,20 +211,21 @@ model IdentityLink {
 /// Personal-scope uniqueness is enforced by the DB-level partial unique index
 /// `Scope_one_personal_per_owner` on (orgId, ownerId) where kind = 'personal'.
 model Scope {
-  id        String     @id @default(uuid(7))
-  orgId     String
-  kind      ScopeKind
-  name      String
-  ownerId   String?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  owner     Principal? @relation("ScopeOwner", fields: [orgId, ownerId], references: [orgId, id], onDelete: Restrict)
-  grants    Grant[]
-  invites   Invite[]
-  bindings  Binding[]
-  items     Item[]
-  sessions  ContextSession[]
+  id            String           @id @default(uuid(7))
+  orgId         String
+  kind          ScopeKind
+  name          String
+  ownerId       String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  org           Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner         Principal?       @relation("ScopeOwner", fields: [orgId, ownerId], references: [orgId, id], onDelete: Restrict)
+  grants        Grant[]
+  invites       Invite[]
+  bindings      Binding[]
+  items         Item[]
+  sessions      ContextSession[]
+  conversations Conversation[]
 
   @@unique([orgId, id])
   @@index([orgId, ownerId])
@@ -264,6 +268,88 @@ model ContextSession {
   @@index([orgId, actingPrincipalId])
   @@index([orgId, requesterPrincipalId])
   @@index([orgId, expiresAt])
+}
+
+/// One captured thread, whatever surface it happened on. Identity is
+/// `(surface, locationRef, threadRef)`, so repeated sessions on the same thread
+/// extend one conversation instead of starting another.
+///
+/// A surface without threads — a direct message, a command-line run — reports
+/// no `threadRef`. The location then stands in as the thread, which keeps the
+/// key free of nulls: Postgres treats nulls in a unique index as distinct, and
+/// a nullable column would let one thread hold many rows.
+///
+/// `scopeId` is the scope the session's binding resolved to. Rebinding the
+/// location moves the conversation with it, because the binding is what decides
+/// who may read the thread.
+model Conversation {
+  id             String    @id @default(uuid(7))
+  orgId          String
+  scopeId        String
+  surface        String
+  locationRef    String
+  threadRef      String
+  /// The people seen in the thread so far: `{ principalId }` for a linked
+  /// person, `{ externalRef }` for a raw surface id.
+  participants   Json      @default("[]")
+  startedAt      DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  org            Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope          Scope     @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  messages       Message[]
+
+  @@unique([orgId, id])
+  @@unique([orgId, surface, locationRef, threadRef])
+  @@index([orgId, scopeId])
+  @@index([orgId, lastActivityAt])
+}
+
+/// One captured message. `seq` orders the thread and is assigned per
+/// conversation under a row lock, so concurrent batches never share a number.
+/// `surfaceMessageRef` is the dedup key: reporting the same message again
+/// updates it rather than adding a second copy.
+model Message {
+  id                String            @id @default(uuid(7))
+  orgId             String
+  conversationId    String
+  seq               Int
+  authorPrincipalId String?
+  /// The raw surface id of an author with no identity link.
+  authorExternalRef String?
+  sentAt            DateTime
+  text              String
+  surfaceMessageRef String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  org               Org               @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation      Conversation      @relation(fields: [orgId, conversationId], references: [orgId, id], onDelete: Cascade)
+  author            Principal?        @relation("MessageAuthor", fields: [orgId, authorPrincipalId], references: [orgId, id], onDelete: Restrict)
+  searchDoc         MessageSearchDoc?
+
+  @@unique([orgId, id])
+  @@unique([conversationId, seq])
+  @@unique([conversationId, surfaceMessageRef])
+  @@index([orgId, authorPrincipalId])
+}
+
+/// The search projection of a message. `tsv` is a generated column whose
+/// expression Prisma cannot express, so the migration hand-writes it. The row
+/// carries no scope: a transcript read joins `Conversation` for that, so moving
+/// a conversation between scopes never rewrites the index.
+///
+/// The row is a replica of `Message.text` and is written after the message
+/// lands, so a failed index write costs a search result, never a message.
+model MessageSearchDoc {
+  messageId String
+  orgId     String
+  text      String
+  tsv       Unsupported("tsvector")?
+  message   Message                  @relation(fields: [orgId, messageId], references: [orgId, id], onDelete: Cascade)
+
+  @@id([orgId, messageId])
+  @@index([tsv], type: Gin)
 }
 
 model Item {
@@ -463,27 +549,27 @@ model ClientRegistration {
 }
 
 model ConnectorConnection {
-  id                 String                @id @default(uuid(7))
-  orgId              String
-  providerKey        String
-  principalId        String
-  mode               String
-  config             Json
-  ciphertext         String
-  providerScopes     String[]              @default([])
-  label              String?
-  expiresAt          DateTime?
-  revokedAt          DateTime?
-  lastRefreshSuccess DateTime?
-  lastRefreshFailure DateTime?
+  id                      String                @id @default(uuid(7))
+  orgId                   String
+  providerKey             String
+  principalId             String
+  mode                    String
+  config                  Json
+  ciphertext              String
+  providerScopes          String[]              @default([])
+  label                   String?
+  expiresAt               DateTime?
+  revokedAt               DateTime?
+  lastRefreshSuccess      DateTime?
+  lastRefreshFailure      DateTime?
   refreshFailureStartedAt DateTime?
-  refreshAttempts    Int                   @default(0)
-  refreshExhausted   Boolean               @default(false)
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
-  org                Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  principal          Principal             @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
-  oauthStates        ConnectorOAuthState[]
+  refreshAttempts         Int                   @default(0)
+  refreshExhausted        Boolean               @default(false)
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  org                     Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  principal               Principal             @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  oauthStates             ConnectorOAuthState[]
 
   @@index([orgId, providerKey])
   @@index([orgId, principalId])
