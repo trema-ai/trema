@@ -432,7 +432,7 @@ export async function renewSession(
   input: RenewSessionInput,
 ): Promise<ContextSession> {
   const now = input.now ?? new Date();
-  return db.$transaction(async (transaction) => {
+  const renewed = await db.$transaction(async (transaction) => {
     const session = await transaction.contextSession.findFirst({
       where: { id: input.sessionId, orgId: input.orgId },
     });
@@ -459,7 +459,7 @@ export async function renewSession(
       log.warn("Session renewal rejected", { sessionId: session.id, reason: "conflict" });
       throw new SessionClosedError();
     }
-    const renewed = await transaction.contextSession.findUniqueOrThrow({
+    const updated = await transaction.contextSession.findUniqueOrThrow({
       where: { orgId_id: { orgId: input.orgId, id: session.id } },
     });
     await transaction.auditLog.create({
@@ -468,15 +468,18 @@ export async function renewSession(
         actorPrincipalId: session.actingPrincipalId,
         action: "session.renew",
         subject: session.id,
-        payload: { expiresAt: renewed.expiresAt.toISOString() },
+        payload: { expiresAt: updated.expiresAt.toISOString() },
       },
     });
-    log.info("Session renewed", {
-      sessionId: renewed.id,
-      expiresAt: renewed.expiresAt.toISOString(),
-    });
-    return renewed;
+    return updated;
   });
+  // Logged after the transaction commits, so the line never claims a renewal
+  // that rolled back.
+  log.info("Session renewed", {
+    sessionId: renewed.id,
+    expiresAt: renewed.expiresAt.toISOString(),
+  });
+  return renewed;
 }
 
 export interface CloseSessionInput {
@@ -491,7 +494,7 @@ export async function closeSession(
   input: CloseSessionInput,
 ): Promise<ContextSession> {
   const now = input.now ?? new Date();
-  return db.$transaction(async (transaction) => {
+  const closed = await db.$transaction(async (transaction) => {
     const session = await transaction.contextSession.findFirst({
       where: { id: input.sessionId, orgId: input.orgId },
     });
@@ -516,7 +519,7 @@ export async function closeSession(
       throw new SessionClosedError();
     }
 
-    const closed = await transaction.contextSession.findUniqueOrThrow({
+    const updated = await transaction.contextSession.findUniqueOrThrow({
       where: { orgId_id: { orgId: input.orgId, id: session.id } },
     });
     await transaction.auditLog.create({
@@ -531,10 +534,13 @@ export async function closeSession(
         },
       },
     });
-    log.info("Session closed", {
-      sessionId: closed.id,
-      usageReported: input.usage !== undefined,
-    });
-    return closed;
+    return updated;
   });
+  // Logged after the transaction commits, so the line never claims a close
+  // that rolled back.
+  log.info("Session closed", {
+    sessionId: closed.id,
+    usageReported: input.usage !== undefined,
+  });
+  return closed;
 }
