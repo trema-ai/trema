@@ -13,7 +13,7 @@ import { orgRouter } from "#/rpc/org.js";
 import { searchRouter } from "#/rpc/search.js";
 import type { Embedder } from "#/services/embeddings/index.js";
 import { createItem, updateItem } from "#/services/items/index.js";
-import { backfillEmbeddings, searchItems } from "#/services/search/index.js";
+import { backfillEmbeddings, rebuildSearchIndex, searchItems } from "#/services/search/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
@@ -564,5 +564,40 @@ integration("item embeddings and hybrid search", () => {
       WHERE "orgId" = ${org.org.id} AND "embeddingModel" IS DISTINCT FROM 'model-b'
     `;
     expect(staleRows?.count).toBe(0);
+  });
+
+  it("keeps vectors for unchanged items through a rebuild", async () => {
+    const org = await createOrg();
+    await configure(org.org.id);
+    await createMemory(org, { ...paraphrase, embedder: fakeEmbedder() });
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
+
+    // The rebuild reconciles the text; unchanged text keeps its vector even
+    // though no embedding endpoint is reachable here.
+    await rebuildSearchIndex(db, org.org.id);
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
+  });
+
+  it("leaves the vector cleared when the item changes during the backfill", async () => {
+    const org = await createOrg();
+    await configure(org.org.id);
+    await createMemory(org, { ...paraphrase, embedder: failingEmbedder });
+
+    // The edit lands between the batch read and the vector write, the same
+    // window a concurrent item update occupies.
+    const editingEmbedder: Embedder = {
+      model: "fake-embedding-model",
+      embed: async (texts) => {
+        await db.itemSearchDoc.updateMany({
+          where: { orgId: org.org.id },
+          data: { content: "Edited while the batch was embedding." },
+        });
+        return texts.map(fakeVector);
+      },
+    };
+
+    const result = await backfillEmbeddings(db, org.org.id, { embedder: editingEmbedder });
+    expect(result).toEqual({ embedded: 0, failed: 1 });
+    await expect(countVectors(org.org.id)).resolves.toBe(0);
   });
 });

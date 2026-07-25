@@ -95,15 +95,27 @@ export async function indexItem(db: Database, item: IndexableItem): Promise<void
   `;
 }
 
+// The title and content guard makes the write conditional on the text the
+// vector was computed from: an item edited after that text was read keeps its
+// cleared vector for the next backfill instead of getting a stale one.
 async function writeEmbedding(
   db: Database,
-  input: { orgId: string; itemId: string; vector: number[]; model: string },
-): Promise<void> {
-  await db.$executeRaw`
+  input: {
+    orgId: string;
+    itemId: string;
+    title: string;
+    content: string;
+    vector: number[];
+    model: string;
+  },
+): Promise<boolean> {
+  const written = await db.$executeRaw`
     UPDATE "ItemSearchDoc"
     SET "embedding" = ${vectorLiteral(input.vector)}::vector, "embeddingModel" = ${input.model}
     WHERE "orgId" = ${input.orgId} AND "itemId" = ${input.itemId}
+      AND "title" = ${input.title} AND "content" = ${input.content}
   `;
+  return written > 0;
 }
 
 async function embedItemSafely(
@@ -115,13 +127,14 @@ async function embedItemSafely(
     const embedder = await resolveEmbedder(db, item.orgId, options);
     if (!embedder) return;
 
-    const [vector] = await embedder.embed([
-      embeddingInput(item.title, searchableText(item.kind, item.body)),
-    ]);
+    const content = searchableText(item.kind, item.body);
+    const [vector] = await embedder.embed([embeddingInput(item.title, content)]);
     if (!vector) return;
     await writeEmbedding(db, {
       orgId: item.orgId,
       itemId: item.id,
+      title: item.title,
+      content,
       vector,
       model: embedder.model,
     });
@@ -149,9 +162,11 @@ export async function indexItemSafely(
   await embedItemSafely(db, item, options);
 }
 
+// A rebuild reconciles rather than wipes: every item is upserted through
+// indexItem, which keeps the stored vector unless the text changed. Vectors
+// for unchanged items survive a rebuild whose endpoint is down, and rows for
+// deleted items are already gone through the foreign key cascade.
 export async function rebuildSearchIndex(db: Database, orgId: string): Promise<void> {
-  await db.itemSearchDoc.deleteMany({ where: { orgId } });
-
   let after: string | undefined;
   let indexed = 0;
   for (;;) {
@@ -163,18 +178,15 @@ export async function rebuildSearchIndex(db: Database, orgId: string): Promise<v
     });
     if (items.length === 0) break;
 
-    // A concurrent item write can recreate a row between the delete above and
-    // this insert. That row is at least as fresh as ours, so keep it rather
-    // than fail the whole rebuild on its primary key.
-    await db.itemSearchDoc.createMany({
-      data: items.map((item) => ({
-        itemId: item.id,
+    for (const item of items) {
+      await indexItem(db, {
+        id: item.id,
         orgId,
+        kind: item.kind,
         title: item.title,
-        content: searchableText(item.kind, item.body),
-      })),
-      skipDuplicates: true,
-    });
+        body: item.body,
+      });
+    }
     indexed += items.length;
     after = items[items.length - 1]!.id;
   }
@@ -233,8 +245,19 @@ export async function backfillEmbeddings(
           failed += 1;
           continue;
         }
-        await writeEmbedding(db, { orgId, itemId: row.itemId, vector, model });
-        embedded += 1;
+        // A guarded write that matches nothing means the item changed after
+        // its text was read; the row keeps its cleared vector and the next
+        // run picks it up.
+        const written = await writeEmbedding(db, {
+          orgId,
+          itemId: row.itemId,
+          title: row.title,
+          content: row.content,
+          vector,
+          model,
+        });
+        if (written) embedded += 1;
+        else failed += 1;
       }
     } catch (error) {
       failed += rows.length;

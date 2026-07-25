@@ -179,10 +179,11 @@ const reindex = requireCapability("manage_models")
         ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
         : {}),
     };
-    // Prove the embedder is buildable before touching the index: the rebuild
-    // wipes the stored vectors, so an unusable configuration must fail here,
-    // while everything is still intact. The backfill resolves its own embedder
-    // per batch, so a settings change mid-run switches the remaining batches.
+    // Prove the embedder is buildable up front, so a broken credential
+    // configuration returns a clear error instead of a rebuild that embeds
+    // nothing. The rebuild itself reconciles rather than wipes, and the
+    // backfill re-resolves per batch, so a settings change mid-run switches
+    // the remaining batches.
     try {
       await resolveEmbedder(context.db, context.org.id, options);
     } catch (error) {
