@@ -168,6 +168,13 @@ export interface CreateItemInput extends EmbeddingOptions {
   status?: ItemStatus;
   disclosure?: ItemDisclosure;
   sourceSessionId?: string;
+  /**
+   * Which half of the write policy the create follows. It defaults to the
+   * writer principal's kind. The data plane always passes `agent`: a mid-run
+   * write is an agent write even when a personal session acts as the human who
+   * owns the scope.
+   */
+  writerKind?: "human" | "agent";
 }
 
 export async function createItem(db: Database, input: CreateItemInput) {
@@ -192,7 +199,7 @@ export async function createItem(db: Database, input: CreateItemInput) {
   if (!writer) throw new ItemValidationError("Writer principal not found");
   if (!scope) throw new ItemValidationError("Item scope not found");
 
-  const status = statusForWriter(writer.kind, input.kind, body);
+  const status = statusForWriter(input.writerKind ?? writer.kind, input.kind, body);
   const disclosure = input.disclosure ?? disclosureForItem(input.kind, body);
 
   const item = await db.$transaction(async (transaction) => {

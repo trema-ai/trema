@@ -10,9 +10,13 @@ const rebuildBatchSize = 500;
 const embedBatchSize = 32;
 // How many rows each ranking contributes to the fusion.
 const candidateLimit = 50;
-// The damping constant from the reciprocal rank fusion paper. It flattens the
-// top of each ranking so one list cannot win on its first result alone.
-const rankConstant = 60;
+/**
+ * The damping constant from the reciprocal rank fusion paper. It flattens the
+ * top of each ranking so one list cannot win on its first result alone. It is
+ * exported because a caller that reads a score has to know the scale: the most
+ * one ranking gives a result is `1 / (RANK_CONSTANT + 1)`.
+ */
+export const RANK_CONSTANT = 60;
 
 export interface IndexableItem {
   id: string;
@@ -327,7 +331,7 @@ function fuse(rankings: string[][]): Array<{ id: string; score: number }> {
   const scores = new Map<string, number>();
   for (const ranking of rankings) {
     for (const [index, id] of ranking.entries()) {
-      scores.set(id, (scores.get(id) ?? 0) + 1 / (rankConstant + index + 1));
+      scores.set(id, (scores.get(id) ?? 0) + 1 / (RANK_CONSTANT + index + 1));
     }
   }
   return [...scores]

@@ -59,7 +59,7 @@ integration("acceptance", () => {
     return { user, context: { db, auth, env, headers: new Headers({ cookie }) } };
   }
 
-  it("opens a session, searches the context, and reads a match in full", async () => {
+  it("opens a session, searches the context, saves a memory, and reads it back", async () => {
     // An administrator sets up the organization: a team scope, the Slack
     // channel bound to it, and one memory worth retrieving.
     const owner = await signUp("Acceptance Owner");
@@ -136,6 +136,36 @@ integration("acceptance", () => {
       body: { type: "fact" },
     });
 
+    // The run learns something worth keeping and writes it down. The memory
+    // lands at the session's own scope, active, because a fact is cheap to
+    // correct.
+    const remembered = (await client.callTool({
+      name: "save_memory",
+      arguments: {
+        type: "fact",
+        title: "Release captain",
+        content: "Priya runs the release train and announces the freeze.",
+      },
+    })) as CallToolResult;
+    expect(remembered.isError).toBeFalsy();
+    const memory = remembered.structuredContent as { id: string };
+    expect(remembered.structuredContent).toMatchObject({
+      scopeId: scope.id,
+      status: "active",
+      version: 1,
+      superseded: null,
+    });
+
+    const readBack = (await client.callTool({
+      name: "get_item",
+      arguments: { id: memory.id },
+    })) as CallToolResult;
+    expect(readBack.structuredContent).toMatchObject({
+      id: memory.id,
+      title: "Release captain",
+      body: { type: "fact", content: "Priya runs the release train and announces the freeze." },
+    });
+
     await client.close();
 
     // The run's usage lands on the session, and the whole exchange is in the
@@ -162,6 +192,7 @@ integration("acceptance", () => {
         "session.open",
         "dataplane.search_context",
         "dataplane.get_item",
+        "dataplane.save_memory",
         "session.close",
       ]),
     );

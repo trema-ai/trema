@@ -25,14 +25,27 @@ export interface DataPlaneSession {
 }
 
 /**
+ * A refusal the caller can act on. The message goes back to the model as the
+ * tool's result, so it says what to do instead; the `code` is what a harness
+ * switches on.
+ */
+export class DataPlaneToolError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DataPlaneToolError";
+  }
+}
+
+/**
  * An item the session may not read reports exactly like an item that does not
  * exist. A distinct error would let a caller probe another scope's contents.
  */
-export class DataPlaneItemNotFoundError extends Error {
-  readonly code = "item_not_found";
-
+export class DataPlaneItemNotFoundError extends DataPlaneToolError {
   constructor(message = "Item not found") {
-    super(message);
+    super("item_not_found", message);
     this.name = "DataPlaneItemNotFoundError";
   }
 }

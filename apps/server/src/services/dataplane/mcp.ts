@@ -7,13 +7,15 @@ import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
 import { bindLogger, log } from "#/lib/logger/index.js";
 import {
-  DataPlaneItemNotFoundError,
   type DataPlaneSession,
+  DataPlaneToolError,
   getContextItem,
   SEARCH_CONTEXT_DEFAULT_LIMIT,
   SEARCH_CONTEXT_MAX_LIMIT,
   searchContext,
 } from "#/services/dataplane/index.js";
+import { saveMemory, updateMemory } from "#/services/dataplane/memory.js";
+import { ItemValidationError, memoryTypes } from "#/services/items/index.js";
 import {
   authenticateSession,
   isSessionExpired,
@@ -57,7 +59,10 @@ async function runTool(name: string, run: () => Promise<CallToolResult>): Promis
   try {
     return await run();
   } catch (error) {
-    if (error instanceof DataPlaneItemNotFoundError) return toolError(error.message);
+    if (error instanceof DataPlaneToolError) return toolError(error.message);
+    // A body the service rejects is the caller's mistake as well, and its
+    // message names the field to fix.
+    if (error instanceof ItemValidationError) return toolError(error.message);
     log.error("Data-plane tool failed", { tool: name, error });
     return toolError("The context app could not complete the call");
   }
@@ -84,7 +89,7 @@ export function createDataPlaneServer(
     },
     {
       instructions:
-        "Search this organization's context before you answer, then read the matches you need. Both tools are scoped to the session; there is nothing to filter by hand.",
+        "Search this organization's context before you answer, read the matches you need, and save what is worth remembering. Every tool is scoped to the session; there is nothing to filter by hand.",
     },
   );
 
@@ -158,6 +163,93 @@ export function createDataPlaneServer(
           disclosure: item.disclosure,
           version: item.version,
           updatedAt: item.updatedAt.toISOString(),
+        };
+        return { content: textResult(structuredContent), structuredContent };
+      }),
+  );
+
+  server.registerTool(
+    "save_memory",
+    {
+      title: "Save memory",
+      description:
+        "Remember something for later runs. A `fact` or a `preference` takes effect at once; a `rule` or a `procedure` is proposed and waits for a person to confirm it. The memory is saved at this session's scope. When it restates a memory that is already there, it replaces it and the reply names what it superseded.",
+      inputSchema: {
+        type: z
+          .enum(memoryTypes)
+          .describe(
+            "fact: something true about the world. preference: how someone likes work done. rule: guidance to follow every time. procedure: the steps for a recurring task.",
+          ),
+        title: z.string().min(1).describe("A short name for the memory, in plain words."),
+        content: z.string().min(1).describe("The memory itself, written to be read months later."),
+      },
+      outputSchema: {
+        id: z.string().describe("The memory's item ID."),
+        type: z.enum(memoryTypes).describe("The memory type, as given."),
+        title: z.string().describe("The memory's title."),
+        scopeId: z.string().describe("The scope the memory was saved at."),
+        status: z
+          .enum(["active", "proposed", "archived"])
+          .describe("`active` is in use now; `proposed` waits for a person to confirm it."),
+        version: z.number().int().describe("The memory's version. Every edit bumps it."),
+        superseded: z
+          .string()
+          .nullable()
+          .describe("The ID of the memory this write replaced, or null when nothing matched."),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ type, title, content }) =>
+      runTool("save_memory", async () => {
+        const { item, supersededId } = await saveMemory(db, session, {
+          type,
+          title,
+          content,
+          ...embedding,
+        });
+        const structuredContent = {
+          id: item.id,
+          type,
+          title: item.title,
+          scopeId: item.scopeId,
+          status: item.status,
+          version: item.version,
+          superseded: supersededId ?? null,
+        };
+        return { content: textResult(structuredContent), structuredContent };
+      }),
+  );
+
+  server.registerTool(
+    "update_memory",
+    {
+      title: "Update memory",
+      description:
+        "Rewrite a memory that is now wrong or out of date. The memory keeps its type and title, and the earlier wording stays in its history. Only memories saved at this session's own scope can be rewritten, and only facts and preferences — a confirmed rule or procedure needs a person.",
+      inputSchema: {
+        id: z.string().min(1).describe("The memory's item ID, from `search_context`."),
+        content: z.string().min(1).describe("What the memory should say now, in full."),
+      },
+      outputSchema: {
+        id: z.string().describe("The memory's item ID."),
+        type: z.enum(memoryTypes).describe("The memory type. An update never changes it."),
+        title: z.string().describe("The memory's title. An update never changes it."),
+        scopeId: z.string().describe("The scope the memory belongs to."),
+        status: z.enum(["active", "proposed", "archived"]).describe("The memory's status."),
+        version: z.number().int().describe("The memory's new version."),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ id, content }) =>
+      runTool("update_memory", async () => {
+        const item = await updateMemory(db, session, { itemId: id, content, ...embedding });
+        const structuredContent = {
+          id: item.id,
+          type: (item.body as { type: (typeof memoryTypes)[number] }).type,
+          title: item.title,
+          scopeId: item.scopeId,
+          status: item.status,
+          version: item.version,
         };
         return { content: textResult(structuredContent), structuredContent };
       }),
