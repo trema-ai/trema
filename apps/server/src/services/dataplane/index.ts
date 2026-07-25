@@ -1,8 +1,8 @@
-import type { Item, ItemKind } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import type { EmbeddingOptions } from "#/services/embeddings/index.js";
-import { type ItemSearchResult, searchItems } from "#/services/search/index.js";
+import type { Item, ItemKind } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
+import { type ItemSearchResult, searchItems } from "#server/services/search/index.js";
 
 /** How many matches `search_context` returns when the caller asks for no number. */
 export const SEARCH_CONTEXT_DEFAULT_LIMIT = 8;

@@ -1,12 +1,12 @@
-import type { Item } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type { Item } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 import {
   DataPlaneItemNotFoundError,
   type DataPlaneSession,
   DataPlaneToolError,
-} from "#/services/dataplane/index.js";
-import type { EmbeddingOptions } from "#/services/embeddings/index.js";
+} from "#server/services/dataplane/index.js";
+import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
 import {
   agentWritePolicy,
   createItem,
@@ -15,8 +15,8 @@ import {
   memoryBodySchema,
   statusForWriter,
   updateItem,
-} from "#/services/items/index.js";
-import { RANK_CONSTANT, searchItems } from "#/services/search/index.js";
+} from "#server/services/items/index.js";
+import { RANK_CONSTANT, searchItems } from "#server/services/search/index.js";
 
 /** How many search candidates the near-duplicate check inspects for a type match. */
 export const SUPERSEDE_CANDIDATE_LIMIT = 5;

@@ -1,7 +1,7 @@
-import type { Conversation, Message, Prisma } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import { SessionClosedError, SessionExpiredError } from "#/services/sessions/index.js";
+import type { Conversation, Message, Prisma } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import { SessionClosedError, SessionExpiredError } from "#server/services/sessions/index.js";
 
 /** How many messages one capture call may report. */
 export const MESSAGE_BATCH_LIMIT = 200;

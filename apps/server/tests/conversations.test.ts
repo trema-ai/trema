@@ -6,17 +6,17 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createApp } from "#/app.js";
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { parseEnv } from "#/lib/env/schema.js";
-import { bindingsRouter } from "#/rpc/bindings.js";
-import { serviceCredentialsRouter } from "#/rpc/credentials.js";
-import { orgRouter } from "#/rpc/org.js";
-import { scopesRouter } from "#/rpc/scopes.js";
-import { sessionsRouter } from "#/rpc/sessions.js";
-import { captureMessages } from "#/services/conversations/index.js";
-import { FETCH_TRANSCRIPT_MAX_WINDOW } from "#/services/dataplane/transcript.js";
+import { createApp } from "#server/app.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { parseEnv } from "#server/lib/env/schema.js";
+import { bindingsRouter } from "#server/rpc/bindings.js";
+import { serviceCredentialsRouter } from "#server/rpc/credentials.js";
+import { orgRouter } from "#server/rpc/org.js";
+import { scopesRouter } from "#server/rpc/scopes.js";
+import { sessionsRouter } from "#server/rpc/sessions.js";
+import { captureMessages } from "#server/services/conversations/index.js";
+import { FETCH_TRANSCRIPT_MAX_WINDOW } from "#server/services/dataplane/transcript.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

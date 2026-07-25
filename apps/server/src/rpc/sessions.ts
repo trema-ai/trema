@@ -8,7 +8,7 @@ import {
   ConversationValidationError,
   captureMessages,
   MESSAGE_BATCH_LIMIT,
-} from "#/services/conversations/index.js";
+} from "#server/services/conversations/index.js";
 import {
   closeSession,
   isSessionExpired,
