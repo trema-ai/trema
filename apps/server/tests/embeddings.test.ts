@@ -12,7 +12,7 @@ import { embeddingsRouter } from "#/rpc/embeddings.js";
 import { orgRouter } from "#/rpc/org.js";
 import { searchRouter } from "#/rpc/search.js";
 import type { Embedder } from "#/services/embeddings/index.js";
-import { createItem } from "#/services/items/index.js";
+import { createItem, updateItem } from "#/services/items/index.js";
 import { backfillEmbeddings, searchItems } from "#/services/search/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -420,5 +420,86 @@ integration("item embeddings and hybrid search", () => {
     await expect(
       call(searchRouter.items, { query, scopeIds: [org.orgScope.id] }, { context: org.context }),
     ).resolves.toHaveLength(0);
+  });
+
+  function countVectors(orgId: string): Promise<number> {
+    return db.$queryRaw<[{ count: number }]>`
+        SELECT count(*)::int AS count FROM "ItemSearchDoc"
+        WHERE "orgId" = ${orgId} AND "embedding" IS NOT NULL
+      `.then(([row]) => row?.count ?? 0);
+  }
+
+  it("clears the stored vector when the text changes and the embed fails", async () => {
+    const org = await createOrg();
+    await configure(org.org.id);
+    const item = await createMemory(org, { ...paraphrase, embedder: fakeEmbedder() });
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
+
+    await updateItem(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      itemId: item.id,
+      body: { type: "fact", content: "Vacation balances reset at the end of the year." },
+      masterKey,
+      embedder: failingEmbedder,
+    });
+
+    // The old vector must not outlive the text it described.
+    await expect(countVectors(org.org.id)).resolves.toBe(0);
+
+    await backfillEmbeddings(db, org.org.id, { embedder: fakeEmbedder() });
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
+  });
+
+  it("reports the missing master key when a key is stored without one", async () => {
+    const org = await createOrg();
+    const envWithoutKey = parseEnv({
+      NODE_ENV: "test",
+      DATABASE_URL: databaseUrl,
+      TREMA_AUTH_SECRET: "item-embeddings-integration-secret-at-least-32",
+      TREMA_MODE: "hosted",
+      TREMA_WEB_ORIGINS: "https://trema.example",
+    });
+
+    await expect(
+      call(
+        embeddingsRouter.settings.put,
+        {
+          endpoint: "https://embeddings.example.test/v1",
+          model: "fake-embedding-model",
+          apiKey: "sk-test",
+        },
+        { context: { ...org.context, env: envWithoutKey } },
+      ),
+    ).rejects.toThrow(/credential master key/i);
+  });
+
+  it("leaves vectors intact when reindex cannot build the embedder", async () => {
+    const org = await createOrg();
+    await call(
+      embeddingsRouter.settings.put,
+      {
+        endpoint: "https://embeddings.example.test/v1",
+        model: "fake-embedding-model",
+        apiKey: "sk-test",
+      },
+      { context: org.context },
+    );
+    await createMemory(org, { ...paraphrase, embedder: fakeEmbedder() });
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
+
+    const envWithoutKey = parseEnv({
+      NODE_ENV: "test",
+      DATABASE_URL: databaseUrl,
+      TREMA_AUTH_SECRET: "item-embeddings-integration-secret-at-least-32",
+      TREMA_MODE: "hosted",
+      TREMA_WEB_ORIGINS: "https://trema.example",
+    });
+    await expect(
+      call(embeddingsRouter.reindex, {}, { context: { ...org.context, env: envWithoutKey } }),
+    ).rejects.toThrow(/credential master key/i);
+
+    // The failed reindex must not have wiped the index or its vectors.
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
   });
 });

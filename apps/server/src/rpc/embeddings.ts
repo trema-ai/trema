@@ -1,6 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
+import { CredentialDecryptionError, CredentialEncryptionConfigError } from "#/lib/crypto/index.js";
 import { requireCapability } from "#/rpc/builders.js";
 import {
   deleteEmbeddingSettings,
@@ -8,6 +9,7 @@ import {
   EmbeddingSettingsValidationError,
   getEmbeddingSettings,
   putEmbeddingSettings,
+  resolveEmbedder,
 } from "#/services/embeddings/index.js";
 import { backfillEmbeddings, rebuildSearchIndex } from "#/services/search/index.js";
 
@@ -41,6 +43,16 @@ function throwEmbeddingError(error: unknown): never {
   }
   if (error instanceof EmbeddingSettingsValidationError) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
+  }
+  if (error instanceof CredentialEncryptionConfigError) {
+    throw new ORPCError("INTERNAL_SERVER_ERROR", {
+      message: "The server has no credential master key, so it cannot use a stored API key",
+    });
+  }
+  if (error instanceof CredentialDecryptionError) {
+    throw new ORPCError("INTERNAL_SERVER_ERROR", {
+      message: "The stored API key cannot be decrypted; check the server's credential master key",
+    });
   }
   throw error;
 }
@@ -162,11 +174,22 @@ const reindex = requireCapability("manage_models")
       .describe("What the reindex did."),
   )
   .handler(async ({ context }) => {
+    // Resolve the embedder before touching the index: the rebuild wipes the
+    // stored vectors, so an unusable configuration must fail here, while
+    // everything is still intact.
+    let embedder: Awaited<ReturnType<typeof resolveEmbedder>>;
+    try {
+      embedder = await resolveEmbedder(context.db, context.org.id, {
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+      });
+    } catch (error) {
+      throwEmbeddingError(error);
+    }
     await rebuildSearchIndex(context.db, context.org.id);
     return backfillEmbeddings(context.db, context.org.id, {
-      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-        : {}),
+      ...(embedder ? { embedder } : {}),
     });
   });
 

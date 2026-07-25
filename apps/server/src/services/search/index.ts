@@ -74,11 +74,25 @@ function vectorLiteral(vector: number[]): string {
 
 export async function indexItem(db: Database, item: IndexableItem): Promise<void> {
   const content = searchableText(item.kind, item.body);
-  await db.itemSearchDoc.upsert({
-    where: { orgId_itemId: { orgId: item.orgId, itemId: item.id } },
-    create: { itemId: item.id, orgId: item.orgId, title: item.title, content },
-    update: { title: item.title, content },
-  });
+  // A text change invalidates the stored vector: ranking must never pair new
+  // text with an old embedding. The vector clears only on a real change; the
+  // embed pass that follows restores it, or backfillEmbeddings does if that
+  // pass fails.
+  await db.$executeRaw`
+    INSERT INTO "ItemSearchDoc" ("orgId", "itemId", "title", "content")
+    VALUES (${item.orgId}, ${item.id}, ${item.title}, ${content})
+    ON CONFLICT ("orgId", "itemId") DO UPDATE SET
+      "title" = EXCLUDED."title",
+      "content" = EXCLUDED."content",
+      "embedding" = CASE
+        WHEN "ItemSearchDoc"."title" IS DISTINCT FROM EXCLUDED."title"
+          OR "ItemSearchDoc"."content" IS DISTINCT FROM EXCLUDED."content"
+        THEN NULL ELSE "ItemSearchDoc"."embedding" END,
+      "embeddingModel" = CASE
+        WHEN "ItemSearchDoc"."title" IS DISTINCT FROM EXCLUDED."title"
+          OR "ItemSearchDoc"."content" IS DISTINCT FROM EXCLUDED."content"
+        THEN NULL ELSE "ItemSearchDoc"."embeddingModel" END
+  `;
 }
 
 async function writeEmbedding(
@@ -149,6 +163,9 @@ export async function rebuildSearchIndex(db: Database, orgId: string): Promise<v
     });
     if (items.length === 0) break;
 
+    // A concurrent item write can recreate a row between the delete above and
+    // this insert. That row is at least as fresh as ours, so keep it rather
+    // than fail the whole rebuild on its primary key.
     await db.itemSearchDoc.createMany({
       data: items.map((item) => ({
         itemId: item.id,
@@ -156,6 +173,7 @@ export async function rebuildSearchIndex(db: Database, orgId: string): Promise<v
         title: item.title,
         content: searchableText(item.kind, item.body),
       })),
+      skipDuplicates: true,
     });
     indexed += items.length;
     after = items[items.length - 1]!.id;
@@ -285,7 +303,9 @@ async function snippetsFor(
                        'MaxWords=25,MinWords=8,StartSel="",StopSel=""') AS snippet
     FROM "ItemSearchDoc" d
     JOIN "Item" i ON i."orgId" = d."orgId" AND i."id" = d."itemId"
-    WHERE d."orgId" = ${input.orgId} AND i."id" = ANY(${input.ids}::text[])
+    WHERE d."orgId" = ${input.orgId}
+      AND i."id" = ANY(${input.ids}::text[])
+      AND i."status" = 'active'::"ItemStatus"
   `;
   return new Map(
     rows.map((row) => [row.id, { kind: row.kind, title: row.title, snippet: row.snippet }]),
