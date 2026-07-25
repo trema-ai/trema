@@ -69,16 +69,19 @@ export async function drainWorker(options: DrainOptions): Promise<DrainResult> {
 
   try {
     const outcome = await Promise.race([stopped, expiry]);
-    if (outcome === "drained") {
-      log.info("Worker drained");
-      return { outcome, abandoned: [] };
-    }
+    // The tracker is the authority, not the stop promise: a stop that resolves
+    // while executions are still tracked did not actually drain them.
     const abandoned = options.inFlight.list();
-    log.warn(outcome === "abandoned" ? "Worker drain timed out" : "Worker stop failed", {
+    if (outcome === "drained" && abandoned.length === 0) {
+      log.info("Worker drained");
+      return { outcome, abandoned };
+    }
+    const settled = outcome === "drained" ? "abandoned" : outcome;
+    log.warn(settled === "abandoned" ? "Worker drain incomplete" : "Worker stop failed", {
       timeoutMs: options.timeoutMs,
       abandonedRuns: abandoned.length,
     });
-    return { outcome, abandoned };
+    return { outcome: settled, abandoned };
   } finally {
     clearTimeout(timer);
   }

@@ -313,6 +313,11 @@ export async function tickSchedule(options: TickScheduleOptions): Promise<Schedu
     return { outcome: "skipped_overlap", tickAt: due, skipped: missed.length + 1 };
   }
 
+  // The scope's oldest binding: deterministic, and for a single-binding scope
+  // simply its location. A schedule that must fire on one specific location of
+  // a multi-binding scope needs its own location field, which does not exist
+  // yet — the session only takes the location as context, so the choice does
+  // not change what the run may do.
   const location = await db.binding.findFirst({
     where: { orgId: schedule.orgId, scopeId: schedule.scopeId },
     orderBy: { createdAt: "asc" },

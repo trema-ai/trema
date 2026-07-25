@@ -629,25 +629,33 @@ export class PrismaRunStore implements RunStore {
     return undefined;
   }
 
+  /**
+   * Claims and removes queued input in one statement, so each row reaches
+   * exactly one drainer: `SKIP LOCKED` makes a concurrent drain pass over rows
+   * another one is already deleting instead of reading them a second time.
+   */
   async #drain(where: {
     orgId: string;
     kind: "steering" | "follow_up";
     runId?: string;
     threadRef?: string;
   }): Promise<QueuedInput[]> {
-    return this.#db.$transaction(async (tx) => {
-      const rows = await tx.runQueuedInput.findMany({
-        where: {
-          orgId: where.orgId,
-          kind: where.kind,
-          ...(where.runId === undefined ? {} : { runId: where.runId }),
-          ...(where.threadRef === undefined ? {} : { threadRef: where.threadRef }),
-        },
-        orderBy: { position: "asc" },
-      });
-      if (rows.length === 0) return [];
-      await tx.runQueuedInput.deleteMany({ where: { id: { in: rows.map(({ id }) => id) } } });
-      return rows.map(toQueuedInput);
-    });
+    const runId = where.runId ?? null;
+    const threadRef = where.threadRef ?? null;
+    const rows = await this.#db.$queryRaw<(QueuedInputRow & { position: number })[]>`
+      WITH claimed AS (
+        SELECT "id" FROM "RunQueuedInput"
+        WHERE "orgId" = ${where.orgId}
+          AND "kind" = ${where.kind}::"RunInputKind"
+          AND (${runId}::text IS NULL OR "runId" = ${runId})
+          AND (${threadRef}::text IS NULL OR "threadRef" = ${threadRef})
+        ORDER BY "position"
+        FOR UPDATE SKIP LOCKED
+      )
+      DELETE FROM "RunQueuedInput" AS q
+      USING claimed
+      WHERE q."id" = claimed."id"
+      RETURNING q."id", q."message", q."author", q."position"`;
+    return rows.sort((a, b) => a.position - b.position).map(toQueuedInput);
   }
 }

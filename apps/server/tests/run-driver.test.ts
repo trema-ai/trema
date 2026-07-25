@@ -249,6 +249,27 @@ describe("worker drain", () => {
     expect(inFlight.size).toBe(0);
   });
 
+  it("reports runs still tracked when the stop resolves without them", async () => {
+    const inFlight = new InFlightRuns();
+    let release: (() => void) | undefined;
+    const started = inFlight.track("run-1", async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+
+    const result = await drainWorker({
+      // A stop that resolves early did not actually wait for the executions.
+      stop: async () => undefined,
+      inFlight,
+      timeoutMs: 1_000,
+    });
+
+    expect(result).toEqual({ outcome: "abandoned", abandoned: ["run-1"] });
+    release?.();
+    await started;
+  });
+
   it("reports a failed stop with the runs still in flight", async () => {
     const inFlight = new InFlightRuns();
     let release: (() => void) | undefined;

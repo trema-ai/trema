@@ -177,8 +177,11 @@ async function requireManageableSchedule(
   let schedule: Schedule;
   try {
     schedule = await requireSchedule(context.db, context.org.id, scheduleId);
-  } catch {
-    throw new ORPCError("NOT_FOUND", { message: "Schedule not found" });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("unknown schedule")) {
+      throw new ORPCError("NOT_FOUND", { message: "Schedule not found" });
+    }
+    throw error;
   }
   if (!(await authorize(context.principal, "manage_schedules", schedule.scopeId, context.db))) {
     throw new ORPCError("FORBIDDEN", { message: "Capability required: manage_schedules" });

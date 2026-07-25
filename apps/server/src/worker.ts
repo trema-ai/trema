@@ -111,10 +111,16 @@ export async function startRunWorker({
       inFlight,
       timeoutMs: env.TREMA_WORKER_DRAIN_TIMEOUT_MS,
     });
-    // An abandoned turn was never committed, so the run replays it from its last
-    // checkpoint on the next execution.
     if (result.outcome !== "drained") {
-      log.warn("Runs abandoned mid-turn", { outcome: result.outcome, runIds: result.abandoned });
+      // The pool stays open until the process exits: closing it now would fail
+      // the very commits that decide each abandoned run's fate. A turn that
+      // still commits is a valid checkpoint the next execution reads; one that
+      // does not was never committed and replays.
+      log.warn("Runs still executing at shutdown", {
+        outcome: result.outcome,
+        runIds: result.abandoned,
+      });
+      return;
     }
     await db.$disconnect();
   };
@@ -136,13 +142,18 @@ export async function serveRunWorker(dependencies: RunWorkerDependencies): Promi
     if (stopping) return;
     stopping = true;
     log.info("Draining run worker", { signal });
-    void started.shutdown().then(
-      () => log.info("Run worker stopped", { signal }),
-      (error: unknown) => {
-        log.error("Run worker shutdown failed", { error });
-        process.exitCode = 1;
-      },
-    );
+    void started
+      .shutdown()
+      .then(
+        () => log.info("Run worker stopped", { signal }),
+        (error: unknown) => {
+          log.error("Run worker shutdown failed", { error });
+          process.exitCode = 1;
+        },
+      )
+      // The drain already waited as long as the deployment allows; an exit is
+      // what actually ends an execution the grace period could not.
+      .finally(() => process.exit(process.exitCode ?? 0));
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
