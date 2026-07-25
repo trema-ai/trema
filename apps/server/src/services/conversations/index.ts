@@ -79,15 +79,13 @@ export interface CaptureSession {
  * The thread a session belongs to.
  *
  * A surface without threads — a direct message, a command-line run — reports
- * none, and the location stands in for it. That keeps one row per thread: a
- * nullable key column would let Postgres treat every such conversation as
- * distinct, because a unique index counts nulls as different values.
+ * none, and the empty string stands in for it. A nullable key column would let
+ * Postgres treat every such conversation as distinct, because a unique index
+ * counts nulls as different values; and no real thread can collide with the
+ * sentinel, because the session protocol refuses an empty `threadRef`.
  */
-export function conversationThreadRef(session: {
-  locationRef: string;
-  threadRef: string | null;
-}): string {
-  return session.threadRef ?? session.locationRef;
+export function conversationThreadRef(session: { threadRef: string | null }): string {
+  return session.threadRef ?? "";
 }
 
 interface NormalizedMessage {
@@ -281,6 +279,10 @@ function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+function isRecordNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2025";
+}
+
 function sameMessage(stored: Message, reported: NormalizedMessage): boolean {
   return (
     stored.text === reported.text &&
@@ -331,15 +333,8 @@ export async function captureMessages(
   };
   const threadRef = conversationThreadRef(session);
   const hasUpserts = reported.some((message) => message.operation === "upsert");
-  const { conversation: found, started } = await ensureConversation(
-    db,
-    session,
-    threadRef,
-    span,
-    hasUpserts,
-  );
-
-  const capture = db.$transaction(async (transaction) => {
+  const runCapture = (conversationId: string) =>
+    db.$transaction(async (transaction) => {
     // Re-checked inside the transaction, on a fresh clock: the route's own
     // check runs before it, and a close or an expiry committing in between
     // must not let an ended session land a batch. A close that commits after
@@ -357,11 +352,11 @@ export async function captureMessages(
     // time; the unique index on (conversationId, seq) backstops it.
     await transaction.$queryRaw`
       SELECT "id" FROM "Conversation"
-      WHERE "orgId" = ${session.orgId} AND "id" = ${found.id}
+      WHERE "orgId" = ${session.orgId} AND "id" = ${conversationId}
       FOR UPDATE
     `;
     const conversation = await transaction.conversation.findUniqueOrThrow({
-      where: { orgId_id: { orgId: session.orgId, id: found.id } },
+      where: { orgId_id: { orgId: session.orgId, id: conversationId } },
     });
 
     const stored = await transaction.message.findMany({
@@ -509,20 +504,37 @@ export async function captureMessages(
     };
   });
 
-  let captured: Awaited<typeof capture>;
-  try {
-    captured = await capture;
-  } catch (error) {
-    // A batch that started the thread and was then refused must not leave the
-    // empty conversation behind as a ghost. The guard on `messages: none`
-    // keeps a concurrent batch's landed messages safe.
-    if (started && (error instanceof SessionClosedError || error instanceof SessionExpiredError)) {
-      await db.conversation.deleteMany({
-        where: { orgId: session.orgId, id: found.id, messages: { none: {} } },
-      });
+  const captured = await (async () => {
+    for (let attempt = 0; ; attempt += 1) {
+      const { conversation: found, started } = await ensureConversation(
+        db,
+        session,
+        threadRef,
+        span,
+        hasUpserts,
+      );
+      try {
+        return await runCapture(found.id);
+      } catch (error) {
+        // A batch that started the thread and was then refused must not leave
+        // the empty conversation behind as a ghost. The guard on `messages:
+        // none` keeps a concurrent batch's landed messages safe.
+        if (
+          started &&
+          (error instanceof SessionClosedError || error instanceof SessionExpiredError)
+        ) {
+          await db.conversation.deleteMany({
+            where: { orgId: session.orgId, id: found.id, messages: { none: {} } },
+          });
+        }
+        // That same cleanup can take the row out from under a batch that
+        // found it moments earlier. The thread is ensured again and the
+        // capture retried, once: a second disappearance is not a race.
+        if (attempt === 0 && isRecordNotFound(error)) continue;
+        throw error;
+      }
     }
-    throw error;
-  }
+  })();
 
   // Indexed after the batch commits, so a search-index failure cannot undo a
   // captured message. Deleted messages take their index rows with them through

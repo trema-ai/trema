@@ -222,14 +222,18 @@ integration("conversation capture", () => {
     expect(separate.conversationId).not.toBe(opening.conversationId);
     expect(separate.results[0]?.seq).toBe(1);
 
-    // A session with no thread at all still lands one conversation: the
-    // location stands in for the thread.
+    // A session with no thread at all still lands one conversation, keyed by
+    // the empty sentinel — a value no real thread can carry, so a thread that
+    // happens to be named like the location cannot collide with it.
     const unthreaded = await openSession(org, "T1:C1");
     const flat = await report(unthreaded, [said("m-5", "A channel message outside any thread")]);
-    expect(flat.threadRef).toBe("T1:C1");
+    expect(flat.threadRef).toBe("");
     expect([opening.conversationId, separate.conversationId]).not.toContain(flat.conversationId);
+    const named = await openSession(org, "T1:C1", "T1:C1");
+    const collision = await report(named, [said("m-6", "A thread named after its channel")]);
+    expect(collision.conversationId).not.toBe(flat.conversationId);
 
-    await expect(db.conversation.count({ where: { orgId: org.org.id } })).resolves.toBe(3);
+    await expect(db.conversation.count({ where: { orgId: org.org.id } })).resolves.toBe(4);
     const stored = await db.conversation.findUniqueOrThrow({
       where: { orgId_id: { orgId: org.org.id, id: opening.conversationId } },
     });

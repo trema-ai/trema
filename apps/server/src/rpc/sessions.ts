@@ -420,7 +420,7 @@ const messages = sessionAuthed
         scopeId: z.string().describe("The scope the conversation belongs to."),
         threadRef: z
           .string()
-          .describe("The thread within the location. It repeats the location when there is none."),
+          .describe("The thread within the location. Empty when the surface reported none."),
         created: z.number().int().describe("How many messages were new."),
         updated: z.number().int().describe("How many stored messages the batch edited."),
         unchanged: z.number().int().describe("How many messages were already stored as reported."),

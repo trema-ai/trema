@@ -289,7 +289,7 @@ export function createDataPlaneServer(
         surface: z.string().describe("The surface the conversation happened on."),
         threadRef: z
           .string()
-          .describe("The thread within the location. It repeats the location when there is none."),
+          .describe("The thread within the location. Empty when the surface reported none."),
         participants: z
           .array(
             z.object({

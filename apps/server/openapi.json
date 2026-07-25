@@ -10385,7 +10385,7 @@
                     },
                     "threadRef": {
                       "type": "string",
-                      "description": "The thread within the location. It repeats the location when there is none."
+                      "description": "The thread within the location. Empty when the surface reported none."
                     },
                     "created": {
                       "type": "integer",

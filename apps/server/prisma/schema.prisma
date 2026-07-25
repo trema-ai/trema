@@ -344,9 +344,10 @@ model ContextSession {
 /// extend one conversation instead of starting another.
 ///
 /// A surface without threads — a direct message, a command-line run — reports
-/// no `threadRef`. The location then stands in as the thread, which keeps the
-/// key free of nulls: Postgres treats nulls in a unique index as distinct, and
-/// a nullable column would let one thread hold many rows.
+/// no `threadRef`, stored as the empty string. That keeps the key free of
+/// nulls (Postgres treats nulls in a unique index as distinct), and no real
+/// thread can collide with it: the session protocol refuses an empty
+/// `threadRef`.
 ///
 /// `scopeId` is the scope the session's binding resolved to. Rebinding the
 /// location moves the conversation with it, because the binding is what decides
