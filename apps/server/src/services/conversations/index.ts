@@ -1,6 +1,7 @@
 import type { Conversation, Message, Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
 import { log } from "#/lib/logger/index.js";
+import { SessionClosedError, SessionExpiredError } from "#/services/sessions/index.js";
 
 /** How many messages one capture call may report. */
 export const MESSAGE_BATCH_LIMIT = 200;
@@ -209,10 +210,14 @@ function mergeParticipants(
 ): ConversationParticipant[] {
   const merged = new Map(stored.map((participant) => [participantKey(participant), participant]));
   for (const participant of seen) {
+    // A raw id that has since been linked upgrades in place, so one person is
+    // never listed twice: the bare entry their earlier messages recorded gives
+    // way to the linked one.
+    if (participant.principalId && participant.externalRef) {
+      merged.delete(`x:${participant.externalRef}`);
+    }
     const key = participantKey(participant);
     const existing = merged.get(key);
-    // A raw id that has since been linked upgrades in place, so one person is
-    // never listed twice.
     if (!existing) merged.set(key, participant);
     else if (!existing.externalRef && participant.externalRef) merged.set(key, participant);
   }
@@ -318,6 +323,17 @@ export async function captureMessages(
   const found = await ensureConversation(db, session, threadRef, span);
 
   const captured = await db.$transaction(async (transaction) => {
+    // Re-checked inside the transaction: the route's own check runs before it,
+    // and a close committing in between must not let an ended session land a
+    // batch. A close that commits after this read is concurrent with the
+    // capture, which is the ordinary case.
+    const liveSession = await transaction.contextSession.findUniqueOrThrow({
+      where: { orgId_id: { orgId: session.orgId, id: session.id } },
+      select: { closedAt: true, expiresAt: true },
+    });
+    if (liveSession.closedAt) throw new SessionClosedError();
+    if (liveSession.expiresAt.getTime() <= now.getTime()) throw new SessionExpiredError();
+
     // The lock serializes concurrent batches on this thread. Everything below
     // reads and writes the thread's sequence, so it must be one writer at a
     // time; the unique index on (conversationId, seq) backstops it.
@@ -422,13 +438,26 @@ export async function captureMessages(
       });
     }
 
+    // The binding decides who may read a thread, so a rebound location takes
+    // its conversation with it. The binding is read here rather than taken
+    // from the session, whose scope is pinned at open: a still-valid session
+    // from before a rebind must not move the conversation back. A location
+    // with no binding row — a direct message — keeps the scope it has.
+    const binding = await transaction.binding.findUnique({
+      where: {
+        orgId_surface_locationRef: {
+          orgId: session.orgId,
+          surface: conversation.surface,
+          locationRef: conversation.locationRef,
+        },
+      },
+      select: { scopeId: true },
+    });
     const participants = mergeParticipants(readParticipants(conversation.participants), seen);
     const updated = await transaction.conversation.update({
       where: { orgId_id: { orgId: session.orgId, id: conversation.id } },
       data: {
-        // The binding decides who may read a thread, so a rebound location
-        // takes its conversation with it.
-        scopeId: session.scopeId,
+        scopeId: binding?.scopeId ?? conversation.scopeId,
         participants: participants as unknown as Prisma.InputJsonValue,
         ...(times.length > 0
           ? {

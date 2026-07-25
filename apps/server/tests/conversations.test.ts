@@ -15,6 +15,7 @@ import { serviceCredentialsRouter } from "#/rpc/credentials.js";
 import { orgRouter } from "#/rpc/org.js";
 import { scopesRouter } from "#/rpc/scopes.js";
 import { sessionsRouter } from "#/rpc/sessions.js";
+import { captureMessages } from "#/services/conversations/index.js";
 import { FETCH_TRANSCRIPT_MAX_WINDOW } from "#/services/dataplane/transcript.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -527,6 +528,76 @@ integration("conversation capture", () => {
     });
     await expect(report(session, [said("m-3", "Already closed")])).rejects.toThrow(/closed/);
 
+    await expect(db.message.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
+  });
+
+  it("lists a person once when their surface id is linked mid-thread", async () => {
+    const org = await createOrg();
+    await bindChannel(org, "Linked Late", "T1:C8");
+    const session = await openSession(org, "T1:C8", "thread-1");
+    await report(session, [said("m-1", "Before the link", "U-LATE")]);
+
+    const member = await linkMember(org, "Late Link", "U-LATE");
+    await report(session, [said("m-2", "After the link", "U-LATE")]);
+
+    const conversation = await db.conversation.findFirstOrThrow({
+      where: { orgId: org.org.id, threadRef: "thread-1" },
+    });
+    expect(conversation.participants).toEqual([
+      { principalId: member.principal.id, externalRef: "U-LATE" },
+    ]);
+  });
+
+  it("keeps a rebound conversation at the new scope when a stale session reports", async () => {
+    const org = await createOrg();
+    const before = await bindChannel(org, "Before", "T1:C9");
+    const stale = await openSession(org, "T1:C9", "thread-1");
+    await report(stale, [said("m-1", "Under the old binding")]);
+
+    const after = await call(scopesRouter.create, { name: "After" }, { context: org.context });
+    await db.binding.update({
+      where: {
+        orgId_surface_locationRef: { orgId: org.org.id, surface: "slack", locationRef: "T1:C9" },
+      },
+      data: { scopeId: after.id },
+    });
+    const fresh = await openSession(org, "T1:C9", "thread-1");
+    const moved = await report(fresh, [said("m-2", "Under the new binding")]);
+    expect(moved.scopeId).toBe(after.id);
+
+    // The stale session is still inside its token lifetime. Its report lands,
+    // but its pinned scope must not drag the conversation back.
+    const reverted = await report(stale, [said("m-3", "Stale but valid")]);
+    expect(reverted.scopeId).toBe(after.id);
+    expect(reverted.messageCount).toBe(3);
+    expect(before.id).not.toBe(after.id);
+  });
+
+  it("refuses a batch when the session closed after the route's check", async () => {
+    const org = await createOrg();
+    await bindChannel(org, "Race", "T1:C10");
+    const session = await openSession(org, "T1:C10", "thread-1");
+    const row = await db.contextSession.findUniqueOrThrow({ where: { id: session.sessionId } });
+
+    // The route checks the session row it authenticated with; a close can
+    // commit between that check and the capture transaction. The stale
+    // snapshot stands in for that interleaving.
+    await db.contextSession.update({
+      where: { id: session.sessionId },
+      data: { closedAt: new Date() },
+    });
+    await expect(
+      captureMessages(db, row, {
+        messages: [
+          {
+            surfaceMessageRef: "m-1",
+            author: { externalRef: "U-ASKS" },
+            sentAt: new Date(),
+            text: "After the close",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/closed/);
     await expect(db.message.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
   });
 });
