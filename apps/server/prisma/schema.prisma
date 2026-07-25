@@ -320,6 +320,11 @@ model ItemVersion {
 /// row deliberately carries no scope or status: search joins `Item` for
 /// those, so a lifecycle change never writes to this table.
 ///
+/// `tsv` is built with the `trema_multilingual` configuration (`simple` plus
+/// unaccent), which stems nothing and so treats every language alike. Queries
+/// must parse with that same configuration or they stop matching what is
+/// stored.
+///
 /// `embedding` declares no dimension. The dimension belongs to the model that
 /// produced the vector, which `embeddingModel` records. Queries compare only
 /// rows written by the organization's current model, so changing models is a
