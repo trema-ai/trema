@@ -107,6 +107,14 @@ export function generateOpenApiDocument() {
         name: "Sessions",
         description: "The handshake a harness opens before it reads context or calls tools.",
       },
+      {
+        name: "Runs",
+        description: "Starting agent work from a script or another system.",
+      },
+      {
+        name: "Schedules",
+        description: "Standing configuration that starts runs on a cron expression.",
+      },
     ],
   });
 }

@@ -27,6 +27,11 @@ describe("parseEnv", () => {
       TREMA_PASSWORD_AUTH_ENABLED: true,
       TREMA_SESSION_STANDING_BUDGET_TOKENS: 4000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
+      TREMA_WORKER_NAME: "trema-runs",
+      TREMA_WORKER_SLOTS: 10,
+      TREMA_WORKER_DRAIN_TIMEOUT_MS: 30_000,
+      TREMA_RUN_MAX_TURNS: 50,
+      TREMA_ELICITATION_TTL_MS: 604_800_000,
     });
     expect(Object.isFrozen(result)).toBe(true);
   });
@@ -55,6 +60,11 @@ describe("parseEnv", () => {
       TREMA_PASSWORD_AUTH_ENABLED: true,
       TREMA_SESSION_STANDING_BUDGET_TOKENS: 4000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
+      TREMA_WORKER_NAME: "trema-runs",
+      TREMA_WORKER_SLOTS: 10,
+      TREMA_WORKER_DRAIN_TIMEOUT_MS: 30_000,
+      TREMA_RUN_MAX_TURNS: 50,
+      TREMA_ELICITATION_TTL_MS: 604_800_000,
     });
   });
 

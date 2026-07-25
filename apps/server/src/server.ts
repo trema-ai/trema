@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { HatchetClient } from "@hatchet-dev/typescript-sdk/v1/index.js";
 
 import { createApp } from "#/app.js";
 import { createAuth } from "#/lib/auth/index.js";
@@ -7,6 +8,7 @@ import type { Environment } from "#/lib/env/schema.js";
 import { configureLogger, log } from "#/lib/logger/index.js";
 import { initializeBootstrap } from "#/services/bootstrap/index.js";
 import { loadProviderCatalog } from "#/services/connectors/index.js";
+import { createRunEngineFactory } from "#/services/runs/index.js";
 
 export interface ServeDependencies {
   env: Environment;
@@ -24,7 +26,15 @@ export async function serveTrema({ env }: ServeDependencies) {
   const db = createPrismaClient(env.DATABASE_URL);
   await initializeBootstrap({ db, env });
   const auth = createAuth({ db, env });
-  const app = createApp({ db, auth, env });
+  // Without Hatchet the deployment still serves context; only run scheduling
+  // is absent, and the runs routes report SERVICE_UNAVAILABLE.
+  const runEngineFor = env.HATCHET_CLIENT_TOKEN
+    ? createRunEngineFactory(HatchetClient.init())
+    : undefined;
+  if (runEngineFor === undefined) {
+    log.warn("Run scheduling is disabled: HATCHET_CLIENT_TOKEN is not set");
+  }
+  const app = createApp({ db, auth, env, ...(runEngineFor ? { runEngineFor } : {}) });
   const server = serve({ fetch: app.fetch, hostname: env.HOST, port: env.PORT }, () =>
     log.info("Server listening", { url: `http://${env.HOST}:${env.PORT}` }),
   );

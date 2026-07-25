@@ -392,6 +392,7 @@ integration("scopes and surface bindings", () => {
   it("lists the surface catalog and rejects an unknown binding surface", async () => {
     const org = await createOrg();
     await expect(call(surfacesRouter.list, undefined, { context: org.context })).resolves.toEqual([
+      { id: "api", name: "API", status: "available" },
       { id: "slack", name: "Slack", status: "planned" },
       { id: "linear", name: "Linear", status: "planned" },
       { id: "github", name: "GitHub", status: "planned" },
