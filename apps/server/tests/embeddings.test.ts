@@ -502,4 +502,31 @@ integration("item embeddings and hybrid search", () => {
     // The failed reindex must not have wiped the index or its vectors.
     await expect(countVectors(org.org.id)).resolves.toBe(1);
   });
+
+  it("stops the backfill when the settings disappear mid-run", async () => {
+    const org = await createOrg();
+    await configure(org.org.id);
+    // One more item than the batch size, so the run needs a second batch.
+    for (let index = 0; index < 33; index += 1) {
+      await createMemory(org, {
+        title: `Deploy note ${String(index).padStart(2, "0")}`,
+        content: "Deploy notes for the rollout.",
+        embedder: failingEmbedder,
+      });
+    }
+
+    const deletingEmbedder: Embedder = {
+      model: "fake-embedding-model",
+      embed: async (texts) => {
+        await db.embeddingSettings.deleteMany({ where: { orgId: org.org.id } });
+        return texts.map(fakeVector);
+      },
+    };
+
+    // The first batch embeds and then removes the settings; the re-resolution
+    // before the second batch sees no settings row and ends the run.
+    const result = await backfillEmbeddings(db, org.org.id, { embedder: deletingEmbedder });
+    expect(result).toEqual({ embedded: 32, failed: 0 });
+    await expect(countVectors(org.org.id)).resolves.toBe(32);
+  });
 });

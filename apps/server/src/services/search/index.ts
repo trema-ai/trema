@@ -191,15 +191,18 @@ export async function backfillEmbeddings(
   orgId: string,
   options: EmbeddingOptions = {},
 ): Promise<BackfillEmbeddingsResult> {
-  const embedder = await resolveEmbedder(db, orgId, options);
-  if (!embedder) return { embedded: 0, failed: 0 };
-
   // Keyset pagination, not a repeated "find the stale rows" query: a row whose
   // batch fails stays stale, and re-reading from the start would never finish.
   let after = "";
   let embedded = 0;
   let failed = 0;
   for (;;) {
+    // Re-resolved every batch: when the settings change mid-run, the next
+    // batch embeds under the new configuration, and a deleted settings row
+    // ends the run instead of writing vectors nothing will read.
+    const embedder = await resolveEmbedder(db, orgId, options);
+    if (!embedder) break;
+
     const rows = await db.$queryRaw<Array<{ itemId: string; title: string; content: string }>>`
       SELECT "itemId", "title", "content"
       FROM "ItemSearchDoc"

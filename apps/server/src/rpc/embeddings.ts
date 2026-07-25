@@ -174,23 +174,22 @@ const reindex = requireCapability("manage_models")
       .describe("What the reindex did."),
   )
   .handler(async ({ context }) => {
-    // Resolve the embedder before touching the index: the rebuild wipes the
-    // stored vectors, so an unusable configuration must fail here, while
-    // everything is still intact.
-    let embedder: Awaited<ReturnType<typeof resolveEmbedder>>;
+    const options = {
+      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+        : {}),
+    };
+    // Prove the embedder is buildable before touching the index: the rebuild
+    // wipes the stored vectors, so an unusable configuration must fail here,
+    // while everything is still intact. The backfill resolves its own embedder
+    // per batch, so a settings change mid-run switches the remaining batches.
     try {
-      embedder = await resolveEmbedder(context.db, context.org.id, {
-        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-          : {}),
-      });
+      await resolveEmbedder(context.db, context.org.id, options);
     } catch (error) {
       throwEmbeddingError(error);
     }
     await rebuildSearchIndex(context.db, context.org.id);
-    return backfillEmbeddings(context.db, context.org.id, {
-      ...(embedder ? { embedder } : {}),
-    });
+    return backfillEmbeddings(context.db, context.org.id, options);
   });
 
 export const embeddingsRouter = {
