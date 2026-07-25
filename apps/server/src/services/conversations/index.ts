@@ -335,174 +335,174 @@ export async function captureMessages(
   const hasUpserts = reported.some((message) => message.operation === "upsert");
   const runCapture = (conversationId: string) =>
     db.$transaction(async (transaction) => {
-    // Re-checked inside the transaction, on a fresh clock: the route's own
-    // check runs before it, and a close or an expiry committing in between
-    // must not let an ended session land a batch. A close that commits after
-    // this read is concurrent with the capture, which is the ordinary case.
-    const checkAt = input.now ?? new Date();
-    const liveSession = await transaction.contextSession.findUniqueOrThrow({
-      where: { orgId_id: { orgId: session.orgId, id: session.id } },
-      select: { closedAt: true, expiresAt: true },
-    });
-    if (liveSession.closedAt) throw new SessionClosedError();
-    if (liveSession.expiresAt.getTime() <= checkAt.getTime()) throw new SessionExpiredError();
+      // Re-checked inside the transaction, on a fresh clock: the route's own
+      // check runs before it, and a close or an expiry committing in between
+      // must not let an ended session land a batch. A close that commits after
+      // this read is concurrent with the capture, which is the ordinary case.
+      const checkAt = input.now ?? new Date();
+      const liveSession = await transaction.contextSession.findUniqueOrThrow({
+        where: { orgId_id: { orgId: session.orgId, id: session.id } },
+        select: { closedAt: true, expiresAt: true },
+      });
+      if (liveSession.closedAt) throw new SessionClosedError();
+      if (liveSession.expiresAt.getTime() <= checkAt.getTime()) throw new SessionExpiredError();
 
-    // The lock serializes concurrent batches on this thread. Everything below
-    // reads and writes the thread's sequence, so it must be one writer at a
-    // time; the unique index on (conversationId, seq) backstops it.
-    await transaction.$queryRaw`
+      // The lock serializes concurrent batches on this thread. Everything below
+      // reads and writes the thread's sequence, so it must be one writer at a
+      // time; the unique index on (conversationId, seq) backstops it.
+      await transaction.$queryRaw`
       SELECT "id" FROM "Conversation"
       WHERE "orgId" = ${session.orgId} AND "id" = ${conversationId}
       FOR UPDATE
     `;
-    const conversation = await transaction.conversation.findUniqueOrThrow({
-      where: { orgId_id: { orgId: session.orgId, id: conversationId } },
-    });
+      const conversation = await transaction.conversation.findUniqueOrThrow({
+        where: { orgId_id: { orgId: session.orgId, id: conversationId } },
+      });
 
-    const stored = await transaction.message.findMany({
-      where: {
-        orgId: session.orgId,
-        conversationId: conversation.id,
-        surfaceMessageRef: { in: reported.map((message) => message.surfaceMessageRef) },
-      },
-    });
-    const byRef = new Map(stored.map((message) => [message.surfaceMessageRef, message]));
-    const highest = await transaction.message.aggregate({
-      where: { orgId: session.orgId, conversationId: conversation.id },
-      _max: { seq: true },
-    });
-    let nextSeq = (highest._max.seq ?? 0) + 1;
+      const stored = await transaction.message.findMany({
+        where: {
+          orgId: session.orgId,
+          conversationId: conversation.id,
+          surfaceMessageRef: { in: reported.map((message) => message.surfaceMessageRef) },
+        },
+      });
+      const byRef = new Map(stored.map((message) => [message.surfaceMessageRef, message]));
+      const highest = await transaction.message.aggregate({
+        where: { orgId: session.orgId, conversationId: conversation.id },
+        _max: { seq: true },
+      });
+      let nextSeq = (highest._max.seq ?? 0) + 1;
 
-    const results: CapturedMessageResult[] = [];
-    const landed: Message[] = [];
-    const seen: ConversationParticipant[] = [];
-    for (const message of reported) {
-      const current = byRef.get(message.surfaceMessageRef);
-      if (message.operation === "delete") {
-        if (!current) {
+      const results: CapturedMessageResult[] = [];
+      const landed: Message[] = [];
+      const seen: ConversationParticipant[] = [];
+      for (const message of reported) {
+        const current = byRef.get(message.surfaceMessageRef);
+        if (message.operation === "delete") {
+          if (!current) {
+            results.push({
+              surfaceMessageRef: message.surfaceMessageRef,
+              outcome: "not_found",
+              seq: null,
+            });
+            continue;
+          }
+          await transaction.message.delete({
+            where: { orgId_id: { orgId: session.orgId, id: current.id } },
+          });
+          byRef.delete(message.surfaceMessageRef);
           results.push({
             surfaceMessageRef: message.surfaceMessageRef,
-            outcome: "not_found",
-            seq: null,
+            outcome: "deleted",
+            seq: current.seq,
           });
           continue;
         }
-        await transaction.message.delete({
-          where: { orgId_id: { orgId: session.orgId, id: current.id } },
-        });
-        byRef.delete(message.surfaceMessageRef);
-        results.push({
-          surfaceMessageRef: message.surfaceMessageRef,
-          outcome: "deleted",
-          seq: current.seq,
-        });
-        continue;
-      }
 
-      seen.push({ principalId: message.principalId, externalRef: message.externalRef });
-      if (current && sameMessage(current, message)) {
-        // Re-indexed all the same: re-reporting an unchanged message is the
-        // stated repair for an index write that failed last time, so it has to
-        // reach the index pass. The upsert there makes it a cheap no-op
-        // otherwise.
-        landed.push(current);
-        results.push({
-          surfaceMessageRef: message.surfaceMessageRef,
-          outcome: "unchanged",
-          seq: current.seq,
-        });
-        continue;
-      }
-      if (current) {
-        // An edit keeps the message's place in the thread: the wording changed,
-        // not when it was said.
-        const updated = await transaction.message.update({
-          where: { orgId_id: { orgId: session.orgId, id: current.id } },
+        seen.push({ principalId: message.principalId, externalRef: message.externalRef });
+        if (current && sameMessage(current, message)) {
+          // Re-indexed all the same: re-reporting an unchanged message is the
+          // stated repair for an index write that failed last time, so it has to
+          // reach the index pass. The upsert there makes it a cheap no-op
+          // otherwise.
+          landed.push(current);
+          results.push({
+            surfaceMessageRef: message.surfaceMessageRef,
+            outcome: "unchanged",
+            seq: current.seq,
+          });
+          continue;
+        }
+        if (current) {
+          // An edit keeps the message's place in the thread: the wording changed,
+          // not when it was said.
+          const updated = await transaction.message.update({
+            where: { orgId_id: { orgId: session.orgId, id: current.id } },
+            data: {
+              text: message.text,
+              sentAt: message.sentAt,
+              authorPrincipalId: message.principalId,
+              authorExternalRef: message.externalRef,
+            },
+          });
+          byRef.set(message.surfaceMessageRef, updated);
+          landed.push(updated);
+          results.push({
+            surfaceMessageRef: message.surfaceMessageRef,
+            outcome: "updated",
+            seq: updated.seq,
+          });
+          continue;
+        }
+        const created = await transaction.message.create({
           data: {
-            text: message.text,
-            sentAt: message.sentAt,
+            orgId: session.orgId,
+            conversationId: conversation.id,
+            seq: nextSeq,
+            surfaceMessageRef: message.surfaceMessageRef,
             authorPrincipalId: message.principalId,
             authorExternalRef: message.externalRef,
+            sentAt: message.sentAt,
+            text: message.text,
           },
         });
-        byRef.set(message.surfaceMessageRef, updated);
-        landed.push(updated);
+        nextSeq += 1;
+        byRef.set(message.surfaceMessageRef, created);
+        landed.push(created);
         results.push({
           surfaceMessageRef: message.surfaceMessageRef,
-          outcome: "updated",
-          seq: updated.seq,
+          outcome: "created",
+          seq: created.seq,
         });
-        continue;
       }
-      const created = await transaction.message.create({
-        data: {
-          orgId: session.orgId,
-          conversationId: conversation.id,
-          seq: nextSeq,
-          surfaceMessageRef: message.surfaceMessageRef,
-          authorPrincipalId: message.principalId,
-          authorExternalRef: message.externalRef,
-          sentAt: message.sentAt,
-          text: message.text,
-        },
-      });
-      nextSeq += 1;
-      byRef.set(message.surfaceMessageRef, created);
-      landed.push(created);
-      results.push({
-        surfaceMessageRef: message.surfaceMessageRef,
-        outcome: "created",
-        seq: created.seq,
-      });
-    }
 
-    // The binding decides who may read a thread, so a rebound location takes
-    // its conversation with it. The binding is read here rather than taken
-    // from the session, whose scope is pinned at open: a still-valid session
-    // from before a rebind must not move the conversation back. A location
-    // with no binding row — a direct message — keeps the scope it has.
-    const binding = await transaction.binding.findUnique({
-      where: {
-        orgId_surface_locationRef: {
-          orgId: session.orgId,
-          surface: conversation.surface,
-          locationRef: conversation.locationRef,
+      // The binding decides who may read a thread, so a rebound location takes
+      // its conversation with it. The binding is read here rather than taken
+      // from the session, whose scope is pinned at open: a still-valid session
+      // from before a rebind must not move the conversation back. A location
+      // with no binding row — a direct message — keeps the scope it has.
+      const binding = await transaction.binding.findUnique({
+        where: {
+          orgId_surface_locationRef: {
+            orgId: session.orgId,
+            surface: conversation.surface,
+            locationRef: conversation.locationRef,
+          },
         },
-      },
-      select: { scopeId: true },
+        select: { scopeId: true },
+      });
+      const participants = mergeParticipants(readParticipants(conversation.participants), seen);
+      const updated = await transaction.conversation.update({
+        where: { orgId_id: { orgId: session.orgId, id: conversation.id } },
+        data: {
+          scopeId: binding?.scopeId ?? conversation.scopeId,
+          participants: participants as unknown as Prisma.InputJsonValue,
+          ...(times.length > 0
+            ? {
+                // The span only ever widens: a batch of older messages backdates
+                // the thread's start, and one that arrives out of order never
+                // pulls its last activity backwards.
+                startedAt: new Date(
+                  Math.min(conversation.startedAt.getTime(), span.earliest.getTime()),
+                ),
+                lastActivityAt: new Date(
+                  Math.max(conversation.lastActivityAt.getTime(), span.latest.getTime()),
+                ),
+              }
+            : {}),
+        },
+      });
+      const messageCount = await transaction.message.count({
+        where: { orgId: session.orgId, conversationId: conversation.id },
+      });
+      return {
+        conversation: updated,
+        previousScopeId: conversation.scopeId,
+        results,
+        landed,
+        messageCount,
+      };
     });
-    const participants = mergeParticipants(readParticipants(conversation.participants), seen);
-    const updated = await transaction.conversation.update({
-      where: { orgId_id: { orgId: session.orgId, id: conversation.id } },
-      data: {
-        scopeId: binding?.scopeId ?? conversation.scopeId,
-        participants: participants as unknown as Prisma.InputJsonValue,
-        ...(times.length > 0
-          ? {
-              // The span only ever widens: a batch of older messages backdates
-              // the thread's start, and one that arrives out of order never
-              // pulls its last activity backwards.
-              startedAt: new Date(
-                Math.min(conversation.startedAt.getTime(), span.earliest.getTime()),
-              ),
-              lastActivityAt: new Date(
-                Math.max(conversation.lastActivityAt.getTime(), span.latest.getTime()),
-              ),
-            }
-          : {}),
-      },
-    });
-    const messageCount = await transaction.message.count({
-      where: { orgId: session.orgId, conversationId: conversation.id },
-    });
-    return {
-      conversation: updated,
-      previousScopeId: conversation.scopeId,
-      results,
-      landed,
-      messageCount,
-    };
-  });
 
   const captured = await (async () => {
     for (let attempt = 0; ; attempt += 1) {
