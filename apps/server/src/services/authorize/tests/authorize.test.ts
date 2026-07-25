@@ -17,6 +17,7 @@ const expected: Record<Capability, Record<(typeof roles)[number], boolean>> = {
   manage_scopes: { owner: true, admin: true, member: false, viewer: false },
   edit_policies: { owner: true, admin: true, member: false, viewer: false },
   manage_members: { owner: true, admin: true, member: false, viewer: false },
+  manage_models: { owner: true, admin: true, member: false, viewer: false },
   manage_org: { owner: true, admin: false, member: false, viewer: false },
 };
 

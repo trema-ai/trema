@@ -7,6 +7,7 @@ import { log } from "#/lib/logger/index.js";
 import type { ConnectorFetch } from "#/services/connectors/connect.js";
 import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
 import type { McpClientFactory } from "#/services/connectors/sync.js";
+import type { EmbeddingOptions } from "#/services/embeddings/index.js";
 import { indexItemSafely } from "#/services/search/index.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
@@ -270,7 +271,7 @@ export async function archiveConnectorInstallation(
   });
 }
 
-export interface CreateConnectorInstallationInput {
+export interface CreateConnectorInstallationInput extends EmbeddingOptions {
   orgId: string;
   actorPrincipalId: string;
   scopeId: string;
@@ -278,7 +279,6 @@ export interface CreateConnectorInstallationInput {
   connectionId: string;
   enabledTools?: "all" | string[];
   sensitivityOverrides?: Record<string, Sensitivity>;
-  masterKey?: string;
   clientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
   fetch?: ConnectorFetch;
@@ -413,7 +413,7 @@ export async function createConnectorInstallation(
     provider: provider.key,
     connectionId: body.connectionId,
   });
-  await indexItemSafely(db, installation);
+  await indexItemSafely(db, installation, input);
   if (provider.transport.type === "mcp") {
     const { syncConnectorInstallation } = await import("#/services/connectors/sync.js");
     const sync = syncConnectorInstallation(db, {
@@ -445,7 +445,7 @@ export async function createConnectorInstallation(
   return installation;
 }
 
-export interface UpdateConnectorInstallationInput {
+export interface UpdateConnectorInstallationInput extends EmbeddingOptions {
   orgId: string;
   actorPrincipalId: string;
   installationItemId: string;
@@ -541,6 +541,6 @@ export async function updateConnectorInstallation(
     });
     return installation;
   });
-  await indexItemSafely(db, updated);
+  await indexItemSafely(db, updated, input);
   return updated;
 }

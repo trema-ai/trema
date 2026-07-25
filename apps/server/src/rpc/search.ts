@@ -12,7 +12,7 @@ const resultSchema = z
     kind: itemKindSchema.describe("The matching item's kind."),
     title: z.string().describe("The matching item's title."),
     snippet: z.string().describe("A bounded excerpt of the matching body text, as plain text."),
-    score: z.number().describe("The full-text rank. Higher scores match better."),
+    score: z.number().describe("The relevance score. Higher scores match better."),
   })
   .describe("One full-text item match. The item body is never included.");
 
@@ -22,7 +22,7 @@ const items = orgScoped
     path: "/items/search",
     summary: "Search items",
     description:
-      "Rank active items in the requested scopes against a full-text query. Titles outrank bodies. Results carry an excerpt, never the item body.",
+      "Rank active items in the requested scopes against a query. Text matching always applies, and an organization with embeddings configured also matches on meaning. Results carry an excerpt, never the item body.",
     tags: ["Items"],
   })
   .input(
@@ -54,6 +54,9 @@ const items = orgScoped
       orgId: context.org.id,
       scopeIds: input.scopeIds,
       query: input.query,
+      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+        : {}),
       ...(input.limit !== undefined ? { limit: input.limit } : {}),
     });
   });

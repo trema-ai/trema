@@ -6,6 +6,7 @@ import {
   type ConnectorInstallationBody,
   connectorInstallationBodySchema,
 } from "#/services/connectors/installations.js";
+import type { EmbeddingOptions } from "#/services/embeddings/index.js";
 import { indexItemSafely } from "#/services/search/index.js";
 
 export const memoryTypes = ["fact", "preference", "rule", "procedure"] as const;
@@ -157,7 +158,7 @@ function jsonValue(value: CreatableItemBody): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
 
-export interface CreateItemInput {
+export interface CreateItemInput extends EmbeddingOptions {
   orgId: string;
   actorPrincipalId: string;
   scopeId: string;
@@ -239,7 +240,7 @@ export async function createItem(db: Database, input: CreateItemInput) {
     return item;
   });
   log.info("Item created", { itemId: item.id, kind: item.kind });
-  await indexItemSafely(db, item);
+  await indexItemSafely(db, item, input);
   return item;
 }
 
@@ -282,7 +283,7 @@ export async function listItems(db: Database, input: ListItemsInput) {
   });
 }
 
-export interface UpdateItemInput {
+export interface UpdateItemInput extends EmbeddingOptions {
   orgId: string;
   actorPrincipalId: string;
   itemId: string;
@@ -359,7 +360,7 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
       kind: item.kind,
     });
   }
-  await indexItemSafely(db, item);
+  await indexItemSafely(db, item, input);
   return item;
 }
 

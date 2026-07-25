@@ -8,6 +8,9 @@ export default defineConfig({
       "@trema/connectors": fileURLToPath(
         new URL("../../packages/connectors/src/index.ts", import.meta.url),
       ),
+      "@trema/models": fileURLToPath(
+        new URL("../../packages/models/src/index.ts", import.meta.url),
+      ),
     },
   },
   test: {

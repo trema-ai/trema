@@ -10,6 +10,7 @@
     "declarationMap": false,
     "paths": {
       "@trema/connectors": ["../../packages/connectors/src/index.ts"],
+      "@trema/models": ["../../packages/models/src/index.ts"],
       "#/*": ["./src/*"]
     }
   },

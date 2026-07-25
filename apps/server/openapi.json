@@ -3618,6 +3618,279 @@
         ]
       }
     },
+    "/embedding-settings": {
+      "get": {
+        "operationId": "embeddings.settings.get",
+        "summary": "Get the embedding settings",
+        "description": "Read the organization's embedding endpoint and model. The stored API key is never returned; only whether one is set.",
+        "tags": [
+          "Embeddings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
+                    },
+                    "endpoint": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The base URL of the embeddings API, including the version path."
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The model that produces the vectors."
+                    },
+                    "hasApiKey": {
+                      "type": "boolean",
+                      "description": "Whether a stored API key accompanies the endpoint. The key itself is never returned."
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the settings last changed. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "endpoint",
+                    "model",
+                    "hasApiKey",
+                    "updatedAt"
+                  ],
+                  "description": "The organization's embedding settings. The API key is write-only."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "embeddings.settings.put",
+        "summary": "Set the embedding settings",
+        "description": "Point the organization at an OpenAI-compatible embeddings endpoint. Existing items keep their vectors until a reindex re-embeds them under the new model.",
+        "tags": [
+          "Embeddings"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The base URL of the embeddings API, including the version path, such as `https://api.openai.com/v1`."
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The model that produces the vectors."
+                  },
+                  "apiKey": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The API key, stored encrypted and never returned. Omit to keep the stored key; send null for an endpoint that needs none."
+                  }
+                },
+                "required": [
+                  "endpoint",
+                  "model"
+                ],
+                "description": "The embedding settings to store."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
+                    },
+                    "endpoint": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The base URL of the embeddings API, including the version path."
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The model that produces the vectors."
+                    },
+                    "hasApiKey": {
+                      "type": "boolean",
+                      "description": "Whether a stored API key accompanies the endpoint. The key itself is never returned."
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the settings last changed. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "endpoint",
+                    "model",
+                    "hasApiKey",
+                    "updatedAt"
+                  ],
+                  "description": "The organization's embedding settings. The API key is write-only."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "embeddings.settings.delete",
+        "summary": "Delete the embedding settings",
+        "description": "Stop embedding this organization's items. Search falls back to text matching. Stored vectors are left in place and are ignored until an endpoint is configured again.",
+        "tags": [
+          "Embeddings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ],
+                  "description": "The settings were removed."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/reindex": {
+      "post": {
+        "operationId": "embeddings.reindex",
+        "summary": "Rebuild the item search index",
+        "description": "Rebuild every item's search text, then embed the items that have no vector or whose vector came from an earlier model. Run it after changing the embedding settings.",
+        "tags": [
+          "Embeddings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "embedded": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items received a vector."
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items the endpoint could not embed."
+                    }
+                  },
+                  "required": [
+                    "embedded",
+                    "failed"
+                  ],
+                  "description": "What the reindex did."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/members": {
       "get": {
         "operationId": "members.list",
@@ -7451,7 +7724,7 @@
       "get": {
         "operationId": "search.items",
         "summary": "Search items",
-        "description": "Rank active items in the requested scopes against a full-text query. Titles outrank bodies. Results carry an excerpt, never the item body.",
+        "description": "Rank active items in the requested scopes against a query. Text matching always applies, and an organization with embeddings configured also matches on meaning. Results carry an excerpt, never the item body.",
         "tags": [
           "Items"
         ],
@@ -7535,7 +7808,7 @@
                       },
                       "score": {
                         "type": "number",
-                        "description": "The full-text rank. Higher scores match better."
+                        "description": "The relevance score. Higher scores match better."
                       }
                     },
                     "required": [

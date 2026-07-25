@@ -10,6 +10,7 @@ export const capabilities = [
   "manage_scopes",
   "edit_policies",
   "manage_members",
+  "manage_models",
   "manage_org",
 ] as const;
 
@@ -36,6 +37,12 @@ const capabilityRoleTable: Record<Capability, Record<Role, boolean>> = {
     viewer: false,
   },
   manage_members: {
+    owner: true,
+    admin: true,
+    member: false,
+    viewer: false,
+  },
+  manage_models: {
     owner: true,
     admin: true,
     member: false,

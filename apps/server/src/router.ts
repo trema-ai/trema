@@ -3,6 +3,7 @@ import { bootstrapRouter } from "./rpc/bootstrap.js";
 import { configRouter } from "./rpc/config.js";
 import { connectorsRouter } from "./rpc/connectors.js";
 import { serviceCredentialsRouter } from "./rpc/credentials.js";
+import { embeddingsRouter } from "./rpc/embeddings.js";
 import { itemsRouter } from "./rpc/items.js";
 import { membersRouter } from "./rpc/members.js";
 import { orgRouter } from "./rpc/org.js";
@@ -16,6 +17,7 @@ export const router = {
   bindings: bindingsRouter,
   config: configRouter,
   connectors: connectorsRouter,
+  embeddings: embeddingsRouter,
   members: membersRouter,
   items: itemsRouter,
   org: orgRouter,
