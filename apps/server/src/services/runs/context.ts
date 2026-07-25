@@ -7,8 +7,8 @@ import type {
   Usage,
 } from "@trema/harness";
 
-import type { Database } from "#/lib/db/index.js";
-import { closeSession, openSession, renewSession } from "#/services/sessions/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { closeSession, openSession, renewSession } from "#server/services/sessions/index.js";
 
 /**
  * A data-plane call the context app does not serve yet.

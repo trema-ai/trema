@@ -3,17 +3,17 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { type Environment, parseEnv } from "#/lib/env/schema.js";
-import { bootstrapRouter } from "#/rpc/bootstrap.js";
-import { AdminOrgResolutionError, promote, resetPassword } from "#/services/admin/index.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { type Environment, parseEnv } from "#server/lib/env/schema.js";
+import { bootstrapRouter } from "#server/rpc/bootstrap.js";
+import { AdminOrgResolutionError, promote, resetPassword } from "#server/services/admin/index.js";
 import {
   BootstrapConflictError,
   hashBootstrapToken,
   mintBootstrapToken,
-} from "#/services/bootstrap/index.js";
-import { createOrgWithOwner } from "#/services/org/index.js";
+} from "#server/services/bootstrap/index.js";
+import { createOrgWithOwner } from "#server/services/org/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { createApp } from "#/app.js";
-import type { Auth } from "#/lib/auth/index.js";
-import type { Database } from "#/lib/db/index.js";
-import { parseEnv } from "#/lib/env/schema.js";
+import { createApp } from "#server/app.js";
+import type { Auth } from "#server/lib/auth/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { parseEnv } from "#server/lib/env/schema.js";
 
 const environment = parseEnv({
   NODE_ENV: "test",

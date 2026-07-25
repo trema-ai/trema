@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ToolCall, TranscriptMessage, Usage } from "#/core/index.js";
-import type { RunEventData } from "#/events/index.js";
-import { runLoop } from "#/loop/loop.js";
-import { InMemoryRunStore } from "#/memory/index.js";
-import type { Clock, ToolExecutor, TurnResult } from "#/ports/index.js";
-import type { FauxTurnScript } from "#/testing/index.js";
-import { FauxModelPort } from "#/testing/index.js";
+import type { ToolCall, TranscriptMessage, Usage } from "#harness/core/index.js";
+import type { RunEventData } from "#harness/events/index.js";
+import { runLoop } from "#harness/loop/loop.js";
+import { InMemoryRunStore } from "#harness/memory/index.js";
+import type { Clock, ToolExecutor, TurnResult } from "#harness/ports/index.js";
+import type { FauxTurnScript } from "#harness/testing/index.js";
+import { FauxModelPort } from "#harness/testing/index.js";
 
 const usage: Usage = {
   inputTokens: 2,

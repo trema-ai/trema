@@ -1,9 +1,9 @@
 import { useTheme } from "next-themes";
 
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { SettingRow, SettingsSection } from "#/components/trema/settings-section.tsx";
-import { Label } from "#/components/ui/label.tsx";
-import { RadioGroup, RadioGroupItem } from "#/components/ui/radio-group.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { SettingRow, SettingsSection } from "#web/components/trema/settings-section.tsx";
+import { Label } from "#web/components/ui/label.tsx";
+import { RadioGroup, RadioGroupItem } from "#web/components/ui/radio-group.tsx";
 
 const themes = [
   { value: "system", label: "System" },

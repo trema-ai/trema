@@ -1,10 +1,10 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { orgScoped } from "#/rpc/builders.js";
-import { itemKindSchema } from "#/rpc/items.js";
-import { authorize } from "#/services/authorize/index.js";
-import { searchItems } from "#/services/search/index.js";
+import { orgScoped } from "#server/rpc/builders.js";
+import { itemKindSchema } from "#server/rpc/items.js";
+import { authorize } from "#server/services/authorize/index.js";
+import { searchItems } from "#server/services/search/index.js";
 
 const resultSchema = z
   .object({

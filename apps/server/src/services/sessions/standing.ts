@@ -1,4 +1,4 @@
-import type { ItemKind } from "#/generated/prisma/client.js";
+import type { ItemKind } from "#server/generated/prisma/client.js";
 
 /** The default standing budget, in tokens, when configuration supplies none. */
 export const DEFAULT_STANDING_BUDGET_TOKENS = 4000;

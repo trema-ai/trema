@@ -7,7 +7,7 @@ import {
   hashSessionToken,
   isSessionToken,
   SESSION_TOKEN_TTL_MS,
-} from "#/services/sessions/index.js";
+} from "#server/services/sessions/index.js";
 
 describe("session token helpers", () => {
   it("accepts only non-empty tokens with the session prefix", () => {

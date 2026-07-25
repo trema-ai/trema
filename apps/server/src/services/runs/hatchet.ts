@@ -5,7 +5,7 @@ import {
 } from "@hatchet-dev/typescript-sdk/v1/index.js";
 import type { Engine, EngineTask } from "@trema/harness";
 
-import { log } from "#/lib/logger/index.js";
+import { log } from "#server/lib/logger/index.js";
 
 /** The one task name a run is scheduled under. One run is one durable task. */
 export const RUN_TASK_NAME = "trema-run";

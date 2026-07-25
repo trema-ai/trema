@@ -16,7 +16,7 @@ import type {
 } from "@trema/harness";
 import { runLoop } from "@trema/harness";
 
-import { log } from "#/lib/logger/index.js";
+import { log } from "#server/lib/logger/index.js";
 
 /** Run states that end the run for good, so a delivered task has nothing to do. */
 const TERMINAL_RUN_STATES: RunState[] = ["completed", "failed", "cancelled", "stale"];

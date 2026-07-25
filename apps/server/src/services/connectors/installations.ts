@@ -1,14 +1,14 @@
 import type { ProviderDef } from "@trema/connectors";
 import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import { z } from "zod";
-import type { Prisma } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import type { ConnectorFetch } from "#/services/connectors/connect.js";
-import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
-import type { McpClientFactory } from "#/services/connectors/sync.js";
-import type { EmbeddingOptions } from "#/services/embeddings/index.js";
-import { indexItemSafely } from "#/services/search/index.js";
+import type { Prisma } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import type { ConnectorFetch } from "#server/services/connectors/connect.js";
+import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
+import type { McpClientFactory } from "#server/services/connectors/sync.js";
+import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
+import { indexItemSafely } from "#server/services/search/index.js";
 
 export const sensitivities = ["read", "write", "destructive"] as const;
 export const sensitivitySchema = z.enum(sensitivities);
@@ -415,7 +415,7 @@ export async function createConnectorInstallation(
   });
   await indexItemSafely(db, installation, input);
   if (provider.transport.type === "mcp") {
-    const { syncConnectorInstallation } = await import("#/services/connectors/sync.js");
+    const { syncConnectorInstallation } = await import("#server/services/connectors/sync.js");
     const sync = syncConnectorInstallation(db, {
       orgId: input.orgId,
       actorPrincipalId: input.actorPrincipalId,

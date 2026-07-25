@@ -1,7 +1,7 @@
 import type * as React from "react";
 
-import { StatusDot } from "#/components/trema/status-dot.tsx";
-import { cn } from "#/lib/utils.ts";
+import { StatusDot } from "#web/components/trema/status-dot.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type RunState = "queued" | "running" | "paused" | "finished" | "failed" | "stale";
 

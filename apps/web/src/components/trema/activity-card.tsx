@@ -1,13 +1,13 @@
 import { ChevronRight, Wrench } from "lucide-react";
 import type * as React from "react";
 
-import { StatusDot } from "#/components/trema/status-dot.tsx";
+import { StatusDot } from "#web/components/trema/status-dot.tsx";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "#/components/ui/collapsible.tsx";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/collapsible.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type ActivityState = "running" | "ok" | "error";
 

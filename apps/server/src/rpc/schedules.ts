@@ -1,10 +1,10 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import type { Schedule } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { orgScoped, requireCapability } from "#/rpc/builders.js";
-import { authorize, type AuthorizePrincipal } from "#/services/authorize/index.js";
+import type { Schedule } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { orgScoped, requireCapability } from "#server/rpc/builders.js";
+import { type AuthorizePrincipal, authorize } from "#server/services/authorize/index.js";
 import {
   CronParseError,
   createSchedule,
@@ -13,7 +13,7 @@ import {
   ScheduleStatusError,
   setScheduleStatus,
   updateSchedule,
-} from "#/services/schedules/index.js";
+} from "#server/services/schedules/index.js";
 
 const statusSchema = z
   .enum(["proposed", "active", "paused", "archived"])

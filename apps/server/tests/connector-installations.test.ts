@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import type { Role } from "#/generated/prisma/client.js";
-import { createAuth } from "#/lib/auth/index.js";
-import { encryptEnvelope } from "#/lib/crypto/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { parseEnv } from "#/lib/env/schema.js";
-import { connectorsRouter } from "#/rpc/connectors.js";
-import { itemsRouter } from "#/rpc/items.js";
-import { orgRouter } from "#/rpc/org.js";
-import type { McpClientFactory } from "#/services/connectors/index.js";
+import type { Role } from "#server/generated/prisma/client.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { encryptEnvelope } from "#server/lib/crypto/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { parseEnv } from "#server/lib/env/schema.js";
+import { connectorsRouter } from "#server/rpc/connectors.js";
+import { itemsRouter } from "#server/rpc/items.js";
+import { orgRouter } from "#server/rpc/org.js";
+import type { McpClientFactory } from "#server/services/connectors/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

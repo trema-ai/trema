@@ -1,27 +1,27 @@
 import type { ProviderDef } from "@trema/connectors";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 
-import type { ConnectorConnection, Prisma } from "#/generated/prisma/client.js";
+import type { ConnectorConnection, Prisma } from "#server/generated/prisma/client.js";
 import {
   CredentialDecryptionError,
   CredentialEncryptionConfigError,
   decryptEnvelope,
   encryptEnvelope,
-} from "#/lib/crypto/index.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import { ConnectorConnectionNotFoundError } from "#/services/connectors/connect.js";
+} from "#server/lib/crypto/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import { ConnectorConnectionNotFoundError } from "#server/services/connectors/connect.js";
 import {
   discoverMcpAuthServer,
   type ResolvedMcpClient,
   resolveExistingMcpClientRegistration,
-} from "#/services/connectors/mcp-oauth.js";
+} from "#server/services/connectors/mcp-oauth.js";
 import {
   ConnectorProviderNotFoundError,
   emptyPlatformAppDirectory,
   type PlatformAppDirectory,
   resolveClientRegistration,
-} from "#/services/connectors/registrations.js";
+} from "#server/services/connectors/registrations.js";
 
 const defaultCatalog = loadProviderCatalog();
 

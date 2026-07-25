@@ -5,7 +5,7 @@ import {
   cronTicks,
   isKnownTimezone,
   parseCron,
-} from "#/services/schedules/cron.js";
+} from "#server/services/schedules/cron.js";
 
 function ticks(expression: string, timezone: string, from: string, to: string): string[] {
   return cronTicks(parseCron(expression), timezone, {

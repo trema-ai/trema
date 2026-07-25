@@ -12,15 +12,15 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 
-import type { ClientRegistrationSource } from "#/generated/prisma/client.js";
-import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type { ClientRegistrationSource } from "#server/generated/prisma/client.js";
+import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 import {
   ClientRegistrationNotFoundError,
   NoClientRegistrationError,
   type PlatformAppDirectory,
-} from "#/services/connectors/registrations.js";
+} from "#server/services/connectors/registrations.js";
 
 type FetchLike = typeof globalThis.fetch;
 

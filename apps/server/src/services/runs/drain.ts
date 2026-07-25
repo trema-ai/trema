@@ -1,4 +1,4 @@
-import { log } from "#/lib/logger/index.js";
+import { log } from "#server/lib/logger/index.js";
 
 /** Tracks the executions a worker is running, so a drain can report what it left behind. */
 export class InFlightRuns {

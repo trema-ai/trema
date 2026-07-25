@@ -1,8 +1,8 @@
-import type { ItemKind } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import type { Embedder, EmbeddingOptions } from "#/services/embeddings/index.js";
-import { resolveEmbedder } from "#/services/embeddings/index.js";
+import type { ItemKind } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import type { Embedder, EmbeddingOptions } from "#server/services/embeddings/index.js";
+import { resolveEmbedder } from "#server/services/embeddings/index.js";
 
 const defaultLimit = 20;
 const maxLimit = 50;

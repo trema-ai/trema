@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Prisma, Role } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import type { Environment } from "#/lib/env/schema.js";
-import { log } from "#/lib/logger/index.js";
-import { ensurePersonalScope } from "#/services/scopes/index.js";
+import type { Prisma, Role } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import type { Environment } from "#server/lib/env/schema.js";
+import { log } from "#server/lib/logger/index.js";
+import { ensurePersonalScope } from "#server/services/scopes/index.js";
 
 const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 

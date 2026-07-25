@@ -2,7 +2,7 @@ import type { ModelPort, ModelRef } from "@trema/harness";
 import { createSdkModelPort, type ModelEndpoints } from "@trema/models";
 import { z } from "zod";
 
-import type { Environment } from "#/lib/env/schema.js";
+import type { Environment } from "#server/lib/env/schema.js";
 
 const endpointSchema = z.object({
   protocol: z.literal("openai-compatible"),

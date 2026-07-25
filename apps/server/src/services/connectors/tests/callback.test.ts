@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { safeConnectorReturnUrl } from "#/app.js";
+import { safeConnectorReturnUrl } from "#server/app.js";
 
 describe("connector callback redirect guard", () => {
   const origins = ["https://app.trema.example", "https://admin.trema.example"];

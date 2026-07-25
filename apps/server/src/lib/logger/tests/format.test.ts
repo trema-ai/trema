@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRecord, type LogRecord } from "#/lib/logger/format.js";
+import { formatRecord, type LogRecord } from "#server/lib/logger/format.js";
 
 function record(overrides: Partial<LogRecord> = {}): LogRecord {
   return {

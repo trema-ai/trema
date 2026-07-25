@@ -1,4 +1,4 @@
-import type { Database } from "#/lib/db/index.js";
+import type { Database } from "#server/lib/db/index.js";
 
 export const AUDIT_PAGE_SIZE = 50;
 export const AUDIT_MAX_PAGE_SIZE = 200;

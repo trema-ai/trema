@@ -1,7 +1,7 @@
 import { AuiIf, ComposerPrimitive } from "@assistant-ui/react";
 import { ArrowUp, Plus, Square } from "lucide-react";
 
-import { Button } from "#/components/ui/button.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 
 /*
  * The default assistant-ui composer shape: a rounded shell with the input

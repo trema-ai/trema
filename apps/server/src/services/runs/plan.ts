@@ -1,9 +1,9 @@
 import type { ModelRef, RunRecord, ToolDef } from "@trema/harness";
 
-import type { Database } from "#/lib/db/index.js";
-import { toSessionStanding } from "#/services/runs/context.js";
-import { type RunExecutionPlan, RunNotStartableError } from "#/services/runs/driver.js";
-import { renewSession } from "#/services/sessions/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { toSessionStanding } from "#server/services/runs/context.js";
+import { type RunExecutionPlan, RunNotStartableError } from "#server/services/runs/driver.js";
+import { renewSession } from "#server/services/sessions/index.js";
 
 /**
  * Intersects the session's resolved tools with a run's allowlist.

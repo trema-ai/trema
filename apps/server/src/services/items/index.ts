@@ -1,13 +1,18 @@
 import { z } from "zod";
-import type { ItemDisclosure, ItemKind, ItemStatus, Prisma } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type {
+  ItemDisclosure,
+  ItemKind,
+  ItemStatus,
+  Prisma,
+} from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   connectorInstallationBodySchema,
-} from "#/services/connectors/installations.js";
-import type { EmbeddingOptions } from "#/services/embeddings/index.js";
-import { indexItemSafely } from "#/services/search/index.js";
+} from "#server/services/connectors/installations.js";
+import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
+import { indexItemSafely } from "#server/services/search/index.js";
 
 export const memoryTypes = ["fact", "preference", "rule", "procedure"] as const;
 export type MemoryType = (typeof memoryTypes)[number];

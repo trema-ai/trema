@@ -2,24 +2,29 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { ThemeProvider } from "next-themes";
 import { type ReactNode, useRef } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router";
-import { AdminSettingsPage, SettingsLayout } from "#/components/trema/settings-layout.tsx";
-import { Toaster } from "#/components/ui/sonner.tsx";
-import { authClient, orpc } from "#/lib/api.ts";
-import { AutomationsPage } from "#/pages/automations.tsx";
-import { BootstrapPage } from "#/pages/bootstrap.tsx";
-import { CustomizePage } from "#/pages/customize/index.tsx";
-import { Gallery } from "#/pages/gallery.tsx";
-import { AuthenticatedAppShell, AuthenticatedProvider, HomePage, Loading } from "#/pages/home.tsx";
-import { JoinPage } from "#/pages/join.tsx";
-import { ScopesPage } from "#/pages/scopes.tsx";
-import { SettingsAppearancePage } from "#/pages/settings/appearance.tsx";
-import { SettingsAuditPage } from "#/pages/settings/audit.tsx";
-import { SettingsConnectorDetailPage } from "#/pages/settings/connectors/detail.tsx";
-import { SettingsConnectorsPage } from "#/pages/settings/connectors/index.tsx";
-import { SettingsGeneralPage } from "#/pages/settings/general.tsx";
-import { SettingsMembersPage } from "#/pages/settings/members.tsx";
-import { SettingsProfilePage } from "#/pages/settings/profile.tsx";
-import { SignInPage } from "#/pages/sign-in.tsx";
+import { AdminSettingsPage, SettingsLayout } from "#web/components/trema/settings-layout.tsx";
+import { Toaster } from "#web/components/ui/sonner.tsx";
+import { authClient, orpc } from "#web/lib/api.ts";
+import { AutomationsPage } from "#web/pages/automations.tsx";
+import { BootstrapPage } from "#web/pages/bootstrap.tsx";
+import { CustomizePage } from "#web/pages/customize/index.tsx";
+import { Gallery } from "#web/pages/gallery.tsx";
+import {
+  AuthenticatedAppShell,
+  AuthenticatedProvider,
+  HomePage,
+  Loading,
+} from "#web/pages/home.tsx";
+import { JoinPage } from "#web/pages/join.tsx";
+import { ScopesPage } from "#web/pages/scopes.tsx";
+import { SettingsAppearancePage } from "#web/pages/settings/appearance.tsx";
+import { SettingsAuditPage } from "#web/pages/settings/audit.tsx";
+import { SettingsConnectorDetailPage } from "#web/pages/settings/connectors/detail.tsx";
+import { SettingsConnectorsPage } from "#web/pages/settings/connectors/index.tsx";
+import { SettingsGeneralPage } from "#web/pages/settings/general.tsx";
+import { SettingsMembersPage } from "#web/pages/settings/members.tsx";
+import { SettingsProfilePage } from "#web/pages/settings/profile.tsx";
+import { SignInPage } from "#web/pages/sign-in.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 15_000 } },

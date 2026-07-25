@@ -1,7 +1,7 @@
 import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import { ConnectorProviderNotFoundError } from "#/services/connectors/registrations.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import { ConnectorProviderNotFoundError } from "#server/services/connectors/registrations.js";
 
 const defaultCatalog = loadProviderCatalog();
 

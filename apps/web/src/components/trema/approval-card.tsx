@@ -1,9 +1,9 @@
 import { CircleCheck, CircleX, Clock } from "lucide-react";
 
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { type Sensitivity, SensitivityBadge } from "#/components/trema/sensitivity-badge.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { cn } from "#/lib/utils.ts";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { type Sensitivity, SensitivityBadge } from "#web/components/trema/sensitivity-badge.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type ApprovalOption = {
   id: string;

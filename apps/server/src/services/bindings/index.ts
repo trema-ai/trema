@@ -1,8 +1,8 @@
-import type { Scope } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import { ensurePersonalScope } from "#/services/scopes/index.js";
-import { isKnownSurface } from "#/services/surfaces/index.js";
+import type { Scope } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import { ensurePersonalScope } from "#server/services/scopes/index.js";
+import { isKnownSurface } from "#server/services/surfaces/index.js";
 
 export class BindingConflictError extends Error {
   constructor(message: string) {

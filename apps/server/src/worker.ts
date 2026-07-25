@@ -1,8 +1,8 @@
 import { HatchetClient, type Worker } from "@hatchet-dev/typescript-sdk/v1/index.js";
 
-import { createPrismaClient, type Database } from "#/lib/db/index.js";
-import type { Environment } from "#/lib/env/schema.js";
-import { configureLogger, log } from "#/lib/logger/index.js";
+import { createPrismaClient, type Database } from "#server/lib/db/index.js";
+import type { Environment } from "#server/lib/env/schema.js";
+import { configureLogger, log } from "#server/lib/logger/index.js";
 import {
   createRunServices,
   defineRunTask,
@@ -12,7 +12,7 @@ import {
   RUN_TASK_NAME,
   type RunDriverResult,
   resolveConfiguredModel,
-} from "#/services/runs/index.js";
+} from "#server/services/runs/index.js";
 
 export interface RunWorkerDependencies {
   env: Environment;

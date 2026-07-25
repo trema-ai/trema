@@ -2,10 +2,10 @@ import type { RunRecord, ToolDef } from "@trema/harness";
 import { InMemoryEngine, InMemoryRunStore, RunLifecycle, ThreadDispatchLock } from "@trema/harness";
 import { FakeContextSession, FauxModelPort } from "@trema/harness/testing";
 import { describe, expect, it, vi } from "vitest";
-import { drainWorker, InFlightRuns } from "#/services/runs/drain.js";
-import { createRunDriver, type RunExecutionPlan } from "#/services/runs/driver.js";
-import { concurrencyKey, HatchetEngine } from "#/services/runs/hatchet.js";
-import { narrowTools } from "#/services/runs/plan.js";
+import { drainWorker, InFlightRuns } from "#server/services/runs/drain.js";
+import { createRunDriver, type RunExecutionPlan } from "#server/services/runs/driver.js";
+import { concurrencyKey, HatchetEngine } from "#server/services/runs/hatchet.js";
+import { narrowTools } from "#server/services/runs/plan.js";
 
 const now = "2026-07-19T12:00:00.000Z";
 const usage = {

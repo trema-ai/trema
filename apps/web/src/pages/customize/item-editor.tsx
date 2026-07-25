@@ -3,8 +3,8 @@ import { Archive, ChevronRight, RotateCcw } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 
-import { KeyValueList } from "#/components/trema/key-value-list.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
+import { KeyValueList } from "#web/components/trema/key-value-list.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,17 +15,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "#/components/ui/alert-dialog.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select.tsx";
+} from "#web/components/ui/select.tsx";
 import {
   Sheet,
   SheetContent,
@@ -33,11 +33,11 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from "#/components/ui/sheet.tsx";
-import { Skeleton } from "#/components/ui/skeleton.tsx";
-import { Textarea } from "#/components/ui/textarea.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/sheet.tsx";
+import { Skeleton } from "#web/components/ui/skeleton.tsx";
+import { Textarea } from "#web/components/ui/textarea.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
+import { cn } from "#web/lib/utils.ts";
 import {
   bodyContent,
   type InstructionBody,
@@ -46,9 +46,9 @@ import {
   type MemoryBody,
   messageFrom,
   type VersionAuthor,
-} from "#/pages/customize/types.ts";
-import { useAuthenticatedSession } from "#/pages/home.tsx";
-import { VersionDiffViewer } from "#/pages/version-diff.tsx";
+} from "#web/pages/customize/types.ts";
+import { useAuthenticatedSession } from "#web/pages/home.tsx";
+import { VersionDiffViewer } from "#web/pages/version-diff.tsx";
 
 const memoryTypes = ["fact", "preference", "rule", "procedure"] as const;
 

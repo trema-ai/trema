@@ -3,17 +3,21 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { Role } from "#/generated/prisma/client.js";
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { parseEnv } from "#/lib/env/schema.js";
-import { createLogger, withLogger } from "#/lib/logger/index.js";
-import { embeddingsRouter } from "#/rpc/embeddings.js";
-import { orgRouter } from "#/rpc/org.js";
-import { searchRouter } from "#/rpc/search.js";
-import type { Embedder } from "#/services/embeddings/index.js";
-import { createItem, updateItem } from "#/services/items/index.js";
-import { backfillEmbeddings, rebuildSearchIndex, searchItems } from "#/services/search/index.js";
+import type { Role } from "#server/generated/prisma/client.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { parseEnv } from "#server/lib/env/schema.js";
+import { createLogger, withLogger } from "#server/lib/logger/index.js";
+import { embeddingsRouter } from "#server/rpc/embeddings.js";
+import { orgRouter } from "#server/rpc/org.js";
+import { searchRouter } from "#server/rpc/search.js";
+import type { Embedder } from "#server/services/embeddings/index.js";
+import { createItem, updateItem } from "#server/services/items/index.js";
+import {
+  backfillEmbeddings,
+  rebuildSearchIndex,
+  searchItems,
+} from "#server/services/search/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

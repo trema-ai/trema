@@ -1,13 +1,13 @@
 import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 
-import { Button } from "#/components/ui/button.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "#/components/ui/tooltip.tsx";
+} from "#web/components/ui/tooltip.tsx";
 
 /*
  * Ghost icon button that flips between light and dark. The icons swap

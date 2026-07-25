@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   hashServiceCredentialToken,
   isServiceCredentialToken,
-} from "#/services/credentials/index.js";
+} from "#server/services/credentials/index.js";
 
 describe("service credential token helpers", () => {
   it("accepts only non-empty tokens with the service credential prefix", () => {

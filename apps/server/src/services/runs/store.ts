@@ -20,8 +20,8 @@ import type {
 } from "@trema/harness";
 import { canTransition } from "@trema/harness";
 
-import type { Prisma } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
+import type { Prisma } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
 
 /** Run states a thread still considers active, so a new message steers instead of starting a run. */
 const ACTIVE_RUN_STATES: RunState[] = ["queued", "running", "awaiting_approval", "awaiting_input"];

@@ -2,35 +2,35 @@ import { CalendarClock, Inbox, Plus, Search, SettingsIcon, UserIcon } from "luci
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 
-import { ThreadDemo } from "#/components/assistant-ui/thread-demo.tsx";
-import { ActivityCard } from "#/components/trema/activity-card.tsx";
-import { ApprovalCard } from "#/components/trema/approval-card.tsx";
-import { CopyButton } from "#/components/trema/copy-button.tsx";
-import { CredentialStatusBadge } from "#/components/trema/credential-status-badge.tsx";
-import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { ErrorItem } from "#/components/trema/error-item.tsx";
+import { ThreadDemo } from "#web/components/assistant-ui/thread-demo.tsx";
+import { ActivityCard } from "#web/components/trema/activity-card.tsx";
+import { ApprovalCard } from "#web/components/trema/approval-card.tsx";
+import { CopyButton } from "#web/components/trema/copy-button.tsx";
+import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
+import { DataTable, type DataTableColumn } from "#web/components/trema/data-table.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { ErrorItem } from "#web/components/trema/error-item.tsx";
 import {
   FilterBar,
   FilterCombobox,
   FilterSearch,
   FilterSelect,
-} from "#/components/trema/filter-bar.tsx";
-import { IdChip } from "#/components/trema/id-chip.tsx";
-import { KeyValueList } from "#/components/trema/key-value-list.tsx";
-import { LogLine } from "#/components/trema/log-line.tsx";
-import { OutputViewer } from "#/components/trema/output-viewer.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { ReasoningBlock } from "#/components/trema/reasoning-block.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { type RunState, RunStateBadge } from "#/components/trema/run-state-badge.tsx";
-import { SegmentDivider } from "#/components/trema/segment-divider.tsx";
-import { SensitivityBadge } from "#/components/trema/sensitivity-badge.tsx";
-import { SettingRow, SettingsSection } from "#/components/trema/settings-section.tsx";
-import { StatusDot } from "#/components/trema/status-dot.tsx";
-import { SteeringNote } from "#/components/trema/steering-note.tsx";
-import { UnknownEventsLine } from "#/components/trema/unknown-events-line.tsx";
-import { LogoMark, Wordmark } from "#/components/trema/wordmark.tsx";
+} from "#web/components/trema/filter-bar.tsx";
+import { IdChip } from "#web/components/trema/id-chip.tsx";
+import { KeyValueList } from "#web/components/trema/key-value-list.tsx";
+import { LogLine } from "#web/components/trema/log-line.tsx";
+import { OutputViewer } from "#web/components/trema/output-viewer.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { ReasoningBlock } from "#web/components/trema/reasoning-block.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { type RunState, RunStateBadge } from "#web/components/trema/run-state-badge.tsx";
+import { SegmentDivider } from "#web/components/trema/segment-divider.tsx";
+import { SensitivityBadge } from "#web/components/trema/sensitivity-badge.tsx";
+import { SettingRow, SettingsSection } from "#web/components/trema/settings-section.tsx";
+import { StatusDot } from "#web/components/trema/status-dot.tsx";
+import { SteeringNote } from "#web/components/trema/steering-note.tsx";
+import { UnknownEventsLine } from "#web/components/trema/unknown-events-line.tsx";
+import { LogoMark, Wordmark } from "#web/components/trema/wordmark.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,10 +41,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "#/components/ui/alert-dialog.tsx";
-import { Badge } from "#/components/ui/badge.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { Checkbox } from "#/components/ui/checkbox.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Badge } from "#web/components/ui/badge.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Checkbox } from "#web/components/ui/checkbox.tsx";
 import {
   Command,
   CommandEmpty,
@@ -54,7 +54,7 @@ import {
   CommandList,
   CommandSeparator,
   CommandShortcut,
-} from "#/components/ui/command.tsx";
+} from "#web/components/ui/command.tsx";
 import {
   Dialog,
   DialogClose,
@@ -64,7 +64,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "#/components/ui/dialog.tsx";
+} from "#web/components/ui/dialog.tsx";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -74,18 +74,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "#/components/ui/popover.tsx";
-import { RadioGroup, RadioGroupItem } from "#/components/ui/radio-group.tsx";
+} from "#web/components/ui/dropdown-menu.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "#web/components/ui/popover.tsx";
+import { RadioGroup, RadioGroupItem } from "#web/components/ui/radio-group.tsx";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select.tsx";
+} from "#web/components/ui/select.tsx";
 import {
   Sheet,
   SheetContent,
@@ -93,16 +93,16 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from "#/components/ui/sheet.tsx";
-import { Switch } from "#/components/ui/switch.tsx";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs.tsx";
-import { Textarea } from "#/components/ui/textarea.tsx";
+} from "#web/components/ui/sheet.tsx";
+import { Switch } from "#web/components/ui/switch.tsx";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
+import { Textarea } from "#web/components/ui/textarea.tsx";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "#/components/ui/tooltip.tsx";
+} from "#web/components/ui/tooltip.tsx";
 
 /* ------------------------------------------------------------------ */
 /* Local helpers                                                      */

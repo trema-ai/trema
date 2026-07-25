@@ -1,8 +1,11 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { CredentialDecryptionError, CredentialEncryptionConfigError } from "#/lib/crypto/index.js";
-import { requireCapability } from "#/rpc/builders.js";
+import {
+  CredentialDecryptionError,
+  CredentialEncryptionConfigError,
+} from "#server/lib/crypto/index.js";
+import { requireCapability } from "#server/rpc/builders.js";
 import {
   deleteEmbeddingSettings,
   EmbeddingSettingsNotFoundError,
@@ -10,8 +13,8 @@ import {
   getEmbeddingSettings,
   putEmbeddingSettings,
   resolveEmbedder,
-} from "#/services/embeddings/index.js";
-import { backfillEmbeddings, rebuildSearchIndex } from "#/services/search/index.js";
+} from "#server/services/embeddings/index.js";
+import { backfillEmbeddings, rebuildSearchIndex } from "#server/services/search/index.js";
 
 const settingsSchema = z
   .object({

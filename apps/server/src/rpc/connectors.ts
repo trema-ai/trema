@@ -1,10 +1,10 @@
 import { ORPCError } from "@orpc/server";
 import { fieldDescriptorSchema } from "@trema/connectors";
 import { z } from "zod";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import { orgScoped, requireCapability } from "#/rpc/builders.js";
-import { authorize } from "#/services/authorize/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import { orgScoped, requireCapability } from "#server/rpc/builders.js";
+import { authorize } from "#server/services/authorize/index.js";
 import {
   archiveConnectorInstallation,
   ClientRegistrationConflictError,
@@ -49,7 +49,7 @@ import {
   updateConnectorConnectionLabel,
   updateConnectorInstallation,
   updateConnectorProviderSettings,
-} from "#/services/connectors/index.js";
+} from "#server/services/connectors/index.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
 const sensitivitySchema = z.enum(sensitivities);

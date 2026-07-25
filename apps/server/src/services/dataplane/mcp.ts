@@ -3,9 +3,9 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import type { Database } from "#/lib/db/index.js";
-import type { Environment } from "#/lib/env/schema.js";
-import { bindLogger, log } from "#/lib/logger/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import type { Environment } from "#server/lib/env/schema.js";
+import { bindLogger, log } from "#server/lib/logger/index.js";
 import {
   type DataPlaneSession,
   DataPlaneToolError,
@@ -13,19 +13,19 @@ import {
   SEARCH_CONTEXT_DEFAULT_LIMIT,
   SEARCH_CONTEXT_MAX_LIMIT,
   searchContext,
-} from "#/services/dataplane/index.js";
-import { saveMemory, updateMemory } from "#/services/dataplane/memory.js";
+} from "#server/services/dataplane/index.js";
+import { saveMemory, updateMemory } from "#server/services/dataplane/memory.js";
 import {
   FETCH_TRANSCRIPT_DEFAULT_WINDOW,
   FETCH_TRANSCRIPT_MAX_WINDOW,
   fetchTranscript,
-} from "#/services/dataplane/transcript.js";
-import { ItemValidationError, memoryTypes } from "#/services/items/index.js";
+} from "#server/services/dataplane/transcript.js";
+import { ItemValidationError, memoryTypes } from "#server/services/items/index.js";
 import {
   authenticateSession,
   isSessionExpired,
   SessionAuthenticationError,
-} from "#/services/sessions/index.js";
+} from "#server/services/sessions/index.js";
 
 export const DATA_PLANE_SERVER_NAME = "trema-context";
 export const DATA_PLANE_SERVER_VERSION = "1.0.0";

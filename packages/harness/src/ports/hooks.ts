@@ -1,5 +1,5 @@
-import type { ModelRef, ToolCall, ToolDef, TranscriptMessage } from "#/core/index.js";
-import type { RunEventData } from "#/events/index.js";
+import type { ModelRef, ToolCall, ToolDef, TranscriptMessage } from "#harness/core/index.js";
+import type { RunEventData } from "#harness/events/index.js";
 import type { TurnResult } from "./model-port.js";
 import type { ToolExecutionResult } from "./tool-executor.js";
 

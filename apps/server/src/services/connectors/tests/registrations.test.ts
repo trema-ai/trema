@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ClientRegistrationValidationError,
   validateRegistrationFields,
-} from "#/services/connectors/registrations.js";
+} from "#server/services/connectors/registrations.js";
 
 describe("client registration validation", () => {
   it("requires customer and dynamic client credentials", () => {

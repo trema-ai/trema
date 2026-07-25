@@ -1,9 +1,9 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import type { Item, ItemVersion } from "#/generated/prisma/client.js";
-import { orgScoped, requireCapability } from "#/rpc/builders.js";
-import { authorize, type Capability } from "#/services/authorize/index.js";
+import type { Item, ItemVersion } from "#server/generated/prisma/client.js";
+import { orgScoped, requireCapability } from "#server/rpc/builders.js";
+import { authorize, type Capability } from "#server/services/authorize/index.js";
 import {
   activateItem,
   archiveItem,
@@ -15,7 +15,7 @@ import {
   listItemVersions,
   restoreItem,
   updateItem,
-} from "#/services/items/index.js";
+} from "#server/services/items/index.js";
 
 export const itemKindSchema = z
   .enum(["memory", "skill", "instruction", "connector", "conversation"])

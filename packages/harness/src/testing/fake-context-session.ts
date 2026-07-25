@@ -1,10 +1,10 @@
-import type { TranscriptMessage, Usage } from "#/core/index.js";
+import type { TranscriptMessage, Usage } from "#harness/core/index.js";
 import type {
   ContextSession,
   OpenSessionRequest,
   SearchContextResult,
   SessionSnapshot,
-} from "#/ports/index.js";
+} from "#harness/ports/index.js";
 
 /** Deterministic context-session fake that records calls and returns configured results. */
 export class FakeContextSession implements ContextSession {

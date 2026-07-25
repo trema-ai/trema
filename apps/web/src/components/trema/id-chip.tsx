@@ -1,13 +1,13 @@
 import type * as React from "react";
 
-import { CopyButton } from "#/components/trema/copy-button.tsx";
+import { CopyButton } from "#web/components/trema/copy-button.tsx";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "#/components/ui/tooltip.tsx";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/tooltip.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type IdChipProps = React.ComponentProps<"span"> & {
   id: string;

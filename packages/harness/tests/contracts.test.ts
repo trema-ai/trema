@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryEngine } from "#/memory/in-memory-engine.js";
-import { InMemoryRunStore } from "#/memory/in-memory-run-store.js";
-import type { Clock, TurnRecord } from "#/ports/index.js";
+import { InMemoryEngine } from "#harness/memory/in-memory-engine.js";
+import { InMemoryRunStore } from "#harness/memory/in-memory-run-store.js";
+import type { Clock, TurnRecord } from "#harness/ports/index.js";
 
 const clock: Clock = { now: () => "2026-07-19T12:00:00.000Z" };
 

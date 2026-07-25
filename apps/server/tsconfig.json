@@ -1,20 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "../..",
+    "rootDir": ".",
     "outDir": "dist",
     "types": ["node"],
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "composite": false,
     "declaration": false,
-    "declarationMap": false,
-    "paths": {
-      "@trema/connectors": ["../../packages/connectors/src/index.ts"],
-      "@trema/harness": ["../../packages/harness/src/index.ts"],
-      "@trema/harness/testing": ["../../packages/harness/src/testing/index.ts"],
-      "@trema/models": ["../../packages/models/src/index.ts"],
-      "#/*": ["./src/*"]
-    }
+    "declarationMap": false
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

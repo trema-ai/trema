@@ -1,4 +1,4 @@
-import type { RunEventData } from "#/events/index.js";
+import type { RunEventData } from "#harness/events/index.js";
 import type {
   CompleteRequest,
   CompleteResult,
@@ -6,7 +6,7 @@ import type {
   TurnRequest,
   TurnResult,
   TurnStream,
-} from "#/ports/index.js";
+} from "#harness/ports/index.js";
 
 /** Events and final result consumed by one scripted model turn. */
 export interface FauxTurnScript {

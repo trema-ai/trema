@@ -1,7 +1,7 @@
 import { createSdkEmbeddingPort } from "@trema/models";
-import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 
 /**
  * A source of vectors, named by the model that produces them. Callers store

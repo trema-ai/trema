@@ -1,8 +1,8 @@
 import type { MessageIntent, PrincipalRef, RunRecord, TranscriptMessage } from "@trema/harness";
 import { InputDispatcher } from "@trema/harness";
 
-import { log } from "#/lib/logger/index.js";
-import type { RunServices } from "#/services/runs/index.js";
+import { log } from "#server/lib/logger/index.js";
+import type { RunServices } from "#server/services/runs/index.js";
 
 /** Where a run comes from, beyond the message itself. */
 export interface RunOrigin {

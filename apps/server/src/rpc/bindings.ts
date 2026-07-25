@@ -9,7 +9,7 @@ import {
   deleteBinding,
   listBindings,
   UnknownSurfaceError,
-} from "#/services/bindings/index.js";
+} from "#server/services/bindings/index.js";
 import { requireCapability } from "./builders.js";
 
 const bindingSchema = z

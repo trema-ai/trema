@@ -1,7 +1,7 @@
 import { Workflow } from "lucide-react";
 
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
 
 export function AutomationsPage() {
   return (

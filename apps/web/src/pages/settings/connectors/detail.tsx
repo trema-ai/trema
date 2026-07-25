@@ -12,13 +12,13 @@ import {
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { CredentialStatusBadge } from "#/components/trema/credential-status-badge.tsx";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { SensitivityBadge } from "#/components/trema/sensitivity-badge.tsx";
-import { SettingRow, SettingsSection } from "#/components/trema/settings-section.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
+import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { SensitivityBadge } from "#web/components/trema/sensitivity-badge.tsx";
+import { SettingRow, SettingsSection } from "#web/components/trema/settings-section.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,9 +28,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "#/components/ui/alert-dialog.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { Checkbox } from "#/components/ui/checkbox.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { Checkbox } from "#web/components/ui/checkbox.tsx";
 import {
   Dialog,
   DialogContent,
@@ -38,30 +38,30 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "#/components/ui/dialog.tsx";
+} from "#web/components/ui/dialog.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
+} from "#web/components/ui/dropdown-menu.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select.tsx";
-import { Switch } from "#/components/ui/switch.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
-import { scopeDisplayName } from "#/lib/scopes.ts";
+} from "#web/components/ui/select.tsx";
+import { Switch } from "#web/components/ui/switch.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
+import { scopeDisplayName } from "#web/lib/scopes.ts";
 import {
   OAuthConnectionDialog,
   StaticConnectionDialog,
-} from "#/pages/settings/connectors/connection-dialogs.tsx";
-import { RegistrationDialog } from "#/pages/settings/connectors/registration-dialog.tsx";
+} from "#web/pages/settings/connectors/connection-dialogs.tsx";
+import { RegistrationDialog } from "#web/pages/settings/connectors/registration-dialog.tsx";
 import {
   type CatalogProvider,
   type ConnectorConnection,
@@ -72,7 +72,7 @@ import {
   type Registration,
   type Scope,
   type Sensitivity,
-} from "#/pages/settings/connectors/shared.tsx";
+} from "#web/pages/settings/connectors/shared.tsx";
 
 type DriftReport = { added: string[]; removed: string[]; changed: string[] };
 

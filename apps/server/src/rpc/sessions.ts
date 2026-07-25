@@ -1,14 +1,14 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import type { ContextSession, Scope } from "#/generated/prisma/client.js";
-import { log } from "#/lib/logger/index.js";
-import { serviceAuthed, sessionAuthed } from "#/rpc/builders.js";
+import type { ContextSession, Scope } from "#server/generated/prisma/client.js";
+import { log } from "#server/lib/logger/index.js";
+import { serviceAuthed, sessionAuthed } from "#server/rpc/builders.js";
 import {
   ConversationValidationError,
   captureMessages,
   MESSAGE_BATCH_LIMIT,
-} from "#/services/conversations/index.js";
+} from "#server/services/conversations/index.js";
 import {
   closeSession,
   isSessionExpired,
@@ -20,7 +20,7 @@ import {
   SessionNotFoundError,
   SessionResolutionError,
   SessionValidationError,
-} from "#/services/sessions/index.js";
+} from "#server/services/sessions/index.js";
 
 const modeSchema = z
   .enum(["service", "delegated"])

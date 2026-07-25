@@ -4,12 +4,12 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "re
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 
-import { DataTable, type DataTableColumn } from "#/components/trema/data-table.tsx";
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { IdChip } from "#/components/trema/id-chip.tsx";
-import { PageHeader } from "#/components/trema/page-header.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
-import { Alert, AlertDescription } from "#/components/ui/alert.tsx";
+import { DataTable, type DataTableColumn } from "#web/components/trema/data-table.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { IdChip } from "#web/components/trema/id-chip.tsx";
+import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,8 +20,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "#/components/ui/alert-dialog.tsx";
-import { Button } from "#/components/ui/button.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Dialog,
   DialogClose,
@@ -30,22 +30,22 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "#/components/ui/dialog.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
+} from "#web/components/ui/dialog.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select.tsx";
-import { Skeleton } from "#/components/ui/skeleton.tsx";
-import { Switch } from "#/components/ui/switch.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
-import { scopeDisplayName } from "#/lib/scopes.ts";
-import { cn } from "#/lib/utils.ts";
-import { useViewerRole } from "#/pages/home.tsx";
+} from "#web/components/ui/select.tsx";
+import { Skeleton } from "#web/components/ui/skeleton.tsx";
+import { Switch } from "#web/components/ui/switch.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
+import { scopeDisplayName } from "#web/lib/scopes.ts";
+import { cn } from "#web/lib/utils.ts";
+import { useViewerRole } from "#web/pages/home.tsx";
 
 type Scope = {
   id: string;

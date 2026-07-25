@@ -5,8 +5,8 @@ import type {
   ToolDef,
   TranscriptMessage,
   Usage,
-} from "#/core/index.js";
-import type { RunEventData } from "#/events/index.js";
+} from "#harness/core/index.js";
+import type { RunEventData } from "#harness/events/index.js";
 import type {
   HarnessHooks,
   ModelPort,
@@ -17,7 +17,7 @@ import type {
   ToolExecutor,
   TurnRecord,
   TurnResult,
-} from "#/ports/index.js";
+} from "#harness/ports/index.js";
 import { executeToolBatch, toToolResultEvent, toToolResultMessage } from "./tool-batch.js";
 
 /** Dependencies and durable context for one loop execution. */

@@ -1,8 +1,8 @@
 import type { RunRecord, TurnRecord } from "@trema/harness";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createPrismaClient } from "#/lib/db/index.js";
-import { PrismaRunStore } from "#/services/runs/store.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { PrismaRunStore } from "#server/services/runs/store.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

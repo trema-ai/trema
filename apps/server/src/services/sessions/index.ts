@@ -6,16 +6,16 @@ import type {
   Prisma,
   Scope,
   SessionMode,
-} from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import { resolveLocation } from "#/services/bindings/index.js";
-import { type PolicySnapshot, resolvePolicySnapshot } from "#/services/policies/index.js";
+} from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import { resolveLocation } from "#server/services/bindings/index.js";
+import { type PolicySnapshot, resolvePolicySnapshot } from "#server/services/policies/index.js";
 import {
   type AssembledStanding,
   assembleStanding,
   type StandingCandidate,
-} from "#/services/sessions/standing.js";
+} from "#server/services/sessions/standing.js";
 
 export const SESSION_TOKEN_PREFIX = "trema_ses_";
 

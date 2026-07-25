@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ToolCall, ToolDef, TranscriptMessage } from "#/core/index.js";
-import { ThreadDispatchLock } from "#/dispatch/index.js";
-import { runLoop } from "#/loop/index.js";
-import { InMemoryEngine, InMemoryRunStore } from "#/memory/index.js";
-import type { ToolExecutionOptions } from "#/ports/index.js";
-import { createBlockingElicitation, InterruptManager, RunLifecycle } from "#/run/index.js";
-import { FakeContextSession, FauxModelPort } from "#/testing/index.js";
+import type { ToolCall, ToolDef, TranscriptMessage } from "#harness/core/index.js";
+import { ThreadDispatchLock } from "#harness/dispatch/index.js";
+import { runLoop } from "#harness/loop/index.js";
+import { InMemoryEngine, InMemoryRunStore } from "#harness/memory/index.js";
+import type { ToolExecutionOptions } from "#harness/ports/index.js";
+import { createBlockingElicitation, InterruptManager, RunLifecycle } from "#harness/run/index.js";
+import { FakeContextSession, FauxModelPort } from "#harness/testing/index.js";
 
 const usage = {
   inputTokens: 2,

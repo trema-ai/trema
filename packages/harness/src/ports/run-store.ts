@@ -5,8 +5,8 @@ import type {
   TranscriptMessage,
   Trigger,
   Usage,
-} from "#/core/index.js";
-import type { PrincipalRef, RunEvent, RunEventData } from "#/events/index.js";
+} from "#harness/core/index.js";
+import type { PrincipalRef, RunEvent, RunEventData } from "#harness/events/index.js";
 
 /** Durable metadata and aggregate outcome for one run. */
 export interface RunRecord {

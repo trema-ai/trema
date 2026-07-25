@@ -5,7 +5,7 @@ import {
   useLocalRuntime,
 } from "@assistant-ui/react";
 
-import { Thread } from "#/components/assistant-ui/thread.tsx";
+import { Thread } from "#web/components/assistant-ui/thread.tsx";
 
 /*
  * Self-contained chat demo for the gallery: mounts the Thread with a

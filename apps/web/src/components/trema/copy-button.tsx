@@ -1,8 +1,8 @@
 import { Check, Copy } from "lucide-react";
 import * as React from "react";
 
-import { Button } from "#/components/ui/button.tsx";
-import { cn } from "#/lib/utils.ts";
+import { Button } from "#web/components/ui/button.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 type CopyButtonProps = Omit<React.ComponentProps<typeof Button>, "children" | "onClick"> & {
   value: string;

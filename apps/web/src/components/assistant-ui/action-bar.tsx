@@ -1,13 +1,13 @@
 import { ActionBarPrimitive } from "@assistant-ui/react";
 import { Check, Copy, RefreshCw } from "lucide-react";
 
-import { Button } from "#/components/ui/button.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "#/components/ui/tooltip.tsx";
+} from "#web/components/ui/tooltip.tsx";
 
 /*
  * Ghost icon row under an assistant message. Hidden until the message is

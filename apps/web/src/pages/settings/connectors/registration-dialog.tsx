@@ -3,8 +3,8 @@ import { Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 
-import { CopyButton } from "#/components/trema/copy-button.tsx";
-import { RelativeTime } from "#/components/trema/relative-time.tsx";
+import { CopyButton } from "#web/components/trema/copy-button.tsx";
+import { RelativeTime } from "#web/components/trema/relative-time.tsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,23 +14,23 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "#/components/ui/alert-dialog.tsx";
-import { Button } from "#/components/ui/button.tsx";
+} from "#web/components/ui/alert-dialog.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "#/components/ui/dialog.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
-import { orpc, rpcClient } from "#/lib/api.ts";
+} from "#web/components/ui/dialog.tsx";
+import { Input } from "#web/components/ui/input.tsx";
+import { Label } from "#web/components/ui/label.tsx";
+import { orpc, rpcClient } from "#web/lib/api.ts";
 import {
   type CatalogProvider,
   messageFrom,
   type Registration,
-} from "#/pages/settings/connectors/shared.tsx";
+} from "#web/pages/settings/connectors/shared.tsx";
 
 export function RegistrationDialog({
   provider,

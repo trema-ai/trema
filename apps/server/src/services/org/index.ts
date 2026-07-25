@@ -1,7 +1,7 @@
-import type { Prisma } from "#/generated/prisma/client.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
-import { ensurePersonalScope } from "#/services/scopes/index.js";
+import type { Prisma } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
+import { ensurePersonalScope } from "#server/services/scopes/index.js";
 
 export class OrganizationNameError extends Error {
   constructor(message: string) {

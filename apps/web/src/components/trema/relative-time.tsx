@@ -5,8 +5,8 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "#/components/ui/tooltip.tsx";
-import { cn } from "#/lib/utils.ts";
+} from "#web/components/ui/tooltip.tsx";
+import { cn } from "#web/lib/utils.ts";
 
 function formatRelative(date: Date): string {
   const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);

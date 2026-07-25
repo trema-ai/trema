@@ -1,11 +1,11 @@
-import type { PrincipalRef, RunEventData } from "#/events/index.js";
+import type { PrincipalRef, RunEventData } from "#harness/events/index.js";
 import type {
   ContextSession,
   ElicitationRecord,
   ResolutionScope,
   RunRecord,
   RunStore,
-} from "#/ports/index.js";
+} from "#harness/ports/index.js";
 
 /** Principal decision that resolves a blocking elicitation. */
 export interface ResolveInterruptInput {

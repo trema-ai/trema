@@ -18,11 +18,19 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   folder (`connectors/catalog.tsx`, `connectors/detail.tsx`, with the
   main screen at `index.tsx`). Hyphens are for compound names
   (`registration-dialog.tsx`), never for encoding hierarchy.
+- Each package imports its own files through the prefix its package.json
+  declares: `#server/*`, `#web/*`, `#harness/*`, `#connectors/*`,
+  `#models/*`. The package.json `imports` field is the only declaration —
+  do not add tsconfig `paths` or bundler aliases beside it. Server-side
+  prefixes need the `.js` extension, because Node resolves them at
+  runtime. The web prefix also accepts extensionless paths, which is why
+  it lists `./src/*.ts` and `./src/*.tsx` fallbacks: the shadcn CLI emits
+  extensionless imports, and `components.json` aliases must match.
 
 ## Logging
 
 - Server code logs through the ambient logger: `import { log } from
-  "#/lib/logger/index.js"`, then `log.info("Member invited", { inviteId })`
+  "#server/lib/logger/index.js"`, then `log.info("Member invited", { inviteId })`
   — message first, details second. Never take a logger parameter and
   never use `console` outside `src/cli.ts` (the CLI reports in plain
   text; only `trema serve` emits log records).

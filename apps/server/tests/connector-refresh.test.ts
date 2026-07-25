@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { googleWorkspaceProvider, loadProviderCatalog, notionMcpProvider } from "@trema/connectors";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { decryptEnvelope, encryptEnvelope } from "#/lib/crypto/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
 import {
   ConnectorConnectionNotFoundError,
   ConnectorReconnectRequiredError,
@@ -13,7 +13,7 @@ import {
   REFRESH_FAILURE_BUDGET_MS,
   resolveConnectionCredential,
   syncConnectorInstallation,
-} from "#/services/connectors/index.js";
+} from "#server/services/connectors/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

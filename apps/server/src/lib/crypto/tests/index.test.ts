@@ -7,7 +7,7 @@ import {
   CredentialEncryptionConfigError,
   decryptEnvelope,
   encryptEnvelope,
-} from "#/lib/crypto/index.js";
+} from "#server/lib/crypto/index.js";
 
 const key = () => randomBytes(32).toString("base64");
 

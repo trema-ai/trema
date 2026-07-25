@@ -3,17 +3,21 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { InMemoryEngine } from "@trema/harness";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { parseEnv } from "#/lib/env/schema.js";
-import { bindingsRouter } from "#/rpc/bindings.js";
-import { serviceCredentialsRouter } from "#/rpc/credentials.js";
-import { orgRouter } from "#/rpc/org.js";
-import { runsRouter } from "#/rpc/runs.js";
-import { schedulesRouter } from "#/rpc/schedules.js";
-import type { RunServices } from "#/services/runs/index.js";
-import { createRunServices } from "#/services/runs/index.js";
-import { createSchedule, setScheduleStatus, tickSchedule } from "#/services/schedules/index.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { parseEnv } from "#server/lib/env/schema.js";
+import { bindingsRouter } from "#server/rpc/bindings.js";
+import { serviceCredentialsRouter } from "#server/rpc/credentials.js";
+import { orgRouter } from "#server/rpc/org.js";
+import { runsRouter } from "#server/rpc/runs.js";
+import { schedulesRouter } from "#server/rpc/schedules.js";
+import type { RunServices } from "#server/services/runs/index.js";
+import { createRunServices } from "#server/services/runs/index.js";
+import {
+  createSchedule,
+  setScheduleStatus,
+  tickSchedule,
+} from "#server/services/schedules/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;

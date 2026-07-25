@@ -13,10 +13,10 @@ import {
 import type { ReactNode } from "react";
 import { Link, NavLink } from "react-router";
 
-import { EmptyState } from "#/components/trema/empty-state.tsx";
-import { Button } from "#/components/ui/button.tsx";
-import { cn } from "#/lib/utils.ts";
-import { useAuthenticatedSession, useViewerRole } from "#/pages/home.tsx";
+import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { Button } from "#web/components/ui/button.tsx";
+import { cn } from "#web/lib/utils.ts";
+import { useAuthenticatedSession, useViewerRole } from "#web/pages/home.tsx";
 
 const personalItems = [
   { label: "Profile", href: "/settings/profile", icon: UserRound },

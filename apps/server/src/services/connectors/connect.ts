@@ -6,24 +6,24 @@ import {
   type ProviderCatalog,
   providerHookRegistry,
 } from "@trema/connectors";
-import type { ConnectorOAuthState, Prisma } from "#/generated/prisma/client.js";
-import { encryptEnvelope } from "#/lib/crypto/index.js";
-import type { Database } from "#/lib/db/index.js";
-import { log } from "#/lib/logger/index.js";
+import type { ConnectorOAuthState, Prisma } from "#server/generated/prisma/client.js";
+import { encryptEnvelope } from "#server/lib/crypto/index.js";
+import type { Database } from "#server/lib/db/index.js";
+import { log } from "#server/lib/logger/index.js";
 import {
   buildMcpAuthorizationRequest,
   discoverMcpAuthServer,
   exchangeMcpAuthorizationCode,
   resolveMcpClientRegistration,
   resolveStoredMcpClientRegistration,
-} from "#/services/connectors/mcp-oauth.js";
+} from "#server/services/connectors/mcp-oauth.js";
 import {
   ConnectorProviderNotFoundError,
   emptyPlatformAppDirectory,
   type PlatformAppDirectory,
   resolveClientRegistration,
   resolveStoredClientRegistration,
-} from "#/services/connectors/registrations.js";
+} from "#server/services/connectors/registrations.js";
 
 const defaultCatalog = loadProviderCatalog();
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;

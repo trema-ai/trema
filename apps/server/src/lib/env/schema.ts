@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { LOG_FORMATS, LOG_THRESHOLDS } from "#/lib/logger/index.js";
-import { DEFAULT_STANDING_BUDGET_TOKENS } from "#/services/sessions/standing.js";
+import { LOG_FORMATS, LOG_THRESHOLDS } from "#server/lib/logger/index.js";
+import { DEFAULT_STANDING_BUDGET_TOKENS } from "#server/services/sessions/standing.js";
 
 const postgresUrl = z
   .string()

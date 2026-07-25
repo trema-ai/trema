@@ -3,15 +3,15 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createAuth } from "#/lib/auth/index.js";
-import { createPrismaClient } from "#/lib/db/index.js";
-import { type Environment, parseEnv } from "#/lib/env/schema.js";
-import { bindingsRouter } from "#/rpc/bindings.js";
-import { serviceCredentialsRouter } from "#/rpc/credentials.js";
-import { orgRouter } from "#/rpc/org.js";
-import { scopesRouter } from "#/rpc/scopes.js";
-import { sessionsRouter } from "#/rpc/sessions.js";
-import { hashSessionToken, SESSION_TOKEN_TTL_MS } from "#/services/sessions/index.js";
+import { createAuth } from "#server/lib/auth/index.js";
+import { createPrismaClient } from "#server/lib/db/index.js";
+import { type Environment, parseEnv } from "#server/lib/env/schema.js";
+import { bindingsRouter } from "#server/rpc/bindings.js";
+import { serviceCredentialsRouter } from "#server/rpc/credentials.js";
+import { orgRouter } from "#server/rpc/org.js";
+import { scopesRouter } from "#server/rpc/scopes.js";
+import { sessionsRouter } from "#server/rpc/sessions.js";
+import { hashSessionToken, SESSION_TOKEN_TTL_MS } from "#server/services/sessions/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
