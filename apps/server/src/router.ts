@@ -1,3 +1,4 @@
+import { auditRouter } from "./rpc/audit.js";
 import { bindingsRouter } from "./rpc/bindings.js";
 import { bootstrapRouter } from "./rpc/bootstrap.js";
 import { configRouter } from "./rpc/config.js";
@@ -13,6 +14,7 @@ import { systemRouter } from "./rpc/system.js";
 
 export const router = {
   bootstrap: bootstrapRouter,
+  audit: auditRouter,
   bindings: bindingsRouter,
   config: configRouter,
   connectors: connectorsRouter,
