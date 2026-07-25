@@ -3,6 +3,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 
 import type { Database } from "#/lib/db/index.js";
 import type { Environment } from "#/lib/env/schema.js";
+import { log } from "#/lib/logger/index.js";
 
 export interface AuthDependencies {
   db: Database;
@@ -20,6 +21,11 @@ function createConfiguredAuth({ db, env }: AuthDependencies) {
         }
       : undefined;
 
+  log.debug("Configuring authentication", {
+    passwordEnabled: env.TREMA_PASSWORD_AUTH_ENABLED,
+    googleEnabled: Boolean(socialProviders),
+  });
+
   return betterAuth({
     database: prismaAdapter(db, {
       provider: "postgresql",
@@ -35,10 +41,11 @@ function createConfiguredAuth({ db, env }: AuthDependencies) {
       user: {
         update: {
           after: async (user) => {
-            await db.principal.updateMany({
+            const { count } = await db.principal.updateMany({
               where: { authId: user.id, kind: "human" },
               data: { displayName: user.name },
             });
+            log.debug("Principal display names synced", { userId: user.id, principals: count });
           },
         },
       },
@@ -52,10 +59,19 @@ function createConfiguredAuth({ db, env }: AuthDependencies) {
             });
 
             if (principals.length === 1) {
+              log.debug("Session pinned to the only organization", {
+                userId: session.userId,
+                orgId: principals[0]?.orgId,
+              });
               return {
                 data: { activeOrgId: principals[0]?.orgId },
               };
             }
+
+            log.debug("Session created without an active organization", {
+              userId: session.userId,
+              organizations: principals.length,
+            });
           },
         },
       },

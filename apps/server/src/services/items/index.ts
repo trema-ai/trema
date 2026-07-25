@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ItemDisclosure, ItemKind, ItemStatus, Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   connectorInstallationBodySchema,
@@ -193,7 +194,7 @@ export async function createItem(db: Database, input: CreateItemInput) {
   const status = statusForWriter(writer.kind, input.kind, body);
   const disclosure = input.disclosure ?? disclosureForItem(input.kind, body);
 
-  const created = await db.$transaction(async (transaction) => {
+  const item = await db.$transaction(async (transaction) => {
     if (input.kind === "instruction" && status === "active") {
       await assertNoActiveInstruction(transaction, input.orgId, input.scopeId);
     }
@@ -237,8 +238,9 @@ export async function createItem(db: Database, input: CreateItemInput) {
     });
     return item;
   });
-  await indexItemSafely(db, created);
-  return created;
+  log.info("Item created", { itemId: item.id, kind: item.kind });
+  await indexItemSafely(db, item);
+  return item;
 }
 
 export async function getItem(db: Database, orgId: string, itemId: string) {
@@ -294,7 +296,8 @@ function jsonEqual(left: unknown, right: unknown): boolean {
 }
 
 export async function updateItem(db: Database, input: UpdateItemInput) {
-  const updated = await db.$transaction(async (transaction) => {
+  let createdVersionId: string | undefined;
+  const item = await db.$transaction(async (transaction) => {
     const existing = await transaction.item.findFirst({
       where: { id: input.itemId, orgId: input.orgId },
     });
@@ -307,7 +310,7 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
     const contentChanged = title !== existing.title || !jsonEqual(body, existing.body);
 
     if (contentChanged) {
-      await transaction.itemVersion.create({
+      const createdVersion = await transaction.itemVersion.create({
         data: {
           orgId: input.orgId,
           itemId: existing.id,
@@ -319,6 +322,7 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
           authorId: existing.updatedById ?? existing.createdById,
         },
       });
+      createdVersionId = createdVersion.id;
     }
 
     const item = await transaction.item.update({
@@ -348,8 +352,15 @@ export async function updateItem(db: Database, input: UpdateItemInput) {
     });
     return item;
   });
-  await indexItemSafely(db, updated);
-  return updated;
+  if (createdVersionId) {
+    log.info("Item version created", {
+      itemId: item.id,
+      itemVersionId: createdVersionId,
+      kind: item.kind,
+    });
+  }
+  await indexItemSafely(db, item);
+  return item;
 }
 
 export interface TransitionItemInput {
@@ -360,7 +371,7 @@ export interface TransitionItemInput {
 }
 
 export async function transitionItem(db: Database, input: TransitionItemInput) {
-  return db.$transaction(async (transaction) => {
+  const updated = await db.$transaction(async (transaction) => {
     const [item, actor] = await Promise.all([
       transaction.item.findFirst({ where: { id: input.itemId, orgId: input.orgId } }),
       transaction.principal.findFirst({
@@ -409,6 +420,13 @@ export async function transitionItem(db: Database, input: TransitionItemInput) {
     });
     return updated;
   });
+  log.info("Item lifecycle changed", {
+    itemId: updated.id,
+    kind: updated.kind,
+    action: input.action,
+    status: updated.status,
+  });
+  return updated;
 }
 
 export function activateItem(db: Database, input: Omit<TransitionItemInput, "action">) {

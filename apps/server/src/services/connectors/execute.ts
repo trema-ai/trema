@@ -2,6 +2,7 @@ import type { ProviderDef, RestTransport, ToolDefinition } from "@trema/connecto
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   createConnectorInstallationBodySchema,
@@ -853,8 +854,23 @@ export async function executeConnectorTool(
   input: ExecuteConnectorToolInput,
 ): Promise<RestConnectorToolResult | McpConnectorToolResult> {
   const catalog = input.catalog ?? defaultCatalog;
-  const installation = await resolveInstallation(db, input, catalog);
+  let installation: SelectedInstallation;
+  try {
+    installation = await resolveInstallation(db, input, catalog);
+  } catch (error) {
+    if (
+      error instanceof ConnectorToolValidationError ||
+      error instanceof ConnectorToolNotAvailableError
+    ) {
+      log.warn("Connector tool call rejected", { toolKey: input.toolKey, reason: error.name });
+    }
+    throw error;
+  }
+  const connector = installation.provider.key;
+  const tool = installation.toolName;
+
   if (installation.sensitivity !== "read" && !input.allowSensitiveToolExecution) {
+    log.warn("Connector tool call rejected", { connector, tool, reason: "approval_required" });
     throw new ConnectorApprovalRequiredError(
       input.toolKey,
       installation.sensitivity,
@@ -863,7 +879,48 @@ export async function executeConnectorTool(
   }
 
   const redactor = new CredentialRedactor();
-  return installation.provider.transport.type === "rest"
-    ? executeRest(db, input, installation, catalog, redactor)
-    : executeMcp(db, input, installation, catalog, redactor);
+  const startedAt = Date.now();
+  log.debug("Connector tool call started", { connector, tool });
+  try {
+    const result =
+      installation.provider.transport.type === "rest"
+        ? await executeRest(db, input, installation, catalog, redactor)
+        : await executeMcp(db, input, installation, catalog, redactor);
+    const status = (result as { status?: number }).status;
+    // A proxied call on the customer's behalf left the deployment: an operator
+    // wants this at the same level as the request that caused it.
+    log.info("Connector tool call completed", {
+      connector,
+      tool,
+      durationMs: Date.now() - startedAt,
+      ...(status !== undefined ? { status } : {}),
+    });
+    return result;
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    if (error instanceof ConnectorTransportError) {
+      const details = {
+        connector,
+        tool,
+        durationMs,
+        ...(error.status !== undefined ? { status: error.status } : {}),
+        error,
+      };
+      if (error.status !== undefined && error.status >= 400 && error.status < 500) {
+        log.warn("Connector tool call failed", details);
+      } else {
+        log.error("Connector tool call failed", details);
+      }
+    } else if (
+      error instanceof ConnectorToolValidationError ||
+      error instanceof ConnectorToolNotAvailableError ||
+      error instanceof ConnectorReconnectRequiredError ||
+      error instanceof ConnectorSsrfRejectedError
+    ) {
+      log.warn("Connector tool call rejected", { connector, tool, reason: error.name });
+    } else {
+      log.error("Connector tool call failed", { connector, tool, durationMs, error });
+    }
+    throw error;
+  }
 }

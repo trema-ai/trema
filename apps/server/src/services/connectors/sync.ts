@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   ConnectorInstallationNotFoundError,
@@ -10,7 +11,10 @@ import {
   type Sensitivity,
   type SyncedTool,
 } from "#/services/connectors/installations.js";
-import { resolveConnectionCredential } from "#/services/connectors/refresh.js";
+import {
+  ConnectorReconnectRequiredError,
+  resolveConnectionCredential,
+} from "#/services/connectors/refresh.js";
 import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
 
 const defaultCatalog = loadProviderCatalog();
@@ -211,94 +215,125 @@ export async function syncConnectorInstallation(
   input: SyncConnectorInstallationInput,
 ) {
   const catalog = input.catalog ?? defaultCatalog;
-  const installation = await db.item.findFirst({
-    where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
-  });
-  if (!installation) throw new ConnectorInstallationNotFoundError();
-  const body = parsedBody(installation.body, catalog);
-  const provider = catalog.find(({ key }) => key === body.catalogKey);
-  if (!provider) throw new ConnectorSyncTransportError("Connector provider is not in the catalog");
-  if (provider.transport.type !== "mcp") {
-    throw new ConnectorSyncTransportError(
-      `Provider '${provider.key}' uses REST; only MCP providers support tool sync`,
-    );
-  }
-
-  const resolved = await resolveBearerToken(
-    db,
-    input.orgId,
-    body.connectionId,
-    input.masterKey,
-    input.now ?? new Date(),
-    catalog,
-    input.platformApps,
-    input.fetch,
-  );
-  const serverUrl = interpolate(provider.transport.serverUrl, { config: resolved.config });
-  const client = await (input.clientFactory ?? createStreamableHttpMcpClient)({
-    serverUrl,
-    ...(resolved.token ? { authorization: `Bearer ${resolved.token}` } : {}),
-    ...(input.fetch ? { fetch: input.fetch } : {}),
-  });
-  const listed: McpListedTool[] = [];
+  log.debug("Connector sync started", { itemId: input.installationItemId });
   try {
-    let cursor: string | undefined;
-    do {
-      const page = await client.listTools(cursor ? { cursor } : undefined);
-      listed.push(...page.tools);
-      cursor = page.nextCursor;
-    } while (cursor);
-  } finally {
-    await client.close();
-  }
-  const freshTools = listed.map(mapMcpTool);
-
-  return db.$transaction(async (transaction) => {
-    const current = await transaction.item.findFirst({
-      where: { id: installation.id, orgId: input.orgId, kind: "connector" },
+    const installation = await db.item.findFirst({
+      where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
     });
-    if (!current) throw new ConnectorInstallationNotFoundError();
-    const currentBody = parsedBody(current.body, catalog);
-    if (currentBody.catalogKey !== provider.key) {
-      throw new ConnectorSyncTransportError("Connector provider changed during tool sync");
+    if (!installation) throw new ConnectorInstallationNotFoundError();
+    const body = parsedBody(installation.body, catalog);
+    const provider = catalog.find(({ key }) => key === body.catalogKey);
+    if (!provider) {
+      throw new ConnectorSyncTransportError("Connector provider is not in the catalog");
     }
-    const merged = mergeSyncedTools(currentBody, freshTools);
-    const validated = parsedBody(merged.body, catalog);
-    const changed = JSON.stringify(validated) !== JSON.stringify(currentBody);
-    if (changed) {
-      await transaction.itemVersion.create({
+    if (provider.transport.type !== "mcp") {
+      throw new ConnectorSyncTransportError(
+        `Provider '${provider.key}' uses REST; only MCP providers support tool sync`,
+      );
+    }
+
+    const resolved = await resolveBearerToken(
+      db,
+      input.orgId,
+      body.connectionId,
+      input.masterKey,
+      input.now ?? new Date(),
+      catalog,
+      input.platformApps,
+      input.fetch,
+    );
+    const serverUrl = interpolate(provider.transport.serverUrl, { config: resolved.config });
+    const client = await (input.clientFactory ?? createStreamableHttpMcpClient)({
+      serverUrl,
+      ...(resolved.token ? { authorization: `Bearer ${resolved.token}` } : {}),
+      ...(input.fetch ? { fetch: input.fetch } : {}),
+    });
+    const listed: McpListedTool[] = [];
+    try {
+      let cursor: string | undefined;
+      do {
+        const page = await client.listTools(cursor ? { cursor } : undefined);
+        listed.push(...page.tools);
+        cursor = page.nextCursor;
+      } while (cursor);
+    } finally {
+      await client.close();
+    }
+    const freshTools = listed.map(mapMcpTool);
+
+    const result = await db.$transaction(async (transaction) => {
+      const current = await transaction.item.findFirst({
+        where: { id: installation.id, orgId: input.orgId, kind: "connector" },
+      });
+      if (!current) throw new ConnectorInstallationNotFoundError();
+      const currentBody = parsedBody(current.body, catalog);
+      if (currentBody.catalogKey !== provider.key) {
+        throw new ConnectorSyncTransportError("Connector provider changed during tool sync");
+      }
+      const merged = mergeSyncedTools(currentBody, freshTools);
+      const validated = parsedBody(merged.body, catalog);
+      const changed = JSON.stringify(validated) !== JSON.stringify(currentBody);
+      if (changed) {
+        await transaction.itemVersion.create({
+          data: {
+            orgId: input.orgId,
+            itemId: current.id,
+            version: current.version,
+            title: current.title,
+            body: current.body as Prisma.InputJsonValue,
+            authorId: current.updatedById ?? current.createdById,
+          },
+        });
+      }
+      const item = changed
+        ? await transaction.item.update({
+            where: { orgId_id: { orgId: input.orgId, id: current.id } },
+            data: {
+              body: validated as Prisma.InputJsonValue,
+              version: { increment: 1 },
+              updatedById: input.actorPrincipalId,
+            },
+          })
+        : current;
+      await transaction.auditLog.create({
         data: {
           orgId: input.orgId,
-          itemId: current.id,
-          version: current.version,
-          title: current.title,
-          body: current.body as Prisma.InputJsonValue,
-          authorId: current.updatedById ?? current.createdById,
+          actorPrincipalId: input.actorPrincipalId,
+          action: "connector.installation.sync",
+          subject: item.id,
+          payload: {
+            catalogKey: provider.key,
+            ...merged.report,
+          },
         },
       });
-    }
-    const item = changed
-      ? await transaction.item.update({
-          where: { orgId_id: { orgId: input.orgId, id: current.id } },
-          data: {
-            body: validated as Prisma.InputJsonValue,
-            version: { increment: 1 },
-            updatedById: input.actorPrincipalId,
-          },
-        })
-      : current;
-    await transaction.auditLog.create({
-      data: {
-        orgId: input.orgId,
-        actorPrincipalId: input.actorPrincipalId,
-        action: "connector.installation.sync",
-        subject: item.id,
-        payload: {
-          catalogKey: provider.key,
-          ...merged.report,
-        },
-      },
+      return { installation: item, report: merged.report };
     });
-    return { installation: item, report: merged.report };
-  });
+
+    log.info("Connector sync completed", {
+      itemId: installation.id,
+      connector: provider.key,
+      addedCount: result.report.added.length,
+      removedCount: result.report.removed.length,
+      changedCount: result.report.changed.length,
+    });
+    return result;
+  } catch (error) {
+    if (
+      error instanceof ConnectorInstallationNotFoundError ||
+      error instanceof ConnectorSyncTransportError ||
+      error instanceof ConnectorReconnectRequiredError
+    ) {
+      log.warn("Connector sync failed", {
+        itemId: input.installationItemId,
+        reason: error.name,
+      });
+    } else {
+      log.error("Connector sync failed", {
+        itemId: input.installationItemId,
+        error,
+      });
+    }
+    throw error;
+  }
 }

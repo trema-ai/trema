@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 
 export const SERVICE_CREDENTIAL_PREFIX = "trema_sc_";
 
@@ -75,6 +76,10 @@ export async function createServiceCredential(db: Database, input: CreateService
         },
       },
     });
+    log.info("Service credential issued", {
+      credentialId: created.id,
+      targetPrincipalId: created.principalId,
+    });
     return created;
   });
 
@@ -144,6 +149,7 @@ export async function revokeServiceCredential(db: Database, input: RevokeService
         },
       },
     });
+    log.info("Service credential revoked", { credentialId: revoked.id });
     return revoked;
   });
 }

@@ -2,6 +2,7 @@ import { ORPCError } from "@orpc/server";
 import { fieldDescriptorSchema } from "@trema/connectors";
 import { z } from "zod";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import { orgScoped, requireCapability } from "#/rpc/builders.js";
 import { authorize } from "#/services/authorize/index.js";
 import {
@@ -755,6 +756,10 @@ const startOAuth = requireCapability("manage_connectors")
   )
   .output(z.object({ authorizationUrl: z.url() }))
   .handler(async ({ context, input }) => {
+    log.info("Connector OAuth connect requested", {
+      provider: input.providerKey,
+      ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+    });
     try {
       const principalId = await orgAgentPrincipalId(context.db, context.org.id);
       return await startOAuthConnect(context.db, {
@@ -916,6 +921,10 @@ const memberStartOAuth = orgScoped
   )
   .output(z.object({ authorizationUrl: z.url() }))
   .handler(async ({ context, input }) => {
+    log.info("Connector OAuth connect requested", {
+      provider: input.providerKey,
+      ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
+    });
     try {
       await requireMemberProvider(context.db, context.org.id, input.providerKey);
       return await startOAuthConnect(context.db, {

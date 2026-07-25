@@ -3,6 +3,7 @@ import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import { z } from "zod";
 import type { Prisma } from "#/generated/prisma/client.js";
 import type { Database } from "#/lib/db/index.js";
+import { log } from "#/lib/logger/index.js";
 import type { ConnectorFetch } from "#/services/connectors/connect.js";
 import type { PlatformAppDirectory } from "#/services/connectors/registrations.js";
 import type { McpClientFactory } from "#/services/connectors/sync.js";
@@ -233,7 +234,10 @@ export async function archiveConnectorInstallation(
         kind: "connector",
       },
     });
-    if (!existing) throw new ConnectorInstallationNotFoundError();
+    if (!existing) {
+      log.warn("Connector installation not found", { itemId: input.installationItemId });
+      throw new ConnectorInstallationNotFoundError();
+    }
     let installation = existing;
 
     if (existing.status !== "archived") {
@@ -250,6 +254,7 @@ export async function archiveConnectorInstallation(
         where: { orgId_id: { orgId: input.orgId, id: existing.id } },
         data: { status: "archived", version: { increment: 1 } },
       });
+      log.info("Connector installation archived", { itemId: installation.id });
     }
 
     await transaction.auditLog.create({
@@ -402,6 +407,12 @@ export async function createConnectorInstallation(
     });
     return installation;
   });
+  log.info("Connector installation created", {
+    itemId: installation.id,
+    scopeId: installation.scopeId,
+    provider: provider.key,
+    connectionId: body.connectionId,
+  });
   await indexItemSafely(db, installation);
   if (provider.transport.type === "mcp") {
     const { syncConnectorInstallation } = await import("#/services/connectors/sync.js");
@@ -414,7 +425,14 @@ export async function createConnectorInstallation(
       ...(input.platformApps ? { platformApps: input.platformApps } : {}),
       ...(input.fetch ? { fetch: input.fetch } : {}),
       catalog,
-    }).catch(() => undefined);
+    }).catch((error) => {
+      log.warn("Connector installation sync failed", {
+        itemId: installation.id,
+        provider: provider.key,
+        error,
+      });
+      return undefined;
+    });
     let syncTimer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       sync,
@@ -446,7 +464,10 @@ export async function updateConnectorInstallation(
     const existing = await transaction.item.findFirst({
       where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
     });
-    if (!existing) throw new ConnectorInstallationNotFoundError();
+    if (!existing) {
+      log.warn("Connector installation not found", { itemId: input.installationItemId });
+      throw new ConnectorInstallationNotFoundError();
+    }
     const current = parseBody(existing.body, catalog);
     const provider = catalog.find(({ key }) => key === current.catalogKey);
     if (!provider) {
@@ -497,6 +518,12 @@ export async function updateConnectorInstallation(
           : {}),
       },
     });
+    if (changed) {
+      log.info("Connector installation updated", {
+        itemId: installation.id,
+        connectionId: body.connectionId,
+      });
+    }
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,

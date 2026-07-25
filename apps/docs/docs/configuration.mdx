@@ -15,6 +15,31 @@ The server validates its environment at startup and refuses to start on an inval
 | `NODE_ENV` | No | `development` | One of `development`, `test`, or `production`. |
 | `TREMA_MODE` | No | `dedicated` | Deployment mode: `dedicated` runs a single organization created through the [bootstrap flow](/first-boot), while `hosted` leaves organization creation open to any signed-in account. |
 
+## Logging
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `TREMA_LOG_FORMAT` | No | `logfmt` | Output format: `logfmt` or `json`. |
+| `TREMA_LOG_LEVEL` | No | `info` | Lowest level that is written: `debug`, `info`, `warn`, `error`, or `silent`. The `silent` level writes nothing. |
+
+The server writes one record per line to stderr. These settings cover the running server; the other [host commands](/cli) report in plain text instead.
+
+Every record carries `time`, `level`, and `msg`, then the details of that event. Records emitted while handling a request also carry `requestId`, `method`, `path`, and—once resolved—`procedure`, `orgId`, and `principalId`, so one request's lines can be collected from anywhere in the stack. In `logfmt`, nested details flatten onto dotted keys:
+
+```
+time=2026-07-24T10:00:00.000Z level=info msg="Server listening" url=http://127.0.0.1:3000
+time=2026-07-24T10:00:12.408Z level=info msg="Request handled" requestId=6f5b0c1e-9d21-4f7a-8f0c-2b1d7c3a5e88 method=POST path=/rpc/items/create status=200 durationMs=37
+time=2026-07-24T10:00:19.912Z level=error msg="Readiness check failed" error.name=Error error.message="connection refused"
+```
+
+In `json`, they stay nested:
+
+```json
+{"time":"2026-07-24T10:00:00.000Z","level":"info","msg":"Server listening","url":"http://127.0.0.1:3000"}
+```
+
+Use `json` where a log shipper parses the stream, and `logfmt` when a person reads it.
+
 ## Authentication
 
 | Variable | Required | Default | Description |
