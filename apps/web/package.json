@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "imports": {
-    "#web/*": "./src/*"
+    "#web/*": [
+      "./src/*",
+      "./src/*.ts",
+      "./src/*.tsx"
+    ]
   },
   "scripts": {
     "dev": "vite",
