@@ -39,6 +39,7 @@ export type {
   QueuedInput,
   RecordIntentResult,
   ResolutionScope,
+  ResolveElicitationResult,
   RunRecord,
   RunStore,
   RunTransitionInput,

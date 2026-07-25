@@ -66,6 +66,20 @@ describe("RunLifecycle", () => {
     expect(subject.context.calls.map(({ method }) => method)).toEqual(["reportMessages", "close"]);
   });
 
+  it("records a second start for a run its worker died on, without a state change", async () => {
+    const subject = fixture();
+    const run = await subject.lifecycle.create({ threadRef: "thread-1", trigger: "message" });
+    await subject.lifecycle.start(run.id);
+
+    await subject.lifecycle.start(run.id, "resume");
+
+    expect(await subject.store.getRun(run.id)).toMatchObject({ state: "running" });
+    expect((await subject.store.listEvents(run.id)).map(({ event }) => event)).toEqual([
+      { type: "run-started", trigger: "message" },
+      { type: "run-started", trigger: "resume" },
+    ]);
+  });
+
   it("promotes a reply arriving after the loop boundary to a follow-up", async () => {
     const subject = fixture();
     const run = await subject.lifecycle.create({ threadRef: "thread-1", trigger: "message" });

@@ -25,7 +25,8 @@ export interface SessionSnapshot {
 export interface OpenSessionRequest {
   surface: string;
   locationRef: unknown;
-  requester: { externalUserId: string } | { principalId: string };
+  /** Who asked. Omitted for work nobody triggered, such as a service call as the agent. */
+  requester?: { externalUserId: string } | { principalId: string };
 }
 
 /** Ranked context item returned by a session search. */
