@@ -18,13 +18,20 @@ const checks = [
   ["packages/connectors", "@trema/connectors"],
   ["packages/models", "@trema/models"],
   ["apps/server", "./dist/server.js"],
+  // Validates env at import time, so it also keeps the fixture below honest.
+  ["apps/server", "./dist/lib/env/index.js"],
 ];
 
-// Enough env for the server's import-time env validation; nothing connects.
+// A fixture that satisfies apps/server/src/lib/env/schema.ts, so that a
+// failure here always means a resolution problem and never a bad fixture.
+// Nothing connects. TREMA_AUTH_SECRET has a 32-character minimum, and
+// TREMA_MODE is pinned to "hosted" because the schema defaults it to
+// "dedicated", which additionally requires a credential master key.
 const env = {
   ...process.env,
   DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/smoke",
-  TREMA_AUTH_SECRET: "smoke-secret-0123456789abcdef",
+  TREMA_AUTH_SECRET: "smoke-secret-0123456789abcdef0123",
+  TREMA_MODE: "hosted",
 };
 
 for (const [dir, specifier] of checks) {
