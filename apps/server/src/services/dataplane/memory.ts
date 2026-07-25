@@ -99,8 +99,12 @@ async function findNearDuplicate(
   // The same title at the same scope is the certain case: two memories cannot
   // be told apart by anything a search would weigh, so this is the same memory
   // written again.
+  // A person may have written the same title twice through the control plane,
+  // so the pick is deterministic: the most recently updated one is what the
+  // scope currently treats as current, and that is the one a re-save takes over.
   const sameTitle = await db.item.findFirst({
     where: { ...sameScopeMemory, title: input.title },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
   });
   if (sameTitle && memoryTypeOf(sameTitle) === input.body.type) {
     return { item: sameTitle, reason: "title", score: null };

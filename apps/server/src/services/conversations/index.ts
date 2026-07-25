@@ -236,6 +236,7 @@ async function ensureConversation(
   session: CaptureSession,
   threadRef: string,
   span: { earliest: Date; latest: Date },
+  hasUpserts: boolean,
 ): Promise<Conversation> {
   const identity = {
     orgId: session.orgId,
@@ -247,6 +248,13 @@ async function ensureConversation(
     where: { orgId_surface_locationRef_threadRef: identity },
   });
   if (existing) return existing;
+
+  // A batch of nothing but deletions retracts messages that were never
+  // reported. Starting an empty conversation for it would record a thread
+  // that never said anything.
+  if (!hasUpserts) {
+    throw new ConversationValidationError("This thread has no captured conversation");
+  }
 
   try {
     return await db.conversation.create({
@@ -320,7 +328,8 @@ export async function captureMessages(
     latest: times.length > 0 ? new Date(Math.max(...times)) : now,
   };
   const threadRef = conversationThreadRef(session);
-  const found = await ensureConversation(db, session, threadRef, span);
+  const hasUpserts = reported.some((message) => message.operation === "upsert");
+  const found = await ensureConversation(db, session, threadRef, span, hasUpserts);
 
   const captured = await db.$transaction(async (transaction) => {
     // Re-checked inside the transaction: the route's own check runs before it,

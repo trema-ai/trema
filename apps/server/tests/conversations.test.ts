@@ -531,6 +531,48 @@ integration("conversation capture", () => {
     await expect(db.message.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
   });
 
+  it("does not start a conversation for a batch of nothing but deletions", async () => {
+    const org = await createOrg();
+    await bindChannel(org, "Retractions", "T1:C11");
+    const session = await openSession(org, "T1:C11", "thread-1");
+
+    await expect(
+      report(session, [{ surfaceMessageRef: "m-1", operation: "delete" }]),
+    ).rejects.toThrow(/no captured conversation/);
+    await expect(db.conversation.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
+
+    // Once the thread exists, an unmatched deletion is an ordinary no-op.
+    await report(session, [said("m-2", "Now it exists")]);
+    const outcome = await report(session, [{ surfaceMessageRef: "m-3", operation: "delete" }]);
+    expect(outcome.notFound).toBe(1);
+  });
+
+  it("clamps a transcript anchor beyond either end of the thread", async () => {
+    const org = await createOrg();
+    await bindChannel(org, "Anchored", "T1:C12");
+    const session = await openSession(org, "T1:C12", "thread-1");
+    await report(session, [said("m-1", "One"), said("m-2", "Two"), said("m-3", "Three")]);
+    const { conversationId } = await report(session, [said("m-4", "Four")]);
+    const client = await connect(session.sessionToken);
+
+    // The anchor clamps to the last message; the window fills forward from it,
+    // so overshooting the end returns that message, never an empty list.
+    const past = await transcript(client, { conversationId, aroundSeq: 99, window: 2 });
+    const tail = past.structuredContent as unknown as Transcript;
+    expect(tail.messages.map(({ seq }) => seq)).toEqual([4]);
+    expect(tail.hasMoreBefore).toBe(true);
+    expect(tail.hasMoreAfter).toBe(false);
+
+    // Deleting the first message moves the thread's start past 1, so an
+    // anchor at 1 now sits before the thread and clamps up to its start.
+    await report(session, [{ surfaceMessageRef: "m-1", operation: "delete" }]);
+    const early = await transcript(client, { conversationId, aroundSeq: 1, window: 2 });
+    const head = early.structuredContent as unknown as Transcript;
+    expect(head.messages.map(({ seq }) => seq)).toEqual([2, 3]);
+    expect(head.hasMoreBefore).toBe(false);
+    expect(head.hasMoreAfter).toBe(true);
+  });
+
   it("lists a person once when their surface id is linked mid-thread", async () => {
     const org = await createOrg();
     await bindChannel(org, "Linked Late", "T1:C8");

@@ -102,10 +102,14 @@ export async function fetchTranscript(
     db.message.count({ where }),
   ]);
 
+  const firstSeq = bounds._min.seq ?? null;
+  const lastSeq = bounds._max.seq ?? null;
+
   let messages: TranscriptMessage[];
-  if (input.aroundSeq === undefined) {
+  if (input.aroundSeq === undefined || firstSeq === null || lastSeq === null) {
     // The end of the thread, read backwards and turned around, so the window
-    // is the most recent messages in reading order.
+    // is the most recent messages in reading order. An empty conversation
+    // takes this path too, whatever the caller anchored on.
     const recent = await db.message.findMany({
       where,
       orderBy: { seq: "desc" },
@@ -114,20 +118,18 @@ export async function fetchTranscript(
     });
     messages = recent.reverse();
   } else {
-    // About half the window sits before the message asked for. A window that
-    // would start before the thread does simply starts at the first message
-    // and fills forward.
+    // About half the window sits before the message asked for. An anchor
+    // outside the thread clamps to its nearest end, so paging past either end
+    // returns the edge window rather than nothing.
+    const anchor = Math.min(Math.max(Math.trunc(input.aroundSeq), firstSeq), lastSeq);
     const before = Math.floor((window - 1) / 2);
     messages = await db.message.findMany({
-      where: { ...where, seq: { gte: Math.trunc(input.aroundSeq) - before } },
+      where: { ...where, seq: { gte: anchor - before } },
       orderBy: { seq: "asc" },
       take: window,
       select: selection,
     });
   }
-
-  const firstSeq = bounds._min.seq ?? null;
-  const lastSeq = bounds._max.seq ?? null;
   const windowFirst = messages[0]?.seq;
   const windowLast = messages[messages.length - 1]?.seq;
   const transcript: Transcript = {
