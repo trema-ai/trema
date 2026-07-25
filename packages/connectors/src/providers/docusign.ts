@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // DocuSign's official MCP server is currently open beta, so the production
 // eSignature REST API provides this catalog entry.

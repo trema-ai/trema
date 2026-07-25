@@ -3,10 +3,10 @@ import { RunEventDataSchema } from "@trema/harness";
 import type { LanguageModelUsage, TextStreamPart, ToolSet } from "ai";
 import { describe, expect, it, vi } from "vitest";
 
-import { createSdkModelPort } from "#/index.js";
-import { createSdkModelPortWithOperations } from "#/sdk-model-port.js";
-import type { SdkCallOptions, SdkOperations } from "#/sdk-operations.js";
-import { toModelMessages } from "#/to-model-messages.js";
+import { createSdkModelPort } from "#models/index.js";
+import { createSdkModelPortWithOperations } from "#models/sdk-model-port.js";
+import type { SdkCallOptions, SdkOperations } from "#models/sdk-operations.js";
+import { toModelMessages } from "#models/to-model-messages.js";
 
 type Part = TextStreamPart<ToolSet>;
 

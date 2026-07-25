@@ -7,8 +7,8 @@ import {
   OpenApiConversionError,
   type OpenApiDocument,
   type OpenApiOperation,
-} from "#/openapi/document.js";
-import { type ToolDefinition, toolDefinitionSchema } from "#/schema.js";
+} from "#connectors/openapi/document.js";
+import { type ToolDefinition, toolDefinitionSchema } from "#connectors/schema.js";
 
 /**
  * A curation config names the operations that become tools. Curated beats

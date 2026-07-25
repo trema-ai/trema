@@ -2,8 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type {
   ContextSession,
-  Prisma,
   Principal,
+  Prisma,
   Scope,
   SessionMode,
 } from "#/generated/prisma/client.js";

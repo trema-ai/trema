@@ -1,4 +1,4 @@
-import type { ProviderDefInput } from "#/schema.js";
+import type { ProviderDefInput } from "#connectors/schema.js";
 
 // Gamma's hosted MCP server requires requesting custom MCP access. Its
 // documented Generate API is broadly available and is the self-service option.

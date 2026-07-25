@@ -6,8 +6,8 @@ import { log } from "#/lib/logger/index.js";
 import { serviceAuthed, sessionAuthed } from "#/rpc/builders.js";
 import {
   closeSession,
-  openSession,
   type OpenSessionResult,
+  openSession,
   renewSession,
   SessionClosedError,
   SessionExpiredError,

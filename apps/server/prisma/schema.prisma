@@ -151,6 +151,7 @@ model Org {
   connectorConnections      ConnectorConnection[]
   connectorOAuthStates      ConnectorOAuthState[]
   connectorProviderSettings ConnectorProviderSettings[]
+  embeddingSettings         EmbeddingSettings?
   contextSessions           ContextSession[]
 }
 
@@ -288,6 +289,7 @@ model Item {
   confirmedBy     Principal?     @relation("ItemConfirmer", fields: [orgId, confirmedById], references: [orgId, id], onDelete: Restrict)
   updatedBy       Principal?     @relation("ItemUpdater", fields: [orgId, updatedById], references: [orgId, id], onDelete: Restrict)
   versions        ItemVersion[]
+  searchDoc       ItemSearchDoc?
 
   @@unique([orgId, id])
   @@index([orgId, scopeId])
@@ -311,6 +313,44 @@ model ItemVersion {
 
   @@unique([itemId, version])
   @@index([orgId, itemId])
+}
+
+/// The search projection of an item. `tsv` is a generated column whose
+/// expression Prisma cannot express, so the migration hand-writes it. The
+/// row deliberately carries no scope or status: search joins `Item` for
+/// those, so a lifecycle change never writes to this table.
+///
+/// `embedding` declares no dimension. The dimension belongs to the model that
+/// produced the vector, which `embeddingModel` records. Queries compare only
+/// rows written by the organization's current model, so changing models is a
+/// re-embed rather than a migration. There is deliberately no vector index:
+/// every query is already narrowed to one organization's active items in a
+/// few scopes, which exact search handles at this corpus size.
+model ItemSearchDoc {
+  itemId         String
+  orgId          String
+  title          String
+  content        String
+  tsv            Unsupported("tsvector")?
+  embedding      Unsupported("vector")?
+  embeddingModel String?
+  item           Item                     @relation(fields: [orgId, itemId], references: [orgId, id], onDelete: Cascade)
+
+  @@id([orgId, itemId])
+  @@index([tsv], type: Gin)
+}
+
+/// One organization's embedding endpoint. No row means embeddings are off for
+/// that organization and search stays lexical.
+model EmbeddingSettings {
+  id               String   @id @default(uuid(7))
+  orgId            String   @unique
+  endpoint         String
+  model            String
+  apiKeyCiphertext String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  org              Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
 }
 
 model Binding {

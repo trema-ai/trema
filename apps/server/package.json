@@ -35,6 +35,7 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@trema/connectors": "workspace:*",
+    "@trema/models": "workspace:*",
     "better-auth": "^1.6.23",
     "dotenv": "^17.2.3",
     "hono": "^4.12.31",
