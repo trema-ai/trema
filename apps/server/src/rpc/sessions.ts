@@ -5,7 +5,13 @@ import type { ContextSession, Scope } from "#/generated/prisma/client.js";
 import { log } from "#/lib/logger/index.js";
 import { serviceAuthed, sessionAuthed } from "#/rpc/builders.js";
 import {
+  ConversationValidationError,
+  captureMessages,
+  MESSAGE_BATCH_LIMIT,
+} from "#/services/conversations/index.js";
+import {
   closeSession,
+  isSessionExpired,
   type OpenSessionResult,
   openSession,
   renewSession,
@@ -150,6 +156,9 @@ function serializeOpenedSession(result: OpenSessionResult) {
 }
 
 function throwSessionError(error: unknown): never {
+  if (error instanceof ConversationValidationError) {
+    throw new ORPCError("BAD_REQUEST", { message: error.message });
+  }
   if (error instanceof SessionResolutionError) {
     // The harness turns these into onboarding: link your account, or ask an
     // administrator to bind this location.
@@ -343,4 +352,155 @@ const close = sessionAuthed
     }
   });
 
-export const sessionsRouter = { open, renew, close };
+const reportedMessageSchema = z
+  .object({
+    surfaceMessageRef: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(
+        "The surface's own id for the message. It is the dedup key: reporting it again edits the stored message instead of adding a second one.",
+      ),
+    operation: z
+      .enum(["upsert", "delete"])
+      .optional()
+      .describe(
+        "`upsert` lands a new message or edits the one with this reference; `delete` removes it, for a message retracted on the surface. Defaults to `upsert`.",
+      ),
+    author: z
+      .object({
+        principalId: z.uuid().optional().describe("The author's principal ID. A UUID."),
+        externalRef: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "The author's raw surface id. An id that is linked to a person also records the principal.",
+          ),
+      })
+      .optional()
+      .describe("Who said it. Required for `upsert`, ignored for `delete`."),
+    sentAt: z.iso
+      .datetime()
+      .optional()
+      .describe("When the message was sent. Required for `upsert`, ignored for `delete`."),
+    text: z
+      .string()
+      .optional()
+      .describe("What was said. Required for `upsert`, ignored for `delete`."),
+  })
+  .describe("One reported message.");
+
+const messages = sessionAuthed
+  .route({
+    method: "POST",
+    path: "/sessions/{id}/messages",
+    summary: "Report conversation messages",
+    description:
+      "Report the messages of the thread this session serves — the people's and the agent's. The thread is identified by the session's surface location, so repeated sessions on it extend one conversation. Reporting the same batch twice changes nothing.",
+    tags: ["Sessions"],
+  })
+  .input(
+    z
+      .object({
+        id: z.uuid().describe("The ID of the session reporting the messages. A UUID."),
+        messages: z
+          .array(reportedMessageSchema)
+          .min(1)
+          .max(MESSAGE_BATCH_LIMIT)
+          .describe("The messages to report, oldest first."),
+      })
+      .describe("A batch of messages to capture on the session's thread."),
+  )
+  .output(
+    z
+      .object({
+        conversationId: z.string().describe("The conversation the messages landed on."),
+        scopeId: z.string().describe("The scope the conversation belongs to."),
+        threadRef: z
+          .string()
+          .describe("The thread within the location. Empty when the surface reported none."),
+        created: z.number().int().describe("How many messages were new."),
+        updated: z.number().int().describe("How many stored messages the batch edited."),
+        unchanged: z.number().int().describe("How many messages were already stored as reported."),
+        deleted: z.number().int().describe("How many stored messages the batch removed."),
+        notFound: z
+          .number()
+          .int()
+          .describe("How many deletions named a message that was not stored."),
+        messageCount: z
+          .number()
+          .int()
+          .describe("How many messages the conversation holds after the batch."),
+        lastActivityAt: z
+          .string()
+          .describe("The conversation's latest activity. An ISO 8601 date-time."),
+        results: z
+          .array(
+            z.object({
+              surfaceMessageRef: z.string().describe("The reference, as reported."),
+              outcome: z
+                .enum(["created", "updated", "unchanged", "deleted", "not_found"])
+                .describe("What became of this message."),
+              seq: z
+                .number()
+                .int()
+                .nullable()
+                .describe(
+                  "The message's place in the thread. Null when there was nothing to act on.",
+                ),
+            }),
+          )
+          .describe("One result per reported message, in the order reported."),
+      })
+      .describe("What the batch did to the conversation."),
+  )
+  .handler(async ({ context, input }) => {
+    const session = context.contextSession;
+    assertSessionMatches(session, input.id);
+    try {
+      // A session that has ended stops accepting context, the same way the
+      // data plane refuses it. The harness opens a new one and reports again.
+      if (session.closedAt) throw new SessionClosedError();
+      if (isSessionExpired(session)) throw new SessionExpiredError();
+
+      const captured = await captureMessages(context.db, session, {
+        messages: input.messages.map((message) => ({
+          surfaceMessageRef: message.surfaceMessageRef,
+          ...(message.operation === undefined ? {} : { operation: message.operation }),
+          ...(message.author === undefined
+            ? {}
+            : {
+                author: {
+                  ...(message.author.principalId === undefined
+                    ? {}
+                    : { principalId: message.author.principalId }),
+                  ...(message.author.externalRef === undefined
+                    ? {}
+                    : { externalRef: message.author.externalRef }),
+                },
+              }),
+          ...(message.sentAt === undefined ? {} : { sentAt: new Date(message.sentAt) }),
+          ...(message.text === undefined ? {} : { text: message.text }),
+        })),
+      });
+      return {
+        conversationId: captured.conversation.id,
+        scopeId: captured.conversation.scopeId,
+        threadRef: captured.conversation.threadRef,
+        created: captured.created,
+        updated: captured.updated,
+        unchanged: captured.unchanged,
+        deleted: captured.deleted,
+        notFound: captured.notFound,
+        messageCount: captured.messageCount,
+        lastActivityAt: captured.conversation.lastActivityAt.toISOString(),
+        results: captured.results,
+      };
+    } catch (error) {
+      throwSessionError(error);
+    }
+  });
+
+export const sessionsRouter = { open, renew, close, messages };

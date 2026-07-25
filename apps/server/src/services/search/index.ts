@@ -16,9 +16,13 @@ const rebuildBatchSize = 500;
 const embedBatchSize = 32;
 // How many rows each ranking contributes to the fusion.
 const candidateLimit = 50;
-// The damping constant from the reciprocal rank fusion paper. It flattens the
-// top of each ranking so one list cannot win on its first result alone.
-const rankConstant = 60;
+/**
+ * The damping constant from the reciprocal rank fusion paper. It flattens the
+ * top of each ranking so one list cannot win on its first result alone. It is
+ * exported because a caller that reads a score has to know the scale: the most
+ * one ranking gives a result is `1 / (RANK_CONSTANT + 1)`.
+ */
+export const RANK_CONSTANT = 60;
 
 export interface IndexableItem {
   id: string;
@@ -32,6 +36,8 @@ export interface SearchItemsInput extends EmbeddingOptions {
   orgId: string;
   scopeIds: string[];
   query: string;
+  /** Restrict the search to these kinds. An empty or absent list searches all kinds. */
+  kinds?: ItemKind[];
   limit?: number;
 }
 
@@ -275,10 +281,16 @@ export async function backfillEmbeddings(
   return { embedded, failed };
 }
 
-async function lexicalCandidates(
-  db: Database,
-  input: { orgId: string; scopeIds: string[]; query: string },
-): Promise<string[]> {
+// An empty kind list means "every kind": the filter compares against the list
+// only when the caller asked for one, so one query serves both cases.
+interface CandidateFilters {
+  orgId: string;
+  scopeIds: string[];
+  kinds: string[];
+  query: string;
+}
+
+async function lexicalCandidates(db: Database, input: CandidateFilters): Promise<string[]> {
   const rows = await db.$queryRaw<Array<{ id: string }>>`
     SELECT i."id"
     FROM "ItemSearchDoc" d
@@ -287,6 +299,7 @@ async function lexicalCandidates(
     WHERE d."orgId" = ${input.orgId}
       AND i."scopeId" = ANY(${input.scopeIds}::text[])
       AND i."status" = 'active'::"ItemStatus"
+      AND (cardinality(${input.kinds}::text[]) = 0 OR i."kind"::text = ANY(${input.kinds}::text[]))
       AND d."tsv" @@ q
     ORDER BY ts_rank(d."tsv", q) DESC, i."id"
     LIMIT ${candidateLimit}
@@ -296,7 +309,7 @@ async function lexicalCandidates(
 
 async function vectorCandidates(
   db: Database,
-  input: { orgId: string; scopeIds: string[]; query: string; embedder: Embedder },
+  input: CandidateFilters & { embedder: Embedder },
 ): Promise<string[]> {
   const [vector] = await input.embedder.embed([input.query]);
   if (!vector) return [];
@@ -308,6 +321,7 @@ async function vectorCandidates(
     WHERE d."orgId" = ${input.orgId}
       AND i."scopeId" = ANY(${input.scopeIds}::text[])
       AND i."status" = 'active'::"ItemStatus"
+      AND (cardinality(${input.kinds}::text[]) = 0 OR i."kind"::text = ANY(${input.kinds}::text[]))
       AND d."embedding" IS NOT NULL
       AND d."embeddingModel" = ${input.embedder.model}
     ORDER BY d."embedding" <=> ${vectorLiteral(vector)}::vector, i."id"
@@ -323,7 +337,7 @@ function fuse(rankings: string[][]): Array<{ id: string; score: number }> {
   const scores = new Map<string, number>();
   for (const ranking of rankings) {
     for (const [index, id] of ranking.entries()) {
-      scores.set(id, (scores.get(id) ?? 0) + 1 / (rankConstant + index + 1));
+      scores.set(id, (scores.get(id) ?? 0) + 1 / (RANK_CONSTANT + index + 1));
     }
   }
   return [...scores]
@@ -360,7 +374,12 @@ export async function searchItems(
   const query = input.query.trim();
   if (!query || input.scopeIds.length === 0) return [];
   const limit = Math.min(input.limit ?? defaultLimit, maxLimit);
-  const filters = { orgId: input.orgId, scopeIds: input.scopeIds, query };
+  const filters: CandidateFilters = {
+    orgId: input.orgId,
+    scopeIds: input.scopeIds,
+    kinds: input.kinds ?? [],
+    query,
+  };
 
   const rankings = [await lexicalCandidates(db, filters)];
   try {

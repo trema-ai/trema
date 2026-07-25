@@ -26,6 +26,7 @@ import {
   OAuthTokenExchangeError,
   type PlatformAppDirectory,
 } from "./services/connectors/index.js";
+import { handleDataPlaneRequest } from "./services/dataplane/mcp.js";
 
 export interface AppDependencies {
   db: Database;
@@ -240,6 +241,14 @@ export function createApp({
 
   app.get(`${OPENAPI_PREFIX}/spec.json`, async (context) => {
     return context.json(await openApiDocument);
+  });
+
+  // The data plane sits on the versioned public surface beside the session
+  // routes that mint its tokens. It speaks MCP rather than REST, so it is a raw
+  // mount: it carries no oRPC procedures and never appears in the OpenAPI
+  // document. Registered before the OpenAPI handler so the path is ours.
+  app.all(`${OPENAPI_PREFIX}/mcp`, async (context) => {
+    return handleDataPlaneRequest(context.req.raw, { db, env });
   });
 
   app.use(`${OPENAPI_PREFIX}/*`, async (context, next) => {
