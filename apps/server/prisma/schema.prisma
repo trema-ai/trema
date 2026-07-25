@@ -130,6 +130,62 @@ enum SessionMode {
   delegated
 }
 
+/// Durable execution state of a run. `awaiting_approval` and `awaiting_input`
+/// are first-class pause states: a parked run holds no worker and no lease.
+enum RunState {
+  queued
+  running
+  awaiting_approval
+  awaiting_input
+  completed
+  failed
+  cancelled
+  stale
+}
+
+/// Why a run exists. The taxonomy is closed; every run carries one value and a
+/// reference to the thing that produced it.
+enum RunTrigger {
+  message
+  api
+  schedule
+  retry
+  resume
+}
+
+/// Why a model turn ended.
+enum TurnStopReason {
+  stop
+  toolUse
+  length
+  error
+  aborted
+  paused
+}
+
+/// Whether queued input waits for the next turn of an active run (`steering`)
+/// or for the thread after the active run ends (`follow_up`).
+enum RunInputKind {
+  steering
+  follow_up
+}
+
+enum ScheduleStatus {
+  proposed
+  active
+  paused
+  archived
+}
+
+/// What one evaluated cron tick did. Both skip outcomes exist so the count is
+/// explainable: `overlap` found the schedule's thread still busy, `missed`
+/// passed while nothing evaluated it.
+enum ScheduleFiringOutcome {
+  started
+  skipped_overlap
+  skipped_missed
+}
+
 model Org {
   id                        String                      @id @default(uuid(7))
   name                      String
@@ -153,6 +209,15 @@ model Org {
   connectorProviderSettings ConnectorProviderSettings[]
   embeddingSettings         EmbeddingSettings?
   contextSessions           ContextSession[]
+  agentRuns                 AgentRun[]
+  turns                     Turn[]
+  runEvents                 RunEvent[]
+  runQueuedInputs           RunQueuedInput[]
+  runIntents                RunIntent[]
+  runStops                  RunStop[]
+  runElicitations           RunElicitation[]
+  schedules                 Schedule[]
+  scheduleFirings           ScheduleFiring[]
 }
 
 model Principal {
@@ -183,6 +248,8 @@ model Principal {
   connectorOAuthStates      ConnectorOAuthState[]
   actedContextSessions      ContextSession[]      @relation("ContextSessionActor")
   requestedContextSessions  ContextSession[]      @relation("ContextSessionRequester")
+  createdSchedules          Schedule[]            @relation("ScheduleCreator")
+  activatedSchedules        Schedule[]            @relation("ScheduleActivator")
 
   @@unique([orgId, authId])
   @@unique([orgId, id])
@@ -222,6 +289,7 @@ model Scope {
   bindings  Binding[]
   items     Item[]
   sessions  ContextSession[]
+  schedules Schedule[]
 
   @@unique([orgId, id])
   @@index([orgId, ownerId])
@@ -258,6 +326,7 @@ model ContextSession {
   scope                Scope       @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
   actingPrincipal      Principal   @relation("ContextSessionActor", fields: [orgId, actingPrincipalId], references: [orgId, id], onDelete: Restrict)
   requesterPrincipal   Principal?  @relation("ContextSessionRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Restrict)
+  agentRuns            AgentRun[]
 
   @@unique([orgId, id])
   @@index([orgId, scopeId])
@@ -319,6 +388,11 @@ model ItemVersion {
 /// expression Prisma cannot express, so the migration hand-writes it. The
 /// row deliberately carries no scope or status: search joins `Item` for
 /// those, so a lifecycle change never writes to this table.
+///
+/// `tsv` is built with the `trema_multilingual` configuration (`simple` plus
+/// unaccent), which stems nothing and so treats every language alike. Queries
+/// must parse with that same configuration or they stop matching what is
+/// stored.
 ///
 /// `embedding` declares no dimension. The dimension belongs to the model that
 /// produced the vector, which `embeddingModel` records. Queries compare only
@@ -532,4 +606,216 @@ model ConnectorProviderSettings {
 
   @@unique([orgId, providerKey])
   @@index([orgId])
+}
+
+/// One agent run: the unit the workflow engine schedules and the harness owns.
+/// The engine carries nothing but this row's id, so the record is here.
+model AgentRun {
+  id           String           @id
+  orgId        String
+  /// The conversation the run serializes against. One run per thread at a time.
+  threadRef    String
+  state        RunState
+  trigger      RunTrigger
+  turnCount    Int              @default(0)
+  /// The highest event sequence number handed out for this run. An
+  /// `UPDATE ... RETURNING` on this column allocates `seq` inside the same
+  /// transaction as the event insert, which keeps the sequence dense.
+  lastEventSeq Int              @default(0)
+  sessionId    String?
+  retryOfRunId String?
+  /// One-based attempt number across a retry chain.
+  retryAttempt Int?
+  usage        Json?
+  error        String?
+  /// Tool names a principal approved for the remainder of this run.
+  runGrants    String[]         @default([])
+  /// Narrows the session's resolved tools for this run. It can never widen them.
+  toolAllowlist String[]        @default([])
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  org          Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  session      ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: SetNull)
+  retryOf      AgentRun?        @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
+  retries      AgentRun[]       @relation("AgentRunRetry")
+  turns        Turn[]
+  events       RunEvent[]
+  queuedInputs RunQueuedInput[]
+  elicitations RunElicitation[]
+  stop         RunStop?
+  firings      ScheduleFiring[]
+
+  @@unique([orgId, id])
+  @@index([orgId, threadRef, createdAt])
+  @@index([orgId, state])
+  @@index([orgId, sessionId])
+  @@index([retryOfRunId])
+}
+
+/// One committed turn. A turn commits atomically at its end, so anything
+/// mid-flight when a worker dies was never here and simply re-runs.
+model Turn {
+  orgId                String
+  runId                String
+  index                Int
+  model                Json
+  message              Json
+  toolResults          Json
+  /// Set while the turn waits on a gated tool call. Cleared when the approved
+  /// call runs, which is what makes a paused turn resumable.
+  pendingCallId        String?
+  pendingElicitationId String?
+  stopReason           TurnStopReason
+  usage                Json
+  createdAt            DateTime       @default(now())
+  org                  Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run                  AgentRun       @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+
+  @@id([runId, index])
+  @@index([orgId, runId])
+}
+
+/// One append-only run event. `seq` is dense within a run and assigned by the
+/// server, never by a device or a sandbox.
+model RunEvent {
+  id      String   @id @default(uuid(7))
+  orgId   String
+  runId   String
+  seq     Int
+  at      DateTime
+  /// Event envelope schema version.
+  v       Int      @default(1)
+  event   Json
+  org     Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run     AgentRun @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([runId, seq])
+  @@index([orgId, runId, seq])
+}
+
+/// Input waiting for a turn boundary. Steering waits on a named run;
+/// a follow-up waits on the thread and starts the next run.
+model RunQueuedInput {
+  id        String       @id
+  orgId     String
+  kind      RunInputKind
+  runId     String?
+  threadRef String
+  message   Json
+  author    Json
+  /// Drain order. Timestamps alone tie under concurrent enqueues.
+  position  Int          @default(autoincrement())
+  createdAt DateTime     @default(now())
+  org       Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run       AgentRun?    @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+
+  @@index([orgId, runId, position])
+  @@index([orgId, threadRef, position])
+}
+
+/// A claimed intent or idempotency key. The insert is the claim: at-least-once
+/// callers, exactly-once runs. The outcome is recorded so a duplicate call can
+/// be answered with where the first one landed.
+model RunIntent {
+  id        String
+  orgId     String
+  runId     String?
+  outcome   String?
+  createdAt DateTime @default(now())
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@id([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// The durable fact that a principal asked a run to stop. Its presence is what
+/// separates a cancellation from worker death.
+model RunStop {
+  runId    String   @id
+  orgId    String
+  intentId String
+  by       Json
+  at       DateTime
+  org      Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run      AgentRun @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, runId])
+  @@index([orgId])
+}
+
+/// A blocking elicitation and its single terminal resolution.
+model RunElicitation {
+  id         String    @id
+  orgId      String
+  runId      String
+  event      Json
+  expiresAt  DateTime?
+  resolution Json?
+  createdAt  DateTime  @default(now())
+  org        Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run        AgentRun  @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, id])
+  @@index([orgId, runId])
+  @@index([orgId, expiresAt])
+}
+
+/// Standing execution config: a standing instruction to start runs. Knowledge
+/// lives in the context app as items; a schedule produces executions, so it
+/// lives with runs.
+model Schedule {
+  id            String           @id @default(uuid(7))
+  orgId         String
+  /// Sessions open here; the scope's binding names the surface location.
+  scopeId       String
+  /// Stable per schedule, so firings serialize against each other.
+  threadRef     String
+  cron          String
+  /// IANA time zone. Daylight saving is resolved by the zone, not by UTC math.
+  timezone      String
+  /// The message each firing starts with.
+  prompt        String
+  /// Intersected with the session's resolved tools. Narrowing only.
+  toolAllowlist String[]         @default([])
+  status        ScheduleStatus   @default(proposed)
+  createdById   String
+  activatedById String?
+  lastFiredAt   DateTime?
+  /// The latest tick already evaluated, fired or skipped. Ticks before it are
+  /// never made up.
+  lastTickAt    DateTime?
+  skippedCount  Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  org           Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope         Scope            @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  createdBy     Principal        @relation("ScheduleCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
+  activatedBy   Principal?       @relation("ScheduleActivator", fields: [orgId, activatedById], references: [orgId, id], onDelete: Restrict)
+  firings       ScheduleFiring[]
+
+  @@unique([orgId, id])
+  @@unique([orgId, threadRef])
+  @@index([orgId, status])
+  @@index([orgId, scopeId])
+  @@index([orgId, createdById])
+  @@index([orgId, activatedById])
+}
+
+/// One evaluated cron tick. A started firing points at its run; a skipped one
+/// records why, which is what makes `skippedCount` explainable.
+model ScheduleFiring {
+  id         String                @id @default(uuid(7))
+  orgId      String
+  scheduleId String
+  tickAt     DateTime
+  outcome    ScheduleFiringOutcome
+  runId      String?
+  createdAt  DateTime              @default(now())
+  org        Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  schedule   Schedule              @relation(fields: [orgId, scheduleId], references: [orgId, id], onDelete: Cascade)
+  run        AgentRun?             @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, scheduleId, tickAt])
+  @@index([orgId, scheduleId, tickAt])
+  @@index([runId])
 }

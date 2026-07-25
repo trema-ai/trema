@@ -6,6 +6,12 @@ import { resolveEmbedder } from "#server/services/embeddings/index.js";
 
 const defaultLimit = 20;
 const maxLimit = 50;
+// The text search configuration built by the multilingual search migration:
+// 'simple' plus unaccent, so nothing is stemmed and diacritics fold. The
+// generated "tsv" column is built with this same configuration. A query parser
+// or a headline call that disagrees with it stops matching what the index
+// stored, so all three read from here.
+const textSearchConfig = "trema_multilingual";
 const rebuildBatchSize = 500;
 const embedBatchSize = 32;
 // How many rows each ranking contributes to the fusion.
@@ -277,7 +283,7 @@ async function lexicalCandidates(
     SELECT i."id"
     FROM "ItemSearchDoc" d
     JOIN "Item" i ON i."orgId" = d."orgId" AND i."id" = d."itemId",
-         websearch_to_tsquery('english', ${input.query}) q
+         websearch_to_tsquery(${textSearchConfig}::regconfig, ${input.query}) q
     WHERE d."orgId" = ${input.orgId}
       AND i."scopeId" = ANY(${input.scopeIds}::text[])
       AND i."status" = 'active'::"ItemStatus"
@@ -333,7 +339,8 @@ async function snippetsFor(
     Array<{ id: string; kind: ItemKind; title: string; snippet: string }>
   >`
     SELECT i."id", i."kind", i."title",
-           ts_headline('english', d."content", websearch_to_tsquery('english', ${input.query}),
+           ts_headline(${textSearchConfig}::regconfig, d."content",
+                       websearch_to_tsquery(${textSearchConfig}::regconfig, ${input.query}),
                        'MaxWords=25,MinWords=8,StartSel="",StopSel=""') AS snippet
     FROM "ItemSearchDoc" d
     JOIN "Item" i ON i."orgId" = d."orgId" AND i."id" = d."itemId"

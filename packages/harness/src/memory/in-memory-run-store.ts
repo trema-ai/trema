@@ -115,6 +115,11 @@ export class InMemoryRunStore implements RunStore {
     const turns = this.#requireTurns(runId);
     const turn = turns[turnIndex];
     if (turn === undefined) throw new Error(`unknown turn: ${runId}/${turnIndex}`);
+    // Completion is single-shot: a turn without a pending call is committed,
+    // and a duplicate resume must not rewrite it.
+    if (turn.pendingToolCall === undefined) {
+      throw new Error(`no pending turn to complete: ${runId}/${turnIndex}`);
+    }
     const { pendingToolCall: _pendingToolCall, ...completed } = turn;
     turns[turnIndex] = { ...completed, toolResults: [...toolResults], stopReason: "toolUse" };
   }

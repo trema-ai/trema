@@ -21,6 +21,8 @@ const checks = [
   ["packages/connectors", "@trema/connectors"],
   ["packages/models", "@trema/models"],
   ["apps/server", "./dist/server.js"],
+  // A second entry with its own import graph; the CLI runs it.
+  ["apps/server", "./dist/worker.js"],
   // Validates env at import time, so it also keeps the fixture below honest.
   ["apps/server", "./dist/lib/env/index.js"],
 ];

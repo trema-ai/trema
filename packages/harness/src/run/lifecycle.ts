@@ -1,5 +1,6 @@
 import type { TranscriptMessage, Trigger, Usage } from "#harness/core/index.js";
 import type { ThreadDispatchLock } from "#harness/dispatch/index.js";
+import type { PrincipalRef } from "#harness/events/index.js";
 import type { LoopResult } from "#harness/loop/index.js";
 import type { ContextSession, Engine, RunRecord, RunStore } from "#harness/ports/index.js";
 
@@ -86,14 +87,19 @@ export class RunLifecycle {
     return run;
   }
 
-  /** Transitions a queued or parked run to running and records its trigger. */
+  /**
+   * Transitions a queued or parked run to running and records its trigger.
+   * A run whose row is already `running` was orphaned when its worker died:
+   * a fresh execution records another start without changing state.
+   */
   async start(runId: string, trigger?: Trigger): Promise<void> {
     const run = await this.#requireRun(runId);
-    await this.#options.store.transitionRun({
-      runId,
-      state: "running",
-      event: { type: "run-started", trigger: trigger ?? run.trigger },
-    });
+    const event = { type: "run-started", trigger: trigger ?? run.trigger } as const;
+    if (run.state === "running") {
+      await this.#options.store.appendEvent(runId, event);
+      return;
+    }
+    await this.#options.store.transitionRun({ runId, state: "running", event });
   }
 
   /**
@@ -192,11 +198,7 @@ export class RunLifecycle {
   }
 
   /** Records a stop intent before aborting active execution. */
-  async stop(
-    intentId: string,
-    runId: string,
-    by: { principalId: string; displayName?: string },
-  ): Promise<void> {
+  async stop(intentId: string, runId: string, by: PrincipalRef): Promise<void> {
     await this.#options.store.recordStop({
       intentId,
       runId,

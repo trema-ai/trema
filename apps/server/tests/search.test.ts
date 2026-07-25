@@ -216,6 +216,109 @@ integration("item search", () => {
     expect(results[0]!.score).toBeGreaterThan(results[1]!.score);
   });
 
+  // A word that is an English stopword is dropped from the index and from the
+  // query, whatever language wrote it. Under the 'english' configuration this
+  // erased the German "will" (wants) and the French "on" (one) and "or" (gold)
+  // — common words in their own languages, unfindable. These cases are the
+  // reason the index carries no language-specific stopword list.
+  it("finds words that English would discard as stopwords", async () => {
+    const org = await createOrg();
+    const german = await createMemory(org, {
+      scopeId: org.orgScope.id,
+      title: "Kundenwunsch",
+      content: "Der Kunde will eine Rechnung für den Dienst",
+    });
+    const french = await createMemory(org, {
+      scopeId: org.orgScope.id,
+      title: "Cours des matières",
+      content: "Le cours de or monte, on surveille le marché",
+    });
+
+    for (const [query, expected] of [
+      ["will", german.id],
+      ["Rechnung", german.id],
+      ["or", french.id],
+      ["on", french.id],
+    ] as const) {
+      const results = await searchItems(db, {
+        orgId: org.org.id,
+        scopeIds: [org.orgScope.id],
+        query,
+      });
+      expect(
+        results.map(({ id }) => id),
+        `query ${query}`,
+      ).toContain(expected);
+    }
+  });
+
+  // Postgres' default parser splits on whitespace and punctuation, so a
+  // language that does not space its words lands in the index as one long
+  // token. No text search configuration fixes that; segmentation needs a
+  // different parser (pgroonga, pg_bigm) or the vector half of the search.
+  // The gap is recorded here so it is a known limit, not a surprise.
+  it("cannot segment unspaced Japanese, and matches it whole", async () => {
+    const org = await createOrg();
+    const japanese = await createMemory(org, {
+      scopeId: org.orgScope.id,
+      title: "リリース手順",
+      content: "デプロイは火曜日です",
+    });
+
+    await expect(
+      searchItems(db, { orgId: org.org.id, scopeIds: [org.orgScope.id], query: "デプロイ" }),
+    ).resolves.toEqual([]);
+
+    const whole = await searchItems(db, {
+      orgId: org.org.id,
+      scopeIds: [org.orgScope.id],
+      query: "デプロイは火曜日です",
+    });
+    expect(whole.map(({ id }) => id)).toContain(japanese.id);
+  });
+
+  it("matches across diacritics in either direction", async () => {
+    const org = await createOrg();
+    const accented = await createMemory(org, {
+      scopeId: org.orgScope.id,
+      title: "Café météo",
+      content: "Le café ferme à midi",
+    });
+
+    for (const query of ["cafe", "café", "meteo"]) {
+      const results = await searchItems(db, {
+        orgId: org.org.id,
+        scopeIds: [org.orgScope.id],
+        query,
+      });
+      expect(
+        results.map(({ id }) => id),
+        `query ${query}`,
+      ).toContain(accented.id);
+    }
+  });
+
+  it("keeps an exact identifier out of a near-miss match", async () => {
+    const org = await createOrg();
+    const exact = await createMemory(org, {
+      scopeId: org.orgScope.id,
+      title: "Connection failures",
+      content: "The worker retries after ECONNREFUSED from the queue",
+    });
+    await createMemory(org, {
+      scopeId: org.orgScope.id,
+      title: "Connection notes",
+      content: "The worker retries after a refused connection",
+    });
+
+    const results = await searchItems(db, {
+      orgId: org.org.id,
+      scopeIds: [org.orgScope.id],
+      query: "ECONNREFUSED",
+    });
+    expect(results.map(({ id }) => id)).toEqual([exact.id]);
+  });
+
   it("writes the item even when the index write fails", async () => {
     const org = await createOrg();
     await db.$executeRaw`ALTER TABLE "ItemSearchDoc" RENAME TO "ItemSearchDocOffline"`;
