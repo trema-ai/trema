@@ -514,6 +514,46 @@ integration("data plane", () => {
     await client.close();
   });
 
+  it("supersedes the same-type match even when another type ranks higher", async () => {
+    const org = await createOrg();
+    const { scope, opened } = await openSessionOn(org, "Cadence", "T1:C14");
+    // Two memories with the same words but different types. Whichever one
+    // search ranks first, the save must take over the fact, never the
+    // preference.
+    const preference = await createMemory(org, {
+      scopeId: scope.id,
+      type: "preference",
+      title: "Deploy cadence preference",
+      content: "Deploys go out every Thursday afternoon after the standup",
+    });
+    const fact = await createMemory(org, {
+      scopeId: scope.id,
+      title: "Deploy cadence",
+      content: "Deploys go out every Thursday afternoon after the standup",
+    });
+    const client = await connect(opened.sessionToken);
+
+    // The title's words all appear in the stored memories: the lexical query
+    // requires every word of the new memory, so a novel title word would hide
+    // both candidates and dodge the case under test.
+    const saved = (await client.callTool({
+      name: "save_memory",
+      arguments: {
+        type: "fact",
+        title: "Thursday deploys",
+        content: "Deploys go out every Thursday afternoon after the standup",
+      },
+    })) as CallToolResult;
+    expect(saved.structuredContent).toMatchObject({ id: fact.id, superseded: fact.id, version: 2 });
+
+    const untouched = await db.item.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: preference.id } },
+    });
+    expect(untouched.version).toBe(1);
+
+    await client.close();
+  });
+
   it("updates only active facts and preferences at the session's own scope", async () => {
     const org = await createOrg();
     const { scope, opened } = await openSessionOn(org, "Billing", "T1:C8");

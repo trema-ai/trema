@@ -18,17 +18,20 @@ import {
 } from "#/services/items/index.js";
 import { RANK_CONSTANT, searchItems } from "#/services/search/index.js";
 
+/** How many search candidates the near-duplicate check inspects for a type match. */
+export const SUPERSEDE_CANDIDATE_LIMIT = 5;
+
 /**
  * How strong a search match has to be before a save takes over the item it
  * matched instead of adding another one.
  *
  * This is a heuristic, and it is deliberately blunt. `searchItems` fuses its
  * rankings with reciprocal rank fusion, so a score reports rank, not
- * similarity: the most one ranking can give a result is
- * `1 / (RANK_CONSTANT + 1)`, which a result earns by placing first. The
- * threshold therefore reads as "search put this first in at least one of its
- * rankings", and the supersede also requires the candidate to be search's best
- * overall match.
+ * similarity: a result at rank N of one ranking scores `1 / (RANK_CONSTANT +
+ * N)`. The threshold therefore reads as "search placed this in the top
+ * `SUPERSEDE_CANDIDATE_LIMIT` of at least one of its rankings" — wide enough
+ * that a near-identical memory of another type ranking first cannot shadow
+ * the one this save should take over.
  *
  * Three deterministic filters carry the real weight, because they are not
  * heuristics at all: the candidate sits at the session's own scope, it is a
@@ -36,7 +39,7 @@ import { RANK_CONSTANT, searchItems } from "#/services/search/index.js";
  * its query is the whole new memory, and Postgres requires every word of it to
  * appear in the candidate.
  */
-export const SUPERSEDE_SCORE_THRESHOLD = 1 / (RANK_CONSTANT + 1);
+export const SUPERSEDE_SCORE_THRESHOLD = 1 / (RANK_CONSTANT + SUPERSEDE_CANDIDATE_LIMIT);
 
 export interface SaveMemoryInput extends EmbeddingOptions {
   type: MemoryType;
@@ -110,24 +113,28 @@ async function findNearDuplicate(
     return { item: sameTitle, reason: "title", score: null };
   }
 
-  const [best] = await searchItems(db, {
+  // A handful of candidates rather than one: the search cannot see memory
+  // types, so a near-identical memory of another type may outrank the one this
+  // save should take over. The best strong match of the right type wins.
+  const candidates = await searchItems(db, {
     orgId: session.orgId,
     scopeIds: [session.scopeId],
     query: `${input.title}\n${input.body.content}`,
     kinds: ["memory"],
-    // The fused ranking is sorted before it is cut, so one result is search's
-    // best match — the only candidate a supersede considers.
-    limit: 1,
+    limit: SUPERSEDE_CANDIDATE_LIMIT,
     ...(input.masterKey ? { masterKey: input.masterKey } : {}),
     ...(input.embedder ? { embedder: input.embedder } : {}),
   });
-  if (!best || best.score < SUPERSEDE_SCORE_THRESHOLD) return undefined;
-
-  const item = await db.item.findFirst({ where: { ...sameScopeMemory, id: best.id } });
-  // A different type is a different memory, however alike the words are: a
-  // preference does not overwrite the fact it was inferred from.
-  if (!item || memoryTypeOf(item) !== input.body.type) return undefined;
-  return { item, reason: "score", score: best.score };
+  for (const candidate of candidates) {
+    if (candidate.score < SUPERSEDE_SCORE_THRESHOLD) break;
+    const item = await db.item.findFirst({ where: { ...sameScopeMemory, id: candidate.id } });
+    // A different type is a different memory, however alike the words are: a
+    // preference does not overwrite the fact it was inferred from.
+    if (item && memoryTypeOf(item) === input.body.type) {
+      return { item, reason: "score", score: candidate.score };
+    }
+  }
+  return undefined;
 }
 
 /**

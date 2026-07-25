@@ -237,7 +237,7 @@ async function ensureConversation(
   threadRef: string,
   span: { earliest: Date; latest: Date },
   hasUpserts: boolean,
-): Promise<Conversation> {
+): Promise<{ conversation: Conversation; started: boolean }> {
   const identity = {
     orgId: session.orgId,
     surface: session.surface,
@@ -247,7 +247,7 @@ async function ensureConversation(
   const existing = await db.conversation.findUnique({
     where: { orgId_surface_locationRef_threadRef: identity },
   });
-  if (existing) return existing;
+  if (existing) return { conversation: existing, started: false };
 
   // A batch of nothing but deletions retracts messages that were never
   // reported. Starting an empty conversation for it would record a thread
@@ -257,7 +257,7 @@ async function ensureConversation(
   }
 
   try {
-    return await db.conversation.create({
+    const conversation = await db.conversation.create({
       data: {
         ...identity,
         scopeId: session.scopeId,
@@ -267,11 +267,13 @@ async function ensureConversation(
         lastActivityAt: span.latest,
       },
     });
+    return { conversation, started: true };
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
-    return db.conversation.findUniqueOrThrow({
+    const conversation = await db.conversation.findUniqueOrThrow({
       where: { orgId_surface_locationRef_threadRef: identity },
     });
+    return { conversation, started: false };
   }
 }
 
@@ -329,19 +331,26 @@ export async function captureMessages(
   };
   const threadRef = conversationThreadRef(session);
   const hasUpserts = reported.some((message) => message.operation === "upsert");
-  const found = await ensureConversation(db, session, threadRef, span, hasUpserts);
+  const { conversation: found, started } = await ensureConversation(
+    db,
+    session,
+    threadRef,
+    span,
+    hasUpserts,
+  );
 
-  const captured = await db.$transaction(async (transaction) => {
-    // Re-checked inside the transaction: the route's own check runs before it,
-    // and a close committing in between must not let an ended session land a
-    // batch. A close that commits after this read is concurrent with the
-    // capture, which is the ordinary case.
+  const capture = db.$transaction(async (transaction) => {
+    // Re-checked inside the transaction, on a fresh clock: the route's own
+    // check runs before it, and a close or an expiry committing in between
+    // must not let an ended session land a batch. A close that commits after
+    // this read is concurrent with the capture, which is the ordinary case.
+    const checkAt = input.now ?? new Date();
     const liveSession = await transaction.contextSession.findUniqueOrThrow({
       where: { orgId_id: { orgId: session.orgId, id: session.id } },
       select: { closedAt: true, expiresAt: true },
     });
     if (liveSession.closedAt) throw new SessionClosedError();
-    if (liveSession.expiresAt.getTime() <= now.getTime()) throw new SessionExpiredError();
+    if (liveSession.expiresAt.getTime() <= checkAt.getTime()) throw new SessionExpiredError();
 
     // The lock serializes concurrent batches on this thread. Everything below
     // reads and writes the thread's sequence, so it must be one writer at a
@@ -397,6 +406,11 @@ export async function captureMessages(
 
       seen.push({ principalId: message.principalId, externalRef: message.externalRef });
       if (current && sameMessage(current, message)) {
+        // Re-indexed all the same: re-reporting an unchanged message is the
+        // stated repair for an index write that failed last time, so it has to
+        // reach the index pass. The upsert there makes it a cheap no-op
+        // otherwise.
+        landed.push(current);
         results.push({
           surfaceMessageRef: message.surfaceMessageRef,
           outcome: "unchanged",
@@ -494,6 +508,21 @@ export async function captureMessages(
       messageCount,
     };
   });
+
+  let captured: Awaited<typeof capture>;
+  try {
+    captured = await capture;
+  } catch (error) {
+    // A batch that started the thread and was then refused must not leave the
+    // empty conversation behind as a ghost. The guard on `messages: none`
+    // keeps a concurrent batch's landed messages safe.
+    if (started && (error instanceof SessionClosedError || error instanceof SessionExpiredError)) {
+      await db.conversation.deleteMany({
+        where: { orgId: session.orgId, id: found.id, messages: { none: {} } },
+      });
+    }
+    throw error;
+  }
 
   // Indexed after the batch commits, so a search-index failure cannot undo a
   // captured message. Deleted messages take their index rows with them through

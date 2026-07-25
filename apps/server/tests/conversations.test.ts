@@ -641,5 +641,26 @@ integration("conversation capture", () => {
       }),
     ).rejects.toThrow(/closed/);
     await expect(db.message.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
+    // The refused first batch must not leave a ghost thread behind.
+    await expect(db.conversation.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
+  });
+
+  it("repairs a lost index row when the message is reported again unchanged", async () => {
+    const org = await createOrg();
+    await bindChannel(org, "Repair", "T1:C13");
+    const session = await openSession(org, "T1:C13", "thread-1");
+    const batch = [said("m-1", "The kingfisher deploy flag is KF_ROLLOUT")];
+    await report(session, batch);
+
+    const message = await db.message.findFirstOrThrow({ where: { orgId: org.org.id } });
+    await db.$executeRaw`DELETE FROM "MessageSearchDoc" WHERE "messageId" = ${message.id}`;
+
+    // The same batch again: the message is unchanged, and the index row is back.
+    const again = await report(session, batch);
+    expect(again.unchanged).toBe(1);
+    const indexed = await db.$queryRaw<{ text: string }[]>`
+      SELECT "text" FROM "MessageSearchDoc" WHERE "messageId" = ${message.id}
+    `;
+    expect(indexed).toHaveLength(1);
   });
 });
