@@ -34,7 +34,7 @@ export interface AppDependencies {
   connectorFetch?: ConnectorFetch;
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
-  runEngine?: Engine;
+  runEngineFor?: (orgId: string) => Engine;
 }
 
 export function safeConnectorReturnUrl(
@@ -122,7 +122,7 @@ export function createApp({
   connectorFetch,
   mcpClientFactory,
   platformApps,
-  runEngine,
+  runEngineFor,
 }: AppDependencies): Hono {
   const app = new Hono();
   const rpcHandler = new RPCHandler<RpcContext>(router, {
@@ -253,7 +253,7 @@ export function createApp({
         ...(connectorFetch ? { connectorFetch } : {}),
         ...(mcpClientFactory ? { mcpClientFactory } : {}),
         ...(platformApps ? { platformApps } : {}),
-        ...(runEngine ? { runEngine } : {}),
+        ...(runEngineFor ? { runEngineFor } : {}),
       },
     });
 
@@ -275,7 +275,7 @@ export function createApp({
         ...(connectorFetch ? { connectorFetch } : {}),
         ...(mcpClientFactory ? { mcpClientFactory } : {}),
         ...(platformApps ? { platformApps } : {}),
-        ...(runEngine ? { runEngine } : {}),
+        ...(runEngineFor ? { runEngineFor } : {}),
       },
     });
 

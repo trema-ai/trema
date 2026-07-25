@@ -193,6 +193,9 @@ CREATE INDEX "RunIntent_orgId_createdAt_idx" ON "RunIntent"("orgId", "createdAt"
 CREATE INDEX "RunStop_orgId_idx" ON "RunStop"("orgId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "RunStop_orgId_runId_key" ON "RunStop"("orgId", "runId");
+
+-- CreateIndex
 CREATE INDEX "RunElicitation_orgId_runId_idx" ON "RunElicitation"("orgId", "runId");
 
 -- CreateIndex
@@ -241,19 +244,19 @@ ALTER TABLE "AgentRun" ADD CONSTRAINT "AgentRun_retryOfRunId_fkey" FOREIGN KEY (
 ALTER TABLE "Turn" ADD CONSTRAINT "Turn_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Turn" ADD CONSTRAINT "Turn_runId_fkey" FOREIGN KEY ("runId") REFERENCES "AgentRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Turn" ADD CONSTRAINT "Turn_orgId_runId_fkey" FOREIGN KEY ("orgId", "runId") REFERENCES "AgentRun"("orgId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RunEvent" ADD CONSTRAINT "RunEvent_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RunEvent" ADD CONSTRAINT "RunEvent_runId_fkey" FOREIGN KEY ("runId") REFERENCES "AgentRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RunEvent" ADD CONSTRAINT "RunEvent_orgId_runId_fkey" FOREIGN KEY ("orgId", "runId") REFERENCES "AgentRun"("orgId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RunQueuedInput" ADD CONSTRAINT "RunQueuedInput_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RunQueuedInput" ADD CONSTRAINT "RunQueuedInput_runId_fkey" FOREIGN KEY ("runId") REFERENCES "AgentRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RunQueuedInput" ADD CONSTRAINT "RunQueuedInput_orgId_runId_fkey" FOREIGN KEY ("orgId", "runId") REFERENCES "AgentRun"("orgId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RunIntent" ADD CONSTRAINT "RunIntent_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -262,13 +265,13 @@ ALTER TABLE "RunIntent" ADD CONSTRAINT "RunIntent_orgId_fkey" FOREIGN KEY ("orgI
 ALTER TABLE "RunStop" ADD CONSTRAINT "RunStop_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RunStop" ADD CONSTRAINT "RunStop_runId_fkey" FOREIGN KEY ("runId") REFERENCES "AgentRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RunStop" ADD CONSTRAINT "RunStop_orgId_runId_fkey" FOREIGN KEY ("orgId", "runId") REFERENCES "AgentRun"("orgId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RunElicitation" ADD CONSTRAINT "RunElicitation_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RunElicitation" ADD CONSTRAINT "RunElicitation_runId_fkey" FOREIGN KEY ("runId") REFERENCES "AgentRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RunElicitation" ADD CONSTRAINT "RunElicitation_orgId_runId_fkey" FOREIGN KEY ("orgId", "runId") REFERENCES "AgentRun"("orgId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Schedule" ADD CONSTRAINT "Schedule_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE CASCADE ON UPDATE CASCADE;

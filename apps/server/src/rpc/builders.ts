@@ -26,8 +26,8 @@ export interface RpcContext {
   connectorFetch?: ConnectorFetch;
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
-  /** Schedules run execution. Absent in a deployment that only serves context. */
-  runEngine?: Engine;
+  /** Schedules run execution for one organization. Absent in a deployment that only serves context. */
+  runEngineFor?: (orgId: string) => Engine;
 }
 
 // The procedure name and timing are bound by the handler interceptor in

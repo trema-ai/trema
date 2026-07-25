@@ -2,7 +2,9 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import type { Schedule } from "#/generated/prisma/client.js";
-import { requireCapability } from "#/rpc/builders.js";
+import type { Database } from "#/lib/db/index.js";
+import { orgScoped, requireCapability } from "#/rpc/builders.js";
+import { authorize, type AuthorizePrincipal } from "#/services/authorize/index.js";
 import {
   CronParseError,
   createSchedule,
@@ -150,10 +152,41 @@ const list = requireCapability("read", { scopeId: scopeIdFromInput })
       ...(input.scopeId === undefined ? {} : { scopeId: input.scopeId }),
       ...(input.status === undefined ? {} : { status: input.status }),
     });
-    return { schedules: schedules.map(serialize) };
+    // Personal scopes do not inherit org roles, so an org-wide listing must
+    // check each scope the results came from rather than the org scope alone.
+    const readable = new Map<string, boolean>();
+    for (const scopeId of new Set(schedules.map((schedule) => schedule.scopeId))) {
+      readable.set(scopeId, await authorize(context.principal, "read", scopeId, context.db));
+    }
+    return {
+      schedules: schedules
+        .filter((schedule) => readable.get(schedule.scopeId) === true)
+        .map(serialize),
+    };
   });
 
-const update = requireCapability("manage_schedules")
+/**
+ * Loads the schedule and authorizes the capability against its own scope.
+ * Personal scopes do not inherit org roles, so the org scope must not stand in.
+ * @throws {ORPCError} NOT_FOUND for an unknown schedule, FORBIDDEN otherwise.
+ */
+async function requireManageableSchedule(
+  context: { db: Database; org: { id: string }; principal: AuthorizePrincipal },
+  scheduleId: string,
+): Promise<Schedule> {
+  let schedule: Schedule;
+  try {
+    schedule = await requireSchedule(context.db, context.org.id, scheduleId);
+  } catch {
+    throw new ORPCError("NOT_FOUND", { message: "Schedule not found" });
+  }
+  if (!(await authorize(context.principal, "manage_schedules", schedule.scopeId, context.db))) {
+    throw new ORPCError("FORBIDDEN", { message: "Capability required: manage_schedules" });
+  }
+  return schedule;
+}
+
+const update = orgScoped
   .route({
     method: "PATCH",
     path: "/schedules/{id}",
@@ -183,7 +216,7 @@ const update = requireCapability("manage_schedules")
   .output(scheduleSchema)
   .handler(async ({ context, input }) => {
     try {
-      await requireSchedule(context.db, context.org.id, input.id);
+      await requireManageableSchedule(context, input.id);
       return serialize(
         await updateSchedule(context.db, {
           orgId: context.org.id,
@@ -202,7 +235,7 @@ const update = requireCapability("manage_schedules")
     }
   });
 
-const setStatus = requireCapability("manage_schedules")
+const setStatus = orgScoped
   .route({
     method: "POST",
     path: "/schedules/{id}/status",
@@ -225,7 +258,7 @@ const setStatus = requireCapability("manage_schedules")
   .output(scheduleSchema)
   .handler(async ({ context, input }) => {
     try {
-      await requireSchedule(context.db, context.org.id, input.id);
+      await requireManageableSchedule(context, input.id);
       return serialize(
         await setScheduleStatus(context.db, {
           orgId: context.org.id,

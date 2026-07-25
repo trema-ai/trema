@@ -72,7 +72,7 @@ integration("triggers", () => {
       auth,
       env,
       headers: new Headers({ authorization: `Bearer ${credential.secret}` }),
-      runEngine: engine,
+      runEngineFor: () => engine,
     };
     return { adminContext: context, serviceContext, engine, org: membership.org, orgScope };
   }
@@ -137,6 +137,32 @@ integration("triggers", () => {
       expect(second).toEqual({ outcome: "steered", runId: first.runId, threadRef: "api:ops" });
       expect(await db.agentRun.count()).toBe(1);
       expect(await db.runQueuedInput.count({ where: { runId: first.runId } })).toBe(2);
+    });
+
+    it("reclaims an idempotency key whose claiming call died before routing", async () => {
+      const { serviceContext, org } = await setup();
+      // A claim with no recorded run, old enough that its call cannot still be
+      // routing: the crash left the key consumed and the message lost.
+      await db.runIntent.create({
+        data: {
+          id: "key-1",
+          orgId: org.id,
+          createdAt: new Date(Date.now() - 5 * 60_000),
+        },
+      });
+
+      const accepted = await call(
+        runsRouter.create,
+        { locationRef: "ops", message: "Check the deploy.", idempotencyKey: "key-1" },
+        { context: serviceContext },
+      );
+
+      expect(accepted).toMatchObject({ outcome: "started", threadRef: "api:ops" });
+      expect(accepted.runId).not.toBeNull();
+      const claim = await db.runIntent.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.id, id: "key-1" } },
+      });
+      expect(claim.runId).toBe(accepted.runId);
     });
 
     it("rejects a location that is not bound to a scope", async () => {
@@ -337,6 +363,30 @@ integration("triggers", () => {
           { context: adminContext },
         ),
       ).rejects.toMatchObject({ code: "CONFLICT" });
+    });
+
+    it("hides schedules in personal scopes the caller cannot read", async () => {
+      const { adminContext, org } = await setup();
+      const owner = await db.principal.findFirstOrThrow({
+        where: { orgId: org.id, kind: "human" },
+      });
+      const personalScope = await db.scope.create({
+        data: { orgId: org.id, kind: "personal", name: "Someone else", ownerId: null },
+      });
+      await createSchedule(db, {
+        orgId: org.id,
+        scopeId: personalScope.id,
+        cron: "*/5 * * * *",
+        timezone: "UTC",
+        prompt: "A private errand.",
+        createdById: owner.id,
+      });
+
+      const listed = await call(schedulesRouter.list, {}, { context: adminContext });
+
+      // Personal scopes do not inherit org roles, so even the org owner cannot
+      // list another principal's personal schedule.
+      expect(listed.schedules).toEqual([]);
     });
 
     it("rejects an invalid cron expression and an unknown time zone", async () => {

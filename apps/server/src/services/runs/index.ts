@@ -26,7 +26,13 @@ export { drainWorker, InFlightRuns } from "./drain.js";
 export type { RunDriver, RunDriverResult, RunExecutionPlan } from "./driver.js";
 export { createRunDriver, RunNotStartableError } from "./driver.js";
 export type { RunTaskInput, RunTaskOptions, RunTaskOutput, RunTaskTrigger } from "./hatchet.js";
-export { concurrencyKey, defineRunTask, HatchetEngine, RUN_TASK_NAME } from "./hatchet.js";
+export {
+  concurrencyKey,
+  createRunEngineFactory,
+  defineRunTask,
+  HatchetEngine,
+  RUN_TASK_NAME,
+} from "./hatchet.js";
 export type { ConfiguredModel } from "./models.js";
 export { ModelConfigurationError, parseModelEndpoints, resolveConfiguredModel } from "./models.js";
 export type { SessionRunPlanOptions } from "./plan.js";

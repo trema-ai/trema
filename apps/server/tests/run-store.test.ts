@@ -198,6 +198,23 @@ integration("Prisma run store", () => {
     );
   });
 
+  it("completes a pending turn once and rejects a repeat", async () => {
+    await store.createRun(record());
+    await store.commitTurn({
+      turn: turn({
+        stopReason: "paused",
+        pendingToolCall: { callId: "call-1", elicitationId: "elicit-1" },
+      }),
+    });
+
+    await store.completePendingTurn("run-1", 0, []);
+
+    expect((await store.listTurns("run-1"))[0]).toMatchObject({ stopReason: "toolUse" });
+    await expect(store.completePendingTurn("run-1", 0, [])).rejects.toThrow(
+      "no pending turn to complete: run-1/0",
+    );
+  });
+
   it("claims an intent identifier once", async () => {
     const claims = await Promise.all(
       Array.from({ length: 5 }, () => store.recordIntent("intent-1")),

@@ -664,7 +664,7 @@ model Turn {
   usage                Json
   createdAt            DateTime       @default(now())
   org                  Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run                  AgentRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run                  AgentRun       @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
   @@id([runId, index])
   @@index([orgId, runId])
@@ -682,7 +682,7 @@ model RunEvent {
   v       Int      @default(1)
   event   Json
   org     Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run     AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run     AgentRun @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
   @@unique([runId, seq])
   @@index([orgId, runId, seq])
@@ -702,7 +702,7 @@ model RunQueuedInput {
   position  Int          @default(autoincrement())
   createdAt DateTime     @default(now())
   org       Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run       AgentRun?    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run       AgentRun?    @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
   @@index([orgId, runId, position])
   @@index([orgId, threadRef, position])
@@ -732,8 +732,9 @@ model RunStop {
   by       Json
   at       DateTime
   org      Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run      AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run      AgentRun @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
+  @@unique([orgId, runId])
   @@index([orgId])
 }
 
@@ -747,7 +748,7 @@ model RunElicitation {
   resolution Json?
   createdAt  DateTime  @default(now())
   org        Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run        AgentRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run        AgentRun  @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
   @@unique([orgId, id])
   @@index([orgId, runId])

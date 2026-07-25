@@ -248,6 +248,52 @@ describe("worker drain", () => {
     await started;
     expect(inFlight.size).toBe(0);
   });
+
+  it("reports a failed stop with the runs still in flight", async () => {
+    const inFlight = new InFlightRuns();
+    let release: (() => void) | undefined;
+    const started = inFlight.track("run-1", async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+
+    const result = await drainWorker({
+      stop: async () => {
+        throw new Error("engine unreachable");
+      },
+      inFlight,
+      timeoutMs: 1_000,
+    });
+
+    expect(result).toEqual({ outcome: "stop-failed", abandoned: ["run-1"] });
+    release?.();
+    await started;
+  });
+
+  it("keeps a run in flight until its last overlapping execution settles", async () => {
+    const inFlight = new InFlightRuns();
+    let releaseFirst: (() => void) | undefined;
+    let releaseSecond: (() => void) | undefined;
+    const first = inFlight.track("run-1", async () => {
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    });
+    const second = inFlight.track("run-1", async () => {
+      await new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+    });
+
+    releaseFirst?.();
+    await first;
+    expect(inFlight.list()).toEqual(["run-1"]);
+
+    releaseSecond?.();
+    await second;
+    expect(inFlight.size).toBe(0);
+  });
 });
 
 describe("tool allowlist", () => {

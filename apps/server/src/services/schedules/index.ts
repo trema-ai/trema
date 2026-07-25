@@ -203,7 +203,7 @@ export async function requireSchedule(
 
 /** What one evaluation of a schedule did. */
 export interface ScheduleTickResult {
-  outcome: "started" | "skipped_overlap" | "skipped_missed" | "not_due" | "inactive";
+  outcome: "started" | "skipped_overlap" | "skipped_missed" | "not_due" | "inactive" | "deferred";
   /** The tick the evaluation acted on. */
   tickAt?: Date;
   runId?: string;
@@ -343,6 +343,14 @@ export async function tickSchedule(options: TickScheduleOptions): Promise<Schedu
       ...(schedule.toolAllowlist.length === 0 ? {} : { toolAllowlist: schedule.toolAllowlist }),
     },
   });
+
+  if (started.runId === null) {
+    // The tick's idempotency key is claimed but no run is recorded yet: another
+    // evaluator is routing this same tick right now. Leave the cursor alone so
+    // a later evaluation settles the tick instead of recording a phantom start.
+    log.warn("Schedule tick deferred", { scheduleId: schedule.id, tickAt: due.toISOString() });
+    return { outcome: "deferred", tickAt: due, skipped: 0 };
+  }
 
   await recordFiring(db, {
     orgId: schedule.orgId,

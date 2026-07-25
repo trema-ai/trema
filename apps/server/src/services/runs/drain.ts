@@ -2,25 +2,29 @@ import { log } from "#/lib/logger/index.js";
 
 /** Tracks the executions a worker is running, so a drain can report what it left behind. */
 export class InFlightRuns {
-  readonly #runIds = new Set<string>();
+  // Counted, not set membership: a redelivered task can overlap the execution
+  // it replaces, and the run stays in flight until the last one settles.
+  readonly #executions = new Map<string, number>();
 
   /** Runs `execute` while counting the run as in flight. */
   async track<T>(runId: string, execute: () => Promise<T>): Promise<T> {
-    this.#runIds.add(runId);
+    this.#executions.set(runId, (this.#executions.get(runId) ?? 0) + 1);
     try {
       return await execute();
     } finally {
-      this.#runIds.delete(runId);
+      const remaining = (this.#executions.get(runId) ?? 1) - 1;
+      if (remaining <= 0) this.#executions.delete(runId);
+      else this.#executions.set(runId, remaining);
     }
   }
 
   get size(): number {
-    return this.#runIds.size;
+    return this.#executions.size;
   }
 
   /** Run ids still executing, in the order they started. */
   list(): string[] {
-    return [...this.#runIds];
+    return [...this.#executions.keys()];
   }
 }
 
@@ -35,7 +39,8 @@ export interface DrainOptions {
 
 /** Whether the grace period was enough, and which runs it left uncommitted. */
 export interface DrainResult {
-  outcome: "drained" | "abandoned";
+  /** `stop-failed` means the engine's stop rejected: the worker state is unknown. */
+  outcome: "drained" | "abandoned" | "stop-failed";
   abandoned: string[];
 }
 
@@ -58,7 +63,7 @@ export async function drainWorker(options: DrainOptions): Promise<DrainResult> {
     () => "drained" as const,
     (error: unknown) => {
       log.error("Worker stop failed", { error });
-      return "drained" as const;
+      return "stop-failed" as const;
     },
   );
 
@@ -69,7 +74,7 @@ export async function drainWorker(options: DrainOptions): Promise<DrainResult> {
       return { outcome, abandoned: [] };
     }
     const abandoned = options.inFlight.list();
-    log.warn("Worker drain timed out", {
+    log.warn(outcome === "abandoned" ? "Worker drain timed out" : "Worker stop failed", {
       timeoutMs: options.timeoutMs,
       abandonedRuns: abandoned.length,
     });

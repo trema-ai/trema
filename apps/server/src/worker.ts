@@ -113,8 +113,8 @@ export async function startRunWorker({
     });
     // An abandoned turn was never committed, so the run replays it from its last
     // checkpoint on the next execution.
-    if (result.outcome === "abandoned") {
-      log.warn("Runs abandoned mid-turn", { runIds: result.abandoned });
+    if (result.outcome !== "drained") {
+      log.warn("Runs abandoned mid-turn", { outcome: result.outcome, runIds: result.abandoned });
     }
     await db.$disconnect();
   };

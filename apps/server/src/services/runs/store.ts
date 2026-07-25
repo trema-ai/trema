@@ -315,8 +315,10 @@ export class PrismaRunStore implements RunStore {
     turnIndex: number,
     toolResults: TranscriptMessage[],
   ): Promise<void> {
+    // The pending guard makes completion single-shot: a duplicate resume finds
+    // the call already cleared and must not rewrite a committed turn.
     const updated = await this.#db.turn.updateMany({
-      where: { orgId: this.#orgId, runId, index: turnIndex },
+      where: { orgId: this.#orgId, runId, index: turnIndex, pendingCallId: { not: null } },
       data: {
         toolResults: json(toolResults),
         pendingCallId: null,
@@ -324,7 +326,7 @@ export class PrismaRunStore implements RunStore {
         stopReason: "toolUse",
       },
     });
-    if (updated.count === 0) throw new Error(`unknown turn: ${runId}/${turnIndex}`);
+    if (updated.count === 0) throw new Error(`no pending turn to complete: ${runId}/${turnIndex}`);
   }
 
   async appendEvent(runId: string, event: RunEventData): Promise<RunEvent> {

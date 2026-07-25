@@ -59,6 +59,12 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
       trigger: input.trigger,
       sessionId: snapshot.sessionId,
     });
+    // Recorded as soon as the run exists, so a crash later in routing still
+    // leaves the claim answerable instead of permanently null.
+    await services.db.runIntent.updateMany({
+      where: { orgId: services.orgId, id: intent.intentId },
+      data: { runId: run.id },
+    });
     if (input.toolAllowlist !== undefined && input.toolAllowlist.length > 0) {
       await services.db.agentRun.update({
         where: { id: run.id },
@@ -101,6 +107,13 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
 }
 
 /**
+ * A claim this old with no recorded run cannot still be in flight: routing is a
+ * session open and a few row writes. Past it, the claiming call is dead and the
+ * key can be released.
+ */
+const STALE_CLAIM_MS = 60_000;
+
+/**
  * Enters a message into the same per-thread dispatch every trigger uses.
  *
  * An active run absorbs the message as steering; otherwise a new run starts.
@@ -108,6 +121,13 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
  * caller observes progress through the run's event stream.
  */
 export async function startRun({ services, input }: StartRunOptions): Promise<StartRunResult> {
+  return dispatchRun({ services, input }, true);
+}
+
+async function dispatchRun(
+  { services, input }: StartRunOptions,
+  reclaimStale: boolean,
+): Promise<StartRunResult> {
   const threadRef = threadRefFor(input);
   const dispatcher = buildDispatcher(services, input);
   const result = await dispatcher.dispatch({
@@ -121,8 +141,30 @@ export async function startRun({ services, input }: StartRunOptions): Promise<St
   if (result.outcome === "duplicate") {
     const claimed = await services.db.runIntent.findUnique({
       where: { orgId_id: { orgId: services.orgId, id: input.idempotencyKey } },
-      select: { runId: true },
+      select: { runId: true, createdAt: true },
     });
+    if (
+      reclaimStale &&
+      claimed !== null &&
+      claimed.runId === null &&
+      Date.now() - claimed.createdAt.getTime() >= STALE_CLAIM_MS
+    ) {
+      // The claiming call died between claiming the key and routing the
+      // message. Release the claim and route again; the guards on `runId` and
+      // `createdAt` keep a concurrent routing's fresh claim untouched.
+      const released = await services.db.runIntent.deleteMany({
+        where: {
+          orgId: services.orgId,
+          id: input.idempotencyKey,
+          runId: null,
+          createdAt: claimed.createdAt,
+        },
+      });
+      if (released.count === 1) {
+        log.warn("Reclaimed a stale run request", { threadRef });
+        return dispatchRun({ services, input }, false);
+      }
+    }
     log.info("Run request was a duplicate", { threadRef, runId: claimed?.runId ?? null });
     return { outcome: "duplicate", runId: claimed?.runId ?? null, threadRef };
   }

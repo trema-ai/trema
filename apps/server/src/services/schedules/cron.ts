@@ -72,11 +72,13 @@ function parseField(raw: string, field: FieldRange): { values: Set<number>; rest
     if (stepToken !== undefined) {
       step = parseNumber(stepToken, { ...field, min: 1, max: field.max });
       if (step < 1) throw new CronParseError(`The ${field.name} step must be positive`);
-      restricted = true;
     }
 
     let from = field.min;
     let to = field.max;
+    // Standard cron: a field that starts from `*` counts as unrestricted for
+    // the day-of-month/day-of-week rule even with a step; its value set still
+    // applies as a normal match.
     if (rangeToken !== "*") {
       restricted = true;
       const bounds = rangeToken.split("-");
@@ -183,11 +185,10 @@ function matches(cron: CronExpression, clock: WallClock): boolean {
   const dayOfMonth = cron.daysOfMonth.has(clock.dayOfMonth);
   const dayOfWeek = cron.daysOfWeek.has(clock.dayOfWeek);
   // Standard cron: when both day fields are restricted, either one firing is
-  // enough. When only one is restricted, that one decides.
+  // enough. Otherwise both value sets apply as ordinary matches — a stepped
+  // wildcard like `*/2` still filters days even though it is not "restricted".
   if (cron.restrictsDayOfMonth && cron.restrictsDayOfWeek) return dayOfMonth || dayOfWeek;
-  if (cron.restrictsDayOfMonth) return dayOfMonth;
-  if (cron.restrictsDayOfWeek) return dayOfWeek;
-  return true;
+  return dayOfMonth && dayOfWeek;
 }
 
 /** The window a tick evaluation covers and how far back it may look. */

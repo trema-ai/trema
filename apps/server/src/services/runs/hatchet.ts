@@ -82,6 +82,27 @@ export function defineRunTask(
   });
 }
 
+/**
+ * Builds the per-organization engine the API process schedules runs through.
+ *
+ * The task is declared for its trigger only: this process registers no worker,
+ * so the stub function never runs. Execution happens wherever `trema worker`
+ * is running against the same Hatchet.
+ */
+export function createRunEngineFactory(hatchet: HatchetClient): (orgId: string) => Engine {
+  const task = defineRunTask(hatchet, async (runId) => {
+    throw new Error(`the API process does not execute runs: ${runId}`);
+  });
+  const engines = new Map<string, HatchetEngine>();
+  return (orgId) => {
+    const existing = engines.get(orgId);
+    if (existing !== undefined) return existing;
+    const engine = new HatchetEngine({ trigger: task, orgId });
+    engines.set(orgId, engine);
+    return engine;
+  };
+}
+
 /** Scheduling dependencies for the Hatchet engine. */
 export interface HatchetEngineOptions {
   trigger: RunTaskTrigger;

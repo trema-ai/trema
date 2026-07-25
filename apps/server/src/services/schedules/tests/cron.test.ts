@@ -92,6 +92,15 @@ describe("cronTicks", () => {
     ).toEqual(["2026-07-01T00:00:00.000Z", "2026-07-03T00:00:00.000Z"]);
   });
 
+  it("treats a stepped wildcard day as a filter, not a restriction", () => {
+    // `*/2` selects the odd days of the month but does not restrict the day
+    // field, so the weekday still decides: the third of July 2026 is a Friday
+    // on an odd day, the tenth is a Friday on an even day.
+    expect(
+      ticks("0 0 */2 * 5", "UTC", "2026-07-01T12:00:00.000Z", "2026-07-11T00:00:00.000Z"),
+    ).toEqual(["2026-07-03T00:00:00.000Z"]);
+  });
+
   it("looks back no further than the configured window", () => {
     const found = cronTicks(parseCron("0 * * * *"), "UTC", {
       after: new Date("2026-01-01T00:00:00.000Z"),

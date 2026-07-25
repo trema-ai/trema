@@ -17,7 +17,7 @@ import {
 export interface RunServicesContext {
   db: Database;
   env: Environment;
-  runEngine?: Engine;
+  runEngineFor?: (orgId: string) => Engine;
 }
 
 /**
@@ -25,7 +25,7 @@ export interface RunServicesContext {
  * @throws {ORPCError} When the deployment has no run engine configured.
  */
 export function runServicesFor(context: RunServicesContext, orgId: string): RunServices {
-  if (context.runEngine === undefined) {
+  if (context.runEngineFor === undefined) {
     log.error("Run engine is not configured");
     throw new ORPCError("SERVICE_UNAVAILABLE", {
       message: "This deployment cannot schedule runs",
@@ -35,7 +35,7 @@ export function runServicesFor(context: RunServicesContext, orgId: string): RunS
     db: context.db,
     env: context.env,
     orgId,
-    engine: context.runEngine,
+    engine: context.runEngineFor(orgId),
   });
 }
 

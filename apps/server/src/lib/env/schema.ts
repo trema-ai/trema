@@ -65,6 +65,9 @@ const environmentSchema = z
     // Model endpoints are customer configuration: a JSON object of named
     // endpoint descriptors, one per protocol. The worker validates the shape.
     TREMA_MODEL_ENDPOINTS: optionalString,
+    // The Hatchet SDK reads its own connection settings from the environment;
+    // the server only checks this one to decide whether runs can be scheduled.
+    HATCHET_CLIENT_TOKEN: optionalString,
     TREMA_MODEL_ID: optionalString,
     TREMA_MODEL_PROVIDER: optionalString,
     TREMA_WORKER_NAME: z.string().trim().min(1).default("trema-runs"),
