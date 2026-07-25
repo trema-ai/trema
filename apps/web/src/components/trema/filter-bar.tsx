@@ -124,8 +124,8 @@ function FilterCombobox({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-0">
         <Command
-          filter={(itemValue, search) =>
-            itemValue.toLowerCase().includes(search.trim().toLowerCase()) ? 1 : 0
+          filter={(_itemValue, search, keywords) =>
+            (keywords ?? []).join(" ").toLowerCase().includes(search.trim().toLowerCase()) ? 1 : 0
           }
         >
           <CommandInput
@@ -138,7 +138,8 @@ function FilterCombobox({
               {options.map((option) => (
                 <CommandItem
                   key={option.value}
-                  value={option.label}
+                  value={option.value}
+                  keywords={[option.label]}
                   className="text-(length:--text-chrome)"
                   onSelect={() => {
                     onValueChange(option.value);
