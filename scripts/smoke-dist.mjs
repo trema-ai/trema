@@ -6,7 +6,10 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL("..", import.meta.url));
+// Keep this a URL and resolve against it. Interpolating a path into a
+// "file://" string breaks when the checkout path contains "#" or "?", which
+// silently resolves the cwd to the wrong directory.
+const repoRoot = new URL("../", import.meta.url);
 
 // [cwd, specifier] — each import runs from inside a package that declares the
 // dependency, so resolution goes through node_modules like production does.
@@ -27,8 +30,16 @@ const checks = [
 // Nothing connects. TREMA_AUTH_SECRET has a 32-character minimum, and
 // TREMA_MODE is pinned to "hosted" because the schema defaults it to
 // "dedicated", which additionally requires a credential master key.
+//
+// The parent environment is NOT inherited. One stray TREMA_* variable (an
+// incomplete Google or OIDC pair, a malformed origin list) fails schema
+// validation and reads as a resolution failure. DOTENV_CONFIG_PATH points at
+// a file that does not exist for the same reason: a developer's local
+// apps/server/.env must not change the result either.
 const env = {
-  ...process.env,
+  PATH: process.env.PATH ?? "",
+  HOME: process.env.HOME ?? "",
+  DOTENV_CONFIG_PATH: fileURLToPath(new URL("scripts/.env.absent", repoRoot)),
   DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/smoke",
   TREMA_AUTH_SECRET: "smoke-secret-0123456789abcdef0123",
   TREMA_MODE: "hosted",
@@ -38,7 +49,7 @@ for (const [dir, specifier] of checks) {
   execFileSync(
     process.execPath,
     ["--input-type=module", "-e", `await import(${JSON.stringify(specifier)})`],
-    { cwd: new URL(dir, `file://${root}`), env, stdio: "inherit" },
+    { cwd: fileURLToPath(new URL(dir, repoRoot)), env, stdio: "inherit" },
   );
   console.log(`ok  ${specifier}  (from ${dir})`);
 }
