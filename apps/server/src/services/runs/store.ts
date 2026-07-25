@@ -631,8 +631,9 @@ export class PrismaRunStore implements RunStore {
 
   /**
    * Claims and removes queued input in one statement, so each row reaches
-   * exactly one drainer: `SKIP LOCKED` makes a concurrent drain pass over rows
-   * another one is already deleting instead of reading them a second time.
+   * exactly one drainer. The `FOR UPDATE` serializes overlapping drains: the
+   * later one waits, then finds the rows already deleted and returns empty
+   * rather than a duplicate or a split of the queue.
    */
   async #drain(where: {
     orgId: string;
@@ -650,7 +651,7 @@ export class PrismaRunStore implements RunStore {
           AND (${runId}::text IS NULL OR "runId" = ${runId})
           AND (${threadRef}::text IS NULL OR "threadRef" = ${threadRef})
         ORDER BY "position"
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE
       )
       DELETE FROM "RunQueuedInput" AS q
       USING claimed
