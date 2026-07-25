@@ -25,6 +25,7 @@ describe("parseEnv", () => {
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
       TREMA_PASSWORD_AUTH_ENABLED: true,
+      TREMA_SESSION_STANDING_BUDGET_TOKENS: 4000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
     });
     expect(Object.isFrozen(result)).toBe(true);
@@ -52,6 +53,7 @@ describe("parseEnv", () => {
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
       TREMA_PASSWORD_AUTH_ENABLED: true,
+      TREMA_SESSION_STANDING_BUDGET_TOKENS: 4000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
     });
   });
@@ -70,6 +72,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: "false",
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
+      TREMA_SESSION_STANDING_BUDGET_TOKENS: "2000",
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
       TREMA_OIDC_ISSUER: "https://idp.example.com",
       TREMA_OIDC_CLIENT_ID: "oidc-client",
@@ -87,6 +90,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: false,
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
+      TREMA_SESSION_STANDING_BUDGET_TOKENS: 2000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
       TREMA_OIDC_ISSUER: "https://idp.example.com",
       TREMA_OIDC_CLIENT_ID: "oidc-client",

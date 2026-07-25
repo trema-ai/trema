@@ -9,6 +9,7 @@ import { membersRouter } from "./rpc/members.js";
 import { orgRouter } from "./rpc/org.js";
 import { scopesRouter } from "./rpc/scopes.js";
 import { searchRouter } from "./rpc/search.js";
+import { sessionsRouter } from "./rpc/sessions.js";
 import { surfacesRouter } from "./rpc/surfaces.js";
 import { systemRouter } from "./rpc/system.js";
 
@@ -24,6 +25,7 @@ export const router = {
   scopes: scopesRouter,
   search: searchRouter,
   serviceCredentials: serviceCredentialsRouter,
+  sessions: sessionsRouter,
   system: systemRouter,
   surfaces: surfacesRouter,
 };
