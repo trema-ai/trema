@@ -14,6 +14,8 @@
     "types": ["vite/client"],
     "paths": {
       "@trema/connectors": ["../../packages/connectors/src/index.ts"],
+      "@trema/harness": ["../../packages/harness/src/index.ts"],
+      "@trema/models": ["../../packages/models/src/index.ts"],
       "#/*": ["./src/*"]
     }
   },

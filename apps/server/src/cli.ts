@@ -10,11 +10,13 @@ import { type Environment, parseEnv } from "#/lib/env/schema.js";
 import { serveTrema } from "#/server.js";
 import { promote, resetPassword } from "#/services/admin/index.js";
 import { mintBootstrapToken } from "#/services/bootstrap/index.js";
+import { serveRunWorker } from "#/worker.js";
 
 const USAGE = `Usage: trema [command]
 
 Commands:
   serve
+  worker
   admin reset-password <email> --password <password>
   admin promote <email> [--org <id>]
   bootstrap-token
@@ -101,7 +103,14 @@ export async function runCli(
   environment: Record<string, string | undefined> = process.env,
 ): Promise<void> {
   const command = argv[0] ?? "serve";
-  const knownCommand = ["serve", "admin", "bootstrap-token", "migrate", "doctor"].includes(command);
+  const knownCommand = [
+    "serve",
+    "worker",
+    "admin",
+    "bootstrap-token",
+    "migrate",
+    "doctor",
+  ].includes(command);
   const knownAdminCommand =
     command !== "admin" || argv[1] === "reset-password" || argv[1] === "promote";
   if (!knownCommand || !knownAdminCommand) throw new Error(USAGE);
@@ -109,6 +118,12 @@ export async function runCli(
   if (command === "serve") {
     if (argv.length > 1) throw new Error(USAGE);
     await serveTrema({ env: parseEnv(environment) });
+    return;
+  }
+
+  if (command === "worker") {
+    if (argv.length > 1) throw new Error(USAGE);
+    await serveRunWorker({ env: parseEnv(environment) });
     return;
   }
 

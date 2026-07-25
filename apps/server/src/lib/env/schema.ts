@@ -62,6 +62,20 @@ const environmentSchema = z
       .min(1)
       .default(DEFAULT_STANDING_BUDGET_TOKENS),
     TREMA_CREDENTIAL_MASTER_KEY: optionalString,
+    // Model endpoints are customer configuration: a JSON object of named
+    // endpoint descriptors, one per protocol. The worker validates the shape.
+    TREMA_MODEL_ENDPOINTS: optionalString,
+    TREMA_MODEL_ID: optionalString,
+    TREMA_MODEL_PROVIDER: optionalString,
+    TREMA_WORKER_NAME: z.string().trim().min(1).default("trema-runs"),
+    TREMA_WORKER_SLOTS: z.coerce.number().int().min(1).default(10),
+    TREMA_WORKER_DRAIN_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
+    TREMA_RUN_MAX_TURNS: z.coerce.number().int().min(1).default(50),
+    TREMA_ELICITATION_TTL_MS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .default(7 * 24 * 60 * 60 * 1000),
     TREMA_OIDC_ISSUER: optionalString,
     TREMA_OIDC_CLIENT_ID: optionalString,
     TREMA_OIDC_CLIENT_SECRET: optionalString,

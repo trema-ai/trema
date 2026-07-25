@@ -4,6 +4,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
+import type { Engine } from "@trema/harness";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
@@ -33,6 +34,7 @@ export interface AppDependencies {
   connectorFetch?: ConnectorFetch;
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
+  runEngine?: Engine;
 }
 
 export function safeConnectorReturnUrl(
@@ -120,6 +122,7 @@ export function createApp({
   connectorFetch,
   mcpClientFactory,
   platformApps,
+  runEngine,
 }: AppDependencies): Hono {
   const app = new Hono();
   const rpcHandler = new RPCHandler<RpcContext>(router, {
@@ -250,6 +253,7 @@ export function createApp({
         ...(connectorFetch ? { connectorFetch } : {}),
         ...(mcpClientFactory ? { mcpClientFactory } : {}),
         ...(platformApps ? { platformApps } : {}),
+        ...(runEngine ? { runEngine } : {}),
       },
     });
 
@@ -271,6 +275,7 @@ export function createApp({
         ...(connectorFetch ? { connectorFetch } : {}),
         ...(mcpClientFactory ? { mcpClientFactory } : {}),
         ...(platformApps ? { platformApps } : {}),
+        ...(runEngine ? { runEngine } : {}),
       },
     });
 

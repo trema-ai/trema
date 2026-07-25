@@ -15,6 +15,12 @@
   "references": [
     {
       "path": "../../packages/connectors/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/harness/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/models/tsconfig.build.json"
     }
   ]
 }

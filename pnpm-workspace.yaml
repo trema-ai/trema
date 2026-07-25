@@ -9,11 +9,15 @@ catalog:
 
 # Lifecycle scripts are blocked by default; allow them per package.
 allowBuilds:
+  # Its install script only prints a version-compatibility notice.
+  "@hatchet-dev/typescript-sdk": false
   "@prisma/client": false
   "@prisma/engines": true
   better-sqlite3: false
   esbuild: true
   prisma: true
+  # Its install script only builds the code generator we do not use.
+  protobufjs: false
   sharp: true
   workerd: true
 

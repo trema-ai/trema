@@ -1,5 +1,6 @@
 import { oo } from "@orpc/openapi";
 import { ORPCError, os } from "@orpc/server";
+import type { Engine } from "@trema/harness";
 
 import type { Auth } from "#/lib/auth/index.js";
 import type { Database } from "#/lib/db/index.js";
@@ -25,6 +26,8 @@ export interface RpcContext {
   connectorFetch?: ConnectorFetch;
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
+  /** Schedules run execution. Absent in a deployment that only serves context. */
+  runEngine?: Engine;
 }
 
 // The procedure name and timing are bound by the handler interceptor in

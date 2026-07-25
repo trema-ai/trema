@@ -6,6 +6,8 @@ import { serviceCredentialsRouter } from "./rpc/credentials.js";
 import { itemsRouter } from "./rpc/items.js";
 import { membersRouter } from "./rpc/members.js";
 import { orgRouter } from "./rpc/org.js";
+import { runsRouter } from "./rpc/runs.js";
+import { schedulesRouter } from "./rpc/schedules.js";
 import { scopesRouter } from "./rpc/scopes.js";
 import { sessionsRouter } from "./rpc/sessions.js";
 import { surfacesRouter } from "./rpc/surfaces.js";
@@ -19,6 +21,8 @@ export const router = {
   members: membersRouter,
   items: itemsRouter,
   org: orgRouter,
+  runs: runsRouter,
+  schedules: schedulesRouter,
   scopes: scopesRouter,
   serviceCredentials: serviceCredentialsRouter,
   sessions: sessionsRouter,

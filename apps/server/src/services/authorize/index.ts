@@ -9,6 +9,7 @@ export const capabilities = [
   "manage_connectors",
   "manage_scopes",
   "edit_policies",
+  "manage_schedules",
   "manage_members",
   "manage_org",
 ] as const;
@@ -30,6 +31,14 @@ const capabilityRoleTable: Record<Capability, Record<Role, boolean>> = {
   },
   manage_scopes: { owner: true, admin: true, member: false, viewer: false },
   edit_policies: {
+    owner: true,
+    admin: true,
+    member: false,
+    viewer: false,
+  },
+  // An active schedule is standing authority to act with the scope's connector
+  // credentials unattended, so it takes an approver-grade role.
+  manage_schedules: {
     owner: true,
     admin: true,
     member: false,
