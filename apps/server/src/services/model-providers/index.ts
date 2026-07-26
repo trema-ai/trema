@@ -37,8 +37,8 @@ const chainSchema = z.array(
 const catalogEntrySchema = z.object({
   id: z.string().trim().min(1),
   label: z.string().trim().min(1).optional(),
-  /** The roles this model may serve. Absent means the admin has not said. */
-  roles: z.array(z.enum(["turns", "utility", "embed"])).optional(),
+  /** Whether this model is offered in the model picker. Absent means it is not. */
+  offered: z.boolean().optional(),
   contextWindow: z.number().int().positive().optional(),
 });
 
@@ -138,7 +138,7 @@ function normalizeListQuery(listQuery: Record<string, string>): Record<string, s
   return normalized;
 }
 
-function normalizeCatalog(catalog: ModelCatalogEntry[]): ModelCatalogEntry[] {
+export function normalizeCatalog(catalog: ModelCatalogEntry[]): ModelCatalogEntry[] {
   const parsed = catalogSchema.parse(catalog);
   const seen = new Set<string>();
   for (const entry of parsed) {

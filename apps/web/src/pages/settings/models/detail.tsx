@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Plus, RefreshCw, Settings2, Trash2, X } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { Boxes, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 
@@ -21,7 +21,6 @@ import {
   AlertDialogTitle,
 } from "#web/components/ui/alert-dialog.tsx";
 import { Button } from "#web/components/ui/button.tsx";
-import { Checkbox } from "#web/components/ui/checkbox.tsx";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +30,6 @@ import {
   DialogTitle,
 } from "#web/components/ui/dialog.tsx";
 import { Input } from "#web/components/ui/input.tsx";
-import { Switch } from "#web/components/ui/switch.tsx";
 import {
   Select,
   SelectContent,
@@ -42,39 +40,15 @@ import {
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
-  type CatalogEntry,
+  type CatalogRefresh,
   credentialModeLabel,
-  type ModelCredentialMode,
+  descriptorOf,
   type ModelProtocol,
   type ModelProvider,
-  type ModelRole,
   messageFrom,
-  isEmbeddingModel,
   type ProbeResult,
   protocolLabel,
-  type RemoteModels,
-  roleLabel,
-  roleDescriptions,
 } from "#web/pages/settings/models/shared.tsx";
-
-/** The descriptor every write repeats, because a put replaces the whole row. */
-type Descriptor = {
-  name: string;
-  label: string;
-  protocol: ModelProtocol;
-  baseUrl: string;
-  credentialMode: ModelCredentialMode;
-};
-
-function descriptorOf(provider: ModelProvider): Descriptor {
-  return {
-    name: provider.name,
-    label: provider.label,
-    protocol: provider.protocol,
-    baseUrl: provider.baseUrl,
-    credentialMode: provider.credentialMode,
-  };
-}
 
 export function SettingsModelProviderPage() {
   const { providerName = "" } = useParams();
@@ -148,7 +122,7 @@ export function SettingsModelProviderPage() {
         <EndpointSection provider={provider} onChanged={invalidate} />
         <CredentialSection provider={provider} onChanged={invalidate} />
         <HeadersSection provider={provider} onChanged={invalidate} />
-        <CatalogSection provider={provider} onChanged={invalidate} />
+        <ModelsSection provider={provider} onChanged={invalidate} />
         <DangerZone
           provider={provider}
           onDeleted={async () => {
@@ -200,13 +174,9 @@ function EndpointSection({
 
   return (
     <form onSubmit={submit}>
-      <SettingsSection
-        title="Endpoint"
-        description="Where requests go, and which wire protocol they speak."
-      >
+      <SettingsSection title="Endpoint">
         <SettingRow
           label="Display name"
-          description="Shown on this screen. The name role assignments use never changes."
           orientation="stack"
           control={
             <Input
@@ -230,7 +200,6 @@ function EndpointSection({
         />
         <SettingRow
           label="Protocol"
-          description="A vendor is a preset over a protocol, so this is the wire format, not the brand."
           control={
             <Select value={protocol} onValueChange={(value) => setProtocol(value as ModelProtocol)}>
               <SelectTrigger aria-label="Protocol" className="w-56">
@@ -245,8 +214,7 @@ function EndpointSection({
           }
         />
         <SettingRow
-          label="Apply changes"
-          description="The stored credential is untouched by an endpoint edit."
+          label=""
           control={
             <Button disabled={!dirty || save.isPending}>
               {save.isPending ? "Saving…" : "Save"}
@@ -307,16 +275,13 @@ function CredentialSection({
 
   const keyed = provider.credentialMode === "api_key";
   return (
-    <SettingsSection
-      title="Credential"
-      description="Stored encrypted on the server. It reaches the provider in a request header, never the model."
-    >
+    <SettingsSection title="Credential">
       <SettingRow
         label="Authentication"
         description={
           keyed
             ? "Requests carry a bearer key."
-            : "Requests go unauthenticated, which suits an endpoint on a trusted network."
+            : "Requests go unauthenticated suitable for an endpoint on a trusted network."
         }
         control={
           <div className="flex items-center gap-3">
@@ -369,7 +334,7 @@ function CredentialSection({
                   result.modelCount === undefined ? "" : `, listing ${result.modelCount} models`
                 }.`
               : result.reason
-            : "One authenticated call, run when you ask for it. Nothing polls the provider."
+            : ""
         }
         control={
           <Button variant="outline" disabled={probe.isPending} onClick={() => probe.mutate()}>
@@ -411,17 +376,14 @@ function HeadersSection({
 }) {
   const [editing, setEditing] = useState(false);
   return (
-    <SettingsSection
-      title="Extra headers"
-      description="Sent with every request to this provider. Names are shown; values get the credential's treatment and are never returned."
-    >
+    <SettingsSection title="Extra headers">
       <SettingRow
         label={
           provider.headerNames.length === 0 ? "No extra headers" : provider.headerNames.join(", ")
         }
         description={
           provider.headerNames.length === 0
-            ? "Most providers need none. A gateway may want a tenant or routing header."
+            ? ""
             : "Replacing the set means entering every value again, since the stored ones cannot be read."
         }
         control={
@@ -582,490 +544,51 @@ function HeadersDialog({
   );
 }
 
-/**
- * Everything the dialog can offer: what the provider lists, what is already
- * stored, and what an admin typed in by hand.
- */
-function offeredIds(
-  remote: RemoteModels | undefined,
-  catalog: CatalogEntry[],
-  added: string[],
-): string[] {
-  const ids = new Set<string>();
-  for (const model of remote?.ok ? remote.models : []) ids.add(model.id);
-  for (const entry of catalog) ids.add(entry.id);
-  for (const id of added) ids.add(id);
-  return [...ids].sort();
-}
-
-/** How many stored models the detail screen lists before it offers to show more. */
-const catalogPageSize = 20;
-
-function CatalogSection({
+function ModelsSection({
   provider,
   onChanged,
 }: {
   provider: ModelProvider;
   onChanged: () => Promise<void>;
 }) {
-  const [configure, setConfigure] = useState(false);
-  // A catalog runs to hundreds on a gateway, and this list is a summary, not a
-  // reading surface: the dialog is where a long one gets searched.
-  const [shownModels, setShownModels] = useState(catalogPageSize);
-  // Fetched when the screen opens and cached from there. A page view is the
-  // admin asking, which is what keeps this inside the on-demand rule; nothing
-  // refetches on its own.
-  const remote = useQuery({
-    ...orpc.modelProviders.providers.remoteModels.queryOptions({
-      input: { name: provider.name },
-    }),
-    staleTime: 5 * 60_000,
-    // Nothing reaches the vendor without the admin asking. A focus refetch
-    // would spend plan quota on someone tabbing back to the page.
-    refetchOnWindowFocus: false,
-    retry: false,
+  const [result, setResult] = useState<CatalogRefresh>();
+  // On demand only: providers rate-limit, so nothing reads a model list in the
+  // background or on a page view.
+  const refresh = useMutation({
+    mutationFn: () => rpcClient.modelProviders.providers.refreshCatalog({ name: provider.name }),
+    onSuccess: async (refreshed) => {
+      setResult(refreshed as CatalogRefresh);
+      await onChanged();
+      if (refreshed.ok) toast.success("Model list read");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
   });
-  const listing = remote.data as RemoteModels | undefined;
-  const unlisted = listing?.ok
-    ? listing.models.filter((model) => !provider.catalog.some((entry) => entry.id === model.id))
-        .length
-    : 0;
+  const count = provider.catalog.length;
 
   return (
     <SettingsSection
       title="Models"
-      description="What role assignments choose from. A model with no role selected is offered for every role."
+      description="Models served by this provider, as of the last refresh."
     >
-      {provider.catalog.length === 0 ? (
-        <div className="px-4 py-3.5 text-meta text-muted-foreground">
-          No models selected yet, so no role can name this provider.
-        </div>
-      ) : (
-        provider.catalog.slice(0, shownModels).map((entry) => (
-          <div key={entry.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-chrome">{entry.id}</p>
-              {entry.label && entry.label !== entry.id ? (
-                <p className="mt-0.5 truncate text-meta text-muted-foreground">{entry.label}</p>
-              ) : null}
-            </div>
-            <p className="text-meta text-muted-foreground">
-              {entry.roles === undefined || entry.roles.length === 0
-                ? "Every role"
-                : entry.roles.map(roleLabel).join(" · ")}
-              {entry.contextWindow
-                ? ` · ${new Intl.NumberFormat().format(entry.contextWindow)} tokens`
-                : ""}
-            </p>
-          </div>
-        ))
-      )}
-      {provider.catalog.length > shownModels ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-          <p className="text-meta text-muted-foreground">
-            and {provider.catalog.length - shownModels} more
-          </p>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setShownModels((current) => current + catalogPageSize)}
-          >
-            Show more
-          </Button>
-        </div>
-      ) : null}
       <SettingRow
-        label="Model list"
+        label={`${count} model${count === 1 ? "" : "s"}`}
         description={
-          remote.isFetching
-            ? "Reading the provider's model list…"
-            : remote.error
-              ? messageFrom(remote.error)
-              : listing && !listing.ok
-                ? listing.reason
-                : !listing?.ok
-                  ? "The provider's model list has not been read."
-                  : unlisted > 0
-                    ? `The provider lists ${unlisted} more model${unlisted === 1 ? "" : "s"}.`
-                    : "Everything the provider lists is selected."
+          result === undefined
+            ? ""
+            : result.ok
+              ? `Answered in ${result.latencyMs} ms. ${result.added} added, ${result.removed} dropped.`
+              : result.reason
         }
         control={
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              disabled={remote.isFetching}
-              onClick={() => void remote.refetch()}
-            >
-              <RefreshCw className={remote.isFetching ? "animate-spin" : ""} />
-              Refresh
-            </Button>
-            <Button variant="outline" onClick={() => setConfigure(true)}>
-              <Settings2 />
-              Configure models
+            <Button variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
+              <RefreshCw className={refresh.isPending ? "animate-spin" : ""} />
+              {refresh.isPending ? "Reading…" : "Refresh models"}
             </Button>
           </div>
         }
       />
-      <ConfigureModelsDialog
-        provider={provider}
-        remote={listing}
-        fetching={remote.isFetching}
-        open={configure}
-        onOpenChange={setConfigure}
-        onChanged={onChanged}
-      />
     </SettingsSection>
-  );
-}
-
-function ConfigureModelsDialog({
-  provider,
-  remote,
-  fetching,
-  open,
-  onOpenChange,
-  onChanged,
-}: {
-  provider: ModelProvider;
-  remote: RemoteModels | undefined;
-  /** The provider's list is still on its way, so what is offered is incomplete. */
-  fetching: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onChanged: () => Promise<void>;
-}) {
-  const [added, setAdded] = useState<string[]>([]);
-  const [draftId, setDraftId] = useState("");
-  const [search, setSearch] = useState("");
-  const [allModels, setAllModels] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [roles, setRoles] = useState<Record<string, ModelRole[]>>({});
-  // What was selected when the All models switch went on. Turning it back off
-  // restores that rather than selecting everything, so a deselection survives
-  // the round trip.
-  const beforeAllModels = useRef<string[] | undefined>(undefined);
-  const available = offeredIds(remote, provider.catalog, added);
-  const listed = new Set((remote?.ok ? remote.models : []).map((model) => model.id));
-  const stored = new Map(provider.catalog.map((entry) => [entry.id, entry]));
-  // What the provider said about its own models, where it said anything. Only
-  // some listings carry it, so this map is usually empty and the name is all
-  // there is to go on.
-  const hints = new Map(
-    (remote?.ok ? remote.models : []).flatMap((model) =>
-      model.embedding === undefined ? [] : [[model.id, model.embedding] as const],
-    ),
-  );
-  const statedEmbedding = hints.size > 0;
-
-  useEffect(() => {
-    if (!open) return;
-    setAdded([]);
-    setDraftId("");
-    setSearch("");
-    setAllModels(false);
-    beforeAllModels.current = undefined;
-    setSelected(provider.catalog.map((entry) => entry.id));
-    setRoles(
-      Object.fromEntries(provider.catalog.map((entry) => [entry.id, entry.roles ?? []])) as Record<
-        string,
-        ModelRole[]
-      >,
-    );
-  }, [open, provider.catalog]);
-
-  const filtered = available.filter((id) =>
-    `${id} ${stored.get(id)?.label ?? ""}`.toLowerCase().includes(search.toLowerCase()),
-  );
-  // Rows are grouped by what is stored, not by what is being edited, so a row
-  // does not jump between sections while its checkboxes are being ticked.
-  const isEmbedding = (id: string) => {
-    const entry = stored.get(id);
-    return entry
-      ? entry.roles?.length === 1 && entry.roles[0] === "embed"
-      : isEmbeddingModel(id, hints.get(id));
-  };
-  const chatModels = filtered.filter((id) => !isEmbedding(id));
-  const embeddingModels = filtered.filter(isEmbedding);
-
-  /** What a model gets the first time it is enabled. A stored model keeps its own. */
-  const defaultRoles = (id: string): ModelRole[] =>
-    !stored.has(id) && isEmbeddingModel(id, hints.get(id)) ? ["embed"] : [];
-
-  function toggle(id: string, enabled: boolean) {
-    setSelected((current) =>
-      enabled ? [...current, id] : current.filter((chosen) => chosen !== id),
-    );
-    if (enabled) {
-      setRoles((current) => (id in current ? current : { ...current, [id]: defaultRoles(id) }));
-    }
-  }
-
-  function toggleRole(id: string, role: ModelRole, checked: boolean) {
-    setRoles((current) => {
-      const next = new Set(current[id] ?? defaultRoles(id));
-      if (checked) next.add(role);
-      else next.delete(role);
-      return { ...current, [id]: [...next] };
-    });
-  }
-
-  const save = useMutation({
-    mutationFn: () => {
-      const chosen = allModels ? available : available.filter((id) => selected.includes(id));
-      // Stored labels and context windows survive: this dialog decides which
-      // models are offered and for which roles, not what they are called.
-      const catalog: CatalogEntry[] = chosen.map((id) => {
-        const entry = stored.get(id);
-        const chosenRoles = roles[id] ?? defaultRoles(id);
-        return {
-          id,
-          ...(entry?.label ? { label: entry.label } : {}),
-          ...(chosenRoles.length > 0 ? { roles: chosenRoles } : {}),
-          ...(entry?.contextWindow ? { contextWindow: entry.contextWindow } : {}),
-        };
-      });
-      return rpcClient.modelProviders.providers.put({ ...descriptorOf(provider), catalog });
-    },
-    onSuccess: async () => {
-      await onChanged();
-      onOpenChange(false);
-      toast.success("Model list saved");
-    },
-    onError: (error) => toast.error(messageFrom(error)),
-  });
-
-  function addByHand() {
-    const id = draftId.trim();
-    if (id.length === 0 || available.includes(id)) {
-      setDraftId("");
-      return;
-    }
-    setAdded((current) => [...current, id]);
-    setSelected((current) => [...current, id]);
-    setDraftId("");
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Configure models</DialogTitle>
-          <DialogDescription>
-            The selected models are what role assignments choose from. The list comes from the
-            provider itself, and anything already stored stays visible even when it does not answer.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
-          <div className="rounded-md border">
-            <SettingRow
-              label="All models"
-              description="Selects every model this provider offers, including any a search is hiding. Models the provider adds later are not picked up until you open this again."
-              control={
-                <Switch
-                  checked={allModels}
-                  onCheckedChange={(checked) => {
-                    setAllModels(checked);
-                    if (checked) {
-                      beforeAllModels.current = selected;
-                      return;
-                    }
-                    // Without a remembered selection the switch was already on
-                    // when the dialog opened, and everything shown is what the
-                    // admin has agreed to.
-                    setSelected(beforeAllModels.current ?? available);
-                    beforeAllModels.current = undefined;
-                  }}
-                />
-              }
-            />
-          </div>
-          {remote && !remote.ok ? (
-            <p className="text-meta text-muted-foreground">
-              {remote.reason} Models already stored are listed below, and one can be added by id.
-            </p>
-          ) : null}
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search models"
-          />
-          {filtered.length === 0 ? (
-            <p className="rounded-md border px-3 py-4 text-meta text-muted-foreground">
-              No model matches. Add one by id below.
-            </p>
-          ) : (
-            <div className="space-y-4">
-              <ModelGroup
-                heading="Completion models"
-                ids={chatModels}
-                stored={stored}
-                listed={listed}
-                selected={selected}
-                roles={roles}
-                allModels={allModels}
-                defaultRoles={defaultRoles}
-                onToggle={toggle}
-                onToggleRole={toggleRole}
-              />
-              <ModelGroup
-                heading="Embedding models"
-                note={
-                  statedEmbedding
-                    ? "Grouped by what this provider says each model produces. Change a role beside a model if it belongs elsewhere."
-                    : "Grouped by name, which is all this provider's model list says. Change a role beside a model if the guess is wrong."
-                }
-                ids={embeddingModels}
-                stored={stored}
-                listed={listed}
-                selected={selected}
-                roles={roles}
-                allModels={allModels}
-                defaultRoles={defaultRoles}
-                onToggle={toggle}
-                onToggleRole={toggleRole}
-              />
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="max-w-64"
-              aria-label="Model id"
-              placeholder="Add a model by id"
-              value={draftId}
-              onChange={(event) => setDraftId(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                addByHand();
-              }}
-            />
-            <Button variant="outline" disabled={draftId.trim().length === 0} onClick={addByHand}>
-              <Plus />
-              Add
-            </Button>
-          </div>
-        </div>
-        <DialogFooter>
-          {fetching ? (
-            <p className="mr-auto text-meta text-muted-foreground">
-              Reading the provider's model list… saving now would store only what is already here.
-            </p>
-          ) : null}
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={fetching || save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? "Saving…" : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** How many rows a group draws before asking to be told to draw more. A provider with hundreds of models is ordinary; rendering all of them is not. */
-const groupPageSize = 100;
-
-function ModelGroup({
-  heading,
-  note,
-  ids,
-  stored,
-  listed,
-  selected,
-  roles,
-  allModels,
-  defaultRoles,
-  onToggle,
-  onToggleRole,
-}: {
-  heading: string;
-  note?: string;
-  ids: string[];
-  stored: Map<string, CatalogEntry>;
-  listed: Set<string>;
-  selected: string[];
-  roles: Record<string, ModelRole[]>;
-  allModels: boolean;
-  defaultRoles: (id: string) => ModelRole[];
-  onToggle: (id: string, enabled: boolean) => void;
-  onToggleRole: (id: string, role: ModelRole, checked: boolean) => void;
-}) {
-  const [cap, setCap] = useState(groupPageSize);
-  if (ids.length === 0) return null;
-  const shown = ids.slice(0, cap);
-  const hidden = ids.length - shown.length;
-
-  return (
-    <section>
-      <h4 className="text-chrome font-medium">
-        {heading} <span className="text-muted-foreground">({ids.length})</span>
-      </h4>
-      {note ? <p className="mt-0.5 text-meta text-muted-foreground">{note}</p> : null}
-      <div className="mt-2 divide-y rounded-md border">
-        {shown.map((id) => {
-          const enabled = allModels || selected.includes(id);
-          const entry = stored.get(id);
-          const chosenRoles = roles[id] ?? defaultRoles(id);
-          return (
-            <div
-              key={id}
-              className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-            >
-              <label htmlFor={`model-enabled-${id}`} className="flex min-w-0 items-start gap-3">
-                <Checkbox
-                  id={`model-enabled-${id}`}
-                  checked={enabled}
-                  disabled={allModels}
-                  onCheckedChange={(checked) => onToggle(id, checked === true)}
-                />
-                <span className="min-w-0">
-                  <span className="block font-medium text-chrome">{id}</span>
-                  <span className="block truncate text-meta text-muted-foreground">
-                    {entry?.label && entry.label !== id
-                      ? entry.label
-                      : listed.has(id)
-                        ? "Listed by the provider."
-                        : "Not in the provider's list."}
-                  </span>
-                </span>
-              </label>
-              <div className="flex flex-wrap items-center gap-3">
-                {roleDescriptions.map((role) => (
-                  <label
-                    key={role.role}
-                    htmlFor={`model-role-${id}-${role.role}`}
-                    className="flex items-center gap-1.5 text-meta text-muted-foreground"
-                  >
-                    <Checkbox
-                      id={`model-role-${id}-${role.role}`}
-                      checked={chosenRoles.includes(role.role)}
-                      disabled={!enabled}
-                      onCheckedChange={(checked) => onToggleRole(id, role.role, checked === true)}
-                    />
-                    {role.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-        {hidden > 0 ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
-            <p className="text-meta text-muted-foreground">
-              {hidden} more not shown. Search to narrow the list.
-            </p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setCap((current) => current + groupPageSize)}
-            >
-              Show more
-            </Button>
-          </div>
-        ) : null}
-      </div>
-    </section>
   );
 }
 
@@ -1088,7 +611,7 @@ function DangerZone({
   return (
     <SettingsSection
       title="Danger zone"
-      description="Removing a provider takes its stored credential with it. Role assignments keep their remaining entries."
+      description="Removing a provider takes its stored credential with it."
     >
       <SettingRow
         label={`Remove ${provider.label}`}

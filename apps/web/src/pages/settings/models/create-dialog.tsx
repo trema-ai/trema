@@ -58,7 +58,7 @@ export function CreateProviderDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   existingNames: string[];
-  onCreated: (name: string) => void;
+  onCreated: () => void;
 }) {
   const presets = useQuery(orpc.modelProviders.presets.list.queryOptions({}));
   const presetRows = (presets.data ?? []) as ModelProviderPreset[];
@@ -105,7 +105,7 @@ export function CreateProviderDialog({
       }),
     onSuccess: (provider) => {
       toast.success(`${provider.label} added`);
-      onCreated(provider.name);
+      onCreated();
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -125,7 +125,7 @@ export function CreateProviderDialog({
               <DialogTitle>Add a model provider</DialogTitle>
               <DialogDescription>
                 A preset fills in the endpoint and the credential mode, both editable afterwards.
-                The models come from the provider itself, once it has a credential.
+                The models are read from the provider itself as it is added.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -274,8 +274,8 @@ export function CreateProviderDialog({
                 </div>
               ) : null}
               <p className="text-meta text-muted-foreground">
-                Adding it opens the provider page, where its models are read from the provider and
-                picked.
+                Adding it reads the provider's model list, so its models are in the list below ready
+                to assign. A provider that does not answer is still added.
               </p>
             </div>
             <DialogFooter>
