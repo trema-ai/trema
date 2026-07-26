@@ -3954,303 +3954,6 @@
         ]
       }
     },
-    "/embedding-settings": {
-      "get": {
-        "operationId": "embeddings.settings.get",
-        "summary": "Get the embedding settings",
-        "description": "Read the provider and model serving the `embed` role. The stored API key is never returned; only whether one is set.",
-        "tags": [
-          "Embeddings"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "configured": {
-                      "type": "boolean",
-                      "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
-                    },
-                    "providerName": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "The registry provider serving the `embed` role. Null when the role is unassigned."
-                    },
-                    "endpoint": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "The base URL of the embeddings API, including the version path."
-                    },
-                    "model": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "The model that produces the vectors."
-                    },
-                    "hasApiKey": {
-                      "type": "boolean",
-                      "description": "Whether a stored API key accompanies the endpoint. The key itself is never returned."
-                    },
-                    "updatedAt": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "When the settings last changed. An ISO 8601 date-time."
-                    }
-                  },
-                  "required": [
-                    "configured",
-                    "providerName",
-                    "endpoint",
-                    "model",
-                    "hasApiKey",
-                    "updatedAt"
-                  ],
-                  "description": "The `embed` role's provider and model, as this screen sees them. The API key is write-only. The registry can express a fallback chain this shape cannot; the Models API reports the whole of it."
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ]
-      },
-      "put": {
-        "operationId": "embeddings.settings.put",
-        "summary": "Set the embedding settings",
-        "description": "Point the `embed` role at an OpenAI-compatible embeddings endpoint, storing it as a model provider. Existing items keep their vectors until a reindex re-embeds them under the new model.",
-        "tags": [
-          "Embeddings"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "endpoint": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "The base URL of the embeddings API, including the version path, such as `https://api.openai.com/v1`."
-                  },
-                  "model": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "The model that produces the vectors."
-                  },
-                  "apiKey": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "description": "The API key, stored encrypted and never returned. Omit to keep the stored key; send null for an endpoint that needs none."
-                  }
-                },
-                "required": [
-                  "endpoint",
-                  "model"
-                ],
-                "description": "The embedding settings to store."
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "configured": {
-                      "type": "boolean",
-                      "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
-                    },
-                    "providerName": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "The registry provider serving the `embed` role. Null when the role is unassigned."
-                    },
-                    "endpoint": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "The base URL of the embeddings API, including the version path."
-                    },
-                    "model": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "The model that produces the vectors."
-                    },
-                    "hasApiKey": {
-                      "type": "boolean",
-                      "description": "Whether a stored API key accompanies the endpoint. The key itself is never returned."
-                    },
-                    "updatedAt": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "When the settings last changed. An ISO 8601 date-time."
-                    }
-                  },
-                  "required": [
-                    "configured",
-                    "providerName",
-                    "endpoint",
-                    "model",
-                    "hasApiKey",
-                    "updatedAt"
-                  ],
-                  "description": "The `embed` role's provider and model, as this screen sees them. The API key is write-only. The registry can express a fallback chain this shape cannot; the Models API reports the whole of it."
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ]
-      },
-      "delete": {
-        "operationId": "embeddings.settings.delete",
-        "summary": "Delete the embedding settings",
-        "description": "Unassign the `embed` role, so this organization stops embedding its items and search falls back to text matching. The provider row stays in the registry, and stored vectors are left in place and ignored until the role is assigned again.",
-        "tags": [
-          "Embeddings"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "deleted": {
-                      "const": true
-                    }
-                  },
-                  "required": [
-                    "deleted"
-                  ],
-                  "description": "The role assignment was removed."
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ]
-      }
-    },
-    "/items/reindex": {
-      "post": {
-        "operationId": "embeddings.reindex",
-        "summary": "Rebuild the item search index",
-        "description": "Rebuild every item's search text, then embed the items that have no vector or whose vector came from an earlier model. Run it after changing the embedding settings.",
-        "tags": [
-          "Embeddings"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "embedded": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991,
-                      "description": "How many items received a vector."
-                    },
-                    "failed": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991,
-                      "description": "How many items the endpoint could not embed."
-                    }
-                  },
-                  "required": [
-                    "embedded",
-                    "failed"
-                  ],
-                  "description": "What the reindex did."
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ]
-      }
-    },
     "/members": {
       "get": {
         "operationId": "members.list",
@@ -7207,6 +6910,52 @@
                     "version"
                   ],
                   "description": "A versioned context item in exactly one scope."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/items/reindex": {
+      "post": {
+        "operationId": "items.reindex",
+        "summary": "Rebuild the item search index",
+        "description": "Rebuild every item's search text, then embed the items that have no vector or whose vector came from an earlier model. Run it after reassigning the `embed` role or changing its model.",
+        "tags": [
+          "Items"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "embedded": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items received a vector."
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items the endpoint could not embed."
+                    }
+                  },
+                  "required": [
+                    "embedded",
+                    "failed"
+                  ],
+                  "description": "What the reindex did."
                 }
               }
             }

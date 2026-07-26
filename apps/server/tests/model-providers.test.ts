@@ -8,7 +8,7 @@ import { createPrismaClient } from "#server/lib/db/index.js";
 import { type Environment, parseEnv } from "#server/lib/env/schema.js";
 import { modelProvidersRouter } from "#server/rpc/model-providers.js";
 import { orgRouter } from "#server/rpc/org.js";
-import { getEmbeddingSettings, resolveEmbedder } from "#server/services/embeddings/index.js";
+import { resolveEmbedder } from "#server/services/embeddings/index.js";
 import {
   resolveEndpoints,
   resolveRoleModel,
@@ -399,12 +399,76 @@ integration("model provider registry", () => {
     // so search picks this up without the settings screen ever being opened.
     const embedder = await resolveEmbedder(db, org.org.id, { masterKey });
     expect(embedder?.model).toBe("text-embedding-3-small");
-    expect(await getEmbeddingSettings(db, org.org.id)).toMatchObject({
-      providerName: "vectors",
-      endpoint: "https://embeddings.example.test/v1",
-      model: "text-embedding-3-small",
-      hasApiKey: true,
+  });
+
+  it("reports a stored credential the server has no master key to read", async () => {
+    const org = await createOrg();
+    const envWithoutKey = parseEnv({
+      NODE_ENV: "test",
+      DATABASE_URL: databaseUrl,
+      TREMA_AUTH_SECRET: "model-providers-integration-secret-at-least-32",
+      TREMA_MODE: "hosted",
+      TREMA_WEB_ORIGINS: "https://trema.example",
     });
+
+    await expect(
+      call(
+        modelProvidersRouter.providers.put,
+        { ...openAiCompatible, name: "primary", credential: "primary-secret" },
+        { context: { ...org.context, env: envWithoutKey } },
+      ),
+    ).rejects.toThrow(/credential master key/i);
+  });
+
+  it("keeps the registry behind the model capability", async () => {
+    const owner = await createOrg();
+    const email = `${randomUUID()}@example.com`;
+    const response = await auth.api.signUpEmail({
+      body: { name: "Registry Member", email, password: "integration-password" },
+      asResponse: true,
+    });
+    const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+    if (!cookie) throw new Error("Sign-up did not return a session cookie");
+    const user = await db.user.findUniqueOrThrow({ where: { email } });
+    const principal = await db.principal.create({
+      data: {
+        orgId: owner.org.id,
+        kind: "human",
+        authId: user.id,
+        displayName: "Registry Member",
+        email: user.email,
+      },
+    });
+    const orgScope = await db.scope.findFirstOrThrow({
+      where: { orgId: owner.org.id, kind: "org" },
+    });
+    await db.grant.create({
+      data: {
+        orgId: owner.org.id,
+        principalId: principal.id,
+        scopeId: orgScope.id,
+        role: "member",
+      },
+    });
+    await db.session.updateMany({
+      where: { userId: user.id },
+      data: { activeOrgId: owner.org.id },
+    });
+    const context = { db, auth, env, headers: new Headers({ cookie }) };
+
+    await expect(call(modelProvidersRouter.providers.list, {}, { context })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(call(modelProvidersRouter.defaults.list, {}, { context })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(
+      call(
+        modelProvidersRouter.providers.put,
+        { ...openAiCompatible, name: "primary", credential: "primary-secret" },
+        { context },
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("keeps one organization's providers out of another's", async () => {
