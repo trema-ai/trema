@@ -1,10 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Boxes, ChevronDown, Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Boxes, ChevronDown, Plus, X } from "lucide-react";
+import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
-import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
@@ -26,14 +25,12 @@ import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
   type CatalogEntry,
   type ChainEntry,
-  credentialModeLabel,
   defaultModality,
   type IndexStatus,
-  modalities,
   type ModelProvider,
   messageFrom,
+  modalities,
   modelDisplayName,
-  type ProbeResult,
   protocolLabel,
   type RoleDefault,
   type RoleDescription,
@@ -41,7 +38,7 @@ import {
 
 /** What the embedding role costs to change, and the completion roles do not. */
 const embedCardProps = {
-  note: "The model is part of the index: vectors written by an earlier one stop counting the moment this changes, and search runs on text alone until the index is rebuilt below.",
+  note: "Changing this leaves the index built on the old model. Search runs on text alone until it is rebuilt.",
 };
 
 export function SettingsModelsPage() {
@@ -82,7 +79,7 @@ export function SettingsModelsPage() {
     <main className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
       <PageHeader
         title="Models"
-        description="The providers this organization can call, and which model serves each kind of work."
+        description="The providers this organization can call, and the models it runs on."
         actions={
           <Button onClick={() => setAdding(true)}>
             <Plus />
@@ -135,7 +132,6 @@ export function SettingsModelsPage() {
             </TabsList>
             {modalities.map((modality) => (
               <TabsContent key={modality.id} value={modality.id} className="space-y-3">
-                <p className="text-meta text-muted-foreground">{modality.description}</p>
                 {modality.roles.map((role) => (
                   <RoleCard
                     key={role.role}
@@ -168,18 +164,11 @@ export function SettingsModelsPage() {
 }
 
 function ProviderRow({ provider, onOpen }: { provider: ModelProvider; onOpen: () => void }) {
-  const [result, setResult] = useState<ProbeResult>();
-  const probe = useMutation({
-    mutationFn: () => rpcClient.modelProviders.providers.probe({ name: provider.name }),
-    onSuccess: (probed) => setResult(probed),
-    onError: (error) => toast.error(messageFrom(error)),
-  });
   const summary = [
     provider.name,
     protocolLabel(provider.protocol),
     `${provider.catalog.length} model${provider.catalog.length === 1 ? "" : "s"}`,
   ].join(" · ");
-  const keyed = provider.credentialMode === "api_key";
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
       <button
@@ -196,32 +185,11 @@ function ProviderRow({ provider, onOpen }: { provider: ModelProvider; onOpen: ()
         <span className="min-w-0">
           <span className="block text-chrome font-medium">{provider.label}</span>
           <span className="mt-0.5 block truncate text-meta text-muted-foreground">{summary}</span>
-          {result ? (
-            <span className="mt-1 block text-meta text-muted-foreground">
-              {result.ok
-                ? `Answered in ${result.latencyMs} ms${
-                    result.modelCount === undefined ? "" : `, listing ${result.modelCount} models`
-                  }.`
-                : result.reason}
-            </span>
-          ) : null}
         </span>
       </button>
-      <div className="flex items-center gap-2">
-        {/* A provider in key mode always has one stored: the registry refuses the other state. */}
-        <CredentialStatusBadge
-          status="connected"
-          label={keyed ? "Key stored" : credentialModeLabel("none")}
-        />
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={probe.isPending}
-          onClick={() => probe.mutate()}
-        >
-          {probe.isPending ? "Checking…" : "Check"}
-        </Button>
-      </div>
+      <Button size="sm" variant="outline" onClick={onOpen}>
+        Configure
+      </Button>
     </div>
   );
 }
@@ -308,16 +276,6 @@ function EmbeddingIndexCard() {
   );
 }
 
-function withoutRepeats(chain: ChainEntry[]): ChainEntry[] {
-  const seen = new Set<string>();
-  return chain.filter((entry) => {
-    const key = `${entry.providerName}\u0000${entry.modelId}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 function RoleCard({
   role,
   chain,
@@ -332,154 +290,87 @@ function RoleCard({
   /** What assigning this role costs, stated where the assignment is made. */
   note?: string;
 }) {
-  const [draft, setDraft] = useState<ChainEntry[]>(() => withoutRepeats(chain));
-  // A chain written through the API can name the same model twice, where only
-  // the first entry can ever be reached. The editor shows the chain that runs.
-  const stored = JSON.stringify(withoutRepeats(chain));
-  useEffect(() => {
-    setDraft(JSON.parse(stored) as ChainEntry[]);
-  }, [stored]);
-  const dirty = JSON.stringify(draft) !== stored;
-  const choices = providers.flatMap((provider) =>
-    provider.catalog.map((entry) => ({ provider, entry })),
+  // The registry stores an ordered chain and resolves down it. This screen
+  // assigns one model, which is a chain of one; a longer chain written through
+  // the API still resolves, and shows here as the entry that runs.
+  const assigned = chain[0];
+  const provider = providers.find((row) => row.name === assigned?.providerName);
+  const model = provider?.catalog.find((entry) => entry.id === assigned?.modelId);
+  const choices = providers.flatMap((row) =>
+    row.catalog.map((entry) => ({ provider: row, entry })),
   );
 
   const save = useMutation({
-    mutationFn: async () => {
-      if (draft.length === 0) await rpcClient.modelProviders.defaults.delete({ role: role.role });
-      else await rpcClient.modelProviders.defaults.put({ role: role.role, chain: draft });
+    mutationFn: async (next?: ChainEntry) => {
+      if (next === undefined) await rpcClient.modelProviders.defaults.delete({ role: role.role });
+      else await rpcClient.modelProviders.defaults.put({ role: role.role, chain: [next] });
     },
-    onSuccess: async () => {
+    onSuccess: async (_result, next) => {
       await onChanged();
-      toast.success(draft.length === 0 ? `${role.label} unassigned` : `${role.label} saved`);
+      toast.success(next === undefined ? `${role.label} unassigned` : `${role.label} saved`);
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
 
-  function move(index: number, by: number) {
-    setDraft((current) => {
-      const next = [...current];
-      const [entry] = next.splice(index, 1);
-      if (entry) next.splice(index + by, 0, entry);
-      return next;
-    });
-  }
+  const selected =
+    assigned === undefined
+      ? undefined
+      : `${model ? modelDisplayName(model) : assigned.modelId} on ${provider?.label ?? assigned.providerName}`;
 
   return (
-    <div className="rounded-md border bg-card">
-      <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3.5">
-        <div className="min-w-0">
-          <p className="text-chrome font-medium">{role.label}</p>
-          <p className="mt-0.5 text-meta text-muted-foreground">{role.description}</p>
-        </div>
-        {dirty ? (
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setDraft(JSON.parse(stored) as ChainEntry[])}
-            >
-              Cancel
-            </Button>
-            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? "Saving…" : "Save"}
-            </Button>
-          </div>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-card px-4 py-3.5">
+      <div className="min-w-0">
+        <p className="text-chrome font-medium">{role.label}</p>
+        <p className="mt-0.5 text-meta text-muted-foreground">{role.description}</p>
+        {assigned === undefined ? (
+          <p className="mt-0.5 text-meta text-muted-foreground">{role.unassigned}</p>
         ) : null}
+        {provider === undefined && assigned !== undefined ? (
+          <p className="mt-0.5 text-meta text-muted-foreground">
+            Its provider is gone, so this role cannot resolve.
+          </p>
+        ) : null}
+        {note ? <p className="mt-0.5 text-meta text-muted-foreground">{note}</p> : null}
       </div>
-      <div className="border-t px-4 py-3">
-        {draft.length === 0 ? (
-          <p className="text-meta text-muted-foreground">{role.unassigned}</p>
+      <div className="flex shrink-0 items-center gap-1">
+        {choices.length === 0 ? (
+          <p className="text-meta text-muted-foreground">No model to choose from yet.</p>
         ) : (
-          <ol className="space-y-1.5">
-            {draft.map((entry, index) => {
-              const provider = providers.find((row) => row.name === entry.providerName);
-              const model = provider?.catalog.find((candidate) => candidate.id === entry.modelId);
-              return (
-                <li
-                  key={`${entry.providerName}-${entry.modelId}`}
-                  className="flex items-center gap-2"
-                >
-                  <span className="w-4 shrink-0 text-meta text-muted-foreground">{index + 1}</span>
-                  <span className="min-w-0 flex-1 truncate text-chrome">
-                    {model ? modelDisplayName(model) : entry.modelId}
-                    <span className="text-muted-foreground">
-                      {" "}
-                      on {provider?.label ?? entry.providerName}
-                    </span>
-                    {provider ? null : (
-                      <span className="text-muted-foreground"> · provider is gone</span>
-                    )}
-                  </span>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`Move ${entry.modelId} up`}
-                    disabled={index === 0}
-                    onClick={() => move(index, -1)}
-                  >
-                    <ArrowUp />
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`Move ${entry.modelId} down`}
-                    disabled={index === draft.length - 1}
-                    onClick={() => move(index, 1)}
-                  >
-                    <ArrowDown />
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`Remove ${entry.modelId}`}
-                    onClick={() =>
-                      setDraft((current) => current.filter((_, position) => position !== index))
-                    }
-                  >
-                    <X />
-                  </Button>
-                </li>
-              );
-            })}
-          </ol>
+          <ModelCombobox
+            label={role.label}
+            selected={selected}
+            busy={save.isPending}
+            choices={choices}
+            onPick={(entry) => save.mutate(entry)}
+          />
         )}
-        {note ? <p className="mt-3 text-meta text-muted-foreground">{note}</p> : null}
-        <div className="mt-3">
-          {choices.length === 0 ? (
-            <p className="text-meta text-muted-foreground">
-              No model is available for this role yet. Add a provider, or refresh one from its page.
-            </p>
-          ) : (
-            <ModelCombobox
-              label={role.label}
-              choices={choices.filter(
-                ({ provider, entry }) =>
-                  !draft.some(
-                    (existing) =>
-                      existing.providerName === provider.name && existing.modelId === entry.id,
-                  ),
-              )}
-              onPick={(entry) => setDraft((current) => [...current, entry])}
-            />
-          )}
-        </div>
+        {assigned === undefined ? null : (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Unassign ${role.label}`}
+            disabled={save.isPending}
+            onClick={() => save.mutate(undefined)}
+          >
+            <X />
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
-/**
- * Picks one model out of the whole catalog. It searches rather than scrolls
- * because a gateway lists hundreds, and it offers every model a provider serves
- * rather than guessing which suit the role — a name is not a capability.
- */
 function ModelCombobox({
   label,
+  selected,
+  busy,
   choices,
   onPick,
 }: {
   label: string;
+  /** What the role resolves to today, or undefined while it is unassigned. */
+  selected?: string | undefined;
+  busy: boolean;
   choices: { provider: ModelProvider; entry: CatalogEntry }[];
   onPick: (entry: ChainEntry) => void;
 }) {
@@ -492,10 +383,11 @@ function ModelCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          aria-label={`Add a model to ${label}`}
-          className="w-full justify-between font-normal"
+          aria-label={`Choose a model for ${label}`}
+          disabled={busy}
+          className="max-w-72 justify-between font-normal"
         >
-          Add a model
+          <span className="truncate">{selected ?? "Choose a model"}</span>
           <ChevronDown className="opacity-50" />
         </Button>
       </PopoverTrigger>

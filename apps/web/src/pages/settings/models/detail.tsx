@@ -180,7 +180,7 @@ function EndpointSection({
       >
         <SettingRow
           label="Display name"
-          description="Shown on this screen. The name role assignments use never changes."
+          description="Shown on this screen. The name assignments use never changes."
           orientation="stack"
           control={
             <Input
@@ -204,7 +204,7 @@ function EndpointSection({
         />
         <SettingRow
           label="Protocol"
-          description="A vendor is a preset over a protocol, so this is the wire format, not the brand."
+          description="The wire format, not the brand."
           control={
             <Select value={protocol} onValueChange={(value) => setProtocol(value as ModelProtocol)}>
               <SelectTrigger aria-label="Protocol" className="w-56">
@@ -581,7 +581,7 @@ function ModelsSection({
   return (
     <SettingsSection
       title="Models"
-      description="What this provider says it serves. Which roles each model may serve is set in the models list on the Models screen."
+      description="What this provider says it serves, as of the last refresh."
     >
       <SettingRow
         label={`${count} model${count === 1 ? "" : "s"}`}
@@ -627,7 +627,7 @@ function DangerZone({
   return (
     <SettingsSection
       title="Danger zone"
-      description="Removing a provider takes its stored credential with it. Role assignments keep their remaining entries."
+      description="Removing a provider takes its stored credential with it."
     >
       <SettingRow
         label={`Remove ${provider.label}`}

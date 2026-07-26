@@ -142,9 +142,6 @@ export function ModelsSection({
   return (
     <section data-slot="settings-section">
       <h3 className="text-chrome font-medium text-foreground">Models</h3>
-      <p className="mt-0.5 text-meta text-muted-foreground">
-        Every model the organization can call. Select the ones offered in the model picker.
-      </p>
       <div className="mt-2 divide-y rounded-md border bg-card">
         {rows.length === 0 && providerName === allProviders ? (
           <p className="px-4 py-3.5 text-meta text-muted-foreground">

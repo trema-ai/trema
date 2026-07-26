@@ -111,7 +111,6 @@ export const roleDescriptions: RoleDescription[] = [turnsRole, utilityRole, embe
 export type Modality = {
   id: string;
   label: string;
-  description: string;
   roles: RoleDescription[];
 };
 
@@ -123,16 +122,12 @@ export type Modality = {
 const completions: Modality = {
   id: "completions",
   label: "Completions",
-  description:
-    "Each role resolves down its list until a provider answers, so a second entry is a fallback.",
   roles: [turnsRole, utilityRole],
 };
 
 const embeddings: Modality = {
   id: "embeddings",
   label: "Embeddings",
-  description:
-    "Memory retrieval searches text and vectors together. The vectors come from this model, which resolves down its list like any other role.",
   roles: [embedRole],
 };
 
