@@ -278,6 +278,51 @@ integration("item embeddings and hybrid search", () => {
     await expect(call(itemsRouter.reindex, {}, { context: member.context })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
+    await expect(
+      call(itemsRouter.indexStatus, {}, { context: member.context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("reports which model the index was built with, and how much a change left stale", async () => {
+    const org = await createOrg();
+    await createMemory(org, paraphrase);
+
+    // Unassigned is the off state, and the report says so rather than counting
+    // staleness against a model that does not exist.
+    const unassigned = await call(itemsRouter.indexStatus, {}, { context: org.context });
+    expect(unassigned).toEqual({
+      assigned: false,
+      documents: 1,
+      embedded: 0,
+      models: [],
+    });
+
+    await configure(org.org.id, "model-a");
+    await createMemory(org, {
+      title: "Release notes",
+      content: "Each rollout gets release notes.",
+      embedder: fakeEmbedder("model-a"),
+    });
+    expect(await call(itemsRouter.indexStatus, {}, { context: org.context })).toEqual({
+      assigned: true,
+      model: "model-a",
+      documents: 2,
+      embedded: 1,
+      stale: 1,
+      models: [{ model: "model-a", count: 1 }],
+    });
+
+    // Assigning another model is what makes the stored vectors stale: nothing
+    // re-embeds on its own, so the count is what a reindex would do.
+    await configure(org.org.id, "model-b");
+    expect(await call(itemsRouter.indexStatus, {}, { context: org.context })).toEqual({
+      assigned: true,
+      model: "model-b",
+      documents: 2,
+      embedded: 1,
+      stale: 2,
+      models: [{ model: "model-a", count: 1 }],
+    });
   });
 
   it("rebuilds the text index and embeds through the reindex route", async () => {

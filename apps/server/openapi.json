@@ -6968,6 +6968,91 @@
         ]
       }
     },
+    "/items/index-status": {
+      "get": {
+        "operationId": "items.indexStatus",
+        "summary": "Read the search index's embedding state",
+        "description": "Report which model the stored vectors were produced by, and how many items still need one. The embedding model is part of the index, so a vector written by a model the `embed` role no longer names is ignored by search until a reindex replaces it. Nothing here reaches a provider.",
+        "tags": [
+          "Items"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assigned": {
+                      "type": "boolean",
+                      "description": "Whether the `embed` role names anything at all. Unassigned means search runs on lexical matching alone."
+                    },
+                    "model": {
+                      "type": "string",
+                      "description": "The model new vectors are written under. Absent when the role is unassigned, or when every provider it names has been deleted or cannot be read."
+                    },
+                    "documents": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items are in the search index."
+                    },
+                    "embedded": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many of them carry a vector."
+                    },
+                    "stale": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many items a reindex would embed: those with no vector, plus those whose vector came from another model. Absent when no model is resolvable, because nothing can be embedded until one is."
+                    },
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "model": {
+                            "type": "string",
+                            "description": "The model that wrote these vectors."
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991,
+                            "description": "How many items carry one."
+                          }
+                        },
+                        "required": [
+                          "model",
+                          "count"
+                        ]
+                      },
+                      "description": "Every model represented in the index. More than one entry means a model change that no reindex has caught up with."
+                    }
+                  },
+                  "required": [
+                    "assigned",
+                    "documents",
+                    "embedded",
+                    "models"
+                  ],
+                  "description": "What the search index holds, and what a reindex would change."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/model-providers": {
       "get": {
         "operationId": "modelProviders.providers.list",
@@ -7066,6 +7151,16 @@
                         },
                         "description": "The models this provider offers."
                       },
+                      "listQuery": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Query parameters sent with the call that reads this provider's model list, and with nothing else. A provider whose listing filters its own catalog needs one — OpenRouter answers with no embedding models until the call asks for every output modality — and a preset seeds it so an admin never types it. It is read back in full, so a token belongs in the credential or a header instead."
+                      },
                       "updatedAt": {
                         "type": "string",
                         "description": "When the provider last changed. An ISO 8601 date-time."
@@ -7080,6 +7175,7 @@
                       "credentialMode",
                       "hasCredential",
                       "catalog",
+                      "listQuery",
                       "updatedAt"
                     ],
                     "description": "One provider in the registry. The credential is write-only."
@@ -7217,6 +7313,23 @@
                       }
                     ],
                     "description": "The models this provider offers. Omit to keep the stored catalog; send null to clear it."
+                  },
+                  "listQuery": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Query parameters for the model-listing call, as the provider's preset supplies them. Omit to keep the stored query; send null to clear it."
                   }
                 },
                 "required": [
@@ -7317,6 +7430,16 @@
                       },
                       "description": "The models this provider offers."
                     },
+                    "listQuery": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Query parameters sent with the call that reads this provider's model list, and with nothing else. A provider whose listing filters its own catalog needs one — OpenRouter answers with no embedding models until the call asks for every output modality — and a preset seeds it so an admin never types it. It is read back in full, so a token belongs in the credential or a header instead."
+                    },
                     "updatedAt": {
                       "type": "string",
                       "description": "When the provider last changed. An ISO 8601 date-time."
@@ -7331,6 +7454,7 @@
                     "credentialMode",
                     "hasCredential",
                     "catalog",
+                    "listQuery",
                     "updatedAt"
                   ],
                   "description": "One provider in the registry. The credential is write-only."
@@ -7454,6 +7578,16 @@
                       },
                       "description": "The models this provider offers."
                     },
+                    "listQuery": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Query parameters sent with the call that reads this provider's model list, and with nothing else. A provider whose listing filters its own catalog needs one — OpenRouter answers with no embedding models until the call asks for every output modality — and a preset seeds it so an admin never types it. It is read back in full, so a token belongs in the credential or a header instead."
+                    },
                     "updatedAt": {
                       "type": "string",
                       "description": "When the provider last changed. An ISO 8601 date-time."
@@ -7468,6 +7602,7 @@
                     "credentialMode",
                     "hasCredential",
                     "catalog",
+                    "listQuery",
                     "updatedAt"
                   ],
                   "description": "One provider in the registry. The credential is write-only."
@@ -7610,6 +7745,23 @@
                       }
                     ],
                     "description": "The models this provider offers. Omit to keep the stored catalog; send null to clear it."
+                  },
+                  "listQuery": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Query parameters for the model-listing call, as the provider's preset supplies them. Omit to keep the stored query; send null to clear it."
                   }
                 },
                 "required": [
@@ -7709,6 +7861,16 @@
                       },
                       "description": "The models this provider offers."
                     },
+                    "listQuery": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Query parameters sent with the call that reads this provider's model list, and with nothing else. A provider whose listing filters its own catalog needs one — OpenRouter answers with no embedding models until the call asks for every output modality — and a preset seeds it so an admin never types it. It is read back in full, so a token belongs in the credential or a header instead."
+                    },
                     "updatedAt": {
                       "type": "string",
                       "description": "When the provider last changed. An ISO 8601 date-time."
@@ -7723,6 +7885,7 @@
                     "credentialMode",
                     "hasCredential",
                     "catalog",
+                    "listQuery",
                     "updatedAt"
                   ],
                   "description": "One provider in the registry. The credential is write-only."
@@ -7869,7 +8032,7 @@
       "get": {
         "operationId": "modelProviders.providers.remoteModels",
         "summary": "List the models a provider offers",
-        "description": "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
+        "description": "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import, and the capability each listing states about its own models where it states one; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
         "tags": [
           "Model providers"
         ],
@@ -7912,6 +8075,10 @@
                               "id": {
                                 "type": "string",
                                 "description": "The model id the provider expects."
+                              },
+                              "embedding": {
+                                "type": "boolean",
+                                "description": "Whether the provider's own listing said this model answers with vectors. It is absent when the listing said nothing, which is the common case: the OpenAI-compatible listing shape carries no capability field, so a client that needs the answer there has to guess from the model's name."
                               }
                             },
                             "required": [
@@ -8247,6 +8414,16 @@
                       "icon": {
                         "type": "string",
                         "description": "Which bundled brand mark the screen draws for this vendor."
+                      },
+                      "listQuery": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Query parameters sent with the call that reads this provider's model list, and with nothing else. A provider whose listing filters its own catalog needs one — OpenRouter answers with no embedding models until the call asks for every output modality — and a preset seeds it so an admin never types it. It is read back in full, so a token belongs in the credential or a header instead."
                       }
                     },
                     "required": [

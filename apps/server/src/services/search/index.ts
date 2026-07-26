@@ -54,6 +54,43 @@ export interface BackfillEmbeddingsResult {
   failed: number;
 }
 
+/** What the index holds right now, counted by the model each vector came from. */
+export interface EmbeddingIndexStatus {
+  /** Indexed items, embedded or not. */
+  documents: number;
+  /** How many rows each model wrote a vector for, most first. */
+  byModel: { model: string; count: number }[];
+}
+
+/**
+ * Reads what the index was built with. The embedding model is part of the
+ * index: a vector only counts for search while the model that produced it is
+ * still the one being asked, so which models are represented here is the
+ * question a reindex answers.
+ */
+export async function embeddingIndexStatus(
+  db: Database,
+  orgId: string,
+): Promise<EmbeddingIndexStatus> {
+  const rows = await db.$queryRaw<Array<{ model: string | null; count: bigint }>>`
+    SELECT "embeddingModel" AS model, count(*) AS count
+    FROM "ItemSearchDoc"
+    WHERE "orgId" = ${orgId}
+    GROUP BY "embeddingModel"
+  `;
+  let documents = 0;
+  const byModel: { model: string; count: number }[] = [];
+  for (const row of rows) {
+    const count = Number(row.count);
+    documents += count;
+    // A null model is a row with no vector: counted in the total, named by
+    // nothing.
+    if (row.model !== null) byModel.push({ model: row.model, count });
+  }
+  byModel.sort((left, right) => right.count - left.count || (left.model < right.model ? -1 : 1));
+  return { documents, byModel };
+}
+
 function bodyContent(body: unknown): string {
   const content = (body as { content?: unknown } | null)?.content;
   return typeof content === "string" ? content : "";
