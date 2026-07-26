@@ -49,6 +49,8 @@ export type ModelCatalogEntry = z.infer<typeof catalogEntrySchema>;
 
 const headersSchema = z.record(z.string().trim().min(1), z.string());
 
+const listQuerySchema = z.record(z.string().trim().min(1), z.string());
+
 /**
  * What an HTTP header field cannot carry, in either half. Scanned rather than
  * matched, because a control character inside a pattern is its own lint error.
@@ -111,6 +113,27 @@ function normalizeHeaders(headers: Record<string, string>): Record<string, strin
     const trimmed = value.trim();
     assertHeaderValue(trimmed, `The value of the ${field} header`);
     normalized[field] = trimmed;
+  }
+  return normalized;
+}
+
+/**
+ * Checks the query a listing call carries. It is read back in full, the way the
+ * base URL is, so the same rule holds: a control character cannot travel in a
+ * URL, and a secret does not belong here — the credential field and the header
+ * map are the write-only ones.
+ */
+function normalizeListQuery(listQuery: Record<string, string>): Record<string, string> {
+  const parsed = listQuerySchema.parse(listQuery);
+  const normalized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(parsed)) {
+    const field = name.trim();
+    if (hasControlCharacter(field) || hasControlCharacter(value)) {
+      throw new ModelProviderValidationError(
+        `The ${field} listing parameter cannot contain control characters`,
+      );
+    }
+    normalized[field] = value;
   }
   return normalized;
 }
@@ -185,6 +208,11 @@ export function providerCatalog(provider: ModelProvider): ModelCatalogEntry[] {
   return parseJsonColumn(catalogSchema, provider.catalogJson, "provider catalog");
 }
 
+export function providerListQuery(provider: ModelProvider): Record<string, string> {
+  if (provider.listQueryJson === null) return {};
+  return parseJsonColumn(listQuerySchema, provider.listQueryJson, "provider listing query");
+}
+
 export function defaultChain(row: ModelDefault): ModelChainEntry[] {
   return parseJsonColumn(chainSchema, row.chainJson, "role default");
 }
@@ -204,6 +232,12 @@ export interface ModelProviderSummary {
   credentialMode: ModelCredentialMode;
   hasCredential: boolean;
   catalog: ModelCatalogEntry[];
+  /**
+   * The query the provider's own model listing is fetched with. Unlike the
+   * header map this is read back: it is a filter a preset seeded, not a place
+   * for a secret.
+   */
+  listQuery: Record<string, string>;
   updatedAt: Date;
 }
 
@@ -217,6 +251,7 @@ export function toProviderSummary(provider: ModelProvider): ModelProviderSummary
     credentialMode: provider.credentialMode,
     hasCredential: provider.credentialCiphertext !== null,
     catalog: providerCatalog(provider),
+    listQuery: providerListQuery(provider),
     updatedAt: provider.updatedAt,
   };
 }
@@ -234,6 +269,8 @@ export interface PutModelProviderInput {
   credential?: string | null;
   /** Omit to keep the stored catalog; `null` clears it. */
   catalog?: ModelCatalogEntry[] | null;
+  /** Omit to keep the stored listing query; `null` clears it. */
+  listQuery?: Record<string, string> | null;
   masterKey?: string;
   /**
    * What a name already in the registry means. `reject` refuses it through the
@@ -312,6 +349,12 @@ export async function putProvider(
       : input.catalog === null
         ? Prisma.DbNull
         : normalizeCatalog(input.catalog);
+  const listQueryJson =
+    input.listQuery === undefined
+      ? undefined
+      : input.listQuery === null
+        ? Prisma.DbNull
+        : normalizeListQuery(input.listQuery);
 
   const written = {
     label,
@@ -321,6 +364,7 @@ export async function putProvider(
     ...(headersJson === undefined ? {} : { headersJson }),
     ...(credentialCiphertext === undefined ? {} : { credentialCiphertext }),
     ...(catalogJson === undefined ? {} : { catalogJson }),
+    ...(listQueryJson === undefined ? {} : { listQueryJson }),
   };
 
   const provider =
@@ -454,16 +498,26 @@ function toEndpoint(provider: ModelProvider, options: ResolveEndpointsOptions): 
   };
 }
 
-/** One provider's descriptor, credential included. Callers keep it in memory only. */
-export async function resolveProviderEndpoint(
+/** Everything one direct call to a provider needs, credential included. */
+export interface ProviderTransport {
+  endpoint: ModelEndpoint;
+  /** The query its own model listing is fetched with. Empty for most providers. */
+  listQuery: Record<string, string>;
+}
+
+/**
+ * One provider as the code that calls it sees it. Callers keep it in memory
+ * only.
+ */
+export async function resolveProviderTransport(
   db: Database,
   orgId: string,
   name: string,
   options: ResolveEndpointsOptions = {},
-): Promise<ModelEndpoint> {
+): Promise<ProviderTransport> {
   const provider = await db.modelProvider.findUnique({ where: { orgId_name: { orgId, name } } });
   if (!provider) throw new ModelProviderNotFoundError(`Model provider not found: ${name}`);
-  return toEndpoint(provider, options);
+  return { endpoint: toEndpoint(provider, options), listQuery: providerListQuery(provider) };
 }
 
 /**

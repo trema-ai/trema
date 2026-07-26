@@ -546,6 +546,10 @@ model ModelProvider {
   /// The provider's model list. Provider-shaped data, not rows anything
   /// queries; it becomes a table when a query needs one.
   catalogJson          Json?
+  /// Query parameters the provider's own model-listing call carries, or null
+  /// for none. Preset data: a listing that hides part of its catalog behind a
+  /// filter is a vendor fact, and a vendor is a preset over a protocol.
+  listQueryJson        Json?
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
   org                  Org                 @relation(fields: [orgId], references: [id], onDelete: Cascade)

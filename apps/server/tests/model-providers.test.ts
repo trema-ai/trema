@@ -614,6 +614,14 @@ integration("model provider registry", () => {
     // The screen needs both shapes: a keyed vendor and an endpoint on the host.
     expect(presets.some((preset) => preset.credentialMode === "api_key")).toBe(true);
     expect(presets.some((preset) => preset.credentialMode === "none")).toBe(true);
+    // A vendor whose listing filters its own catalog ships the query that
+    // undoes the filter, so an admin never has to know about it.
+    expect(presets.some((preset) => preset.listQuery !== undefined)).toBe(true);
+    for (const preset of presets) {
+      for (const value of Object.values(preset.listQuery ?? {})) {
+        expect(typeof value).toBe("string");
+      }
+    }
 
     // A preset is data the API hands over, so storing one is an ordinary create.
     // It brings no models: those are read from the provider afterwards.
@@ -978,6 +986,164 @@ integration("model provider registry", () => {
       expect(seen.path).toBe("/v1/models");
       expect(seen.authorization).toBe("Bearer the-secret");
       expect(JSON.stringify(result)).not.toContain("the-secret");
+
+      await provider.close();
+    });
+
+    it("carries through the capability a listing states about its own models", async () => {
+      const provider = await startProvider((_request, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            data: [
+              // The two shapes a listing states this in: a top-level type, and
+              // the output modalities of an architecture block.
+              { id: "typed-embedder", type: "embedding" },
+              { id: "typed-chat", type: "chat" },
+              { id: "modal-embedder", architecture: { output_modalities: ["embeddings"] } },
+              { id: "modal-chat", architecture: { output_modalities: ["text"] } },
+            ],
+          }),
+        );
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "stating",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+
+      const result = await call(
+        modelProvidersRouter.providers.remoteModels,
+        { name: "stating" },
+        { context: org.context },
+      );
+      expect(result).toEqual({
+        ok: true,
+        latencyMs: expect.any(Number),
+        models: [
+          { id: "modal-chat", embedding: false },
+          { id: "modal-embedder", embedding: true },
+          { id: "typed-chat", embedding: false },
+          { id: "typed-embedder", embedding: true },
+        ],
+      });
+      expect(JSON.stringify(result)).not.toContain("the-secret");
+
+      await provider.close();
+    });
+
+    it("states nothing about a model whose listing carries no capability it recognizes", async () => {
+      const provider = await startProvider((_request, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            data: [
+              // The plain OpenAI-compatible entry, which says nothing.
+              { id: "plain", object: "model" },
+              // A gateway's own vocabulary is not the one being read, and a
+              // guess dressed as a statement is worse than silence.
+              { id: "own-words", type: "model" },
+              // Shapes that are the right field and the wrong thing.
+              { id: "wrong-type", type: 7 },
+              { id: "wrong-architecture", architecture: null },
+              { id: "wrong-modalities", architecture: { output_modalities: "embeddings" } },
+              { id: "mixed-modalities", architecture: { output_modalities: ["text", 3] } },
+            ],
+          }),
+        );
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "silent",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+
+      const result = await call(
+        modelProvidersRouter.providers.remoteModels,
+        { name: "silent" },
+        { context: org.context },
+      );
+      expect(result).toEqual({
+        ok: true,
+        latencyMs: expect.any(Number),
+        models: [
+          { id: "mixed-modalities" },
+          { id: "own-words" },
+          { id: "plain" },
+          { id: "wrong-architecture" },
+          { id: "wrong-modalities" },
+          { id: "wrong-type" },
+        ],
+      });
+
+      await provider.close();
+    });
+
+    it("reads the model list with the query the provider stores", async () => {
+      const seen: { path?: string | undefined } = {};
+      const provider = await startProvider((request, response) => {
+        seen.path = request.url;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: [{ id: "listed" }] }));
+      });
+      const org = await createOrg();
+      const created = await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "filtered",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+          listQuery: { output_modalities: "all" },
+        },
+        { context: org.context },
+      );
+      expect(created.listQuery).toEqual({ output_modalities: "all" });
+
+      await call(
+        modelProvidersRouter.providers.remoteModels,
+        { name: "filtered" },
+        { context: org.context },
+      );
+      expect(seen.path).toBe("/v1/models?output_modalities=all");
+
+      // The probe is the same call, so it asks the same question.
+      await call(
+        modelProvidersRouter.providers.probe,
+        { name: "filtered" },
+        { context: org.context },
+      );
+      expect(seen.path).toBe("/v1/models?output_modalities=all");
+
+      // Clearing it puts the plain listing back.
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "filtered",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          listQuery: null,
+        },
+        { context: org.context },
+      );
+      await call(
+        modelProvidersRouter.providers.remoteModels,
+        { name: "filtered" },
+        { context: org.context },
+      );
+      expect(seen.path).toBe("/v1/models");
 
       await provider.close();
     });

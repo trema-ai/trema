@@ -17,7 +17,11 @@ import {
   restoreItem,
   updateItem,
 } from "#server/services/items/index.js";
-import { backfillEmbeddings, rebuildSearchIndex } from "#server/services/search/index.js";
+import {
+  backfillEmbeddings,
+  embeddingIndexStatus,
+  rebuildSearchIndex,
+} from "#server/services/search/index.js";
 
 export const itemKindSchema = z
   .enum(["memory", "skill", "instruction", "connector", "conversation"])
@@ -396,6 +400,70 @@ const reindex = requireCapability("manage_models")
     return backfillEmbeddings(context.db, context.org.id, options);
   });
 
+const indexStatus = requireCapability("manage_models")
+  .route({
+    method: "GET",
+    path: "/items/index-status",
+    summary: "Read the search index's embedding state",
+    description:
+      "Report which model the stored vectors were produced by, and how many items still need one. The embedding model is part of the index, so a vector written by a model the `embed` role no longer names is ignored by search until a reindex replaces it. Nothing here reaches a provider.",
+    tags: ["Items"],
+  })
+  .output(
+    z
+      .object({
+        assigned: z
+          .boolean()
+          .describe(
+            "Whether the `embed` role names anything at all. Unassigned means search runs on lexical matching alone.",
+          ),
+        model: z
+          .string()
+          .optional()
+          .describe(
+            "The model new vectors are written under. Absent when the role is unassigned, or when every provider it names has been deleted or cannot be read.",
+          ),
+        documents: z.number().int().describe("How many items are in the search index."),
+        embedded: z.number().int().describe("How many of them carry a vector."),
+        stale: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "How many items a reindex would embed: those with no vector, plus those whose vector came from another model. Absent when no model is resolvable, because nothing can be embedded until one is.",
+          ),
+        models: z
+          .array(
+            z.object({
+              model: z.string().describe("The model that wrote these vectors."),
+              count: z.number().int().describe("How many items carry one."),
+            }),
+          )
+          .describe(
+            "Every model represented in the index. More than one entry means a model change that no reindex has caught up with.",
+          ),
+      })
+      .describe("What the search index holds, and what a reindex would change."),
+  )
+  .handler(async ({ context }) => {
+    const status = await embeddingIndexStatus(context.db, context.org.id);
+    const embedder = await resolveEmbedder(context.db, context.org.id, {
+      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+        : {}),
+    });
+    const embedded = status.byModel.reduce((total, entry) => total + entry.count, 0);
+    const current = status.byModel.find((entry) => entry.model === embedder?.model);
+    return {
+      assigned: await hasEmbedAssignment(context.db, context.org.id),
+      ...(embedder === undefined ? {} : { model: embedder.model }),
+      documents: status.documents,
+      embedded,
+      ...(embedder === undefined ? {} : { stale: status.documents - (current?.count ?? 0) }),
+      models: status.byModel,
+    };
+  });
+
 export const itemsRouter = {
   create,
   list,
@@ -406,4 +474,5 @@ export const itemsRouter = {
   archive: lifecycleRoute("archive"),
   restore: lifecycleRoute("restore"),
   reindex,
+  indexStatus,
 };

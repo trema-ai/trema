@@ -49,6 +49,12 @@ const catalogEntrySchema = z.object({
   contextWindow: z.number().int().positive().optional().describe("Context window, in tokens."),
 });
 
+const listQuerySchema = z
+  .record(z.string(), z.string())
+  .describe(
+    "Query parameters sent with the call that reads this provider's model list, and with nothing else. A provider whose listing filters its own catalog needs one — OpenRouter answers with no embedding models until the call asks for every output modality — and a preset seeds it so an admin never types it. It is read back in full, so a token belongs in the credential or a header instead.",
+  );
+
 const providerSchema = z
   .object({
     name: z.string().describe("The key role defaults reference. Unique within the organization."),
@@ -67,6 +73,7 @@ const providerSchema = z
         "Whether a credential is stored for this provider. The credential itself is never returned.",
       ),
     catalog: z.array(catalogEntrySchema).describe("The models this provider offers."),
+    listQuery: listQuerySchema,
     updatedAt: z.string().describe("When the provider last changed. An ISO 8601 date-time."),
   })
   .describe("One provider in the registry. The credential is write-only.");
@@ -187,6 +194,13 @@ const providerWriteSchema = z
       .describe(
         "The models this provider offers. Omit to keep the stored catalog; send null to clear it.",
       ),
+    listQuery: z
+      .record(z.string(), z.string())
+      .nullable()
+      .optional()
+      .describe(
+        "Query parameters for the model-listing call, as the provider's preset supplies them. Omit to keep the stored query; send null to clear it.",
+      ),
   })
   .describe("The provider to store.");
 
@@ -207,6 +221,7 @@ function writeInput(
     ...(input.credentialMode === undefined ? {} : { credentialMode: input.credentialMode }),
     ...(input.credential === undefined ? {} : { credential: input.credential }),
     ...(input.catalog === undefined ? {} : { catalog: input.catalog }),
+    ...(input.listQuery === undefined ? {} : { listQuery: input.listQuery }),
     ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
       ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
       : {}),
@@ -351,6 +366,7 @@ const presetSchema = z
       .string()
       .optional()
       .describe("Which bundled brand mark the screen draws for this vendor."),
+    listQuery: listQuerySchema.optional(),
   })
   .describe(
     "A bundled provider, ready to store as a registry row. A vendor is a preset over a protocol, never code. It carries no model list: a provider is asked what it serves.",
@@ -424,7 +440,17 @@ const remoteModelsSchema = z
         .nonnegative()
         .describe("How long the provider took to answer, in milliseconds."),
       models: z
-        .array(z.object({ id: z.string().describe("The model id the provider expects.") }))
+        .array(
+          z.object({
+            id: z.string().describe("The model id the provider expects."),
+            embedding: z
+              .boolean()
+              .optional()
+              .describe(
+                "Whether the provider's own listing said this model answers with vectors. It is absent when the listing said nothing, which is the common case: the OpenAI-compatible listing shape carries no capability field, so a client that needs the answer there has to guess from the model's name.",
+              ),
+          }),
+        )
         .describe("Every model the provider listed, by id."),
     }),
     z.object({
@@ -442,7 +468,7 @@ const remoteModels = requireCapability("manage_models")
     path: "/model-providers/{name}/remote-models",
     summary: "List the models a provider offers",
     description:
-      "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
+      "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import, and the capability each listing states about its own models where it states one; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
     tags: ["Model providers"],
   })
   .input(z.object({ name: z.string().trim().min(1).describe("The provider's name.") }))
