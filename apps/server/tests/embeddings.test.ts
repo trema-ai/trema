@@ -481,6 +481,30 @@ integration("item embeddings and hybrid search", () => {
     ).rejects.toThrow(/credential master key/i);
   });
 
+  it("refuses to reindex when the embed role names a provider that is gone", async () => {
+    const org = await createOrg();
+    await configure(org.org.id);
+    await createMemory(org, { ...paraphrase, embedder: fakeEmbedder() });
+
+    // A role default outlives the provider it names, by design: that is what
+    // makes a fallback chain a chain. With nothing left to fall back to, an
+    // explicit reindex must say so rather than quietly embedding nothing.
+    await db.modelProvider.deleteMany({ where: { orgId: org.org.id } });
+
+    await expect(call(embeddingsRouter.reindex, {}, { context: org.context })).rejects.toThrow(
+      /no usable provider/i,
+    );
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
+
+    // An organization that never configured embeddings is a different case: it
+    // reindexes its text and reports an honest zero.
+    const plain = await createOrg("Unconfigured Reindex Org");
+    await expect(call(embeddingsRouter.reindex, {}, { context: plain.context })).resolves.toEqual({
+      embedded: 0,
+      failed: 0,
+    });
+  });
+
   it("leaves vectors intact when reindex cannot build the embedder", async () => {
     const org = await createOrg();
     await call(

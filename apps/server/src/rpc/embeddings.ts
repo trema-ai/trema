@@ -11,6 +11,7 @@ import {
   EmbeddingSettingsNotFoundError,
   EmbeddingSettingsValidationError,
   getEmbeddingSettings,
+  hasEmbedAssignment,
   putEmbeddingSettings,
   resolveEmbedder,
 } from "#server/services/embeddings/index.js";
@@ -212,10 +213,14 @@ const reindex = requireCapability("manage_models")
     }
     // Indexing and search treat an unusable provider as the off state and stay
     // lexical. A reindex was asked for explicitly, so it says so instead.
-    if (embedder === undefined && (await getEmbeddingSettings(context.db, context.org.id))) {
+    //
+    // The guard asks whether the role is assigned, not whether a provider backs
+    // it: a default outlives the provider it names, and a reindex that embedded
+    // nothing because that provider is gone must not report success.
+    if (embedder === undefined && (await hasEmbedAssignment(context.db, context.org.id))) {
       throw new ORPCError("INTERNAL_SERVER_ERROR", {
         message:
-          "The embed role's provider cannot be used; check the server's credential master key and the provider's stored credential",
+          "The embed role names no usable provider; check that it still exists and that the server's credential master key can read its credential",
       });
     }
     await rebuildSearchIndex(context.db, context.org.id);

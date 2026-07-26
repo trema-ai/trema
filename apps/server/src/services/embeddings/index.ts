@@ -60,32 +60,48 @@ export interface EmbeddingSettings {
 }
 
 /**
- * Reads the `embed` role's first chain entry as a settings row.
+ * Whether the `embed` role is assigned at all, regardless of whether anything
+ * it names can still be reached.
+ *
+ * Role defaults outlive the providers they name, so this is a different
+ * question from "can this organization embed" — and the two answers are what
+ * separate an organization that never configured embeddings from one whose
+ * provider was deleted underneath it.
+ */
+export async function hasEmbedAssignment(db: Database, orgId: string): Promise<boolean> {
+  return (await resolveRoleChain(db, orgId, "embed")).length > 0;
+}
+
+/**
+ * Reads the `embed` role as a settings row.
  *
  * The registry can express more than this screen can — a fallback chain, a
- * provider shared with `turns` — so this reports the head of the chain and
- * phase 3's Models screen shows the rest.
+ * provider shared with `turns` — so this reports the first chain entry whose
+ * provider still exists, which is the one the embedder would use, and phase 3's
+ * Models screen shows the rest.
  */
 export async function getEmbeddingSettings(
   db: Database,
   orgId: string,
 ): Promise<EmbeddingSettings | null> {
   const chain = await resolveRoleChain(db, orgId, "embed");
-  const entry = chain[0];
-  if (entry === undefined) return null;
+  if (chain.length === 0) return null;
 
-  const provider = await db.modelProvider.findUnique({
-    where: { orgId_name: { orgId, name: entry.providerName } },
+  const providers = await db.modelProvider.findMany({
+    where: { orgId, name: { in: chain.map((entry) => entry.providerName) } },
   });
-  if (provider === null) return null;
-
-  return {
-    providerName: provider.name,
-    endpoint: provider.baseUrl,
-    model: entry.modelId,
-    hasApiKey: provider.credentialCiphertext !== null,
-    updatedAt: provider.updatedAt,
-  };
+  for (const entry of chain) {
+    const provider = providers.find((candidate) => candidate.name === entry.providerName);
+    if (provider === undefined) continue;
+    return {
+      providerName: provider.name,
+      endpoint: provider.baseUrl,
+      model: entry.modelId,
+      hasApiKey: provider.credentialCiphertext !== null,
+      updatedAt: provider.updatedAt,
+    };
+  }
+  return null;
 }
 
 export interface PutEmbeddingSettingsInput {
