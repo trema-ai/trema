@@ -7095,6 +7095,255 @@
             "sessionCookie": []
           }
         ]
+      },
+      "post": {
+        "operationId": "modelProviders.providers.create",
+        "summary": "Create a model provider",
+        "description": "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential.",
+        "tags": [
+          "Model providers"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The provider's name."
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The provider's display name. Defaults to its name."
+                  },
+                  "protocol": {
+                    "enum": [
+                      "openai_compatible"
+                    ],
+                    "type": "string",
+                    "description": "The wire protocol the provider speaks. One value per protocol, not per vendor: a vendor is a preset over a protocol."
+                  },
+                  "baseUrl": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The base endpoint address, including the version path, such as `https://api.openai.com/v1`. Request paths are appended to it, so it carries no query string or fragment, and a trailing slash is dropped."
+                  },
+                  "headers": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Extra headers sent with every request, stored and never returned. Omit to keep the stored headers; send null to clear them."
+                  },
+                  "credentialMode": {
+                    "enum": [
+                      "api_key",
+                      "none"
+                    ],
+                    "type": "string",
+                    "description": "How the provider authenticates. `none` is for endpoints that need no credential, such as a model server on the same host."
+                  },
+                  "credential": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The credential, stored encrypted and never returned. Omit to keep the stored value; send null to clear it."
+                  },
+                  "catalog": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "The model id the provider expects."
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "What the admin screen shows."
+                            },
+                            "roles": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "turns",
+                                  "utility",
+                                  "embed"
+                                ],
+                                "type": "string",
+                                "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
+                              },
+                              "description": "The roles this model may serve. Omitted means unrestricted."
+                            },
+                            "contextWindow": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991,
+                              "exclusiveMinimum": 0,
+                              "description": "Context window, in tokens."
+                            }
+                          },
+                          "required": [
+                            "id"
+                          ]
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The models this provider offers. Omit to keep the stored catalog; send null to clear it."
+                  }
+                },
+                "required": [
+                  "name",
+                  "protocol",
+                  "baseUrl"
+                ],
+                "description": "The provider to store."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The key role defaults reference. Unique within the organization."
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "The provider's display name."
+                    },
+                    "protocol": {
+                      "enum": [
+                        "openai_compatible"
+                      ],
+                      "type": "string",
+                      "description": "The wire protocol the provider speaks. One value per protocol, not per vendor: a vendor is a preset over a protocol."
+                    },
+                    "baseUrl": {
+                      "type": "string",
+                      "description": "The base endpoint address, including the version path."
+                    },
+                    "headerNames": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Which extra headers are sent with every request to this provider. The values are never returned: a header can hold a token, so it gets the credential's write-only treatment."
+                    },
+                    "credentialMode": {
+                      "enum": [
+                        "api_key",
+                        "none"
+                      ],
+                      "type": "string",
+                      "description": "How the provider authenticates. `none` is for endpoints that need no credential, such as a model server on the same host."
+                    },
+                    "hasCredential": {
+                      "type": "boolean",
+                      "description": "Whether a credential is stored for this provider. The credential itself is never returned."
+                    },
+                    "catalog": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The model id the provider expects."
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "What the admin screen shows."
+                          },
+                          "roles": {
+                            "type": "array",
+                            "items": {
+                              "enum": [
+                                "turns",
+                                "utility",
+                                "embed"
+                              ],
+                              "type": "string",
+                              "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
+                            },
+                            "description": "The roles this model may serve. Omitted means unrestricted."
+                          },
+                          "contextWindow": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991,
+                            "exclusiveMinimum": 0,
+                            "description": "Context window, in tokens."
+                          }
+                        },
+                        "required": [
+                          "id"
+                        ]
+                      },
+                      "description": "The models this provider offers."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the provider last changed. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "label",
+                    "protocol",
+                    "baseUrl",
+                    "headerNames",
+                    "credentialMode",
+                    "hasCredential",
+                    "catalog",
+                    "updatedAt"
+                  ],
+                  "description": "One provider in the registry. The credential is write-only."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
       }
     },
     "/model-providers/{name}": {
@@ -7236,7 +7485,7 @@
       "put": {
         "operationId": "modelProviders.providers.put",
         "summary": "Create or replace a model provider",
-        "description": "Store a provider descriptor and its credential. The credential is write-only: omit it to keep the stored value, send null to clear it.",
+        "description": "Store a provider descriptor and its credential, replacing one stored under the same name. The credential is write-only: omit it to keep the stored value, send null to clear it.",
         "tags": [
           "Model providers"
         ],
@@ -7274,7 +7523,7 @@
                   "baseUrl": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The base endpoint address, including the version path, such as `https://api.openai.com/v1`."
+                    "description": "The base endpoint address, including the version path, such as `https://api.openai.com/v1`. Request paths are appended to it, so it carries no query string or fragment, and a trailing slash is dropped."
                   },
                   "headers": {
                     "anyOf": [
@@ -7954,7 +8203,7 @@
       "get": {
         "operationId": "modelProviders.presets.list",
         "summary": "List the bundled provider presets",
-        "description": "Read the presets a provider can be created from. A preset carries a base URL, a credential mode, and a starting catalog, all of which stay editable once the provider exists.",
+        "description": "Read the presets a provider can be created from. A preset carries a base URL and a credential mode, both editable once the provider exists; the models come from the provider itself.",
         "tags": [
           "Model providers"
         ],
@@ -7998,48 +8247,6 @@
                       "icon": {
                         "type": "string",
                         "description": "Which bundled brand mark the screen draws for this vendor."
-                      },
-                      "catalog": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1,
-                              "description": "The model id the provider expects."
-                            },
-                            "label": {
-                              "type": "string",
-                              "minLength": 1,
-                              "description": "What the admin screen shows."
-                            },
-                            "roles": {
-                              "type": "array",
-                              "items": {
-                                "enum": [
-                                  "turns",
-                                  "utility",
-                                  "embed"
-                                ],
-                                "type": "string",
-                                "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                              },
-                              "description": "The roles this model may serve. Omitted means unrestricted."
-                            },
-                            "contextWindow": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991,
-                              "exclusiveMinimum": 0,
-                              "description": "Context window, in tokens."
-                            }
-                          },
-                          "required": [
-                            "id"
-                          ]
-                        },
-                        "description": "The models the preset starts the provider with."
                       }
                     },
                     "required": [
@@ -8047,10 +8254,9 @@
                       "label",
                       "protocol",
                       "baseUrl",
-                      "credentialMode",
-                      "catalog"
+                      "credentialMode"
                     ],
-                    "description": "A bundled provider, ready to store as a registry row. A vendor is a preset over a protocol, never code."
+                    "description": "A bundled provider, ready to store as a registry row. A vendor is a preset over a protocol, never code. It carries no model list: a provider is asked what it serves."
                   },
                   "description": "Every bundled preset."
                 }

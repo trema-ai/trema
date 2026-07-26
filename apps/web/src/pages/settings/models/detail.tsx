@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Plus, RefreshCw, Settings2, Trash2, X } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 
@@ -467,6 +467,11 @@ function HeadersDialog({
   // Stored values cannot be pre-filled, so a row saved blank would quietly
   // replace a working header with an empty one.
   const missingValue = named.some((row) => row.value.length === 0);
+  // Header names are case-insensitive, and the map a save builds keeps the last
+  // row of a repeated name — so two rows for one header would silently drop
+  // half of what was typed.
+  const fields = named.map((row) => row.name.trim().toLowerCase());
+  const duplicateName = fields.find((field, index) => fields.indexOf(field) !== index);
 
   const save = useMutation({
     mutationFn: () => {
@@ -553,12 +558,21 @@ function HeadersDialog({
               Enter a value for every header, or remove the row.
             </p>
           ) : null}
+          {duplicateName ? (
+            <p className="text-meta text-destructive">
+              Two rows name the {duplicateName} header. Header names are case-insensitive, so keep
+              one of them.
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={missingValue || save.isPending} onClick={() => save.mutate()}>
+          <Button
+            disabled={missingValue || duplicateName !== undefined || save.isPending}
+            onClick={() => save.mutate()}
+          >
             {save.isPending ? "Saving…" : "Save headers"}
           </Button>
         </DialogFooter>
@@ -694,6 +708,7 @@ function CatalogSection({
       <ConfigureModelsDialog
         provider={provider}
         remote={listing}
+        fetching={remote.isFetching}
         open={configure}
         onOpenChange={setConfigure}
         onChanged={onChanged}
@@ -705,12 +720,15 @@ function CatalogSection({
 function ConfigureModelsDialog({
   provider,
   remote,
+  fetching,
   open,
   onOpenChange,
   onChanged,
 }: {
   provider: ModelProvider;
   remote: RemoteModels | undefined;
+  /** The provider's list is still on its way, so what is offered is incomplete. */
+  fetching: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onChanged: () => Promise<void>;
@@ -721,6 +739,10 @@ function ConfigureModelsDialog({
   const [allModels, setAllModels] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [roles, setRoles] = useState<Record<string, ModelRole[]>>({});
+  // What was selected when the All models switch went on. Turning it back off
+  // restores that rather than selecting everything, so a deselection survives
+  // the round trip.
+  const beforeAllModels = useRef<string[] | undefined>(undefined);
   const available = offeredIds(remote, provider.catalog, added);
   const listed = new Set((remote?.ok ? remote.models : []).map((model) => model.id));
   const stored = new Map(provider.catalog.map((entry) => [entry.id, entry]));
@@ -731,6 +753,7 @@ function ConfigureModelsDialog({
     setDraftId("");
     setSearch("");
     setAllModels(false);
+    beforeAllModels.current = undefined;
     setSelected(provider.catalog.map((entry) => entry.id));
     setRoles(
       Object.fromEntries(provider.catalog.map((entry) => [entry.id, entry.roles ?? []])) as Record<
@@ -832,7 +855,15 @@ function ConfigureModelsDialog({
                   checked={allModels}
                   onCheckedChange={(checked) => {
                     setAllModels(checked);
-                    if (!checked) setSelected(available);
+                    if (checked) {
+                      beforeAllModels.current = selected;
+                      return;
+                    }
+                    // Without a remembered selection the switch was already on
+                    // when the dialog opened, and everything shown is what the
+                    // admin has agreed to.
+                    setSelected(beforeAllModels.current ?? available);
+                    beforeAllModels.current = undefined;
                   }}
                 />
               }
@@ -901,10 +932,15 @@ function ConfigureModelsDialog({
           </div>
         </div>
         <DialogFooter>
+          {fetching ? (
+            <p className="mr-auto text-meta text-muted-foreground">
+              Reading the provider's model list… saving now would store only what is already here.
+            </p>
+          ) : null}
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={save.isPending} onClick={() => save.mutate()}>
+          <Button disabled={fetching || save.isPending} onClick={() => save.mutate()}>
             {save.isPending ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>

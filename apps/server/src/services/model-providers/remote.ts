@@ -161,6 +161,9 @@ async function listModels(
   try {
     return { ok: true, latencyMs, body: await response.json() };
   } catch {
+    // Parsing consumes the stream, so this is belt and braces — every failure
+    // branch here leaves the socket released, and none is left to inference.
+    await discard(response);
     return {
       ok: false,
       reason: "The provider answered with something other than JSON, so its models are unreadable.",

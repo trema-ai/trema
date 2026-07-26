@@ -144,6 +144,94 @@ integration("model provider registry", () => {
     ).rejects.toThrow(/absolute URL/);
   });
 
+  it("normalizes a base URL and refuses one a request path cannot be appended to", async () => {
+    const org = await createOrg();
+
+    // Every caller builds `${baseUrl}/models`, so a query or fragment would end
+    // up in the middle of the path.
+    for (const baseUrl of [
+      "https://models.example.test/v1?tenant=acme",
+      "https://models.example.test/v1#anchor",
+    ]) {
+      await expect(
+        call(
+          modelProvidersRouter.providers.put,
+          { ...openAiCompatible, name: "primary", baseUrl, credential: "the-secret" },
+          { context: org.context },
+        ),
+      ).rejects.toThrow(/query or fragment/);
+    }
+
+    // The base URL is read back in full, so it must not be a place a secret can live.
+    await expect(
+      call(
+        modelProvidersRouter.providers.put,
+        {
+          ...openAiCompatible,
+          name: "primary",
+          baseUrl: "https://user:secret-token@models.example.test/v1",
+          credential: "the-secret",
+        },
+        { context: org.context },
+      ),
+    ).rejects.toThrow(/cannot carry credentials/);
+
+    const trimmed = await call(
+      modelProvidersRouter.providers.put,
+      {
+        ...openAiCompatible,
+        name: "primary",
+        baseUrl: "https://models.example.test/v1//",
+        credential: "the-secret",
+      },
+      { context: org.context },
+    );
+    expect(trimmed.baseUrl).toBe("https://models.example.test/v1");
+
+    // A model server on the same host is plain http, and stays allowed.
+    const local = await call(
+      modelProvidersRouter.providers.put,
+      {
+        name: "local",
+        protocol: "openai_compatible",
+        baseUrl: "http://localhost:11434/v1/",
+        credentialMode: "none",
+      },
+      { context: org.context },
+    );
+    expect(local.baseUrl).toBe("http://localhost:11434/v1");
+  });
+
+  it("refuses to create a provider whose name is taken, credential and all", async () => {
+    const org = await createOrg();
+
+    const created = await call(
+      modelProvidersRouter.providers.create,
+      { ...openAiCompatible, name: "primary", label: "First", credential: "first-secret" },
+      { context: org.context },
+    );
+    expect(created).toMatchObject({ name: "primary", label: "First" });
+
+    // The unique index answers, not a read: two admins creating the same
+    // provider at once cannot both believe they won.
+    await expect(
+      call(
+        modelProvidersRouter.providers.create,
+        { ...openAiCompatible, name: "primary", label: "Second", credential: "second-secret" },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const kept = await call(
+      modelProvidersRouter.providers.get,
+      { name: "primary" },
+      { context: org.context },
+    );
+    expect(kept.label).toBe("First");
+    const endpoints = await resolveEndpoints(db, org.org.id, { masterKey });
+    expect(endpoints.primary).toMatchObject({ apiKey: "first-secret" });
+  });
+
   it("refuses a catalog that lists one model twice", async () => {
     const org = await createOrg();
 
@@ -495,6 +583,13 @@ integration("model provider registry", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
       call(
+        modelProvidersRouter.providers.create,
+        { ...openAiCompatible, name: "primary", credential: "primary-secret" },
+        { context },
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      call(
         modelProvidersRouter.providers.put,
         { ...openAiCompatible, name: "primary", credential: "primary-secret" },
         { context },
@@ -509,21 +604,23 @@ integration("model provider registry", () => {
     expect(presets.length).toBeGreaterThan(0);
     for (const preset of presets) {
       expect(preset.protocol).toBe("openai_compatible");
-      expect(() => new URL(preset.baseUrl)).not.toThrow();
+      const parsed = new URL(preset.baseUrl);
+      // Presets are stored verbatim, so they carry the normalized form a
+      // request path can be appended to.
+      expect(parsed.search).toBe("");
+      expect(parsed.hash).toBe("");
+      expect(preset.baseUrl.endsWith("/")).toBe(false);
     }
     // The screen needs both shapes: a keyed vendor and an endpoint on the host.
     expect(presets.some((preset) => preset.credentialMode === "api_key")).toBe(true);
     expect(presets.some((preset) => preset.credentialMode === "none")).toBe(true);
-    // A preset a role can be assigned from, without the admin typing a model id.
-    expect(
-      presets.some((preset) => preset.catalog.some((entry) => entry.roles?.includes("embed"))),
-    ).toBe(true);
 
-    // A preset is data the API hands over, so storing one is an ordinary put.
+    // A preset is data the API hands over, so storing one is an ordinary create.
+    // It brings no models: those are read from the provider afterwards.
     const preset = presets[0];
     if (!preset) throw new Error("A preset is required");
     const created = await call(
-      modelProvidersRouter.providers.put,
+      modelProvidersRouter.providers.create,
       {
         name: preset.name,
         label: preset.label,
@@ -531,11 +628,11 @@ integration("model provider registry", () => {
         baseUrl: preset.baseUrl,
         credentialMode: preset.credentialMode,
         credential: preset.credentialMode === "api_key" ? "preset-secret" : null,
-        catalog: preset.catalog,
       },
       { context: org.context },
     );
-    expect(created.catalog).toEqual(preset.catalog);
+    expect(created).toMatchObject({ name: preset.name, baseUrl: preset.baseUrl });
+    expect(created.catalog).toEqual([]);
   });
 
   describe("health probe", () => {

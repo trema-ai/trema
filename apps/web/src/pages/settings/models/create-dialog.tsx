@@ -24,7 +24,6 @@ import {
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
-  type CatalogEntry,
   credentialModeLabel,
   type ModelCredentialMode,
   type ModelProtocol,
@@ -39,7 +38,6 @@ const customPreset: ModelProviderPreset = {
   protocol: "openai_compatible",
   baseUrl: "",
   credentialMode: "api_key",
-  catalog: [],
 };
 
 /** Keeps a suggested name unique without making the admin discover the clash. */
@@ -71,7 +69,6 @@ export function CreateProviderDialog({
   const [baseUrl, setBaseUrl] = useState("");
   const [credentialMode, setCredentialMode] = useState<ModelCredentialMode>("api_key");
   const [credential, setCredential] = useState("");
-  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
 
   useEffect(() => {
     if (open) return;
@@ -87,23 +84,21 @@ export function CreateProviderDialog({
     setBaseUrl(preset.baseUrl);
     setCredentialMode(preset.credentialMode);
     setCredential("");
-    setCatalog(preset.catalog);
   }
 
-  // A put is an upsert, so a name already in the registry would replace that
-  // provider's credential and catalog rather than add a new one.
+  // The server refuses a name already in the registry; this only says so before
+  // the round trip, and cannot be the guarantee — two admins can race it.
   const taken = existingNames.includes(name.trim());
 
   const create = useMutation({
     mutationFn: () =>
-      rpcClient.modelProviders.providers.put({
+      rpcClient.modelProviders.providers.create({
         name: name.trim(),
         label: label.trim() || name.trim(),
         protocol,
         baseUrl: baseUrl.trim(),
         credentialMode,
         credential: credentialMode === "api_key" ? credential : null,
-        catalog,
       }),
     onSuccess: (provider) => {
       toast.success(`${provider.label} added`);
@@ -275,12 +270,10 @@ export function CreateProviderDialog({
                   </p>
                 </div>
               ) : null}
-              {chosen.catalog.length > 0 ? (
-                <p className="text-meta text-muted-foreground">
-                  {chosen.catalog.length} models come with this preset. Edit the list on the
-                  provider page.
-                </p>
-              ) : null}
+              <p className="text-meta text-muted-foreground">
+                Adding it opens the provider page, where its models are read from the provider and
+                picked.
+              </p>
             </div>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setChosen(undefined)}>

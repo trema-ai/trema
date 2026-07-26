@@ -34,7 +34,6 @@ export type ModelProviderPreset = {
   baseUrl: string;
   credentialMode: ModelCredentialMode;
   icon?: string | undefined;
-  catalog: CatalogEntry[];
 };
 
 export type RemoteModels =

@@ -71,6 +71,14 @@ export class ModelProviderValidationError extends Error {
   }
 }
 
+/** The name a create asked for is taken. Raised by the unique index, not by a prior read. */
+export class ModelProviderAlreadyExistsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelProviderAlreadyExistsError";
+  }
+}
+
 /** Nothing in the registry answers to what the caller named — a provider or a role. */
 export class ModelProviderNotFoundError extends Error {
   constructor(message: string) {
@@ -121,18 +129,34 @@ function normalizeCatalog(catalog: ModelCatalogEntry[]): ModelCatalogEntry[] {
   return parsed;
 }
 
+/**
+ * The stored form every caller appends a path to (`${baseUrl}/models`). String
+ * concatenation is the whole reason this is strict: a query or fragment would
+ * land in the middle of the request path, and a trailing slash would double up.
+ * Normalizing once at write time keeps the read paths plain.
+ */
 function normalizeBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
   let parsed: URL;
   try {
-    parsed = new URL(trimmed);
+    parsed = new URL(baseUrl.trim());
   } catch {
     throw new ModelProviderValidationError("Provider base URL must be an absolute URL");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new ModelProviderValidationError("Provider base URL must be an http or https URL");
   }
-  return trimmed;
+  if (parsed.search !== "" || parsed.hash !== "") {
+    throw new ModelProviderValidationError("The base URL cannot carry a query or fragment");
+  }
+  // The base URL is read back in full, so a secret inside it would be readable;
+  // headers and the credential field get write-only treatment instead.
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new ModelProviderValidationError(
+      "The base URL cannot carry credentials. Store a token as the credential or a header instead",
+    );
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 /**
@@ -211,6 +235,27 @@ export interface PutModelProviderInput {
   /** Omit to keep the stored catalog; `null` clears it. */
   catalog?: ModelCatalogEntry[] | null;
   masterKey?: string;
+  /**
+   * What a name already in the registry means. `reject` refuses it through the
+   * unique index rather than the read above, so two admins creating the same
+   * provider at once cannot both win.
+   */
+  onExisting?: "replace" | "reject";
+}
+
+/** The insert that lets the unique index answer, rather than the read before it. */
+async function createRow(
+  db: RegistryClient,
+  data: Prisma.ModelProviderUncheckedCreateInput,
+): Promise<ModelProvider> {
+  try {
+    return await db.modelProvider.create({ data });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new ModelProviderAlreadyExistsError(`A provider named ${data.name} already exists`);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -268,29 +313,24 @@ export async function putProvider(
         ? Prisma.DbNull
         : normalizeCatalog(input.catalog);
 
-  const provider = await db.modelProvider.upsert({
-    where: { orgId_name: { orgId: input.orgId, name } },
-    create: {
-      orgId: input.orgId,
-      name,
-      label,
-      protocol: input.protocol,
-      baseUrl,
-      credentialMode,
-      ...(headersJson === undefined ? {} : { headersJson }),
-      ...(credentialCiphertext === undefined ? {} : { credentialCiphertext }),
-      ...(catalogJson === undefined ? {} : { catalogJson }),
-    },
-    update: {
-      label,
-      protocol: input.protocol,
-      baseUrl,
-      credentialMode,
-      ...(headersJson === undefined ? {} : { headersJson }),
-      ...(credentialCiphertext === undefined ? {} : { credentialCiphertext }),
-      ...(catalogJson === undefined ? {} : { catalogJson }),
-    },
-  });
+  const written = {
+    label,
+    protocol: input.protocol,
+    baseUrl,
+    credentialMode,
+    ...(headersJson === undefined ? {} : { headersJson }),
+    ...(credentialCiphertext === undefined ? {} : { credentialCiphertext }),
+    ...(catalogJson === undefined ? {} : { catalogJson }),
+  };
+
+  const provider =
+    input.onExisting === "reject"
+      ? await createRow(db, { orgId: input.orgId, name, ...written })
+      : await db.modelProvider.upsert({
+          where: { orgId_name: { orgId: input.orgId, name } },
+          create: { orgId: input.orgId, name, ...written },
+          update: written,
+        });
   log.info("Model provider saved", {
     providerName: provider.name,
     protocol: provider.protocol,
