@@ -61,7 +61,8 @@ function withOffered(entry: CatalogEntry, offered: boolean): CatalogEntry {
   };
 }
 
-export function ModelsSection({
+/** One row of the Models card: what is on offer, and the way to change it. */
+export function AvailableModelsRow({
   providers,
   onChanged,
 }: {
@@ -73,34 +74,31 @@ export function ModelsSection({
   const summary =
     catalog.length === 0
       ? providers.length === 0
-        ? "No models yet. Add a provider and its list is read from the provider itself."
-        : "No models yet. Refresh a provider from its page to read what it serves."
+        ? "Add a provider and its list is read from the provider itself."
+        : "Refresh a provider from its page to read what it serves."
       : `${offered} of ${catalog.length} offered in the model picker.`;
 
   return (
-    <section data-slot="settings-section">
-      <h3 className="text-chrome font-medium text-foreground">Models</h3>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-md border bg-card px-4 py-3.5">
-        <p className="min-w-0 text-meta text-muted-foreground">{summary}</p>
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button size="sm" variant="outline" disabled={catalog.length === 0}>
-              Select models
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="flex max-h-[80svh] flex-col gap-0 p-0 sm:max-w-2xl">
-            <DialogHeader className="px-4 pt-4 pb-3">
-              <DialogTitle>Models</DialogTitle>
-              <DialogDescription>
-                Select the models offered in the model picker. A role can name any model, selected
-                or not.
-              </DialogDescription>
-            </DialogHeader>
-            <ModelPicker providers={providers} onChanged={onChanged} />
-          </DialogContent>
-        </Dialog>
-      </div>
-    </section>
+    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
+      <p className="min-w-0 text-meta text-muted-foreground">{summary}</p>
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button size="sm" variant="outline" disabled={catalog.length === 0}>
+            Select models
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="flex max-h-[80svh] flex-col gap-0 p-0 sm:max-w-2xl">
+          <DialogHeader className="px-4 pt-4 pb-3">
+            <DialogTitle>Models</DialogTitle>
+            <DialogDescription>
+              Select the models offered in the model picker. A role can name any model, selected or
+              not.
+            </DialogDescription>
+          </DialogHeader>
+          <ModelPicker providers={providers} onChanged={onChanged} />
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 

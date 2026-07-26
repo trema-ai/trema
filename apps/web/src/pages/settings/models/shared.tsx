@@ -103,35 +103,6 @@ const embedRole: RoleDescription = {
 /** The roles the registry assigns. */
 export const roleDescriptions: RoleDescription[] = [turnsRole, utilityRole, embedRole];
 
-/** What a model is asked to produce. One tab on the models screen each. */
-export type Modality = {
-  id: string;
-  label: string;
-  roles: RoleDescription[];
-};
-
-/**
- * The grouping the screen reads roles through. It is a reading of the role
- * enum, not a second concept: the server knows roles, and image or voice
- * arrives as a role there and an entry here.
- */
-const completions: Modality = {
-  id: "completions",
-  label: "Completions",
-  roles: [turnsRole, utilityRole],
-};
-
-const embeddings: Modality = {
-  id: "embeddings",
-  label: "Embeddings",
-  roles: [embedRole],
-};
-
-export const modalities: Modality[] = [completions, embeddings];
-
-/** Where the screen opens, and where a tab nobody recognizes lands. */
-export const defaultModality: string = completions.id;
-
 export function protocolLabel(protocol: string) {
   const labels: Record<string, string> = { openai_compatible: "OpenAI-compatible" };
   return labels[protocol] ?? protocol.replaceAll("_", " ");

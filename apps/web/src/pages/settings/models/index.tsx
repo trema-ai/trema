@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, ChevronDown, Plus, X } from "lucide-react";
+import { Boxes, ChevronDown, Plus } from "lucide-react";
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
@@ -27,23 +27,21 @@ import {
   CommandList,
 } from "#web/components/ui/command.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "#web/components/ui/popover.tsx";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
-import { ModelsSection } from "#web/pages/settings/models/catalog.tsx";
+import { AvailableModelsRow } from "#web/pages/settings/models/catalog.tsx";
 import { CreateProviderDialog } from "#web/pages/settings/models/create-dialog.tsx";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
   type CatalogEntry,
   type ChainEntry,
-  defaultModality,
   type IndexStatus,
   type ModelProvider,
   messageFrom,
-  modalities,
   modelDisplayName,
   protocolLabel,
   type RoleDefault,
   type RoleDescription,
+  roleDescriptions,
 } from "#web/pages/settings/models/shared.tsx";
 
 /** The embedding role rebuilds the index when it changes; the others just save. */
@@ -52,14 +50,9 @@ const embedCardProps = { reindexes: true };
 export function SettingsModelsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
   const providers = useQuery(orpc.modelProviders.providers.list.queryOptions({}));
   const defaults = useQuery(orpc.modelProviders.defaults.list.queryOptions({}));
   const [adding, setAdding] = useState(false);
-  const requested = searchParams.get("tab");
-  // A link naming a tab this build does not have opens the default one rather
-  // than a page with nothing on it.
-  const tab = modalities.find((modality) => modality.id === requested)?.id ?? defaultModality;
   const providerRows = (providers.data ?? []) as ModelProvider[];
   const defaultRows = (defaults.data ?? []) as RoleDefault[];
   const error = providers.error ?? defaults.error;
@@ -70,17 +63,6 @@ export function SettingsModelsPage() {
       queryClient.invalidateQueries({ queryKey: orpc.modelProviders.providers.list.key() }),
       queryClient.invalidateQueries({ queryKey: orpc.modelProviders.defaults.list.key() }),
     ]);
-  }
-
-  function selectTab(next: string) {
-    setSearchParams(
-      (current) => {
-        const params = new URLSearchParams(current);
-        params.set("tab", next);
-        return params;
-      },
-      { replace: true },
-    );
   }
 
   return (
@@ -129,31 +111,28 @@ export function SettingsModelsPage() {
               )}
             </div>
           </section>
-          <ModelsSection providers={providerRows} onChanged={invalidate} />
-          <Tabs value={tab} onValueChange={selectTab}>
-            <TabsList className="mb-2">
-              {modalities.map((modality) => (
-                <TabsTrigger key={modality.id} value={modality.id}>
-                  {modality.label}
-                </TabsTrigger>
+          <section data-slot="settings-section">
+            <h3 className="text-chrome font-medium text-foreground">Available models</h3>
+            <div className="mt-2 rounded-md border bg-card">
+              <AvailableModelsRow providers={providerRows} onChanged={invalidate} />
+            </div>
+          </section>
+          <section data-slot="settings-section">
+            <h3 className="text-chrome font-medium text-foreground">Default models</h3>
+            <div className="mt-2 divide-y rounded-md border bg-card">
+              {roleDescriptions.map((role) => (
+                <RoleCard
+                  key={role.role}
+                  role={role}
+                  chain={defaultRows.find((entry) => entry.role === role.role)?.chain ?? []}
+                  providers={providerRows}
+                  onChanged={invalidate}
+                  {...(role.role === "embed" ? embedCardProps : {})}
+                />
               ))}
-            </TabsList>
-            {modalities.map((modality) => (
-              <TabsContent key={modality.id} value={modality.id} className="space-y-3">
-                {modality.roles.map((role) => (
-                  <RoleCard
-                    key={role.role}
-                    role={role}
-                    chain={defaultRows.find((entry) => entry.role === role.role)?.chain ?? []}
-                    providers={providerRows}
-                    onChanged={invalidate}
-                    {...(role.role === "embed" ? embedCardProps : {})}
-                  />
-                ))}
-                {modality.id === "embeddings" ? <EmbeddingIndexCard /> : null}
-              </TabsContent>
-            ))}
-          </Tabs>
+              <EmbeddingIndexCard />
+            </div>
+          </section>
         </div>
       )}
       <CreateProviderDialog
@@ -243,7 +222,7 @@ function EmbeddingIndexCard() {
   });
 
   return (
-    <div className="rounded-md border bg-card">
+    <>
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3.5">
         <div className="min-w-0">
           <p className="text-chrome font-medium">Index</p>
@@ -280,7 +259,7 @@ function EmbeddingIndexCard() {
           </p>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -315,23 +294,24 @@ function RoleCard({
     row.catalog.map((entry) => ({ provider: row, entry })),
   );
 
+  // A role is changed, never cleared: a deployment that had a model and now has
+  // none is a worse state than one nobody configured, and nothing here should
+  // walk an organization into it.
   const save = useMutation({
-    mutationFn: async (next?: ChainEntry) => {
-      if (next === undefined) {
-        await rpcClient.modelProviders.defaults.delete({ role: role.role });
-        return undefined;
-      }
+    mutationFn: async (next: ChainEntry) => {
       await rpcClient.modelProviders.defaults.put({ role: role.role, chain: [next] });
       // The index is only as good as the model that wrote it, so the rebuild
       // rides along with the change rather than waiting to be remembered.
       return reindexes ? await rpcClient.items.reindex({}) : undefined;
     },
-    onSuccess: async (result, next) => {
+    onSuccess: async (result) => {
       await onChanged();
       await queryClient.invalidateQueries({ queryKey: orpc.items.indexStatus.key() });
-      if (next === undefined) toast.success(`${role.label} unassigned`);
-      else if (result === undefined) toast.success(`${role.label} saved`);
-      else toast.success(`${role.label} saved, ${countFormat.format(result.embedded)} embedded`);
+      toast.success(
+        result === undefined
+          ? `${role.label} saved`
+          : `${role.label} saved, ${countFormat.format(result.embedded)} embedded`,
+      );
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -342,7 +322,7 @@ function RoleCard({
       : `${model ? modelDisplayName(model) : assigned.modelId} on ${provider?.label ?? assigned.providerName}`;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-card px-4 py-3.5">
+    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
       <div className="min-w-0">
         <p className="text-chrome font-medium">{role.label}</p>
         <p className="mt-0.5 text-meta text-muted-foreground">{role.description}</p>
@@ -364,17 +344,6 @@ function RoleCard({
             choices={choices}
             onPick={(entry) => (reindexes ? setPending(entry) : save.mutate(entry))}
           />
-        )}
-        {assigned === undefined ? null : (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={`Unassign ${role.label}`}
-            disabled={save.isPending}
-            onClick={() => save.mutate(undefined)}
-          >
-            <X />
-          </Button>
         )}
       </div>
       <AlertDialog

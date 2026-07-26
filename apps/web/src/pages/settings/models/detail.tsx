@@ -281,7 +281,7 @@ function CredentialSection({
         description={
           keyed
             ? "Requests carry a bearer key."
-            : "Requests go unauthenticated, which suits an endpoint on a trusted network."
+            : "Requests go unauthenticated suitable for an endpoint on a trusted network."
         }
         control={
           <div className="flex items-center gap-3">
@@ -334,7 +334,7 @@ function CredentialSection({
                   result.modelCount === undefined ? "" : `, listing ${result.modelCount} models`
                 }.`
               : result.reason
-            : "One authenticated call, run when you ask for it. Nothing polls the provider."
+            : ""
         }
         control={
           <Button variant="outline" disabled={probe.isPending} onClick={() => probe.mutate()}>
@@ -376,17 +376,14 @@ function HeadersSection({
 }) {
   const [editing, setEditing] = useState(false);
   return (
-    <SettingsSection
-      title="Extra headers"
-      description="Sent with every request to this provider. Names are shown; values get the credential's treatment and are never returned."
-    >
+    <SettingsSection title="Extra headers">
       <SettingRow
         label={
           provider.headerNames.length === 0 ? "No extra headers" : provider.headerNames.join(", ")
         }
         description={
           provider.headerNames.length === 0
-            ? "Most providers need none. A gateway may want a tenant or routing header."
+            ? ""
             : "Replacing the set means entering every value again, since the stored ones cannot be read."
         }
         control={
@@ -554,7 +551,6 @@ function ModelsSection({
   provider: ModelProvider;
   onChanged: () => Promise<void>;
 }) {
-  const navigate = useNavigate();
   const [result, setResult] = useState<CatalogRefresh>();
   // On demand only: providers rate-limit, so nothing reads a model list in the
   // background or on a page view.
@@ -572,13 +568,13 @@ function ModelsSection({
   return (
     <SettingsSection
       title="Models"
-      description="What this provider says it serves, as of the last refresh."
+      description="Models served by this provider, as of the last refresh."
     >
       <SettingRow
         label={`${count} model${count === 1 ? "" : "s"}`}
         description={
           result === undefined
-            ? "Reading the list again picks up what the provider has added, and drops what it no longer offers. A model given a role, a label, or a role default that names it is kept either way."
+            ? ""
             : result.ok
               ? `Answered in ${result.latencyMs} ms. ${result.added} added, ${result.removed} dropped.`
               : result.reason
@@ -588,9 +584,6 @@ function ModelsSection({
             <Button variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
               <RefreshCw className={refresh.isPending ? "animate-spin" : ""} />
               {refresh.isPending ? "Reading…" : "Refresh models"}
-            </Button>
-            <Button variant="ghost" onClick={() => navigate("/settings/models")}>
-              Open the models list
             </Button>
           </div>
         }
