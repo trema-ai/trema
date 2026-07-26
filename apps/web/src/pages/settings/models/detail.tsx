@@ -896,7 +896,7 @@ function ConfigureModelsDialog({
           ) : (
             <div className="space-y-4">
               <ModelGroup
-                heading="Models"
+                heading="Completion models"
                 ids={chatModels}
                 stored={stored}
                 listed={listed}

@@ -79,12 +79,7 @@ const utilityRole: RoleDescription = {
   unassigned: "No model assigned. Nothing calls this role yet.",
 };
 
-/**
- * The embedding role, kept out of the matrix below. It is assigned the same
- * way as the others; what differs is the cost of changing it, which is why the
- * screen gives it a section of its own.
- */
-export const embedRole: RoleDescription = {
+const embedRole: RoleDescription = {
   role: "embed",
   label: "Embedding model",
   description: "Vectors for memory retrieval and ingestion.",
@@ -94,8 +89,39 @@ export const embedRole: RoleDescription = {
 /** The roles the registry assigns, and what an unassigned one costs. */
 export const roleDescriptions: RoleDescription[] = [turnsRole, utilityRole, embedRole];
 
-/** The roles the assignment matrix edits. Embeddings is assigned in its own section. */
-export const matrixRoles: RoleDescription[] = [turnsRole, utilityRole];
+/** What a model is asked to produce. One tab on the models screen each. */
+export type Modality = {
+  id: string;
+  label: string;
+  description: string;
+  roles: RoleDescription[];
+};
+
+/**
+ * The grouping the screen reads roles through. It is a reading of the role
+ * enum, not a second concept: the server knows roles, and image or voice
+ * arrives as a role there and an entry here.
+ */
+const completions: Modality = {
+  id: "completions",
+  label: "Completions",
+  description:
+    "Each role resolves down its list until a provider answers, so a second entry is a fallback.",
+  roles: [turnsRole, utilityRole],
+};
+
+const embeddings: Modality = {
+  id: "embeddings",
+  label: "Embeddings",
+  description:
+    "Memory retrieval searches text and vectors together. The vectors come from this model, which resolves down its list like any other role.",
+  roles: [embedRole],
+};
+
+export const modalities: Modality[] = [completions, embeddings];
+
+/** Where the screen opens, and where a tab nobody recognizes lands. */
+export const defaultModality: string = completions.id;
 
 export function protocolLabel(protocol: string) {
   const labels: Record<string, string> = { openai_compatible: "OpenAI-compatible" };

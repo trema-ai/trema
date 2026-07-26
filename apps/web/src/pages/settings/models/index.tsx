@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Boxes, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
 import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "#web/components/ui/select.tsx";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { CreateProviderDialog } from "#web/pages/settings/models/create-dialog.tsx";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
@@ -24,9 +25,9 @@ import {
   type CatalogEntry,
   type ChainEntry,
   credentialModeLabel,
-  embedRole,
+  defaultModality,
   type IndexStatus,
-  matrixRoles,
+  modalities,
   type ModelProvider,
   messageFrom,
   modelDisplayName,
@@ -38,12 +39,28 @@ import {
   servesRole,
 } from "#web/pages/settings/models/shared.tsx";
 
+/** What the embedding picker needs and the completion roles do not. */
+const embedCardProps = {
+  note: "The model is part of the index: vectors written by an earlier one stop counting the moment this changes, and search runs on text alone until the index is rebuilt below.",
+  narrow: {
+    keep: offeredForEmbedding,
+    label: "Show every model",
+    description:
+      "The list is narrowed to models chosen for embedding and models whose name reads that way. Neither test is reliable, so this widens it to everything a provider offers.",
+  },
+};
+
 export function SettingsModelsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const providers = useQuery(orpc.modelProviders.providers.list.queryOptions({}));
   const defaults = useQuery(orpc.modelProviders.defaults.list.queryOptions({}));
   const [adding, setAdding] = useState(false);
+  const requested = searchParams.get("tab");
+  // A link naming a tab this build does not have opens the default one rather
+  // than a page with nothing on it.
+  const tab = modalities.find((modality) => modality.id === requested)?.id ?? defaultModality;
   const providerRows = (providers.data ?? []) as ModelProvider[];
   const defaultRows = (defaults.data ?? []) as RoleDefault[];
   const error = providers.error ?? defaults.error;
@@ -56,11 +73,22 @@ export function SettingsModelsPage() {
     ]);
   }
 
+  function selectTab(next: string) {
+    setSearchParams(
+      (current) => {
+        const params = new URLSearchParams(current);
+        params.set("tab", next);
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
   return (
     <main className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
       <PageHeader
         title="Models"
-        description="The providers this organization can call, and which model serves each role."
+        description="The providers this organization can call, and which model serves each kind of work."
         actions={
           <Button onClick={() => setAdding(true)}>
             <Plus />
@@ -105,47 +133,31 @@ export function SettingsModelsPage() {
               )}
             </div>
           </section>
-          <section data-slot="settings-section">
-            <h3 className="text-chrome font-medium text-foreground">Role assignments</h3>
-            <p className="mt-0.5 text-meta text-muted-foreground">
-              Each role resolves down its list until a provider answers, so a second entry is a
-              fallback.
-            </p>
-            <div className="mt-2 space-y-3">
-              {matrixRoles.map((role) => (
-                <RoleCard
-                  key={role.role}
-                  role={role}
-                  chain={defaultRows.find((entry) => entry.role === role.role)?.chain ?? []}
-                  providers={providerRows}
-                  onChanged={invalidate}
-                />
+          <Tabs value={tab} onValueChange={selectTab}>
+            <TabsList className="mb-2">
+              {modalities.map((modality) => (
+                <TabsTrigger key={modality.id} value={modality.id}>
+                  {modality.label}
+                </TabsTrigger>
               ))}
-            </div>
-          </section>
-          <section data-slot="settings-section">
-            <h3 className="text-chrome font-medium text-foreground">Embeddings</h3>
-            <p className="mt-0.5 text-meta text-muted-foreground">
-              Memory retrieval searches text and vectors together. The vectors come from this model,
-              which is why it is assigned apart from the rest.
-            </p>
-            <div className="mt-2 space-y-3">
-              <RoleCard
-                role={embedRole}
-                chain={defaultRows.find((entry) => entry.role === "embed")?.chain ?? []}
-                providers={providerRows}
-                onChanged={invalidate}
-                note="The model is part of the index: vectors written by an earlier one stop counting the moment this changes, and search runs on text alone until the index is rebuilt below."
-                narrow={{
-                  keep: offeredForEmbedding,
-                  label: "Show every model",
-                  description:
-                    "The list is narrowed to models chosen for embedding and models whose name reads that way. Neither test is reliable, so this widens it to everything a provider offers.",
-                }}
-              />
-              <EmbeddingIndexCard />
-            </div>
-          </section>
+            </TabsList>
+            {modalities.map((modality) => (
+              <TabsContent key={modality.id} value={modality.id} className="space-y-3">
+                <p className="text-meta text-muted-foreground">{modality.description}</p>
+                {modality.roles.map((role) => (
+                  <RoleCard
+                    key={role.role}
+                    role={role}
+                    chain={defaultRows.find((entry) => entry.role === role.role)?.chain ?? []}
+                    providers={providerRows}
+                    onChanged={invalidate}
+                    {...(role.role === "embed" ? embedCardProps : {})}
+                  />
+                ))}
+                {modality.id === "embeddings" ? <EmbeddingIndexCard /> : null}
+              </TabsContent>
+            ))}
+          </Tabs>
         </div>
       )}
       <CreateProviderDialog
