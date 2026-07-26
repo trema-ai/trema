@@ -2,7 +2,7 @@ import type { ModelPort, ModelRef } from "@trema/harness";
 import { createSdkModelPort } from "@trema/models";
 
 import type { Database } from "#server/lib/db/index.js";
-import { resolveEndpoints, resolveRoleModel } from "#server/services/model-providers/index.js";
+import { resolveEndpoints, resolveRoleChain } from "#server/services/model-providers/index.js";
 
 /** A deployment with no configured model endpoint cannot run the loop. */
 export class ModelConfigurationError extends Error {
@@ -43,15 +43,19 @@ export async function resolveConfiguredModel(
     );
   }
 
-  const turns = await resolveRoleModel(db, orgId, "turns");
-  if (turns === undefined) {
+  const chain = await resolveRoleChain(db, orgId, "turns");
+  if (chain.length === 0) {
     throw new ModelConfigurationError(
       "No model is assigned to the turns role for this organization",
     );
   }
-  if (endpoints[turns.providerName] === undefined) {
+  // Walked against the resolved endpoints rather than against the rows, so a
+  // provider that exists but cannot be read falls through to the next entry
+  // instead of stopping the chain at itself.
+  const turns = chain.find((entry) => endpoints[entry.providerName] !== undefined);
+  if (turns === undefined) {
     throw new ModelConfigurationError(
-      `The turns role names no configured provider: ${turns.providerName}`,
+      `The turns role names no usable provider: ${chain.map((entry) => entry.providerName).join(", ")}`,
     );
   }
 

@@ -46,16 +46,18 @@ async function executeDeliveredRun(
     log.warn("Run execution skipped", { runId, reason: "unknown_run" });
     return { status: "unknown" };
   }
-  const { modelPort, model } = await resolveConfiguredModel(db, row.orgId, {
-    ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
-  });
   const services = createRunServices({
     db,
     env,
     orgId: row.orgId,
     engine: engineFor(row.orgId),
-    modelPort,
-    model,
+    // Resolved inside the driver's start guard, so an organization with no
+    // usable provider fails its run with a message rather than rejecting the
+    // task and retrying forever.
+    resolveModel: () =>
+      resolveConfiguredModel(db, row.orgId, {
+        ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
+      }),
   });
   if (services.driver === undefined) {
     throw new Error("The worker composed no run driver");

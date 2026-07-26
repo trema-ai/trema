@@ -283,6 +283,97 @@ integration("model provider registry", () => {
     expect(Object.keys(await resolveEndpoints(db, org.org.id, { masterKey }))).toEqual(["chosen"]);
   });
 
+  it("reports which headers are set without returning their values", async () => {
+    const org = await createOrg();
+
+    const created = await call(
+      modelProvidersRouter.providers.put,
+      {
+        ...openAiCompatible,
+        name: "primary",
+        credential: "the-secret",
+        headers: { authorization: "Bearer header-token", "x-tenant": "acme" },
+      },
+      { context: org.context },
+    );
+    // A header is a place to hide a token, so values get the credential's
+    // treatment rather than being echoed to every manage_models caller.
+    expect(created.headerNames).toEqual(["authorization", "x-tenant"]);
+    expect(JSON.stringify(created)).not.toContain("header-token");
+
+    const listed = await call(modelProvidersRouter.providers.list, {}, { context: org.context });
+    expect(JSON.stringify(listed)).not.toContain("header-token");
+
+    // Stored in full, though: the resolver still sends them.
+    const endpoints = await resolveEndpoints(db, org.org.id, { masterKey });
+    expect(endpoints.primary).toMatchObject({
+      headers: { authorization: "Bearer header-token", "x-tenant": "acme" },
+    });
+  });
+
+  it("skips a provider it cannot read and falls through to the next chain entry", async () => {
+    const org = await createOrg();
+    for (const name of ["primary", "secondary"]) {
+      await call(
+        modelProvidersRouter.providers.put,
+        { ...openAiCompatible, name, credential: `${name}-secret` },
+        { context: org.context },
+      );
+    }
+    await call(
+      modelProvidersRouter.defaults.put,
+      {
+        role: "turns",
+        chain: [
+          { providerName: "primary", modelId: "big-model" },
+          { providerName: "secondary", modelId: "small-model" },
+        ],
+      },
+      { context: org.context },
+    );
+
+    // What a master-key rotation leaves behind on a row nobody re-entered.
+    await db.modelProvider.update({
+      where: { orgId_name: { orgId: org.org.id, name: "primary" } },
+      data: { credentialCiphertext: "not-an-envelope" },
+    });
+
+    expect(Object.keys(await resolveEndpoints(db, org.org.id, { masterKey }))).toEqual([
+      "secondary",
+    ]);
+    const configured = await resolveConfiguredModel(db, org.org.id, { masterKey });
+    expect(configured.model).toEqual({ id: "small-model", provider: "secondary" });
+  });
+
+  it("leaves the registry empty when one seeded endpoint is unusable", async () => {
+    const org = await createOrg();
+
+    await seedModelProvidersFromEnv(
+      db,
+      envWith({
+        TREMA_MODEL_ENDPOINTS: JSON.stringify({
+          ...legacyEndpoints,
+          // A valid URL that is not an endpoint the resolver can call.
+          broken: {
+            protocol: "openai-compatible",
+            baseUrl: "ftp://models.example.test/v1",
+            apiKey: "broken-secret",
+          },
+        }),
+        TREMA_MODEL_ID: "big-model",
+        TREMA_MODEL_PROVIDER: "primary",
+      }),
+      org.org.id,
+    );
+
+    // All or nothing: a partial registry would read as configured on the next
+    // boot and strand the deployment with a subset of its providers.
+    expect(await db.modelProvider.count({ where: { orgId: org.org.id } })).toBe(0);
+    await expect(resolveConfiguredModel(db, org.org.id, { masterKey })).rejects.toBeInstanceOf(
+      ModelConfigurationError,
+    );
+  });
+
   it("keeps one organization's providers out of another's", async () => {
     const first = await createOrg("First Org");
     const second = await createOrg("Second Org");

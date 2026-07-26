@@ -1,8 +1,9 @@
-import type { ModelRef, RunRecord, ToolDef } from "@trema/harness";
+import type { RunRecord, ToolDef } from "@trema/harness";
 
 import type { Database } from "#server/lib/db/index.js";
 import { toSessionStanding } from "#server/services/runs/context.js";
 import { type RunExecutionPlan, RunNotStartableError } from "#server/services/runs/driver.js";
+import type { ConfiguredModel } from "#server/services/runs/models.js";
 import { renewSession } from "#server/services/sessions/index.js";
 
 /**
@@ -23,7 +24,12 @@ export function narrowTools(tools: ToolDef[], allowlist: readonly string[]): Too
 export interface SessionRunPlanOptions {
   db: Database;
   orgId: string;
-  model: ModelRef;
+  /**
+   * Reads the organization's model configuration. It runs per execution, inside
+   * the driver's start guard, so a deployment with no usable provider fails the
+   * run with a message instead of rejecting the task.
+   */
+  resolveModel: () => Promise<ConfiguredModel>;
   /** Hard cap on turns per run. */
   maxTurns?: number;
   /** Milliseconds a blocking elicitation stays resolvable. */
@@ -48,6 +54,7 @@ export function createSessionRunPlan(
     if (run.sessionId === undefined) {
       throw new RunNotStartableError(run.id, `run has no context session: ${run.id}`);
     }
+    const configured = await options.resolveModel();
     const [row, session] = await Promise.all([
       options.db.agentRun.findUnique({
         where: { orgId_id: { orgId: options.orgId, id: run.id } },
@@ -74,7 +81,8 @@ export function createSessionRunPlan(
     const sessionTools: ToolDef[] = [];
 
     return {
-      model: options.model,
+      model: configured.model,
+      modelPort: configured.modelPort,
       standing: toSessionStanding(session.standing),
       tools: narrowTools(sessionTools, row?.toolAllowlist ?? []),
       // The opening message is queued as steering, so the loop drains it at the

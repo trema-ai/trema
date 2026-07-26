@@ -78,6 +78,13 @@ function normalizeBaseUrl(baseUrl: string): string {
   return trimmed;
 }
 
+/**
+ * The registry's write surface, satisfied by both the client and a transaction.
+ * Seeding needs several writes to land or fail together; nothing here reaches
+ * for a client-only method.
+ */
+export type RegistryClient = Pick<Database, "modelProvider" | "modelDefault">;
+
 /** Reads a stored JSON column back through its schema, or throws if it drifted. */
 function parseJsonColumn<T>(schema: z.ZodType<T>, value: Prisma.JsonValue, label: string): T {
   const result = schema.safeParse(value);
@@ -107,7 +114,12 @@ export interface ModelProviderSummary {
   label: string;
   protocol: ModelProtocol;
   baseUrl: string;
-  headers?: Record<string, string>;
+  /**
+   * Which headers are set, not what they hold. Nothing stops an admin putting a
+   * bearer token in a custom header, so header values get the credential's
+   * treatment: written once, reported as presence thereafter.
+   */
+  headerNames: string[];
   credentialMode: ModelCredentialMode;
   hasCredential: boolean;
   catalog: ModelCatalogEntry[];
@@ -115,13 +127,12 @@ export interface ModelProviderSummary {
 }
 
 export function toProviderSummary(provider: ModelProvider): ModelProviderSummary {
-  const headers = providerHeaders(provider);
   return {
     name: provider.name,
     label: provider.label,
     protocol: provider.protocol,
     baseUrl: provider.baseUrl,
-    ...(headers === undefined ? {} : { headers }),
+    headerNames: Object.keys(providerHeaders(provider) ?? {}).sort(),
     credentialMode: provider.credentialMode,
     hasCredential: provider.credentialCiphertext !== null,
     catalog: providerCatalog(provider),
@@ -151,7 +162,7 @@ export interface PutModelProviderInput {
  * re-entering a key.
  */
 export async function putProvider(
-  db: Database,
+  db: RegistryClient,
   input: PutModelProviderInput,
 ): Promise<ModelProvider> {
   const name = input.name.trim();
@@ -272,7 +283,7 @@ export interface PutModelDefaultInput {
  * at write time; a later deletion degrades the chain rather than breaking it.
  */
 export async function putDefaults(
-  db: Database,
+  db: RegistryClient,
   input: PutModelDefaultInput,
 ): Promise<ModelDefault> {
   const chain = chainSchema.parse(input.chain);
@@ -328,6 +339,11 @@ export interface ResolveEndpointsOptions {
  * Resolves the organization's registry into the descriptor map `@trema/models`
  * accepts. This is the one function the run path calls: everything above it is
  * administration, and everything below it is transport.
+ *
+ * A provider whose stored state cannot be read — an undecryptable credential
+ * after a key rotation, a hand-edited JSON column — is dropped with a warning
+ * rather than failing the call. One unusable row must not take down the
+ * providers beside it, which is what lets a role's fallback chain work.
  */
 export async function resolveEndpoints(
   db: Database,
@@ -337,42 +353,59 @@ export async function resolveEndpoints(
   const providers = await db.modelProvider.findMany({ where: { orgId }, orderBy: { name: "asc" } });
   const endpoints: ModelEndpoints = {};
   for (const provider of providers) {
-    const headers = providerHeaders(provider);
-    const apiKey =
-      provider.credentialCiphertext === null
-        ? undefined
-        : decryptEnvelope<string>(provider.credentialCiphertext, options.masterKey);
-    endpoints[provider.name] = {
-      protocol: descriptorProtocols[provider.protocol],
-      baseUrl: provider.baseUrl,
-      ...(apiKey === undefined ? {} : { apiKey }),
-      ...(headers === undefined ? {} : { headers }),
-    };
+    try {
+      const headers = providerHeaders(provider);
+      const apiKey =
+        provider.credentialCiphertext === null
+          ? undefined
+          : decryptEnvelope<string>(provider.credentialCiphertext, options.masterKey);
+      endpoints[provider.name] = {
+        protocol: descriptorProtocols[provider.protocol],
+        baseUrl: provider.baseUrl,
+        ...(apiKey === undefined ? {} : { apiKey }),
+        ...(headers === undefined ? {} : { headers }),
+      };
+    } catch (error) {
+      log.warn("Model provider unusable", { providerName: provider.name, error });
+    }
   }
   return endpoints;
+}
+
+/** The role's ordered chain as stored, or an empty chain when the role has no row. */
+export async function resolveRoleChain(
+  db: Database,
+  orgId: string,
+  role: ModelRole,
+): Promise<ModelChainEntry[]> {
+  const row = await db.modelDefault.findUnique({ where: { orgId_role: { orgId, role } } });
+  return row ? defaultChain(row) : [];
 }
 
 /**
  * The first chain entry whose provider still exists, or undefined when the role
  * is unconfigured. Consumers decide what an unconfigured role means: turns
  * cannot run, embeddings fall back to lexical search.
+ *
+ * Callers that are about to reach the endpoint should walk the chain against a
+ * resolved `ModelEndpoints` instead, so a provider that exists but cannot be
+ * read falls through to the next entry.
  */
 export async function resolveRoleModel(
   db: Database,
   orgId: string,
   role: ModelRole,
 ): Promise<ModelChainEntry | undefined> {
-  const row = await db.modelDefault.findUnique({ where: { orgId_role: { orgId, role } } });
-  if (!row) return undefined;
+  const chain = await resolveRoleChain(db, orgId, role);
+  if (chain.length === 0) return undefined;
 
-  const chain = defaultChain(row);
   const providers = await db.modelProvider.findMany({
     where: { orgId, name: { in: chain.map((entry) => entry.providerName) } },
     select: { name: true },
   });
   const available = new Set(providers.map((provider) => provider.name));
   const entry = chain.find((candidate) => available.has(candidate.providerName));
-  if (entry === undefined && chain.length > 0) {
+  if (entry === undefined) {
     log.warn("Model role default resolves to no provider", { role });
   }
   return entry;

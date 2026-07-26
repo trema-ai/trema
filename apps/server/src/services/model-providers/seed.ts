@@ -73,35 +73,43 @@ async function seedOrg(db: Database, env: Environment, orgId: string): Promise<v
   if (endpoints === undefined) return;
 
   const masterKey = env.TREMA_CREDENTIAL_MASTER_KEY;
-  for (const [name, endpoint] of Object.entries(endpoints)) {
-    await putProvider(db, {
-      orgId,
-      name,
-      label: name,
-      protocol: "openai_compatible",
-      baseUrl: endpoint.baseUrl,
-      credentialMode: "api_key",
-      credential: endpoint.apiKey,
-      ...(endpoint.headers === undefined ? {} : { headers: endpoint.headers }),
-      ...(masterKey === undefined ? {} : { masterKey }),
-    });
-  }
-
+  const providerName =
+    env.TREMA_MODEL_ID === undefined ? undefined : seedProviderName(endpoints, env);
   if (env.TREMA_MODEL_ID === undefined) {
     log.warn("Model role default not seeded", { orgId, reason: "model_id_missing" });
-    return;
   }
-  const providerName = seedProviderName(endpoints, env);
-  if (providerName === undefined) return;
 
-  await putDefaults(db, {
-    orgId,
-    role: "turns",
-    chain: [{ providerName, modelId: env.TREMA_MODEL_ID }],
+  // One transaction for the whole seed. A rejected endpoint would otherwise
+  // leave a partial registry behind, and a partial registry is a configured
+  // registry as far as the next boot is concerned — which would strand the
+  // deployment with a subset of its providers and no way back.
+  await db.$transaction(async (transaction) => {
+    for (const [name, endpoint] of Object.entries(endpoints)) {
+      await putProvider(transaction, {
+        orgId,
+        name,
+        label: name,
+        protocol: "openai_compatible",
+        baseUrl: endpoint.baseUrl,
+        credentialMode: "api_key",
+        credential: endpoint.apiKey,
+        ...(endpoint.headers === undefined ? {} : { headers: endpoint.headers }),
+        ...(masterKey === undefined ? {} : { masterKey }),
+      });
+    }
+    if (providerName !== undefined && env.TREMA_MODEL_ID !== undefined) {
+      await putDefaults(transaction, {
+        orgId,
+        role: "turns",
+        chain: [{ providerName, modelId: env.TREMA_MODEL_ID }],
+      });
+    }
   });
+
   log.info("Model provider registry seeded from the environment", {
     orgId,
     providerCount: Object.keys(endpoints).length,
+    seededTurnsDefault: providerName !== undefined,
   });
 }
 

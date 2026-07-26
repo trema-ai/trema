@@ -52,10 +52,11 @@ const providerSchema = z
     label: z.string().describe("The provider's display name."),
     protocol: protocolSchema,
     baseUrl: z.string().describe("The base endpoint address, including the version path."),
-    headers: z
-      .record(z.string(), z.string())
-      .optional()
-      .describe("Extra headers sent with every request to this provider."),
+    headerNames: z
+      .array(z.string())
+      .describe(
+        "Which extra headers are sent with every request to this provider. The values are never returned: a header can hold a token, so it gets the credential's write-only treatment.",
+      ),
     credentialMode: credentialModeSchema,
     hasCredential: z
       .boolean()
@@ -171,7 +172,7 @@ const put = requireCapability("manage_models")
           .nullable()
           .optional()
           .describe(
-            "Extra headers sent with every request. Omit to keep the stored headers; send null to clear them.",
+            "Extra headers sent with every request, stored and never returned. Omit to keep the stored headers; send null to clear them.",
           ),
         credentialMode: credentialModeSchema.optional(),
         credential: z

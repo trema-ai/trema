@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { drainWorker, InFlightRuns } from "#server/services/runs/drain.js";
 import { createRunDriver, type RunExecutionPlan } from "#server/services/runs/driver.js";
 import { concurrencyKey, HatchetEngine } from "#server/services/runs/hatchet.js";
+import { ModelConfigurationError } from "#server/services/runs/models.js";
 import { narrowTools } from "#server/services/runs/plan.js";
 
 const now = "2026-07-19T12:00:00.000Z";
@@ -59,6 +60,7 @@ function fixture(turns = 1) {
   const plan = vi.fn(
     async (): Promise<RunExecutionPlan> => ({
       model: { id: "test/model" },
+      modelPort,
       standing: { instructions: "Be useful.", rules: [], skillIndex: [] },
       tools: [],
       threadMessages: [],
@@ -67,7 +69,6 @@ function fixture(turns = 1) {
   const driver = createRunDriver({
     store,
     lifecycle,
-    modelPort,
     toolExecutor: {
       execute: async (call) => ({
         callId: call.callId,
@@ -164,6 +165,25 @@ describe("run driver", () => {
       "error",
       "run-finished",
     ]);
+  });
+
+  it("records an unusable model configuration as a failed run, not a rejected task", async () => {
+    const subject = fixture();
+    const run = await queueRun(subject);
+    // The plan resolves the organization's model, so a registry with no usable
+    // provider reaches the driver here. A rejection would leave the run
+    // non-terminal and let the engine retry it forever.
+    subject.plan.mockRejectedValueOnce(
+      new ModelConfigurationError("No model is assigned to the turns role for this organization"),
+    );
+
+    const result = await subject.driver.execute(run.id);
+
+    expect(result).toEqual({
+      status: "start-failed",
+      error: "No model is assigned to the turns role for this organization",
+    });
+    expect(await subject.store.getRun(run.id)).toMatchObject({ state: "failed" });
   });
 
   it("resumes a parked run with the resume trigger", async () => {
