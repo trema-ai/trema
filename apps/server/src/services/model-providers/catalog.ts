@@ -73,6 +73,9 @@ export function mergeCatalog(input: CatalogMergeInput): ModelCatalogEntry[] {
   return merged.sort((left, right) => (left.id < right.id ? -1 : 1));
 }
 
+/** How many times a refresh re-merges before it gives up and says so. */
+const mergeAttempts = 3;
+
 /** What a refresh did, or the sentence explaining why it did nothing. */
 export type CatalogRefreshResult =
   | { ok: true; latencyMs: number; added: number; removed: number }
@@ -95,33 +98,47 @@ export async function refreshProviderCatalog(
   const listing = await fetchRemoteModels(db, orgId, name, options);
   if (!listing.ok) return listing;
 
-  const provider = await db.modelProvider.findUnique({ where: { orgId_name: { orgId, name } } });
-  if (!provider) throw new ModelProviderNotFoundError(`Model provider not found: ${name}`);
-  const stored = providerCatalog(provider);
-  const defaults = await listDefaults(db, orgId);
-  const pinned = new Set(
-    defaults.flatMap((entry) =>
-      entry.chain.filter((link) => link.providerName === name).map((link) => link.modelId),
-    ),
-  );
+  // The merge reads the stored catalog and writes it back, so an admin editing
+  // the same row in between would lose their edit. The write is conditional on
+  // the row not having moved since the read, and a row that moved is merged
+  // again against what is there now. The listing is already in hand, so a retry
+  // costs a query rather than another call to the provider.
+  for (let attempt = 0; attempt < mergeAttempts; attempt += 1) {
+    const provider = await db.modelProvider.findUnique({ where: { orgId_name: { orgId, name } } });
+    if (!provider) throw new ModelProviderNotFoundError(`Model provider not found: ${name}`);
+    const stored = providerCatalog(provider);
+    const defaults = await listDefaults(db, orgId);
+    const pinned = new Set(
+      defaults.flatMap((entry) =>
+        entry.chain.filter((link) => link.providerName === name).map((link) => link.modelId),
+      ),
+    );
 
-  const merged = mergeCatalog({ stored, listed: listing.models, pinned });
-  await db.modelProvider.update({
-    where: { orgId_name: { orgId, name } },
-    data: { catalogJson: normalizeCatalog(merged) },
-  });
+    const merged = mergeCatalog({ stored, listed: listing.models, pinned });
+    const written = await db.modelProvider.updateMany({
+      where: { orgId, name, updatedAt: provider.updatedAt },
+      data: { catalogJson: normalizeCatalog(merged) },
+    });
+    if (written.count === 0) continue;
 
-  const storedIds = new Set(stored.map((entry) => entry.id));
-  const mergedIds = new Set(merged.map((entry) => entry.id));
-  const added = merged.filter((entry) => !storedIds.has(entry.id)).length;
-  const removed = stored.filter((entry) => !mergedIds.has(entry.id)).length;
-  log.info("Model provider catalog refreshed", {
-    providerName: name,
-    modelCount: merged.length,
-    added,
-    removed,
-  });
-  return { ok: true, latencyMs: listing.latencyMs, added, removed };
+    const storedIds = new Set(stored.map((entry) => entry.id));
+    const mergedIds = new Set(merged.map((entry) => entry.id));
+    const added = merged.filter((entry) => !storedIds.has(entry.id)).length;
+    const removed = stored.filter((entry) => !mergedIds.has(entry.id)).length;
+    log.info("Model provider catalog refreshed", {
+      providerName: name,
+      modelCount: merged.length,
+      added,
+      removed,
+    });
+    return { ok: true, latencyMs: listing.latencyMs, added, removed };
+  }
+
+  log.warn("Model provider catalog refresh contended", { providerName: name });
+  return {
+    ok: false,
+    reason: "The provider was being edited at the same time. Try the refresh again.",
+  };
 }
 
 /**

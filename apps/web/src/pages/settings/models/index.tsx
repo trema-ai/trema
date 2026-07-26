@@ -47,6 +47,9 @@ import {
 /** The embedding role rebuilds the index when it changes; the others just save. */
 const embedCardProps = { reindexes: true };
 
+/** What a role assignment did: the rebuild it ran, or the one that would not run. */
+type SaveOutcome = { embedded?: number; rebuildError?: string };
+
 export function SettingsModelsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -284,10 +287,12 @@ function RoleCard({
   // Held while the confirmation is open, because rebuilding the index is the
   // expensive half of this change and the admin should agree to it first.
   const [pending, setPending] = useState<ChainEntry>();
-  // The registry stores an ordered chain and resolves down it. This screen
-  // assigns one model, which is a chain of one; a longer chain written through
-  // the API still resolves, and shows here as the entry that runs.
-  const assigned = chain[0];
+  // The registry stores an ordered chain and resolves down it, taking the first
+  // entry whose provider is still there. This screen assigns a chain of one, but
+  // a longer one written through the API resolves the same way, so the row shows
+  // the entry that would run rather than the head of the list.
+  const assigned =
+    chain.find((entry) => providers.some((row) => row.name === entry.providerName)) ?? chain[0];
   const provider = providers.find((row) => row.name === assigned?.providerName);
   const model = provider?.catalog.find((entry) => entry.id === assigned?.modelId);
   const choices = providers.flatMap((row) =>
@@ -298,22 +303,38 @@ function RoleCard({
   // none is a worse state than one nobody configured, and nothing here should
   // walk an organization into it.
   const save = useMutation({
-    mutationFn: async (next: ChainEntry) => {
+    mutationFn: async (next: ChainEntry): Promise<SaveOutcome> => {
       await rpcClient.modelProviders.defaults.put({ role: role.role, chain: [next] });
       // The index is only as good as the model that wrote it, so the rebuild
-      // rides along with the change rather than waiting to be remembered.
-      return reindexes ? await rpcClient.items.reindex({}) : undefined;
+      // rides along with the change rather than waiting to be remembered. It is
+      // reported rather than thrown: the assignment is already saved by now, and
+      // a failed rebuild is a different sentence from a failed save.
+      if (!reindexes) return {};
+      try {
+        const rebuilt = await rpcClient.items.reindex({});
+        return { embedded: rebuilt.embedded };
+      } catch (error) {
+        return { rebuildError: messageFrom(error) };
+      }
     },
-    onSuccess: async (result) => {
-      await onChanged();
-      await queryClient.invalidateQueries({ queryKey: orpc.items.indexStatus.key() });
+    onSuccess: (result) => {
+      if (result.rebuildError !== undefined) {
+        toast.error(`${role.label} saved, but the rebuild failed: ${result.rebuildError}`);
+        return;
+      }
       toast.success(
-        result === undefined
+        result.embedded === undefined
           ? `${role.label} saved`
           : `${role.label} saved, ${countFormat.format(result.embedded)} embedded`,
       );
     },
     onError: (error) => toast.error(messageFrom(error)),
+    // Reload either way. A rebuild that failed still left the assignment
+    // changed, and the index row is where that shows.
+    onSettled: async () => {
+      await onChanged();
+      await queryClient.invalidateQueries({ queryKey: orpc.items.indexStatus.key() });
+    },
   });
 
   const selected =

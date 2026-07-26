@@ -111,9 +111,11 @@ function ModelPicker({
 }) {
   const [search, setSearch] = useState("");
   const [providerName, setProviderName] = useState(allProviders);
-  // Which provider has a write in flight. Every edit replaces that provider's
-  // whole catalog, so a second edit on the same row set would race the first.
-  const [writing, setWriting] = useState<string>();
+  // Which providers have a write in flight. Every edit replaces that provider's
+  // whole catalog, so a second edit on the same row set would race the first —
+  // and writes to different providers overlap, so one name is not enough to
+  // know whose rows are still settling.
+  const [writing, setWriting] = useState<ReadonlySet<string>>(new Set());
 
   const scoped =
     providerName === allProviders
@@ -144,10 +146,15 @@ function ModelPicker({
   const write = useMutation({
     mutationFn: ({ provider, catalog }: { provider: ModelProvider; catalog: CatalogEntry[] }) =>
       rpcClient.modelProviders.providers.put({ ...descriptorOf(provider), catalog }),
-    onMutate: ({ provider }) => setWriting(provider.name),
+    onMutate: ({ provider }) => setWriting((current) => new Set(current).add(provider.name)),
     onSuccess: onChanged,
     onError: (error) => toast.error(messageFrom(error)),
-    onSettled: () => setWriting(undefined),
+    onSettled: (_result, _error, { provider }) =>
+      setWriting((current) => {
+        const next = new Set(current);
+        next.delete(provider.name);
+        return next;
+      }),
   });
 
   function toggle(row: ModelRow, offered: boolean) {
@@ -182,8 +189,11 @@ function ModelPicker({
         });
       }
     },
-    onSuccess: onChanged,
     onError: (error) => toast.error(messageFrom(error)),
+    // A batch is one write per provider, so a failure part-way leaves the
+    // earlier ones applied. Reload either way rather than leave the list
+    // showing a state the server has already moved past.
+    onSettled: onChanged,
   });
 
   const busy = write.isPending || setAll.isPending;
@@ -250,7 +260,7 @@ function ModelPicker({
             <ModelListRow
               key={[row.provider.name, row.entry.id].join("\u0000")}
               row={row}
-              busy={setAll.isPending || (write.isPending && writing === row.provider.name)}
+              busy={setAll.isPending || writing.has(row.provider.name)}
               onToggle={toggle}
             />
           ))
