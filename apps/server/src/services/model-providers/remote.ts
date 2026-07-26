@@ -4,16 +4,27 @@ import {
 } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
-import { resolveProviderEndpoint } from "#server/services/model-providers/index.js";
+import { resolveProviderTransport } from "#server/services/model-providers/index.js";
 
 /** What one probe learned. A failure carries a sentence an admin can act on. */
 export type ModelProviderProbeResult =
   | { ok: true; latencyMs: number; modelCount?: number }
   | { ok: false; reason: string };
 
+/** One model a provider listed, plus whatever capability it stated about it. */
+export interface RemoteModel {
+  id: string;
+  /**
+   * Whether the listing said this model answers with vectors. Absent when the
+   * listing said nothing a reader can trust, which is most of them: the
+   * OpenAI-compatible listing shape carries no capability field.
+   */
+  embedding?: boolean;
+}
+
 /** The models a provider says it serves, as it names them. */
 export type RemoteModelListResult =
-  | { ok: true; latencyMs: number; models: { id: string }[] }
+  | { ok: true; latencyMs: number; models: RemoteModel[] }
   | { ok: false; reason: string };
 
 /** Long enough for a cold gateway, short enough that the screen is not left waiting. */
@@ -90,9 +101,9 @@ async function listModels(
   options: RemoteCallOptions,
 ): Promise<ListingResult> {
   const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-  let endpoint: Awaited<ReturnType<typeof resolveProviderEndpoint>>;
+  let transport: Awaited<ReturnType<typeof resolveProviderTransport>>;
   try {
-    endpoint = await resolveProviderEndpoint(db, orgId, name, {
+    transport = await resolveProviderTransport(db, orgId, name, {
       ...(options.masterKey === undefined ? {} : { masterKey: options.masterKey }),
     });
   } catch (error) {
@@ -109,17 +120,22 @@ async function listModels(
     throw error;
   }
 
+  const { endpoint, listQuery } = transport;
   // The listing call each protocol answers cheapest. A new protocol member adds
   // its line here rather than a branch further down.
   const listUrl: Record<typeof endpoint.protocol, string> = {
     "openai-compatible": `${endpoint.baseUrl}/models`,
   };
+  // The stored query is the row's own, seeded by whatever preset created it, so
+  // no vendor is named here. The base URL carries none of its own — it is
+  // refused a query string at write time — which is what makes appending safe.
+  const query = new URLSearchParams(listQuery).toString();
 
   const started = performance.now();
   const call = options.fetch ?? globalThis.fetch;
   let response: Response;
   try {
-    response = await call(listUrl[endpoint.protocol], {
+    response = await call(`${listUrl[endpoint.protocol]}${query === "" ? "" : `?${query}`}`, {
       method: "GET",
       headers: {
         ...(endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` }),
@@ -179,6 +195,42 @@ function listedEntries(body: unknown): unknown[] | undefined {
 }
 
 /**
+ * The model categories a listing names, where it names any. Together documents
+ * this exact vocabulary on its `type` field; a value outside it — a gateway
+ * that writes `type: "model"` — is read as no statement at all rather than as
+ * "not an embedder".
+ */
+const modelTypes: Record<string, boolean> = {
+  chat: false,
+  language: false,
+  code: false,
+  image: false,
+  moderation: false,
+  rerank: false,
+  embedding: true,
+  embeddings: true,
+};
+
+/**
+ * What a listing entry says about producing vectors: true, false, or nothing.
+ *
+ * Two shapes carry it, and both are read in one pass rather than per vendor: a
+ * top-level `type` (Together) and `architecture.output_modalities`
+ * (OpenRouter). An unrecognized shape yields undefined — unknown, never "no" —
+ * so the screen falls back to reading the model's name, which is all the plain
+ * OpenAI-compatible listing offers.
+ */
+function embeddingHint(entry: Record<string, unknown>): boolean | undefined {
+  const modalities = (entry.architecture as { output_modalities?: unknown } | undefined)
+    ?.output_modalities;
+  if (Array.isArray(modalities) && modalities.every((value) => typeof value === "string")) {
+    return modalities.includes("embeddings");
+  }
+  const type = entry.type;
+  return typeof type === "string" ? modelTypes[type.toLowerCase()] : undefined;
+}
+
+/**
  * Asks a provider whether it is reachable and whether its credential still
  * works. The credential is spent on a transport header and never enters the
  * result; a credential the server cannot read is reported as a failed probe
@@ -222,19 +274,21 @@ export async function fetchRemoteModels(
     };
   }
 
-  const ids = new Set<string>();
+  const models = new Map<string, RemoteModel>();
   for (const entry of listed) {
-    const id = typeof entry === "object" && entry !== null ? (entry as { id?: unknown }).id : entry;
-    if (typeof id === "string" && id.trim().length > 0) ids.add(id.trim());
+    const shaped =
+      typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : undefined;
+    const id = shaped === undefined ? entry : shaped.id;
+    if (typeof id !== "string" || id.trim().length === 0) continue;
+    const hint = shaped === undefined ? undefined : embeddingHint(shaped);
+    models.set(id.trim(), { id: id.trim(), ...(hint === undefined ? {} : { embedding: hint }) });
   }
+  const sorted = [...models.values()].sort((left, right) => (left.id < right.id ? -1 : 1));
   log.info("Model provider models listed", {
     providerName: name,
     latencyMs: listing.latencyMs,
-    modelCount: ids.size,
+    modelCount: sorted.length,
+    embeddingCount: sorted.filter((model) => model.embedding === true).length,
   });
-  return {
-    ok: true,
-    latencyMs: listing.latencyMs,
-    models: [...ids].sort().map((id) => ({ id })),
-  };
+  return { ok: true, latencyMs: listing.latencyMs, models: sorted };
 }

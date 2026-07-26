@@ -9,6 +9,7 @@ import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import { Button } from "#web/components/ui/button.tsx";
+import { Checkbox } from "#web/components/ui/checkbox.tsx";
 import {
   Select,
   SelectContent,
@@ -20,15 +21,20 @@ import { orpc, rpcClient } from "#web/lib/api.ts";
 import { CreateProviderDialog } from "#web/pages/settings/models/create-dialog.tsx";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
+  type CatalogEntry,
   type ChainEntry,
   credentialModeLabel,
+  embedRole,
+  type IndexStatus,
+  matrixRoles,
   type ModelProvider,
   messageFrom,
   modelDisplayName,
+  offeredForEmbedding,
   type ProbeResult,
   protocolLabel,
   type RoleDefault,
-  roleDescriptions,
+  type RoleDescription,
   servesRole,
 } from "#web/pages/settings/models/shared.tsx";
 
@@ -106,7 +112,7 @@ export function SettingsModelsPage() {
               fallback.
             </p>
             <div className="mt-2 space-y-3">
-              {roleDescriptions.map((role) => (
+              {matrixRoles.map((role) => (
                 <RoleCard
                   key={role.role}
                   role={role}
@@ -115,6 +121,29 @@ export function SettingsModelsPage() {
                   onChanged={invalidate}
                 />
               ))}
+            </div>
+          </section>
+          <section data-slot="settings-section">
+            <h3 className="text-chrome font-medium text-foreground">Embeddings</h3>
+            <p className="mt-0.5 text-meta text-muted-foreground">
+              Memory retrieval searches text and vectors together. The vectors come from this model,
+              which is why it is assigned apart from the rest.
+            </p>
+            <div className="mt-2 space-y-3">
+              <RoleCard
+                role={embedRole}
+                chain={defaultRows.find((entry) => entry.role === "embed")?.chain ?? []}
+                providers={providerRows}
+                onChanged={invalidate}
+                note="The model is part of the index: vectors written by an earlier one stop counting the moment this changes, and search runs on text alone until the index is rebuilt below."
+                narrow={{
+                  keep: offeredForEmbedding,
+                  label: "Show every model",
+                  description:
+                    "The list is narrowed to models chosen for embedding and models whose name reads that way. Neither test is reliable, so this widens it to everything a provider offers.",
+                }}
+              />
+              <EmbeddingIndexCard />
             </div>
           </section>
         </div>
@@ -192,6 +221,88 @@ function ProviderRow({ provider, onOpen }: { provider: ModelProvider; onOpen: ()
   );
 }
 
+const countFormat = new Intl.NumberFormat();
+
+/** What the index is built from today, and what a reindex would change about it. */
+function indexSummary(status: IndexStatus): string {
+  if (status.documents === 0) return "Nothing is indexed yet.";
+  const items = `${countFormat.format(status.documents)} item${status.documents === 1 ? "" : "s"}`;
+  if (status.model === undefined) {
+    const built = status.models.map((entry) => entry.model).join(", ");
+    const vectors =
+      status.embedded === 0
+        ? "None of them are embedded."
+        : `The ${countFormat.format(status.embedded)} vectors stored from ${built} are ignored.`;
+    // A role that is assigned but resolves to nothing is a different problem
+    // from one nobody set, and it is not one a reindex fixes.
+    return status.assigned
+      ? `${items} indexed. ${vectors} The assigned model cannot be reached: its provider is gone, or its credential cannot be read.`
+      : `${items} indexed. ${vectors} Search matches on text alone.`;
+  }
+  const stale = status.stale ?? 0;
+  if (stale === 0) return `${items} indexed, all of them embedded with ${status.model}.`;
+  return `${countFormat.format(stale)} of ${items} still need embedding with ${status.model}. Until they are, those items match on text alone.`;
+}
+
+function EmbeddingIndexCard() {
+  const queryClient = useQueryClient();
+  const query = useQuery(orpc.items.indexStatus.queryOptions({}));
+  const status = query.data as IndexStatus | undefined;
+  const reindex = useMutation({
+    mutationFn: () => rpcClient.items.reindex({}),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: orpc.items.indexStatus.key() });
+      toast.success(
+        result.failed === 0
+          ? `Embedded ${countFormat.format(result.embedded)} items`
+          : `Embedded ${countFormat.format(result.embedded)} items, ${countFormat.format(result.failed)} failed`,
+      );
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+
+  return (
+    <div className="rounded-md border bg-card">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3.5">
+        <div className="min-w-0">
+          <p className="text-chrome font-medium">Index</p>
+          <p className="mt-0.5 text-meta text-muted-foreground">
+            {query.error
+              ? query.error.message
+              : status === undefined
+                ? "Reading the index…"
+                : indexSummary(status)}
+          </p>
+          {status && status.documents > 0 ? (
+            <p className="mt-0.5 text-meta text-muted-foreground">
+              A rebuild embeds everything that needs it, and runs while you wait.
+            </p>
+          ) : null}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={reindex.isPending || status === undefined}
+          onClick={() => reindex.mutate()}
+        >
+          {reindex.isPending ? "Rebuilding…" : "Rebuild index"}
+        </Button>
+      </div>
+      {status && status.models.length > 1 ? (
+        <div className="border-t px-4 py-3">
+          <p className="text-meta text-muted-foreground">
+            Vectors in the index came from{" "}
+            {status.models
+              .map((entry) => `${entry.model} (${countFormat.format(entry.count)})`)
+              .join(", ")}
+            . A rebuild settles them on one model.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function withoutRepeats(chain: ChainEntry[]): ChainEntry[] {
   const seen = new Set<string>();
   return chain.filter((entry) => {
@@ -207,13 +318,20 @@ function RoleCard({
   chain,
   providers,
   onChanged,
+  note,
+  narrow,
 }: {
-  role: (typeof roleDescriptions)[number];
+  role: RoleDescription;
   chain: ChainEntry[];
   providers: ModelProvider[];
   onChanged: () => Promise<void>;
+  /** What assigning this role costs, stated where the assignment is made. */
+  note?: string;
+  /** Hides the models that do not suit this role, with a way to see them anyway. */
+  narrow?: { keep: (entry: CatalogEntry) => boolean; label: string; description: string };
 }) {
   const [draft, setDraft] = useState<ChainEntry[]>(() => withoutRepeats(chain));
+  const [showAll, setShowAll] = useState(false);
   // A chain written through the API can name the same model twice, where only
   // the first entry can ever be reached. The editor shows the chain that runs.
   const stored = JSON.stringify(withoutRepeats(chain));
@@ -223,7 +341,10 @@ function RoleCard({
   const dirty = JSON.stringify(draft) !== stored;
   const choices = providers.flatMap((provider) =>
     provider.catalog
-      .filter((entry) => servesRole(entry, role.role))
+      .filter(
+        (entry) =>
+          servesRole(entry, role.role) && (narrow === undefined || showAll || narrow.keep(entry)),
+      )
       .map((entry) => ({ provider, entry })),
   );
 
@@ -327,10 +448,13 @@ function RoleCard({
             })}
           </ol>
         )}
+        {note ? <p className="mt-3 text-meta text-muted-foreground">{note}</p> : null}
         <div className="mt-3">
           {choices.length === 0 ? (
             <p className="text-meta text-muted-foreground">
-              No provider lists a model for this role yet. Add models on a provider's page.
+              {narrow === undefined || showAll
+                ? "No provider lists a model for this role yet. Add models on a provider's page."
+                : "No selected model looks like an embedding model. Turn on every model below, or select more on a provider's page."}
             </p>
           ) : (
             <Select
@@ -363,6 +487,22 @@ function RoleCard({
             </Select>
           )}
         </div>
+        {narrow ? (
+          <label
+            htmlFor={`role-all-models-${role.role}`}
+            className="mt-3 flex items-start gap-2.5 text-meta text-muted-foreground"
+          >
+            <Checkbox
+              id={`role-all-models-${role.role}`}
+              checked={showAll}
+              onCheckedChange={(checked) => setShowAll(checked === true)}
+            />
+            <span>
+              <span className="block text-foreground">{narrow.label}</span>
+              {narrow.description}
+            </span>
+          </label>
+        ) : null}
       </div>
     </div>
   );

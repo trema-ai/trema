@@ -99,6 +99,9 @@ export function CreateProviderDialog({
         baseUrl: baseUrl.trim(),
         credentialMode,
         credential: credentialMode === "api_key" ? credential : null,
+        // Carried from the preset, never typed: it is how a provider whose
+        // model list filters itself answers in full.
+        listQuery: chosen?.listQuery ?? null,
       }),
     onSuccess: (provider) => {
       toast.success(`${provider.label} added`);
@@ -121,8 +124,8 @@ export function CreateProviderDialog({
             <DialogHeader>
               <DialogTitle>Add a model provider</DialogTitle>
               <DialogDescription>
-                A preset fills in the endpoint, the credential mode, and a starting model list. All
-                of it stays editable afterwards.
+                A preset fills in the endpoint and the credential mode, both editable afterwards.
+                The models come from the provider itself, once it has a credential.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-2 sm:grid-cols-2">

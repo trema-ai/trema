@@ -49,7 +49,7 @@ import {
   type ModelProvider,
   type ModelRole,
   messageFrom,
-  looksLikeEmbeddingModel,
+  isEmbeddingModel,
   type ProbeResult,
   protocolLabel,
   type RemoteModels,
@@ -747,6 +747,15 @@ function ConfigureModelsDialog({
   const available = offeredIds(remote, provider.catalog, added);
   const listed = new Set((remote?.ok ? remote.models : []).map((model) => model.id));
   const stored = new Map(provider.catalog.map((entry) => [entry.id, entry]));
+  // What the provider said about its own models, where it said anything. Only
+  // some listings carry it, so this map is usually empty and the name is all
+  // there is to go on.
+  const hints = new Map(
+    (remote?.ok ? remote.models : []).flatMap((model) =>
+      model.embedding === undefined ? [] : [[model.id, model.embedding] as const],
+    ),
+  );
+  const statedEmbedding = hints.size > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -773,14 +782,14 @@ function ConfigureModelsDialog({
     const entry = stored.get(id);
     return entry
       ? entry.roles?.length === 1 && entry.roles[0] === "embed"
-      : looksLikeEmbeddingModel(id);
+      : isEmbeddingModel(id, hints.get(id));
   };
   const chatModels = filtered.filter((id) => !isEmbedding(id));
   const embeddingModels = filtered.filter(isEmbedding);
 
   /** What a model gets the first time it is enabled. A stored model keeps its own. */
   const defaultRoles = (id: string): ModelRole[] =>
-    stored.has(id) || !looksLikeEmbeddingModel(id) ? [] : ["embed"];
+    !stored.has(id) && isEmbeddingModel(id, hints.get(id)) ? ["embed"] : [];
 
   function toggle(id: string, enabled: boolean) {
     setSelected((current) =>
@@ -900,7 +909,11 @@ function ConfigureModelsDialog({
               />
               <ModelGroup
                 heading="Embedding models"
-                note="Grouped by name, which is all a model list says. Change a role below if the guess is wrong."
+                note={
+                  statedEmbedding
+                    ? "Grouped by what this provider says each model produces. Change a role beside a model if it belongs elsewhere."
+                    : "Grouped by name, which is all this provider's model list says. Change a role beside a model if the guess is wrong."
+                }
                 ids={embeddingModels}
                 stored={stored}
                 listed={listed}
