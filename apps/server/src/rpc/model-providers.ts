@@ -46,10 +46,10 @@ const roleSchema = z
 const catalogEntrySchema = z.object({
   id: z.string().trim().min(1).describe("The model id the provider expects."),
   label: z.string().trim().min(1).optional().describe("What the admin screen shows."),
-  roles: z
-    .array(roleSchema)
+  offered: z
+    .boolean()
     .optional()
-    .describe("The roles this model may serve. Omitted means unrestricted."),
+    .describe("Whether this model is offered in the model picker. Omitted means it is not."),
   contextWindow: z.number().int().positive().optional().describe("Context window, in tokens."),
 });
 
@@ -78,9 +78,7 @@ const providerSchema = z
       ),
     catalog: z
       .array(catalogEntrySchema)
-      .describe(
-        "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it.",
-      ),
+      .describe("The models this provider offers, as of the last catalog refresh."),
     listQuery: listQuerySchema,
     updatedAt: z.string().describe("When the provider last changed. An ISO 8601 date-time."),
   })
@@ -242,7 +240,7 @@ const create = requireCapability("manage_models")
     path: "/model-providers",
     summary: "Create a model provider",
     description:
-      "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential. The provider is asked for its model list on the way out, so the catalog comes back populated; a listing that fails leaves it empty rather than failing the create.",
+      "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential. The catalog is populated from the provider's model list; a listing that fails leaves it empty rather than failing the create.",
     tags: ["Model providers"],
   })
   .input(providerWriteSchema)
@@ -481,7 +479,7 @@ const remoteModels = requireCapability("manage_models")
     path: "/model-providers/{name}/remote-models",
     summary: "List the models a provider offers",
     description:
-      "Ask the provider itself which models it serves, using the stored credential. The answer carries the capability each listing states about its own models where it states one. It stores nothing: writing the answer into the provider's catalog is what a catalog refresh does.",
+      "Ask the provider which models it serves, using the stored credential. The answer carries whatever capability the listing states about each model. It stores nothing — a catalog refresh is what writes the answer down.",
     tags: ["Model providers"],
   })
   .input(z.object({ name: z.string().trim().min(1).describe("The provider's name.") }))
@@ -517,7 +515,7 @@ const catalogRefreshSchema = z
         .int()
         .nonnegative()
         .describe(
-          "How many entries were dropped. Only entries nothing was said about go: one carrying a role, a label, a context window, or a role default that names it stays even after the provider stops listing it.",
+          "How many entries were dropped. An entry offered in the picker, or carrying a label, a context window, or a role default that names it, is kept.",
         ),
       provider: providerSchema,
     }),
@@ -527,7 +525,7 @@ const catalogRefreshSchema = z
     }),
   ])
   .describe(
-    "What the refresh wrote. A provider that cannot be reached is a result, not an error: the stored catalog is left exactly as it was.",
+    "What the refresh wrote. An unreachable provider is a result, not an error; the stored catalog is left as it was.",
   );
 
 const refreshCatalog = requireCapability("manage_models")
@@ -536,7 +534,7 @@ const refreshCatalog = requireCapability("manage_models")
     path: "/model-providers/{name}/refresh-catalog",
     summary: "Refresh a provider's model catalog",
     description:
-      "Ask the provider what it serves and store the answer as its catalog. The listing is the menu and the catalog is the annotations over it: an entry the admin gave a role, a label, or a context window keeps every one of them, and so does an entry a role default names, while an entry that only ever came from an earlier listing goes when the provider stops listing it. Roles on a newly imported model follow whatever the listing said about it, and its name where the listing said nothing.",
+      "Ask the provider what it serves and store the answer as its catalog. Entries the admin annotated, and entries a role default names, are kept; an entry that came from an earlier listing alone is dropped once the provider stops listing it.",
     tags: ["Model providers"],
   })
   .input(z.object({ name: z.string().trim().min(1).describe("The provider's name.") }))

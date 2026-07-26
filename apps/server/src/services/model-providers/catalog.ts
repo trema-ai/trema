@@ -1,4 +1,3 @@
-import type { ModelRole } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import {
@@ -14,38 +13,16 @@ import {
   type RemoteModel,
 } from "#server/services/model-providers/remote.js";
 
-/** The families whose names say "embedding" without the word in them. */
-const embeddingFamilies = /(^|[/\-_.])(bge|gte|e5|voyage)([-_.]|$)/;
-
 /**
- * Whether a model id reads like an embedding model. The OpenAI-compatible
- * listing shape carries no capability field, so where a provider states
- * nothing this is all there is to go on.
- */
-function looksLikeEmbeddingModel(id: string): boolean {
-  const value = id.toLowerCase();
-  return value.includes("embed") || embeddingFamilies.test(value);
-}
-
-/**
- * The roles a newly imported model starts with. What the listing said about its
- * own model is believed; the name heuristic answers only where it said nothing,
- * and never overrules it. An entry with no roles is unrestricted, which is what
- * a model that is not an embedder gets.
- */
-function importedRoles(model: RemoteModel): ModelRole[] {
-  return (model.embedding ?? looksLikeEmbeddingModel(model.id)) ? ["embed"] : [];
-}
-
-/**
- * Whether a stored entry says something the provider's listing cannot. Roles, a
- * label, and a context window are all the admin's to set; a role default naming
- * the model is the deployment depending on it. Anything else in the catalog got
- * there by import alone, and a refresh may drop it.
+ * Whether a stored entry says something the provider's listing cannot. Being
+ * offered in the picker, a label, and a context window are all the admin's to
+ * set; a role default naming the model is the deployment depending on it.
+ * Anything else in the catalog got there by import alone, and a refresh may
+ * drop it.
  */
 function carriesAdminIntent(entry: ModelCatalogEntry, pinned: ReadonlySet<string>): boolean {
   return (
-    (entry.roles?.length ?? 0) > 0 ||
+    entry.offered === true ||
     entry.label !== undefined ||
     entry.contextWindow !== undefined ||
     pinned.has(entry.id)
@@ -68,11 +45,10 @@ export interface CatalogMergeInput {
  * The rule, in the order it resolves:
  *
  * 1. A listed model that is already stored keeps its stored entry whole. A
- *    refresh never clobbers a label, a context window, or a role the admin set
- *    — re-import is not an edit.
- * 2. A listed model that is not stored is imported, with roles defaulted from
- *    the listing's own capability statement where it made one and from the
- *    model's name where it did not.
+ *    refresh never clobbers a label, a context window, or the picker choice the
+ *    admin made — re-import is not an edit.
+ * 2. A listed model that is not stored is imported bare. The provider names it;
+ *    nothing else about it has been decided yet.
  * 3. A stored entry the listing no longer names survives only if it carries
  *    admin intent. Auto-imported entries for models a provider has retired go,
  *    which is what keeps the list the provider's own menu.
@@ -88,8 +64,7 @@ export function mergeCatalog(input: CatalogMergeInput): ModelCatalogEntry[] {
       merged.push(entry);
       continue;
     }
-    const roles = importedRoles(model);
-    merged.push({ id: model.id, ...(roles.length === 0 ? {} : { roles }) });
+    merged.push({ id: model.id });
   }
   for (const entry of input.stored) {
     if (listed.has(entry.id)) continue;

@@ -5,37 +5,30 @@ import { mergeCatalog } from "#server/services/model-providers/catalog.js";
 const nothingPinned = new Set<string>();
 
 describe("mergeCatalog", () => {
-  it("imports what the provider lists and defaults the roles it can", () => {
+  it("imports what the provider lists, and nothing else about it", () => {
     expect(
       mergeCatalog({
         stored: [],
         listed: [
           { id: "plain-model" },
           { id: "stated-vectors", embedding: true },
-          { id: "embed-in-name-only", embedding: false },
           { id: "voyage-3" },
         ],
         pinned: nothingPinned,
       }),
-    ).toEqual([
-      { id: "embed-in-name-only" },
-      { id: "plain-model" },
-      { id: "stated-vectors", roles: ["embed"] },
-      { id: "voyage-3", roles: ["embed"] },
-    ]);
+    ).toEqual([{ id: "plain-model" }, { id: "stated-vectors" }, { id: "voyage-3" }]);
   });
 
   it("leaves a stored entry exactly as the admin left it", () => {
     const stored = {
       id: "big-model",
       label: "Big model",
-      roles: ["turns" as const],
+      offered: true,
       contextWindow: 8,
     };
     expect(
       mergeCatalog({
         stored: [stored],
-        // The listing would import this one as an embedder if it were new.
         listed: [{ id: "big-model", embedding: true }],
         pinned: nothingPinned,
       }),
@@ -49,11 +42,11 @@ describe("mergeCatalog", () => {
           { id: "forgotten" },
           { id: "labelled", label: "Named by hand" },
           { id: "sized", contextWindow: 4096 },
-          { id: "roled", roles: ["utility"] },
+          { id: "picked", offered: true },
           { id: "assigned" },
-          // An empty role list is what an admin clearing every role leaves, and
-          // it means unrestricted — the same thing saying nothing means.
-          { id: "cleared", roles: [] },
+          // Deselecting a model leaves the flag off, which is the same thing
+          // saying nothing means: a refresh may drop it.
+          { id: "unpicked", offered: false },
         ],
         listed: [],
         pinned: new Set(["assigned"]),
@@ -61,7 +54,7 @@ describe("mergeCatalog", () => {
     ).toEqual([
       { id: "assigned" },
       { id: "labelled", label: "Named by hand" },
-      { id: "roled", roles: ["utility"] },
+      { id: "picked", offered: true },
       { id: "sized", contextWindow: 4096 },
     ]);
   });

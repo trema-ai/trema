@@ -7,7 +7,8 @@ export type ModelCredentialMode = "api_key" | "none";
 export type CatalogEntry = {
   id: string;
   label?: string;
-  roles?: ModelRole[];
+  /** Whether this model is offered in the model picker. Absent means it is not. */
+  offered?: boolean;
   contextWindow?: number;
 };
 
@@ -152,35 +153,6 @@ export function credentialModeLabel(mode: string) {
 
 export function modelDisplayName(entry: CatalogEntry) {
   return entry.label ?? entry.id;
-}
-
-/** A catalog entry with no roles is unrestricted, so it serves every role. */
-export function servesRole(entry: CatalogEntry, role: ModelRole) {
-  return entry.roles === undefined || entry.roles.length === 0 || entry.roles.includes(role);
-}
-
-/** The families whose names say "embedding" without the word in them. */
-const embeddingFamilies = /(^|[/\-_.])(bge|gte|e5|voyage)([-_.]|$)/;
-
-/**
- * Whether a model id reads like an embedding model. An OpenAI-compatible model
- * list carries no capability data, so this is a naming heuristic and a filter
- * only: it narrows the embedding picker, and never decides what a model may
- * serve. The role a model carries is what does that.
- */
-export function looksLikeEmbeddingModel(id: string): boolean {
-  const value = id.toLowerCase();
-  return value.includes("embed") || embeddingFamilies.test(value);
-}
-
-/**
- * Whether a stored catalog entry belongs in the embedding picker. The provider
- * hint that produced it is not on this screen — reading it means a call to
- * every provider, and those run on demand only — so what survives of it is the
- * role the admin saved, with the model's name as the fallback it always was.
- */
-export function offeredForEmbedding(entry: CatalogEntry): boolean {
-  return entry.roles?.includes("embed") === true || looksLikeEmbeddingModel(entry.id);
 }
 
 export function messageFrom(error: unknown) {

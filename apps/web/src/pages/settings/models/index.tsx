@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Boxes, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Boxes, ChevronDown, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -9,14 +9,15 @@ import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import { Button } from "#web/components/ui/button.tsx";
-import { Checkbox } from "#web/components/ui/checkbox.tsx";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "#web/components/ui/select.tsx";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "#web/components/ui/command.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "#web/components/ui/popover.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { ModelsSection } from "#web/pages/settings/models/catalog.tsx";
@@ -32,23 +33,15 @@ import {
   type ModelProvider,
   messageFrom,
   modelDisplayName,
-  offeredForEmbedding,
   type ProbeResult,
   protocolLabel,
   type RoleDefault,
   type RoleDescription,
-  servesRole,
 } from "#web/pages/settings/models/shared.tsx";
 
-/** What the embedding picker needs and the completion roles do not. */
+/** What the embedding role costs to change, and the completion roles do not. */
 const embedCardProps = {
   note: "The model is part of the index: vectors written by an earlier one stop counting the moment this changes, and search runs on text alone until the index is rebuilt below.",
-  narrow: {
-    keep: offeredForEmbedding,
-    label: "Show every model",
-    description:
-      "The list is narrowed to models chosen for embedding and models whose name reads that way. Neither test is reliable, so this widens it to everything a provider offers.",
-  },
 };
 
 export function SettingsModelsPage() {
@@ -112,9 +105,6 @@ export function SettingsModelsPage() {
         <div className="space-y-7">
           <section data-slot="settings-section">
             <h3 className="text-chrome font-medium text-foreground">Providers</h3>
-            <p className="mt-0.5 text-meta text-muted-foreground">
-              Each provider is an endpoint plus its credential. The credential stays on the server.
-            </p>
             <div className="mt-2 divide-y rounded-md border bg-card">
               {providerRows.length === 0 ? (
                 <EmptyState
@@ -334,7 +324,6 @@ function RoleCard({
   providers,
   onChanged,
   note,
-  narrow,
 }: {
   role: RoleDescription;
   chain: ChainEntry[];
@@ -342,11 +331,8 @@ function RoleCard({
   onChanged: () => Promise<void>;
   /** What assigning this role costs, stated where the assignment is made. */
   note?: string;
-  /** Hides the models that do not suit this role, with a way to see them anyway. */
-  narrow?: { keep: (entry: CatalogEntry) => boolean; label: string; description: string };
 }) {
   const [draft, setDraft] = useState<ChainEntry[]>(() => withoutRepeats(chain));
-  const [showAll, setShowAll] = useState(false);
   // A chain written through the API can name the same model twice, where only
   // the first entry can ever be reached. The editor shows the chain that runs.
   const stored = JSON.stringify(withoutRepeats(chain));
@@ -355,12 +341,7 @@ function RoleCard({
   }, [stored]);
   const dirty = JSON.stringify(draft) !== stored;
   const choices = providers.flatMap((provider) =>
-    provider.catalog
-      .filter(
-        (entry) =>
-          servesRole(entry, role.role) && (narrow === undefined || showAll || narrow.keep(entry)),
-      )
-      .map((entry) => ({ provider, entry })),
+    provider.catalog.map((entry) => ({ provider, entry })),
   );
 
   const save = useMutation({
@@ -467,58 +448,87 @@ function RoleCard({
         <div className="mt-3">
           {choices.length === 0 ? (
             <p className="text-meta text-muted-foreground">
-              {narrow === undefined || showAll
-                ? "No model is available for this role yet. Add a provider, or refresh one from its page."
-                : "No model in the list looks like an embedding model. Turn on every model below, or give one the embedding role in the models list above."}
+              No model is available for this role yet. Add a provider, or refresh one from its page.
             </p>
           ) : (
-            <Select
-              value=""
-              onValueChange={(value) => {
-                setDraft((current) => [...current, JSON.parse(value) as ChainEntry]);
-              }}
-            >
-              <SelectTrigger size="sm" aria-label={`Add a model to ${role.label}`}>
-                <SelectValue placeholder="Add a model" />
-              </SelectTrigger>
-              <SelectContent>
-                {choices
-                  .filter(
-                    ({ provider, entry }) =>
-                      !draft.some(
-                        (existing) =>
-                          existing.providerName === provider.name && existing.modelId === entry.id,
-                      ),
-                  )
-                  .map(({ provider, entry }) => (
-                    <SelectItem
-                      key={`${provider.name}-${entry.id}`}
-                      value={JSON.stringify({ providerName: provider.name, modelId: entry.id })}
-                    >
-                      {modelDisplayName(entry)} on {provider.label}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <ModelCombobox
+              label={role.label}
+              choices={choices.filter(
+                ({ provider, entry }) =>
+                  !draft.some(
+                    (existing) =>
+                      existing.providerName === provider.name && existing.modelId === entry.id,
+                  ),
+              )}
+              onPick={(entry) => setDraft((current) => [...current, entry])}
+            />
           )}
         </div>
-        {narrow ? (
-          <label
-            htmlFor={`role-all-models-${role.role}`}
-            className="mt-3 flex items-start gap-2.5 text-meta text-muted-foreground"
-          >
-            <Checkbox
-              id={`role-all-models-${role.role}`}
-              checked={showAll}
-              onCheckedChange={(checked) => setShowAll(checked === true)}
-            />
-            <span>
-              <span className="block text-foreground">{narrow.label}</span>
-              {narrow.description}
-            </span>
-          </label>
-        ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * Picks one model out of the whole catalog. It searches rather than scrolls
+ * because a gateway lists hundreds, and it offers every model a provider serves
+ * rather than guessing which suit the role — a name is not a capability.
+ */
+function ModelCombobox({
+  label,
+  choices,
+  onPick,
+}: {
+  label: string;
+  choices: { provider: ModelProvider; entry: CatalogEntry }[];
+  onPick: (entry: ChainEntry) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          aria-label={`Add a model to ${label}`}
+          className="w-full justify-between font-normal"
+        >
+          Add a model
+          <ChevronDown className="opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
+        <Command
+          filter={(_value, search, keywords) =>
+            (keywords ?? []).join(" ").toLowerCase().includes(search.trim().toLowerCase()) ? 1 : 0
+          }
+        >
+          <CommandInput placeholder="Search models…" />
+          <CommandList>
+            <CommandEmpty>No model matches.</CommandEmpty>
+            <CommandGroup>
+              {choices.map(({ provider, entry }) => (
+                <CommandItem
+                  key={`${provider.name} ${entry.id}`}
+                  value={`${provider.name} ${entry.id}`}
+                  keywords={[entry.id, modelDisplayName(entry), provider.label]}
+                  onSelect={() => {
+                    onPick({ providerName: provider.name, modelId: entry.id });
+                    setOpen(false);
+                  }}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {modelDisplayName(entry)}
+                    <span className="text-muted-foreground"> on {provider.label}</span>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

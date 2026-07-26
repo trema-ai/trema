@@ -1267,10 +1267,7 @@ integration("model provider registry", () => {
       );
       // The provider's listing is the menu, so the catalog arrives populated
       // and a role can name a model without anything being ticked first.
-      expect(created.catalog).toEqual([
-        { id: "small-model" },
-        { id: "text-embedding-3-small", roles: ["embed"] },
-      ]);
+      expect(created.catalog).toEqual([{ id: "small-model" }, { id: "text-embedding-3-small" }]);
       expect(JSON.stringify(created)).not.toContain("the-secret");
 
       await provider.close();
@@ -1326,7 +1323,7 @@ integration("model provider registry", () => {
           protocol: "openai_compatible",
           baseUrl: provider.baseUrl,
           catalog: [
-            { id: "big-model", label: "Big model", roles: ["turns"], contextWindow: 128_000 },
+            { id: "big-model", label: "Big model", offered: true, contextWindow: 128_000 },
             { id: "small-model" },
           ],
         },
@@ -1339,10 +1336,10 @@ integration("model provider registry", () => {
         { context: org.context },
       );
       if (!refreshed.ok) throw new Error(refreshed.reason);
-      // Re-import is not an edit: a label, a context window, and a role the
-      // admin set all survive the provider listing the model again.
+      // Re-import is not an edit: a label, a context window, and the picker
+      // choice all survive the provider listing the model again.
       expect(refreshed.provider.catalog).toEqual([
-        { id: "big-model", label: "Big model", roles: ["turns"], contextWindow: 128_000 },
+        { id: "big-model", label: "Big model", offered: true, contextWindow: 128_000 },
         { id: "small-model" },
       ]);
       expect(refreshed).toMatchObject({ added: 0, removed: 0 });
@@ -1413,12 +1410,10 @@ integration("model provider registry", () => {
       await provider.close();
     });
 
-    it("defaults an imported model's roles from the listing, and from its name where the listing is silent", async () => {
+    it("imports every listed model bare, whatever the listing says each one is", async () => {
       const provider = await startListing([
         { id: "stated-vectors", type: "embedding" },
         { id: "stated-chat", type: "chat" },
-        // Named like an embedder, and the provider says otherwise. What the
-        // provider said about its own model wins.
         { id: "embed-in-name-only", type: "chat" },
         { id: "nomic-embed-text" },
         { id: "bge-large" },
@@ -1436,13 +1431,15 @@ integration("model provider registry", () => {
         },
         { context: org.context },
       );
+      // What a model is for is the admin's to say, not the listing's to guess:
+      // the catalog is the provider's menu and carries no judgement about it.
       expect(created.catalog).toEqual([
-        { id: "bge-large", roles: ["embed"] },
+        { id: "bge-large" },
         { id: "embed-in-name-only" },
-        { id: "nomic-embed-text", roles: ["embed"] },
+        { id: "nomic-embed-text" },
         { id: "plain-model" },
         { id: "stated-chat" },
-        { id: "stated-vectors", roles: ["embed"] },
+        { id: "stated-vectors" },
       ]);
 
       await provider.close();

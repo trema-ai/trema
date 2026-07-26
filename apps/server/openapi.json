@@ -7124,18 +7124,9 @@
                               "minLength": 1,
                               "description": "What the admin screen shows."
                             },
-                            "roles": {
-                              "type": "array",
-                              "items": {
-                                "enum": [
-                                  "turns",
-                                  "utility",
-                                  "embed"
-                                ],
-                                "type": "string",
-                                "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                              },
-                              "description": "The roles this model may serve. Omitted means unrestricted."
+                            "offered": {
+                              "type": "boolean",
+                              "description": "Whether this model is offered in the model picker. Omitted means it is not."
                             },
                             "contextWindow": {
                               "type": "integer",
@@ -7149,7 +7140,7 @@
                             "id"
                           ]
                         },
-                        "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
+                        "description": "The models this provider offers, as of the last catalog refresh."
                       },
                       "listQuery": {
                         "type": "object",
@@ -7195,7 +7186,7 @@
       "post": {
         "operationId": "modelProviders.providers.create",
         "summary": "Create a model provider",
-        "description": "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential. The provider is asked for its model list on the way out, so the catalog comes back populated; a listing that fails leaves it empty rather than failing the create.",
+        "description": "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential. The catalog is populated from the provider's model list; a listing that fails leaves it empty rather than failing the create.",
         "tags": [
           "Model providers"
         ],
@@ -7282,18 +7273,9 @@
                               "minLength": 1,
                               "description": "What the admin screen shows."
                             },
-                            "roles": {
-                              "type": "array",
-                              "items": {
-                                "enum": [
-                                  "turns",
-                                  "utility",
-                                  "embed"
-                                ],
-                                "type": "string",
-                                "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                              },
-                              "description": "The roles this model may serve. Omitted means unrestricted."
+                            "offered": {
+                              "type": "boolean",
+                              "description": "Whether this model is offered in the model picker. Omitted means it is not."
                             },
                             "contextWindow": {
                               "type": "integer",
@@ -7403,18 +7385,9 @@
                             "minLength": 1,
                             "description": "What the admin screen shows."
                           },
-                          "roles": {
-                            "type": "array",
-                            "items": {
-                              "enum": [
-                                "turns",
-                                "utility",
-                                "embed"
-                              ],
-                              "type": "string",
-                              "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                            },
-                            "description": "The roles this model may serve. Omitted means unrestricted."
+                          "offered": {
+                            "type": "boolean",
+                            "description": "Whether this model is offered in the model picker. Omitted means it is not."
                           },
                           "contextWindow": {
                             "type": "integer",
@@ -7428,7 +7401,7 @@
                           "id"
                         ]
                       },
-                      "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
+                      "description": "The models this provider offers, as of the last catalog refresh."
                     },
                     "listQuery": {
                       "type": "object",
@@ -7551,18 +7524,9 @@
                             "minLength": 1,
                             "description": "What the admin screen shows."
                           },
-                          "roles": {
-                            "type": "array",
-                            "items": {
-                              "enum": [
-                                "turns",
-                                "utility",
-                                "embed"
-                              ],
-                              "type": "string",
-                              "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                            },
-                            "description": "The roles this model may serve. Omitted means unrestricted."
+                          "offered": {
+                            "type": "boolean",
+                            "description": "Whether this model is offered in the model picker. Omitted means it is not."
                           },
                           "contextWindow": {
                             "type": "integer",
@@ -7576,7 +7540,7 @@
                           "id"
                         ]
                       },
-                      "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
+                      "description": "The models this provider offers, as of the last catalog refresh."
                     },
                     "listQuery": {
                       "type": "object",
@@ -7714,18 +7678,9 @@
                               "minLength": 1,
                               "description": "What the admin screen shows."
                             },
-                            "roles": {
-                              "type": "array",
-                              "items": {
-                                "enum": [
-                                  "turns",
-                                  "utility",
-                                  "embed"
-                                ],
-                                "type": "string",
-                                "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                              },
-                              "description": "The roles this model may serve. Omitted means unrestricted."
+                            "offered": {
+                              "type": "boolean",
+                              "description": "Whether this model is offered in the model picker. Omitted means it is not."
                             },
                             "contextWindow": {
                               "type": "integer",
@@ -7834,18 +7789,9 @@
                             "minLength": 1,
                             "description": "What the admin screen shows."
                           },
-                          "roles": {
-                            "type": "array",
-                            "items": {
-                              "enum": [
-                                "turns",
-                                "utility",
-                                "embed"
-                              ],
-                              "type": "string",
-                              "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                            },
-                            "description": "The roles this model may serve. Omitted means unrestricted."
+                          "offered": {
+                            "type": "boolean",
+                            "description": "Whether this model is offered in the model picker. Omitted means it is not."
                           },
                           "contextWindow": {
                             "type": "integer",
@@ -7859,7 +7805,7 @@
                           "id"
                         ]
                       },
-                      "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
+                      "description": "The models this provider offers, as of the last catalog refresh."
                     },
                     "listQuery": {
                       "type": "object",
@@ -8032,7 +7978,7 @@
       "get": {
         "operationId": "modelProviders.providers.remoteModels",
         "summary": "List the models a provider offers",
-        "description": "Ask the provider itself which models it serves, using the stored credential. The answer carries the capability each listing states about its own models where it states one. It stores nothing: writing the answer into the provider's catalog is what a catalog refresh does.",
+        "description": "Ask the provider which models it serves, using the stored credential. The answer carries whatever capability the listing states about each model. It stores nothing — a catalog refresh is what writes the answer down.",
         "tags": [
           "Model providers"
         ],
@@ -8128,7 +8074,7 @@
       "post": {
         "operationId": "modelProviders.providers.refreshCatalog",
         "summary": "Refresh a provider's model catalog",
-        "description": "Ask the provider what it serves and store the answer as its catalog. The listing is the menu and the catalog is the annotations over it: an entry the admin gave a role, a label, or a context window keeps every one of them, and so does an entry a role default names, while an entry that only ever came from an earlier listing goes when the provider stops listing it. Roles on a newly imported model follow whatever the listing said about it, and its name where the listing said nothing.",
+        "description": "Ask the provider what it serves and store the answer as its catalog. Entries the admin annotated, and entries a role default names, are kept; an entry that came from an earlier listing alone is dropped once the provider stops listing it.",
         "tags": [
           "Model providers"
         ],
@@ -8173,7 +8119,7 @@
                           "type": "integer",
                           "minimum": 0,
                           "maximum": 9007199254740991,
-                          "description": "How many entries were dropped. Only entries nothing was said about go: one carrying a role, a label, a context window, or a role default that names it stays even after the provider stops listing it."
+                          "description": "How many entries were dropped. An entry offered in the picker, or carrying a label, a context window, or a role default that names it, is kept."
                         },
                         "provider": {
                           "type": "object",
@@ -8231,18 +8177,9 @@
                                     "minLength": 1,
                                     "description": "What the admin screen shows."
                                   },
-                                  "roles": {
-                                    "type": "array",
-                                    "items": {
-                                      "enum": [
-                                        "turns",
-                                        "utility",
-                                        "embed"
-                                      ],
-                                      "type": "string",
-                                      "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
-                                    },
-                                    "description": "The roles this model may serve. Omitted means unrestricted."
+                                  "offered": {
+                                    "type": "boolean",
+                                    "description": "Whether this model is offered in the model picker. Omitted means it is not."
                                   },
                                   "contextWindow": {
                                     "type": "integer",
@@ -8256,7 +8193,7 @@
                                   "id"
                                 ]
                               },
-                              "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
+                              "description": "The models this provider offers, as of the last catalog refresh."
                             },
                             "listQuery": {
                               "type": "object",
@@ -8313,7 +8250,7 @@
                       ]
                     }
                   ],
-                  "description": "What the refresh wrote. A provider that cannot be reached is a result, not an error: the stored catalog is left exactly as it was."
+                  "description": "What the refresh wrote. An unreachable provider is a result, not an error; the stored catalog is left as it was."
                 }
               }
             }
