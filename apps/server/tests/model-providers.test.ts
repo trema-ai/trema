@@ -86,6 +86,37 @@ integration("model provider registry", () => {
     baseUrl: "https://models.example.test/v1",
   } as const;
 
+  /** A stand-in provider on the loopback interface, so no test reaches a vendor. */
+  async function startProvider(
+    handler: (request: IncomingMessage, response: ServerResponse) => void,
+  ) {
+    const server = createServer(handler);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      async close() {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => {
+          server.close(() => resolve());
+        });
+      },
+    };
+  }
+
+  /**
+   * A loopback address with nothing listening. A create reads the provider's
+   * model list, so a test that does not care about the list still needs an
+   * endpoint that fails fast rather than a name that resolves off the machine.
+   */
+  async function closedEndpoint(): Promise<string> {
+    const server = await startProvider(() => undefined);
+    await server.close();
+    return server.baseUrl;
+  }
+
   it("stores a provider and reports its credential as status only", async () => {
     const org = await createOrg();
 
@@ -204,10 +235,11 @@ integration("model provider registry", () => {
 
   it("refuses to create a provider whose name is taken, credential and all", async () => {
     const org = await createOrg();
+    const baseUrl = await closedEndpoint();
 
     const created = await call(
       modelProvidersRouter.providers.create,
-      { ...openAiCompatible, name: "primary", label: "First", credential: "first-secret" },
+      { ...openAiCompatible, baseUrl, name: "primary", label: "First", credential: "first-secret" },
       { context: org.context },
     );
     expect(created).toMatchObject({ name: "primary", label: "First" });
@@ -217,7 +249,13 @@ integration("model provider registry", () => {
     await expect(
       call(
         modelProvidersRouter.providers.create,
-        { ...openAiCompatible, name: "primary", label: "Second", credential: "second-secret" },
+        {
+          ...openAiCompatible,
+          baseUrl,
+          name: "primary",
+          label: "Second",
+          credential: "second-secret",
+        },
         { context: org.context },
       ),
     ).rejects.toMatchObject({ code: "CONFLICT" });
@@ -582,6 +620,9 @@ integration("model provider registry", () => {
       call(modelProvidersRouter.providers.remoteModels, { name: "primary" }, { context }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
+      call(modelProvidersRouter.providers.refreshCatalog, { name: "primary" }, { context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
       call(
         modelProvidersRouter.providers.create,
         { ...openAiCompatible, name: "primary", credential: "primary-secret" },
@@ -624,7 +665,8 @@ integration("model provider registry", () => {
     }
 
     // A preset is data the API hands over, so storing one is an ordinary create.
-    // It brings no models: those are read from the provider afterwards.
+    // The endpoint is a closed loopback port rather than the vendor's own: a
+    // create reads the provider's model list, and no test reaches a vendor.
     const preset = presets[0];
     if (!preset) throw new Error("A preset is required");
     const created = await call(
@@ -633,37 +675,18 @@ integration("model provider registry", () => {
         name: preset.name,
         label: preset.label,
         protocol: preset.protocol,
-        baseUrl: preset.baseUrl,
+        baseUrl: await closedEndpoint(),
         credentialMode: preset.credentialMode,
         credential: preset.credentialMode === "api_key" ? "preset-secret" : null,
       },
       { context: org.context },
     );
-    expect(created).toMatchObject({ name: preset.name, baseUrl: preset.baseUrl });
+    expect(created).toMatchObject({ name: preset.name, label: preset.label });
+    // The listing never answered, and the provider is stored all the same.
     expect(created.catalog).toEqual([]);
   });
 
   describe("health probe", () => {
-    /** A stand-in provider on the loopback interface, so no test reaches a vendor. */
-    async function startProvider(
-      handler: (request: IncomingMessage, response: ServerResponse) => void,
-    ) {
-      const server = createServer(handler);
-      await new Promise<void>((resolve) => {
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const { port } = server.address() as AddressInfo;
-      return {
-        baseUrl: `http://127.0.0.1:${port}/v1`,
-        async close() {
-          server.closeAllConnections();
-          await new Promise<void>((resolve) => {
-            server.close(() => resolve());
-          });
-        },
-      };
-    }
-
     it("reports a reachable provider, the models it lists, and the credential it accepted", async () => {
       const seen: {
         path?: string | undefined;
@@ -1203,6 +1226,247 @@ integration("model provider registry", () => {
           { context: org.context },
         ),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(
+        call(
+          modelProvidersRouter.providers.refreshCatalog,
+          { name: "absent" },
+          { context: org.context },
+        ),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+  });
+
+  describe("catalog refresh", () => {
+    /** A stand-in whose model list the test changes between calls. */
+    async function startListing(models: unknown[]) {
+      const state = { models, path: undefined as string | undefined };
+      const server = await startProvider((request, response) => {
+        state.path = request.url;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: state.models }));
+      });
+      return { ...server, state };
+    }
+
+    it("reads a new provider's models as it is created", async () => {
+      const provider = await startListing([
+        { id: "small-model" },
+        { id: "text-embedding-3-small" },
+      ]);
+      const org = await createOrg();
+
+      const created = await call(
+        modelProvidersRouter.providers.create,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+      // The provider's listing is the menu, so the catalog arrives populated
+      // and a role can name a model without anything being ticked first.
+      expect(created.catalog).toEqual([
+        { id: "small-model" },
+        { id: "text-embedding-3-small", roles: ["embed"] },
+      ]);
+      expect(JSON.stringify(created)).not.toContain("the-secret");
+
+      await provider.close();
+    });
+
+    it("stores a provider whose model list it could not read", async () => {
+      const org = await createOrg();
+
+      const created = await call(
+        modelProvidersRouter.providers.create,
+        {
+          name: "unreachable",
+          protocol: "openai_compatible",
+          baseUrl: await closedEndpoint(),
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+      // A bad credential or an unreachable host is not a failed create: the row
+      // is valid, and the admin refreshes it once the endpoint answers.
+      expect(created).toMatchObject({ name: "unreachable", hasCredential: true });
+      expect(created.catalog).toEqual([]);
+
+      const refreshed = await call(
+        modelProvidersRouter.providers.refreshCatalog,
+        { name: "unreachable" },
+        { context: org.context },
+      );
+      expect(refreshed).toEqual({
+        ok: false,
+        reason: "Nothing is listening at the provider's base URL.",
+      });
+      expect(JSON.stringify(refreshed)).not.toContain("the-secret");
+    });
+
+    it("keeps every annotation an admin made when the list is read again", async () => {
+      const provider = await startListing([{ id: "big-model" }, { id: "small-model" }]);
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.create,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          catalog: [
+            { id: "big-model", label: "Big model", roles: ["turns"], contextWindow: 128_000 },
+            { id: "small-model" },
+          ],
+        },
+        { context: org.context },
+      );
+
+      const refreshed = await call(
+        modelProvidersRouter.providers.refreshCatalog,
+        { name: "primary" },
+        { context: org.context },
+      );
+      if (!refreshed.ok) throw new Error(refreshed.reason);
+      // Re-import is not an edit: a label, a context window, and a role the
+      // admin set all survive the provider listing the model again.
+      expect(refreshed.provider.catalog).toEqual([
+        { id: "big-model", label: "Big model", roles: ["turns"], contextWindow: 128_000 },
+        { id: "small-model" },
+      ]);
+      expect(refreshed).toMatchObject({ added: 0, removed: 0 });
+
+      await provider.close();
+    });
+
+    it("drops an imported model the provider stopped listing and keeps the ones that carry intent", async () => {
+      const provider = await startListing([
+        { id: "kept-model" },
+        { id: "labelled-model" },
+        { id: "assigned-model" },
+        { id: "forgotten-model" },
+      ]);
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.create,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          catalog: [
+            { id: "kept-model" },
+            { id: "labelled-model", label: "The one we call by name" },
+            { id: "assigned-model" },
+            { id: "forgotten-model" },
+          ],
+        },
+        { context: org.context },
+      );
+      await call(
+        modelProvidersRouter.defaults.put,
+        { role: "turns", chain: [{ providerName: "primary", modelId: "assigned-model" }] },
+        { context: org.context },
+      );
+
+      provider.state.models = [{ id: "kept-model" }, { id: "arrived-model" }];
+      const refreshed = await call(
+        modelProvidersRouter.providers.refreshCatalog,
+        { name: "primary" },
+        { context: org.context },
+      );
+      if (!refreshed.ok) throw new Error(refreshed.reason);
+      // What the listing no longer names survives only where something says it
+      // should: a label the admin wrote, or a role default that depends on it.
+      expect(refreshed.provider.catalog.map((entry) => entry.id)).toEqual([
+        "arrived-model",
+        "assigned-model",
+        "kept-model",
+        "labelled-model",
+      ]);
+      expect(refreshed).toMatchObject({ added: 1, removed: 1 });
+      expect(await resolveRoleModel(db, org.org.id, "turns")).toEqual({
+        providerName: "primary",
+        modelId: "assigned-model",
+      });
+
+      await provider.close();
+    });
+
+    it("defaults an imported model's roles from the listing, and from its name where the listing is silent", async () => {
+      const provider = await startListing([
+        { id: "stated-vectors", type: "embedding" },
+        { id: "stated-chat", type: "chat" },
+        // Named like an embedder, and the provider says otherwise. What the
+        // provider said about its own model wins.
+        { id: "embed-in-name-only", type: "chat" },
+        { id: "nomic-embed-text" },
+        { id: "bge-large" },
+        { id: "plain-model" },
+      ]);
+      const org = await createOrg();
+
+      const created = await call(
+        modelProvidersRouter.providers.create,
+        {
+          name: "stating",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+      expect(created.catalog).toEqual([
+        { id: "bge-large", roles: ["embed"] },
+        { id: "embed-in-name-only" },
+        { id: "nomic-embed-text", roles: ["embed"] },
+        { id: "plain-model" },
+        { id: "stated-chat" },
+        { id: "stated-vectors", roles: ["embed"] },
+      ]);
+
+      await provider.close();
+    });
+
+    it("reads the model list with the query the provider stores", async () => {
+      const provider = await startListing([{ id: "listed" }]);
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.create,
+        {
+          name: "filtered",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+          listQuery: { output_modalities: "all" },
+        },
+        { context: org.context },
+      );
+      // The create's own listing carries it, so a provider whose list filters
+      // itself answers in full the first time it is asked.
+      expect(provider.state.path).toBe("/v1/models?output_modalities=all");
+
+      await provider.close();
     });
   });
 

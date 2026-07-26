@@ -24,6 +24,25 @@ export type ModelProvider = {
   updatedAt: string;
 };
 
+/** The descriptor every write repeats, because a put replaces the whole row. */
+export type Descriptor = {
+  name: string;
+  label: string;
+  protocol: ModelProtocol;
+  baseUrl: string;
+  credentialMode: ModelCredentialMode;
+};
+
+export function descriptorOf(provider: ModelProvider): Descriptor {
+  return {
+    name: provider.name,
+    label: provider.label,
+    protocol: provider.protocol,
+    baseUrl: provider.baseUrl,
+    credentialMode: provider.credentialMode,
+  };
+}
+
 export type ChainEntry = { providerName: string; modelId: string };
 
 export type RoleDefault = { role: ModelRole; chain: ChainEntry[] };
@@ -38,11 +57,9 @@ export type ModelProviderPreset = {
   listQuery?: Record<string, string> | undefined;
 };
 
-/** One model a provider listed. The hint is absent when the listing stated nothing. */
-export type RemoteModel = { id: string; embedding?: boolean | undefined };
-
-export type RemoteModels =
-  | { ok: true; latencyMs: number; models: RemoteModel[] }
+/** What a catalog refresh wrote, or why it wrote nothing. */
+export type CatalogRefresh =
+  | { ok: true; latencyMs: number; added: number; removed: number; provider: ModelProvider }
   | { ok: false; reason: string };
 
 export type IndexStatus = {
@@ -133,10 +150,6 @@ export function credentialModeLabel(mode: string) {
   return labels[mode] ?? mode.replaceAll("_", " ");
 }
 
-export function roleLabel(role: ModelRole) {
-  return roleDescriptions.find((entry) => entry.role === role)?.label ?? role;
-}
-
 export function modelDisplayName(entry: CatalogEntry) {
   return entry.label ?? entry.id;
 }
@@ -151,22 +164,13 @@ const embeddingFamilies = /(^|[/\-_.])(bge|gte|e5|voyage)([-_.]|$)/;
 
 /**
  * Whether a model id reads like an embedding model. An OpenAI-compatible model
- * list carries no capability data, so this is a naming heuristic and a default
- * only: it suggests a role for a model the admin has just enabled, and never
- * overrides a role already chosen.
+ * list carries no capability data, so this is a naming heuristic and a filter
+ * only: it narrows the embedding picker, and never decides what a model may
+ * serve. The role a model carries is what does that.
  */
 export function looksLikeEmbeddingModel(id: string): boolean {
   const value = id.toLowerCase();
   return value.includes("embed") || embeddingFamilies.test(value);
-}
-
-/**
- * Whether a listed model produces vectors. A provider that states the
- * capability is believed; the name heuristic answers only where nothing was
- * stated, and never overrules what a provider said about its own model.
- */
-export function isEmbeddingModel(id: string, hint: boolean | undefined): boolean {
-  return hint ?? looksLikeEmbeddingModel(id);
 }
 
 /**

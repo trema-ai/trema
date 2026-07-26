@@ -18,6 +18,10 @@ import {
   putDefaults,
   putProvider,
 } from "#server/services/model-providers/index.js";
+import {
+  importProviderCatalog,
+  refreshProviderCatalog,
+} from "#server/services/model-providers/catalog.js";
 import { listPresets } from "#server/services/model-providers/presets.js";
 import { fetchRemoteModels, probeProvider } from "#server/services/model-providers/remote.js";
 
@@ -72,7 +76,11 @@ const providerSchema = z
       .describe(
         "Whether a credential is stored for this provider. The credential itself is never returned.",
       ),
-    catalog: z.array(catalogEntrySchema).describe("The models this provider offers."),
+    catalog: z
+      .array(catalogEntrySchema)
+      .describe(
+        "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it.",
+      ),
     listQuery: listQuerySchema,
     updatedAt: z.string().describe("When the provider last changed. An ISO 8601 date-time."),
   })
@@ -234,7 +242,7 @@ const create = requireCapability("manage_models")
     path: "/model-providers",
     summary: "Create a model provider",
     description:
-      "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential.",
+      "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential. The provider is asked for its model list on the way out, so the catalog comes back populated; a listing that fails leaves it empty rather than failing the create.",
     tags: ["Model providers"],
   })
   .input(providerWriteSchema)
@@ -242,6 +250,11 @@ const create = requireCapability("manage_models")
   .handler(async ({ context, input }) => {
     try {
       await putProvider(context.db, { ...writeInput(context, input), onExisting: "reject" });
+      await importProviderCatalog(context.db, context.org.id, input.name, {
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+      });
       return renderProvider(await getProvider(context.db, context.org.id, input.name));
     } catch (error) {
       throwModelProviderError(error);
@@ -468,7 +481,7 @@ const remoteModels = requireCapability("manage_models")
     path: "/model-providers/{name}/remote-models",
     summary: "List the models a provider offers",
     description:
-      "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import, and the capability each listing states about its own models where it states one; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
+      "Ask the provider itself which models it serves, using the stored credential. The answer carries the capability each listing states about its own models where it states one. It stores nothing: writing the answer into the provider's catalog is what a catalog refresh does.",
     tags: ["Model providers"],
   })
   .input(z.object({ name: z.string().trim().min(1).describe("The provider's name.") }))
@@ -485,8 +498,68 @@ const remoteModels = requireCapability("manage_models")
     }
   });
 
+const catalogRefreshSchema = z
+  .discriminatedUnion("ok", [
+    z.object({
+      ok: z.literal(true),
+      latencyMs: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe("How long the provider took to answer, in milliseconds."),
+      added: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe("How many models the listing brought that the catalog did not already hold."),
+      removed: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe(
+          "How many entries were dropped. Only entries nothing was said about go: one carrying a role, a label, a context window, or a role default that names it stays even after the provider stops listing it.",
+        ),
+      provider: providerSchema,
+    }),
+    z.object({
+      ok: z.literal(false),
+      reason: z.string().describe("What went wrong, in a sentence an admin can act on."),
+    }),
+  ])
+  .describe(
+    "What the refresh wrote. A provider that cannot be reached is a result, not an error: the stored catalog is left exactly as it was.",
+  );
+
+const refreshCatalog = requireCapability("manage_models")
+  .route({
+    method: "POST",
+    path: "/model-providers/{name}/refresh-catalog",
+    summary: "Refresh a provider's model catalog",
+    description:
+      "Ask the provider what it serves and store the answer as its catalog. The listing is the menu and the catalog is the annotations over it: an entry the admin gave a role, a label, or a context window keeps every one of them, and so does an entry a role default names, while an entry that only ever came from an earlier listing goes when the provider stops listing it. Roles on a newly imported model follow whatever the listing said about it, and its name where the listing said nothing.",
+    tags: ["Model providers"],
+  })
+  .input(z.object({ name: z.string().trim().min(1).describe("The provider's name.") }))
+  .output(catalogRefreshSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      const result = await refreshProviderCatalog(context.db, context.org.id, input.name, {
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+      });
+      if (!result.ok) return result;
+      return {
+        ...result,
+        provider: renderProvider(await getProvider(context.db, context.org.id, input.name)),
+      };
+    } catch (error) {
+      throwModelProviderError(error);
+    }
+  });
+
 export const modelProvidersRouter = {
-  providers: { list, get, create, put, delete: remove, probe, remoteModels },
+  providers: { list, get, create, put, delete: remove, probe, remoteModels, refreshCatalog },
   defaults: { list: listRoleDefaults, put: putRoleDefault, delete: removeRoleDefault },
   presets: { list: listProviderPresets },
 };

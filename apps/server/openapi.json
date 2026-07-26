@@ -7149,7 +7149,7 @@
                             "id"
                           ]
                         },
-                        "description": "The models this provider offers."
+                        "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
                       },
                       "listQuery": {
                         "type": "object",
@@ -7195,7 +7195,7 @@
       "post": {
         "operationId": "modelProviders.providers.create",
         "summary": "Create a model provider",
-        "description": "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential.",
+        "description": "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential. The provider is asked for its model list on the way out, so the catalog comes back populated; a listing that fails leaves it empty rather than failing the create.",
         "tags": [
           "Model providers"
         ],
@@ -7428,7 +7428,7 @@
                           "id"
                         ]
                       },
-                      "description": "The models this provider offers."
+                      "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
                     },
                     "listQuery": {
                       "type": "object",
@@ -7576,7 +7576,7 @@
                           "id"
                         ]
                       },
-                      "description": "The models this provider offers."
+                      "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
                     },
                     "listQuery": {
                       "type": "object",
@@ -7859,7 +7859,7 @@
                           "id"
                         ]
                       },
-                      "description": "The models this provider offers."
+                      "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
                     },
                     "listQuery": {
                       "type": "object",
@@ -8032,7 +8032,7 @@
       "get": {
         "operationId": "modelProviders.providers.remoteModels",
         "summary": "List the models a provider offers",
-        "description": "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import, and the capability each listing states about its own models where it states one; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
+        "description": "Ask the provider itself which models it serves, using the stored credential. The answer carries the capability each listing states about its own models where it states one. It stores nothing: writing the answer into the provider's catalog is what a catalog refresh does.",
         "tags": [
           "Model providers"
         ],
@@ -8112,6 +8112,208 @@
                     }
                   ],
                   "description": "What the provider offers right now. A provider that cannot be reached is a result, not an error: the stored catalog is still editable by hand."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/model-providers/{name}/refresh-catalog": {
+      "post": {
+        "operationId": "modelProviders.providers.refreshCatalog",
+        "summary": "Refresh a provider's model catalog",
+        "description": "Ask the provider what it serves and store the answer as its catalog. The listing is the menu and the catalog is the annotations over it: an entry the admin gave a role, a label, or a context window keeps every one of them, and so does an entry a role default names, while an entry that only ever came from an earlier listing goes when the provider stops listing it. Roles on a newly imported model follow whatever the listing said about it, and its name where the listing said nothing.",
+        "tags": [
+          "Model providers"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The provider's name."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "const": true
+                        },
+                        "latencyMs": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "How long the provider took to answer, in milliseconds."
+                        },
+                        "added": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "How many models the listing brought that the catalog did not already hold."
+                        },
+                        "removed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "How many entries were dropped. Only entries nothing was said about go: one carrying a role, a label, a context window, or a role default that names it stays even after the provider stops listing it."
+                        },
+                        "provider": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "The key role defaults reference. Unique within the organization."
+                            },
+                            "label": {
+                              "type": "string",
+                              "description": "The provider's display name."
+                            },
+                            "protocol": {
+                              "enum": [
+                                "openai_compatible"
+                              ],
+                              "type": "string",
+                              "description": "The wire protocol the provider speaks. One value per protocol, not per vendor: a vendor is a preset over a protocol."
+                            },
+                            "baseUrl": {
+                              "type": "string",
+                              "description": "The base endpoint address, including the version path."
+                            },
+                            "headerNames": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Which extra headers are sent with every request to this provider. The values are never returned: a header can hold a token, so it gets the credential's write-only treatment."
+                            },
+                            "credentialMode": {
+                              "enum": [
+                                "api_key",
+                                "none"
+                              ],
+                              "type": "string",
+                              "description": "How the provider authenticates. `none` is for endpoints that need no credential, such as a model server on the same host."
+                            },
+                            "hasCredential": {
+                              "type": "boolean",
+                              "description": "Whether a credential is stored for this provider. The credential itself is never returned."
+                            },
+                            "catalog": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "The model id the provider expects."
+                                  },
+                                  "label": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "What the admin screen shows."
+                                  },
+                                  "roles": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "turns",
+                                        "utility",
+                                        "embed"
+                                      ],
+                                      "type": "string",
+                                      "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
+                                    },
+                                    "description": "The roles this model may serve. Omitted means unrestricted."
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991,
+                                    "exclusiveMinimum": 0,
+                                    "description": "Context window, in tokens."
+                                  }
+                                },
+                                "required": [
+                                  "id"
+                                ]
+                              },
+                              "description": "The models this provider offers, as of the last time it was asked. It is written by a refresh rather than curated model by model: the provider's own listing is the menu, and the stored entry carries what the admin said about a model on top of it."
+                            },
+                            "listQuery": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "Query parameters sent with the call that reads this provider's model list, and with nothing else. A provider whose listing filters its own catalog needs one — OpenRouter answers with no embedding models until the call asks for every output modality — and a preset seeds it so an admin never types it. It is read back in full, so a token belongs in the credential or a header instead."
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "description": "When the provider last changed. An ISO 8601 date-time."
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "label",
+                            "protocol",
+                            "baseUrl",
+                            "headerNames",
+                            "credentialMode",
+                            "hasCredential",
+                            "catalog",
+                            "listQuery",
+                            "updatedAt"
+                          ],
+                          "description": "One provider in the registry. The credential is write-only."
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "latencyMs",
+                        "added",
+                        "removed",
+                        "provider"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "const": false
+                        },
+                        "reason": {
+                          "type": "string",
+                          "description": "What went wrong, in a sentence an admin can act on."
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "reason"
+                      ]
+                    }
+                  ],
+                  "description": "What the refresh wrote. A provider that cannot be reached is a result, not an error: the stored catalog is left exactly as it was."
                 }
               }
             }

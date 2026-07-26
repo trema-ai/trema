@@ -254,9 +254,9 @@ export async function probeProvider(
 }
 
 /**
- * Reads the models a provider offers, for the catalog editor to import from.
- * The stored catalog stays the source of truth — this supplies ids, the admin
- * still owns which roles each model may serve.
+ * Reads the models a provider offers. It is what a refresh writes the catalog
+ * from, and it is read-only here: merging the answer with what is stored is
+ * `catalog.ts`, which owns the rule for what an admin said about a model.
  */
 export async function fetchRemoteModels(
   db: Database,

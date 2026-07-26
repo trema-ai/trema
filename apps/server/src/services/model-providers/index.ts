@@ -138,7 +138,7 @@ function normalizeListQuery(listQuery: Record<string, string>): Record<string, s
   return normalized;
 }
 
-function normalizeCatalog(catalog: ModelCatalogEntry[]): ModelCatalogEntry[] {
+export function normalizeCatalog(catalog: ModelCatalogEntry[]): ModelCatalogEntry[] {
   const parsed = catalogSchema.parse(catalog);
   const seen = new Set<string>();
   for (const entry of parsed) {

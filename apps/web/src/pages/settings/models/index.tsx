@@ -19,6 +19,7 @@ import {
 } from "#web/components/ui/select.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
+import { ModelsSection } from "#web/pages/settings/models/catalog.tsx";
 import { CreateProviderDialog } from "#web/pages/settings/models/create-dialog.tsx";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
@@ -133,6 +134,7 @@ export function SettingsModelsPage() {
               )}
             </div>
           </section>
+          <ModelsSection providers={providerRows} onChanged={invalidate} />
           <Tabs value={tab} onValueChange={selectTab}>
             <TabsList className="mb-2">
               {modalities.map((modality) => (
@@ -164,10 +166,11 @@ export function SettingsModelsPage() {
         open={adding}
         onOpenChange={setAdding}
         existingNames={providerRows.map((provider) => provider.name)}
-        onCreated={async (name) => {
+        // The models it just read are on this screen, so it stays here rather
+        // than opening the endpoint page nobody asked for.
+        onCreated={async () => {
           setAdding(false);
           await invalidate();
-          navigate(`/settings/models/${name}`);
         }}
       />
     </main>
@@ -465,8 +468,8 @@ function RoleCard({
           {choices.length === 0 ? (
             <p className="text-meta text-muted-foreground">
               {narrow === undefined || showAll
-                ? "No provider lists a model for this role yet. Add models on a provider's page."
-                : "No selected model looks like an embedding model. Turn on every model below, or select more on a provider's page."}
+                ? "No model is available for this role yet. Add a provider, or refresh one from its page."
+                : "No model in the list looks like an embedding model. Turn on every model below, or give one the embedding role in the models list above."}
             </p>
           ) : (
             <Select
