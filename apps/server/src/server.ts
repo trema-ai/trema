@@ -8,6 +8,7 @@ import type { Environment } from "#server/lib/env/schema.js";
 import { configureLogger, log } from "#server/lib/logger/index.js";
 import { initializeBootstrap } from "#server/services/bootstrap/index.js";
 import { loadProviderCatalog } from "#server/services/connectors/index.js";
+import { seedModelProvidersFromEnv } from "#server/services/model-providers/index.js";
 import { createRunEngineFactory } from "#server/services/runs/index.js";
 
 export interface ServeDependencies {
@@ -25,6 +26,7 @@ export async function serveTrema({ env }: ServeDependencies) {
   });
   const db = createPrismaClient(env.DATABASE_URL);
   await initializeBootstrap({ db, env });
+  await seedModelProvidersFromEnv(db, env);
   const auth = createAuth({ db, env });
   // Without Hatchet the deployment still serves context; only run scheduling
   // is absent, and the runs routes report SERVICE_UNAVAILABLE.

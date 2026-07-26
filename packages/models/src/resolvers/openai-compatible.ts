@@ -12,7 +12,7 @@ export function resolveOpenAICompatible(input: {
   const provider = createOpenAICompatible({
     name: input.endpointName,
     baseURL: input.endpoint.baseUrl,
-    apiKey: input.endpoint.apiKey,
+    ...(input.endpoint.apiKey === undefined ? {} : { apiKey: input.endpoint.apiKey }),
     ...(input.endpoint.headers === undefined ? {} : { headers: input.endpoint.headers }),
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
     includeUsage: true,

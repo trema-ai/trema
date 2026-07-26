@@ -33,8 +33,8 @@ export {
   HatchetEngine,
   RUN_TASK_NAME,
 } from "./hatchet.js";
-export type { ConfiguredModel } from "./models.js";
-export { ModelConfigurationError, parseModelEndpoints, resolveConfiguredModel } from "./models.js";
+export type { ConfiguredModel, ResolveConfiguredModelOptions } from "./models.js";
+export { ModelConfigurationError, resolveConfiguredModel } from "./models.js";
 export type { SessionRunPlanOptions } from "./plan.js";
 export { createSessionRunPlan, narrowTools } from "./plan.js";
 export type { PrismaRunStoreOptions } from "./store.js";

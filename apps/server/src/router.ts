@@ -7,6 +7,7 @@ import { serviceCredentialsRouter } from "./rpc/credentials.js";
 import { embeddingsRouter } from "./rpc/embeddings.js";
 import { itemsRouter } from "./rpc/items.js";
 import { membersRouter } from "./rpc/members.js";
+import { modelProvidersRouter } from "./rpc/model-providers.js";
 import { orgRouter } from "./rpc/org.js";
 import { runsRouter } from "./rpc/runs.js";
 import { schedulesRouter } from "./rpc/schedules.js";
@@ -25,6 +26,7 @@ export const router = {
   embeddings: embeddingsRouter,
   members: membersRouter,
   items: itemsRouter,
+  modelProviders: modelProvidersRouter,
   org: orgRouter,
   runs: runsRouter,
   schedules: schedulesRouter,

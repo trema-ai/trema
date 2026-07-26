@@ -62,8 +62,8 @@ const environmentSchema = z
       .min(1)
       .default(DEFAULT_STANDING_BUDGET_TOKENS),
     TREMA_CREDENTIAL_MASTER_KEY: optionalString,
-    // Model endpoints are customer configuration: a JSON object of named
-    // endpoint descriptors, one per protocol. The worker validates the shape.
+    // Model endpoints seed an empty provider registry and are ignored
+    // thereafter. The registry is the configuration; this is bootstrap.
     TREMA_MODEL_ENDPOINTS: optionalString,
     // The Hatchet SDK reads its own connection settings from the environment;
     // the server only checks this one to decide whether runs can be scheduled.

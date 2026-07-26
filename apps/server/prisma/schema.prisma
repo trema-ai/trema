@@ -130,6 +130,29 @@ enum SessionMode {
   delegated
 }
 
+/// The wire protocol a model provider speaks. One member per protocol, never
+/// per vendor: a vendor is a preset over a protocol, and a new protocol is a
+/// new arm in `@trema/models`. Values are snake_case here and map to the
+/// hyphenated descriptor literal in `services/model-providers`.
+enum ModelProtocol {
+  openai_compatible
+}
+
+/// How a provider authenticates. `oauth` and `aws_sigv4` land with the flows
+/// that implement them; an unimplemented mode is not a value.
+enum ModelCredentialMode {
+  api_key
+  none
+}
+
+/// What a model is asked to do. Each role resolves to its own provider and
+/// model, so a deployment can run turns on one endpoint and embed on another.
+enum ModelRole {
+  turns
+  utility
+  embed
+}
+
 /// Durable execution state of a run. `awaiting_approval` and `awaiting_input`
 /// are first-class pause states: a parked run holds no worker and no lease.
 enum RunState {
@@ -208,6 +231,8 @@ model Org {
   connectorOAuthStates      ConnectorOAuthState[]
   connectorProviderSettings ConnectorProviderSettings[]
   embeddingSettings         EmbeddingSettings?
+  modelProviders            ModelProvider[]
+  modelDefaults             ModelDefault[]
   contextSessions           ContextSession[]
   conversations             Conversation[]
   messages                  Message[]
@@ -514,6 +539,53 @@ model EmbeddingSettings {
   org              Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
 }
 
+/// One entry in an organization's model provider registry: an endpoint
+/// descriptor plus the credential that reaches it. The environment seeds this
+/// table on an empty registry and is ignored thereafter — these rows are the
+/// configuration, and the admin API is how they change.
+model ModelProvider {
+  id                   String              @id @default(uuid(7))
+  orgId                String
+  /// The key role defaults reference. Stable, unique per organization.
+  name                 String
+  /// What the admin screen shows. Free text.
+  label                String
+  protocol             ModelProtocol
+  baseUrl              String
+  /// Extra headers sent with every request to this provider, or null for none.
+  headersJson          Json?
+  credentialMode       ModelCredentialMode @default(api_key)
+  /// The envelope-encrypted credential. Written, never read back over the API.
+  credentialCiphertext String?
+  /// The provider's model list. Provider-shaped data, not rows anything
+  /// queries; it becomes a table when a query needs one.
+  catalogJson          Json?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  org                  Org                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, name])
+  @@index([orgId])
+}
+
+/// The model one role resolves to, as an ordered fallback chain. No row for a
+/// role means that role is unconfigured, which each consumer degrades on its
+/// own terms.
+model ModelDefault {
+  id        String    @id @default(uuid(7))
+  orgId     String
+  role      ModelRole
+  /// Ordered `{ providerName, modelId }` pairs. The first entry naming a
+  /// provider that still exists wins; the rest are the fallback chain.
+  chainJson Json
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  org       Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, role])
+  @@index([orgId])
+}
+
 model Binding {
   id          String   @id @default(uuid(7))
   orgId       String
@@ -698,39 +770,39 @@ model ConnectorProviderSettings {
 /// One agent run: the unit the workflow engine schedules and the harness owns.
 /// The engine carries nothing but this row's id, so the record is here.
 model AgentRun {
-  id           String           @id
-  orgId        String
+  id            String           @id
+  orgId         String
   /// The conversation the run serializes against. One run per thread at a time.
-  threadRef    String
-  state        RunState
-  trigger      RunTrigger
-  turnCount    Int              @default(0)
+  threadRef     String
+  state         RunState
+  trigger       RunTrigger
+  turnCount     Int              @default(0)
   /// The highest event sequence number handed out for this run. An
   /// `UPDATE ... RETURNING` on this column allocates `seq` inside the same
   /// transaction as the event insert, which keeps the sequence dense.
-  lastEventSeq Int              @default(0)
-  sessionId    String?
-  retryOfRunId String?
+  lastEventSeq  Int              @default(0)
+  sessionId     String?
+  retryOfRunId  String?
   /// One-based attempt number across a retry chain.
-  retryAttempt Int?
-  usage        Json?
-  error        String?
+  retryAttempt  Int?
+  usage         Json?
+  error         String?
   /// Tool names a principal approved for the remainder of this run.
-  runGrants    String[]         @default([])
+  runGrants     String[]         @default([])
   /// Narrows the session's resolved tools for this run. It can never widen them.
-  toolAllowlist String[]        @default([])
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  org          Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  session      ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: SetNull)
-  retryOf      AgentRun?        @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
-  retries      AgentRun[]       @relation("AgentRunRetry")
-  turns        Turn[]
-  events       RunEvent[]
-  queuedInputs RunQueuedInput[]
-  elicitations RunElicitation[]
-  stop         RunStop?
-  firings      ScheduleFiring[]
+  toolAllowlist String[]         @default([])
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  org           Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  session       ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: SetNull)
+  retryOf       AgentRun?        @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
+  retries       AgentRun[]       @relation("AgentRunRetry")
+  turns         Turn[]
+  events        RunEvent[]
+  queuedInputs  RunQueuedInput[]
+  elicitations  RunElicitation[]
+  stop          RunStop?
+  firings       ScheduleFiring[]
 
   @@unique([orgId, id])
   @@index([orgId, threadRef, createdAt])
@@ -765,16 +837,16 @@ model Turn {
 /// One append-only run event. `seq` is dense within a run and assigned by the
 /// server, never by a device or a sandbox.
 model RunEvent {
-  id      String   @id @default(uuid(7))
-  orgId   String
-  runId   String
-  seq     Int
-  at      DateTime
+  id    String   @id @default(uuid(7))
+  orgId String
+  runId String
+  seq   Int
+  at    DateTime
   /// Event envelope schema version.
-  v       Int      @default(1)
-  event   Json
-  org     Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run     AgentRun @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+  v     Int      @default(1)
+  event Json
+  org   Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run   AgentRun @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
   @@unique([runId, seq])
   @@index([orgId, runId, seq])
