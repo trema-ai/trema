@@ -23,6 +23,8 @@ import { SettingsConnectorDetailPage } from "#web/pages/settings/connectors/deta
 import { SettingsConnectorsPage } from "#web/pages/settings/connectors/index.tsx";
 import { SettingsGeneralPage } from "#web/pages/settings/general.tsx";
 import { SettingsMembersPage } from "#web/pages/settings/members.tsx";
+import { SettingsModelProviderPage } from "#web/pages/settings/models/detail.tsx";
+import { SettingsModelsPage } from "#web/pages/settings/models/index.tsx";
 import { SettingsProfilePage } from "#web/pages/settings/profile.tsx";
 import { SignInPage } from "#web/pages/sign-in.tsx";
 
@@ -89,10 +91,15 @@ function AppRoutes() {
       <Route path="/settings/members" element={settings(<SettingsMembersPage />, true)} />
       <Route path="/settings/scopes" element={settings(<ScopesPage />, true)} />
       <Route path="/settings/connectors" element={settings(<SettingsConnectorsPage />, true)} />
+      <Route path="/settings/models" element={settings(<SettingsModelsPage />, true)} />
       <Route path="/settings/audit" element={settings(<SettingsAuditPage />, true)} />
       <Route
         path="/settings/connectors/:providerKey"
         element={settings(<SettingsConnectorDetailPage />, true)}
+      />
+      <Route
+        path="/settings/models/:providerName"
+        element={settings(<SettingsModelProviderPage />, true)}
       />
       <Route path="/settings/*" element={settings(<Navigate to="/settings/profile" replace />)} />
       <Route path="/" element={shell(<HomePage />)} />

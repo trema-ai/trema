@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Boxes,
   Building2,
   Cable,
   LogOut,
@@ -28,6 +29,7 @@ const adminItems = [
   { label: "Members", href: "/settings/members", icon: UsersRound },
   { label: "Scopes", href: "/settings/scopes", icon: SlidersHorizontal },
   { label: "Connectors", href: "/settings/connectors", icon: Cable },
+  { label: "Models", href: "/settings/models", icon: Boxes },
   { label: "Audit log", href: "/settings/audit", icon: ScrollText },
 ];
 

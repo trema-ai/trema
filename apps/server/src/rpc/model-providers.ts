@@ -12,11 +12,14 @@ import {
   getProvider,
   listDefaults,
   listProviders,
+  ModelProviderAlreadyExistsError,
   ModelProviderNotFoundError,
   ModelProviderValidationError,
   putDefaults,
   putProvider,
 } from "#server/services/model-providers/index.js";
+import { listPresets } from "#server/services/model-providers/presets.js";
+import { fetchRemoteModels, probeProvider } from "#server/services/model-providers/remote.js";
 
 const protocolSchema = z
   .enum(["openai_compatible"])
@@ -89,6 +92,9 @@ function throwModelProviderError(error: unknown): never {
   if (error instanceof ModelProviderValidationError) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
+  if (error instanceof ModelProviderAlreadyExistsError) {
+    throw new ORPCError("CONFLICT", { message: error.message });
+  }
   if (error instanceof CredentialEncryptionConfigError) {
     throw new ORPCError("INTERNAL_SERVER_ERROR", {
       message: "The server has no credential master key, so it cannot store a provider credential",
@@ -140,77 +146,107 @@ const get = requireCapability("manage_models")
     }
   });
 
+const providerWriteSchema = z
+  .object({
+    name: z.string().trim().min(1).describe("The provider's name."),
+    label: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("The provider's display name. Defaults to its name."),
+    protocol: protocolSchema,
+    baseUrl: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(
+        "The base endpoint address, including the version path, such as `https://api.openai.com/v1`. Request paths are appended to it, so it carries no query string or fragment, and a trailing slash is dropped.",
+      ),
+    headers: z
+      .record(z.string(), z.string())
+      .nullable()
+      .optional()
+      .describe(
+        "Extra headers sent with every request, stored and never returned. Omit to keep the stored headers; send null to clear them.",
+      ),
+    credentialMode: credentialModeSchema.optional(),
+    credential: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        "The credential, stored encrypted and never returned. Omit to keep the stored value; send null to clear it.",
+      ),
+    catalog: z
+      .array(catalogEntrySchema)
+      .nullable()
+      .optional()
+      .describe(
+        "The models this provider offers. Omit to keep the stored catalog; send null to clear it.",
+      ),
+  })
+  .describe("The provider to store.");
+
+/** The service call both writes make. They differ only in what an existing name means. */
+type ProviderWrite = z.infer<typeof providerWriteSchema>;
+
+function writeInput(
+  context: { org: { id: string }; env: { TREMA_CREDENTIAL_MASTER_KEY?: string | undefined } },
+  input: ProviderWrite,
+) {
+  return {
+    orgId: context.org.id,
+    name: input.name,
+    ...(input.label === undefined ? {} : { label: input.label }),
+    protocol: input.protocol,
+    baseUrl: input.baseUrl,
+    ...(input.headers === undefined ? {} : { headers: input.headers }),
+    ...(input.credentialMode === undefined ? {} : { credentialMode: input.credentialMode }),
+    ...(input.credential === undefined ? {} : { credential: input.credential }),
+    ...(input.catalog === undefined ? {} : { catalog: input.catalog }),
+    ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+      ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+      : {}),
+  };
+}
+
+const create = requireCapability("manage_models")
+  .route({
+    method: "POST",
+    path: "/model-providers",
+    summary: "Create a model provider",
+    description:
+      "Store a provider under a name no other provider holds. A name already in the registry is refused rather than replaced, so two admins adding the same provider at once cannot overwrite each other's credential.",
+    tags: ["Model providers"],
+  })
+  .input(providerWriteSchema)
+  .output(providerSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      await putProvider(context.db, { ...writeInput(context, input), onExisting: "reject" });
+      return renderProvider(await getProvider(context.db, context.org.id, input.name));
+    } catch (error) {
+      throwModelProviderError(error);
+    }
+  });
+
 const put = requireCapability("manage_models")
   .route({
     method: "PUT",
     path: "/model-providers/{name}",
     summary: "Create or replace a model provider",
     description:
-      "Store a provider descriptor and its credential. The credential is write-only: omit it to keep the stored value, send null to clear it.",
+      "Store a provider descriptor and its credential, replacing one stored under the same name. The credential is write-only: omit it to keep the stored value, send null to clear it.",
     tags: ["Model providers"],
   })
-  .input(
-    z
-      .object({
-        name: z.string().trim().min(1).describe("The provider's name."),
-        label: z
-          .string()
-          .trim()
-          .min(1)
-          .optional()
-          .describe("The provider's display name. Defaults to its name."),
-        protocol: protocolSchema,
-        baseUrl: z
-          .string()
-          .trim()
-          .min(1)
-          .describe(
-            "The base endpoint address, including the version path, such as `https://api.openai.com/v1`.",
-          ),
-        headers: z
-          .record(z.string(), z.string())
-          .nullable()
-          .optional()
-          .describe(
-            "Extra headers sent with every request, stored and never returned. Omit to keep the stored headers; send null to clear them.",
-          ),
-        credentialMode: credentialModeSchema.optional(),
-        credential: z
-          .string()
-          .trim()
-          .min(1)
-          .nullable()
-          .optional()
-          .describe(
-            "The credential, stored encrypted and never returned. Omit to keep the stored value; send null to clear it.",
-          ),
-        catalog: z
-          .array(catalogEntrySchema)
-          .nullable()
-          .optional()
-          .describe(
-            "The models this provider offers. Omit to keep the stored catalog; send null to clear it.",
-          ),
-      })
-      .describe("The provider to store."),
-  )
+  .input(providerWriteSchema)
   .output(providerSchema)
   .handler(async ({ context, input }) => {
     try {
-      await putProvider(context.db, {
-        orgId: context.org.id,
-        name: input.name,
-        ...(input.label === undefined ? {} : { label: input.label }),
-        protocol: input.protocol,
-        baseUrl: input.baseUrl,
-        ...(input.headers === undefined ? {} : { headers: input.headers }),
-        ...(input.credentialMode === undefined ? {} : { credentialMode: input.credentialMode }),
-        ...(input.credential === undefined ? {} : { credential: input.credential }),
-        ...(input.catalog === undefined ? {} : { catalog: input.catalog }),
-        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-          : {}),
-      });
+      await putProvider(context.db, writeInput(context, input));
       return renderProvider(await getProvider(context.db, context.org.id, input.name));
     } catch (error) {
       throwModelProviderError(error);
@@ -302,7 +338,129 @@ const removeRoleDefault = requireCapability("manage_models")
     }
   });
 
+const presetSchema = z
+  .object({
+    name: z
+      .string()
+      .describe("The provider name this preset suggests. An admin may store it under another."),
+    label: z.string().describe("The vendor's display name."),
+    protocol: protocolSchema,
+    baseUrl: z.string().describe("The vendor's base endpoint address."),
+    credentialMode: credentialModeSchema,
+    icon: z
+      .string()
+      .optional()
+      .describe("Which bundled brand mark the screen draws for this vendor."),
+  })
+  .describe(
+    "A bundled provider, ready to store as a registry row. A vendor is a preset over a protocol, never code. It carries no model list: a provider is asked what it serves.",
+  );
+
+const listProviderPresets = requireCapability("manage_models")
+  .route({
+    method: "GET",
+    path: "/model-provider-presets",
+    summary: "List the bundled provider presets",
+    description:
+      "Read the presets a provider can be created from. A preset carries a base URL and a credential mode, both editable once the provider exists; the models come from the provider itself.",
+    tags: ["Model providers"],
+  })
+  .output(z.array(presetSchema).describe("Every bundled preset."))
+  .handler(() => listPresets());
+
+const probeSchema = z
+  .discriminatedUnion("ok", [
+    z.object({
+      ok: z.literal(true),
+      latencyMs: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe("How long the provider took to answer, in milliseconds."),
+      modelCount: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe("How many models the provider listed, when it listed any."),
+    }),
+    z.object({
+      ok: z.literal(false),
+      reason: z.string().describe("What went wrong, in a sentence an admin can act on."),
+    }),
+  ])
+  .describe("What the probe found. A failed probe is a result, not an error.");
+
+const probe = requireCapability("manage_models")
+  .route({
+    method: "POST",
+    path: "/model-providers/{name}/probe",
+    summary: "Probe a model provider",
+    description:
+      "Ask the provider whether it is reachable and whether its credential still works, with one cheap authenticated call. It runs on demand only: providers rate-limit, so nothing polls this in the background.",
+    tags: ["Model providers"],
+  })
+  .input(z.object({ name: z.string().trim().min(1).describe("The provider's name.") }))
+  .output(probeSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      return await probeProvider(context.db, context.org.id, input.name, {
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+      });
+    } catch (error) {
+      throwModelProviderError(error);
+    }
+  });
+
+const remoteModelsSchema = z
+  .discriminatedUnion("ok", [
+    z.object({
+      ok: z.literal(true),
+      latencyMs: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe("How long the provider took to answer, in milliseconds."),
+      models: z
+        .array(z.object({ id: z.string().describe("The model id the provider expects.") }))
+        .describe("Every model the provider listed, by id."),
+    }),
+    z.object({
+      ok: z.literal(false),
+      reason: z.string().describe("What went wrong, in a sentence an admin can act on."),
+    }),
+  ])
+  .describe(
+    "What the provider offers right now. A provider that cannot be reached is a result, not an error: the stored catalog is still editable by hand.",
+  );
+
+const remoteModels = requireCapability("manage_models")
+  .route({
+    method: "GET",
+    path: "/model-providers/{name}/remote-models",
+    summary: "List the models a provider offers",
+    description:
+      "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
+    tags: ["Model providers"],
+  })
+  .input(z.object({ name: z.string().trim().min(1).describe("The provider's name.") }))
+  .output(remoteModelsSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      return await fetchRemoteModels(context.db, context.org.id, input.name, {
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+      });
+    } catch (error) {
+      throwModelProviderError(error);
+    }
+  });
+
 export const modelProvidersRouter = {
-  providers: { list, get, put, delete: remove },
+  providers: { list, get, create, put, delete: remove, probe, remoteModels },
   defaults: { list: listRoleDefaults, put: putRoleDefault, delete: removeRoleDefault },
+  presets: { list: listProviderPresets },
 };
