@@ -465,8 +465,9 @@ function HeadersDialog({
 
   const named = rows.filter((row) => row.name.trim().length > 0);
   // Stored values cannot be pre-filled, so a row saved blank would quietly
-  // replace a working header with an empty one.
-  const missingValue = named.some((row) => row.value.length === 0);
+  // replace a working header with an empty one. Trimmed, because the server
+  // trims before storing — spaces-only is blank.
+  const missingValue = named.some((row) => row.value.trim().length === 0);
   // Header names are case-insensitive, and the map a save builds keeps the last
   // row of a repeated name — so two rows for one header would silently drop
   // half of what was typed.
