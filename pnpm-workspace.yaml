@@ -2,6 +2,10 @@ packages:
   - apps/*
   - packages/*
 
+# pnpm is pinned through mise; use the executable selected on PATH instead of
+# downloading and re-executing the version from package.json.
+pmOnFail: ignore
+
 # Shared dependency versions. Reference as `"typescript": "catalog:"`.
 catalog:
   "@types/node": ^24.10.1
