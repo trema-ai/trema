@@ -7535,6 +7535,179 @@
         ]
       }
     },
+    "/model-providers/{name}/probe": {
+      "post": {
+        "operationId": "modelProviders.providers.probe",
+        "summary": "Probe a model provider",
+        "description": "Ask the provider whether it is reachable and whether its credential still works, with one cheap authenticated call. It runs on demand only: providers rate-limit, so nothing polls this in the background.",
+        "tags": [
+          "Model providers"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The provider's name."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "const": true
+                        },
+                        "latencyMs": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "How long the provider took to answer, in milliseconds."
+                        },
+                        "modelCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "How many models the provider listed, when it listed any."
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "latencyMs"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "const": false
+                        },
+                        "reason": {
+                          "type": "string",
+                          "description": "What went wrong, in a sentence an admin can act on."
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "reason"
+                      ]
+                    }
+                  ],
+                  "description": "What the probe found. A failed probe is a result, not an error."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/model-providers/{name}/remote-models": {
+      "get": {
+        "operationId": "modelProviders.providers.remoteModels",
+        "summary": "List the models a provider offers",
+        "description": "Ask the provider itself which models it serves, using the stored credential. The answer supplies model ids for the catalog to import; the stored catalog remains what role assignments read, because roles and labels are the admin's to set.",
+        "tags": [
+          "Model providers"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The provider's name."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "const": true
+                        },
+                        "latencyMs": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "How long the provider took to answer, in milliseconds."
+                        },
+                        "models": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The model id the provider expects."
+                              }
+                            },
+                            "required": [
+                              "id"
+                            ]
+                          },
+                          "description": "Every model the provider listed, by id."
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "latencyMs",
+                        "models"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "const": false
+                        },
+                        "reason": {
+                          "type": "string",
+                          "description": "What went wrong, in a sentence an admin can act on."
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "reason"
+                      ]
+                    }
+                  ],
+                  "description": "What the provider offers right now. A provider that cannot be reached is a result, not an error: the stored catalog is still editable by hand."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/model-defaults": {
       "get": {
         "operationId": "modelProviders.defaults.list",
@@ -7765,6 +7938,121 @@
                     "deleted"
                   ],
                   "description": "The role default was removed."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/model-provider-presets": {
+      "get": {
+        "operationId": "modelProviders.presets.list",
+        "summary": "List the bundled provider presets",
+        "description": "Read the presets a provider can be created from. A preset carries a base URL, a credential mode, and a starting catalog, all of which stay editable once the provider exists.",
+        "tags": [
+          "Model providers"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "The provider name this preset suggests. An admin may store it under another."
+                      },
+                      "label": {
+                        "type": "string",
+                        "description": "The vendor's display name."
+                      },
+                      "protocol": {
+                        "enum": [
+                          "openai_compatible"
+                        ],
+                        "type": "string",
+                        "description": "The wire protocol the provider speaks. One value per protocol, not per vendor: a vendor is a preset over a protocol."
+                      },
+                      "baseUrl": {
+                        "type": "string",
+                        "description": "The vendor's base endpoint address."
+                      },
+                      "credentialMode": {
+                        "enum": [
+                          "api_key",
+                          "none"
+                        ],
+                        "type": "string",
+                        "description": "How the provider authenticates. `none` is for endpoints that need no credential, such as a model server on the same host."
+                      },
+                      "icon": {
+                        "type": "string",
+                        "description": "Which bundled brand mark the screen draws for this vendor."
+                      },
+                      "catalog": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "The model id the provider expects."
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "What the admin screen shows."
+                            },
+                            "roles": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "turns",
+                                  "utility",
+                                  "embed"
+                                ],
+                                "type": "string",
+                                "description": "What the model is asked to do: `turns` runs the agent loop, `utility` serves satellite completions, `embed` produces vectors."
+                              },
+                              "description": "The roles this model may serve. Omitted means unrestricted."
+                            },
+                            "contextWindow": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991,
+                              "exclusiveMinimum": 0,
+                              "description": "Context window, in tokens."
+                            }
+                          },
+                          "required": [
+                            "id"
+                          ]
+                        },
+                        "description": "The models the preset starts the provider with."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "label",
+                      "protocol",
+                      "baseUrl",
+                      "credentialMode",
+                      "catalog"
+                    ],
+                    "description": "A bundled provider, ready to store as a registry row. A vendor is a preset over a protocol, never code."
+                  },
+                  "description": "Every bundled preset."
                 }
               }
             }

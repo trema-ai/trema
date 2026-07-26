@@ -49,6 +49,21 @@ export type ModelCatalogEntry = z.infer<typeof catalogEntrySchema>;
 
 const headersSchema = z.record(z.string().trim().min(1), z.string());
 
+/**
+ * What an HTTP header field cannot carry, in either half. Scanned rather than
+ * matched, because a control character inside a pattern is its own lint error.
+ */
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** What RFC 9110 allows in a field name. Anything else is not a header name. */
+const headerNamePattern = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
 export class ModelProviderValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -62,6 +77,48 @@ export class ModelProviderNotFoundError extends Error {
     super(message);
     this.name = "ModelProviderNotFoundError";
   }
+}
+
+/**
+ * Refuses a value that cannot become a header. The transport would reject it
+ * anyway, but it reports the offending value in the error it throws — so a
+ * credential with a stray newline in it would travel back out through whatever
+ * surfaces that error. Refusing at write time keeps that value out of every
+ * later message.
+ */
+function assertHeaderValue(value: string, label: string): void {
+  if (hasControlCharacter(value)) {
+    throw new ModelProviderValidationError(`${label} cannot contain control characters`);
+  }
+}
+
+function normalizeHeaders(headers: Record<string, string>): Record<string, string> {
+  const parsed = headersSchema.parse(headers);
+  const normalized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(parsed)) {
+    const field = name.trim();
+    if (!headerNamePattern.test(field)) {
+      throw new ModelProviderValidationError(`Header name is not a valid HTTP header: ${field}`);
+    }
+    const trimmed = value.trim();
+    assertHeaderValue(trimmed, `The value of the ${field} header`);
+    normalized[field] = trimmed;
+  }
+  return normalized;
+}
+
+function normalizeCatalog(catalog: ModelCatalogEntry[]): ModelCatalogEntry[] {
+  const parsed = catalogSchema.parse(catalog);
+  const seen = new Set<string>();
+  for (const entry of parsed) {
+    // Two rows for one id makes a role assignment ambiguous, and the screen
+    // cannot tell the admin which of the two it picked.
+    if (seen.has(entry.id)) {
+      throw new ModelProviderValidationError(`Provider catalog lists ${entry.id} twice`);
+    }
+    seen.add(entry.id);
+  }
+  return parsed;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -185,6 +242,9 @@ export async function putProvider(
   if (credentialMode === "api_key" && typeof input.credential !== "string" && !keepsCredential) {
     throw new ModelProviderValidationError("A provider in api_key mode needs a credential");
   }
+  if (typeof input.credential === "string") {
+    assertHeaderValue(input.credential, "The provider credential");
+  }
 
   const credentialCiphertext =
     credentialMode === "none"
@@ -200,13 +260,13 @@ export async function putProvider(
       ? undefined
       : input.headers === null
         ? Prisma.DbNull
-        : headersSchema.parse(input.headers);
+        : normalizeHeaders(input.headers);
   const catalogJson =
     input.catalog === undefined
       ? undefined
       : input.catalog === null
         ? Prisma.DbNull
-        : catalogSchema.parse(input.catalog);
+        : normalizeCatalog(input.catalog);
 
   const provider = await db.modelProvider.upsert({
     where: { orgId_name: { orgId: input.orgId, name } },
@@ -336,6 +396,37 @@ export interface ResolveEndpointsOptions {
 }
 
 /**
+ * One row as transport sees it. The credential is decrypted here and nowhere
+ * else: everything above this line handles status, everything below handles
+ * headers.
+ */
+function toEndpoint(provider: ModelProvider, options: ResolveEndpointsOptions): ModelEndpoint {
+  const headers = providerHeaders(provider);
+  const apiKey =
+    provider.credentialCiphertext === null
+      ? undefined
+      : decryptEnvelope<string>(provider.credentialCiphertext, options.masterKey);
+  return {
+    protocol: descriptorProtocols[provider.protocol],
+    baseUrl: provider.baseUrl,
+    ...(apiKey === undefined ? {} : { apiKey }),
+    ...(headers === undefined ? {} : { headers }),
+  };
+}
+
+/** One provider's descriptor, credential included. Callers keep it in memory only. */
+export async function resolveProviderEndpoint(
+  db: Database,
+  orgId: string,
+  name: string,
+  options: ResolveEndpointsOptions = {},
+): Promise<ModelEndpoint> {
+  const provider = await db.modelProvider.findUnique({ where: { orgId_name: { orgId, name } } });
+  if (!provider) throw new ModelProviderNotFoundError(`Model provider not found: ${name}`);
+  return toEndpoint(provider, options);
+}
+
+/**
  * Resolves the organization's registry into the descriptor map `@trema/models`
  * accepts. This is the one function the run path calls: everything above it is
  * administration, and everything below it is transport.
@@ -354,17 +445,7 @@ export async function resolveEndpoints(
   const endpoints: ModelEndpoints = {};
   for (const provider of providers) {
     try {
-      const headers = providerHeaders(provider);
-      const apiKey =
-        provider.credentialCiphertext === null
-          ? undefined
-          : decryptEnvelope<string>(provider.credentialCiphertext, options.masterKey);
-      endpoints[provider.name] = {
-        protocol: descriptorProtocols[provider.protocol],
-        baseUrl: provider.baseUrl,
-        ...(apiKey === undefined ? {} : { apiKey }),
-        ...(headers === undefined ? {} : { headers }),
-      };
+      endpoints[provider.name] = toEndpoint(provider, options);
     } catch (error) {
       log.warn("Model provider unusable", { providerName: provider.name, error });
     }

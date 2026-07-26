@@ -1,19 +1,24 @@
 import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createAuth } from "#server/lib/auth/index.js";
+import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { type Environment, parseEnv } from "#server/lib/env/schema.js";
 import { modelProvidersRouter } from "#server/rpc/model-providers.js";
 import { orgRouter } from "#server/rpc/org.js";
 import { resolveEmbedder } from "#server/services/embeddings/index.js";
 import {
+  putProvider,
   resolveEndpoints,
   resolveRoleModel,
   seedModelProvidersFromEnv,
 } from "#server/services/model-providers/index.js";
+import { probeProvider } from "#server/services/model-providers/remote.js";
 import { ModelConfigurationError, resolveConfiguredModel } from "#server/services/runs/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -137,6 +142,23 @@ integration("model provider registry", () => {
         { context: org.context },
       ),
     ).rejects.toThrow(/absolute URL/);
+  });
+
+  it("refuses a catalog that lists one model twice", async () => {
+    const org = await createOrg();
+
+    await expect(
+      call(
+        modelProvidersRouter.providers.put,
+        {
+          ...openAiCompatible,
+          name: "primary",
+          credential: "the-secret",
+          catalog: [{ id: "big-model" }, { id: "big-model", label: "Big model" }],
+        },
+        { context: org.context },
+      ),
+    ).rejects.toThrow(/big-model twice/);
   });
 
   it("serves an endpoint that needs no credential", async () => {
@@ -462,6 +484,15 @@ integration("model provider registry", () => {
     await expect(call(modelProvidersRouter.defaults.list, {}, { context })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
+    await expect(call(modelProvidersRouter.presets.list, {}, { context })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(
+      call(modelProvidersRouter.providers.probe, { name: "primary" }, { context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      call(modelProvidersRouter.providers.remoteModels, { name: "primary" }, { context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
       call(
         modelProvidersRouter.providers.put,
@@ -469,6 +500,447 @@ integration("model provider registry", () => {
         { context },
       ),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("offers presets a provider can be created from", async () => {
+    const org = await createOrg();
+    const presets = await call(modelProvidersRouter.presets.list, {}, { context: org.context });
+
+    expect(presets.length).toBeGreaterThan(0);
+    for (const preset of presets) {
+      expect(preset.protocol).toBe("openai_compatible");
+      expect(() => new URL(preset.baseUrl)).not.toThrow();
+    }
+    // The screen needs both shapes: a keyed vendor and an endpoint on the host.
+    expect(presets.some((preset) => preset.credentialMode === "api_key")).toBe(true);
+    expect(presets.some((preset) => preset.credentialMode === "none")).toBe(true);
+    // A preset a role can be assigned from, without the admin typing a model id.
+    expect(
+      presets.some((preset) => preset.catalog.some((entry) => entry.roles?.includes("embed"))),
+    ).toBe(true);
+
+    // A preset is data the API hands over, so storing one is an ordinary put.
+    const preset = presets[0];
+    if (!preset) throw new Error("A preset is required");
+    const created = await call(
+      modelProvidersRouter.providers.put,
+      {
+        name: preset.name,
+        label: preset.label,
+        protocol: preset.protocol,
+        baseUrl: preset.baseUrl,
+        credentialMode: preset.credentialMode,
+        credential: preset.credentialMode === "api_key" ? "preset-secret" : null,
+        catalog: preset.catalog,
+      },
+      { context: org.context },
+    );
+    expect(created.catalog).toEqual(preset.catalog);
+  });
+
+  describe("health probe", () => {
+    /** A stand-in provider on the loopback interface, so no test reaches a vendor. */
+    async function startProvider(
+      handler: (request: IncomingMessage, response: ServerResponse) => void,
+    ) {
+      const server = createServer(handler);
+      await new Promise<void>((resolve) => {
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const { port } = server.address() as AddressInfo;
+      return {
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        async close() {
+          server.closeAllConnections();
+          await new Promise<void>((resolve) => {
+            server.close(() => resolve());
+          });
+        },
+      };
+    }
+
+    it("reports a reachable provider, the models it lists, and the credential it accepted", async () => {
+      const seen: {
+        path?: string | undefined;
+        authorization?: string | undefined;
+        tenant?: string | undefined;
+      } = {};
+      const provider = await startProvider((request, response) => {
+        seen.path = request.url;
+        seen.authorization = request.headers.authorization;
+        seen.tenant = request.headers["x-tenant"] as string;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: [{ id: "big-model" }, { id: "small-model" }] }));
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+          headers: { "x-tenant": "acme" },
+        },
+        { context: org.context },
+      );
+
+      const result = await call(
+        modelProvidersRouter.providers.probe,
+        { name: "primary" },
+        { context: org.context },
+      );
+      expect(result).toMatchObject({ ok: true, modelCount: 2 });
+      expect(seen.path).toBe("/v1/models");
+      // The credential is spent on a header below the port and nowhere else.
+      expect(seen.authorization).toBe("Bearer the-secret");
+      expect(seen.tenant).toBe("acme");
+      expect(JSON.stringify(result)).not.toContain("the-secret");
+
+      await provider.close();
+    });
+
+    it("tells a rejected credential apart from an unreadable answer", async () => {
+      const rejecting = await startProvider((_request, response) => {
+        response.writeHead(401, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "invalid api key" }));
+      });
+      const babbling = await startProvider((_request, response) => {
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end("<html>login</html>");
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "rejecting",
+          protocol: "openai_compatible",
+          baseUrl: rejecting.baseUrl,
+          credential: "stale-secret",
+        },
+        { context: org.context },
+      );
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "babbling",
+          protocol: "openai_compatible",
+          baseUrl: babbling.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+
+      expect(
+        await call(
+          modelProvidersRouter.providers.probe,
+          { name: "rejecting" },
+          { context: org.context },
+        ),
+      ).toEqual({ ok: false, reason: "The provider rejected the credential (HTTP 401)." });
+      expect(
+        await call(
+          modelProvidersRouter.providers.probe,
+          { name: "babbling" },
+          { context: org.context },
+        ),
+      ).toMatchObject({ ok: false, reason: expect.stringContaining("other than JSON") });
+
+      await rejecting.close();
+      await babbling.close();
+    });
+
+    it("reports an endpoint that never answers and one that is not listening", async () => {
+      const silent = await startProvider(() => {
+        // Never responds: what a hung endpoint looks like from the screen.
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "silent",
+          protocol: "openai_compatible",
+          baseUrl: silent.baseUrl,
+          credentialMode: "none",
+        },
+        { context: org.context },
+      );
+      // The bound timeout is the RPC's; the service takes one so a test does
+      // not have to wait it out.
+      const timedOut = await probeProvider(db, org.org.id, "silent", {
+        masterKey,
+        timeoutMs: 250,
+      });
+      expect(timedOut).toEqual({
+        ok: false,
+        reason: "The provider did not answer within 250 ms.",
+      });
+      await silent.close();
+
+      const closed = await startProvider(() => undefined);
+      const baseUrl = closed.baseUrl;
+      await closed.close();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "gone",
+          protocol: "openai_compatible",
+          baseUrl,
+          credentialMode: "none",
+        },
+        { context: org.context },
+      );
+      const unreachable = await call(
+        modelProvidersRouter.providers.probe,
+        { name: "gone" },
+        { context: org.context },
+      );
+      expect(unreachable).toEqual({
+        ok: false,
+        reason: "Nothing is listening at the provider's base URL.",
+      });
+    });
+
+    it("keeps a stored secret out of every failure it reports", async () => {
+      const org = await createOrg();
+      const refusing = await startProvider((_request, response) => {
+        response.writeHead(500);
+        response.end("no");
+      });
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: refusing.baseUrl,
+          credential: "placeholder-secret",
+        },
+        { context: org.context },
+      );
+
+      // A credential the transport refuses as a header: undici reports it by
+      // quoting the offending value, which is the whole reason the probe never
+      // repeats an error message it did not write.
+      const smuggled = "sk-live\nx-injected: 1";
+      await db.modelProvider.update({
+        where: { orgId_name: { orgId: org.org.id, name: "primary" } },
+        data: { credentialCiphertext: encryptEnvelope(smuggled, masterKey) },
+      });
+      const rejected = await call(
+        modelProvidersRouter.providers.probe,
+        { name: "primary" },
+        { context: org.context },
+      );
+      expect(rejected).toEqual({
+        ok: false,
+        reason:
+          "The provider could not be reached. Check the base URL, the stored headers, and the credential.",
+      });
+      expect(JSON.stringify(rejected)).not.toContain("sk-live");
+      await refusing.close();
+
+      // The same guarantee on the branch that reports a plain HTTP failure, and
+      // on the one where nothing is listening at all.
+      await db.modelProvider.update({
+        where: { orgId_name: { orgId: org.org.id, name: "primary" } },
+        data: { credentialCiphertext: encryptEnvelope("sk-live-plain", masterKey) },
+      });
+      const failed = await call(
+        modelProvidersRouter.providers.probe,
+        { name: "primary" },
+        { context: org.context },
+      );
+      expect(JSON.stringify(failed)).not.toContain("sk-live-plain");
+      expect(failed).toEqual({
+        ok: false,
+        reason: "Nothing is listening at the provider's base URL.",
+      });
+    });
+
+    it("refuses a credential or header value that cannot become a header", async () => {
+      const org = await createOrg();
+
+      await expect(
+        call(
+          modelProvidersRouter.providers.put,
+          { ...openAiCompatible, name: "primary", credential: "sk-live\nx-injected: 1" },
+          { context: org.context },
+        ),
+      ).rejects.toThrow(/control characters/);
+      await expect(
+        putProvider(db, {
+          orgId: org.org.id,
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: "https://models.example.test/v1",
+          credential: "sk-live\nx-injected: 1",
+          masterKey,
+        }),
+      ).rejects.toThrow(/control characters/);
+      await expect(
+        call(
+          modelProvidersRouter.providers.put,
+          {
+            ...openAiCompatible,
+            name: "primary",
+            credential: "fine",
+            headers: { "x-tenant": "acme\r\nx-injected: 1" },
+          },
+          { context: org.context },
+        ),
+      ).rejects.toThrow(/control characters/);
+      await expect(
+        call(
+          modelProvidersRouter.providers.put,
+          {
+            ...openAiCompatible,
+            name: "primary",
+            credential: "fine",
+            headers: { "x tenant": "acme" },
+          },
+          { context: org.context },
+        ),
+      ).rejects.toThrow(/not a valid HTTP header/);
+    });
+
+    it("does not follow a redirect away from the base URL", async () => {
+      const elsewhere = await startProvider((request, response) => {
+        // Nothing should arrive here: the probe stops at the redirect.
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: [], seen: request.headers["x-tenant"] }));
+      });
+      const redirecting = await startProvider((_request, response) => {
+        response.writeHead(302, { location: `${elsewhere.baseUrl}/models` });
+        response.end();
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "moved",
+          protocol: "openai_compatible",
+          baseUrl: redirecting.baseUrl,
+          credential: "the-secret",
+          headers: { "x-tenant": "acme" },
+        },
+        { context: org.context },
+      );
+
+      expect(
+        await call(
+          modelProvidersRouter.providers.probe,
+          { name: "moved" },
+          { context: org.context },
+        ),
+      ).toMatchObject({ ok: false, reason: expect.stringContaining("redirect") });
+
+      await redirecting.close();
+      await elsewhere.close();
+    });
+
+    it("reads the models a provider offers, for the catalog to import", async () => {
+      const seen: { path?: string | undefined; authorization?: string | undefined } = {};
+      const provider = await startProvider((request, response) => {
+        seen.path = request.url;
+        seen.authorization = request.headers.authorization;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            // Out of order, with one repeat and one entry that has no id: what
+            // a gateway actually returns.
+            data: [
+              { id: "small-model" },
+              { id: "big-model" },
+              { id: "small-model" },
+              { object: "model" },
+            ],
+          }),
+        );
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "primary",
+          protocol: "openai_compatible",
+          baseUrl: provider.baseUrl,
+          credential: "the-secret",
+        },
+        { context: org.context },
+      );
+
+      const result = await call(
+        modelProvidersRouter.providers.remoteModels,
+        { name: "primary" },
+        { context: org.context },
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        models: [{ id: "big-model" }, { id: "small-model" }],
+      });
+      expect(seen.path).toBe("/v1/models");
+      expect(seen.authorization).toBe("Bearer the-secret");
+      expect(JSON.stringify(result)).not.toContain("the-secret");
+
+      await provider.close();
+    });
+
+    it("reports a model list it could not fetch without repeating the credential", async () => {
+      const rejecting = await startProvider((_request, response) => {
+        response.writeHead(401);
+        response.end("nope");
+      });
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "rejecting",
+          protocol: "openai_compatible",
+          baseUrl: rejecting.baseUrl,
+          credential: "stale-secret",
+        },
+        { context: org.context },
+      );
+
+      const rejected = await call(
+        modelProvidersRouter.providers.remoteModels,
+        { name: "rejecting" },
+        { context: org.context },
+      );
+      expect(rejected).toEqual({
+        ok: false,
+        reason: "The provider rejected the credential (HTTP 401).",
+      });
+      expect(JSON.stringify(rejected)).not.toContain("stale-secret");
+      await rejecting.close();
+
+      // Nothing listening: the catalog editor keeps working by hand, so this
+      // stays a result rather than an error.
+      const unreachable = await call(
+        modelProvidersRouter.providers.remoteModels,
+        { name: "rejecting" },
+        { context: org.context },
+      );
+      expect(unreachable).toEqual({
+        ok: false,
+        reason: "Nothing is listening at the provider's base URL.",
+      });
+      expect(JSON.stringify(unreachable)).not.toContain("stale-secret");
+    });
+
+    it("refuses to reach a provider that is not in the registry", async () => {
+      const org = await createOrg();
+      await expect(
+        call(modelProvidersRouter.providers.probe, { name: "absent" }, { context: org.context }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(
+        call(
+          modelProvidersRouter.providers.remoteModels,
+          { name: "absent" },
+          { context: org.context },
+        ),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
   });
 
   it("keeps one organization's providers out of another's", async () => {
