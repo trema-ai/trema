@@ -174,13 +174,9 @@ function EndpointSection({
 
   return (
     <form onSubmit={submit}>
-      <SettingsSection
-        title="Endpoint"
-        description="Where requests go, and which wire protocol they speak."
-      >
+      <SettingsSection title="Endpoint">
         <SettingRow
           label="Display name"
-          description="Shown on this screen. The name assignments use never changes."
           orientation="stack"
           control={
             <Input
@@ -204,7 +200,6 @@ function EndpointSection({
         />
         <SettingRow
           label="Protocol"
-          description="The wire format, not the brand."
           control={
             <Select value={protocol} onValueChange={(value) => setProtocol(value as ModelProtocol)}>
               <SelectTrigger aria-label="Protocol" className="w-56">
@@ -219,8 +214,7 @@ function EndpointSection({
           }
         />
         <SettingRow
-          label="Apply changes"
-          description="The stored credential is untouched by an endpoint edit."
+          label=""
           control={
             <Button disabled={!dirty || save.isPending}>
               {save.isPending ? "Saving…" : "Save"}
@@ -281,10 +275,7 @@ function CredentialSection({
 
   const keyed = provider.credentialMode === "api_key";
   return (
-    <SettingsSection
-      title="Credential"
-      description="Stored encrypted on the server. It reaches the provider in a request header, never the model."
-    >
+    <SettingsSection title="Credential">
       <SettingRow
         label="Authentication"
         description={

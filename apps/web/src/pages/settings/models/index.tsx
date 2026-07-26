@@ -7,6 +7,16 @@ import { toast } from "sonner";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "#web/components/ui/alert-dialog.tsx";
 import { Button } from "#web/components/ui/button.tsx";
 import {
   Command,
@@ -36,10 +46,8 @@ import {
   type RoleDescription,
 } from "#web/pages/settings/models/shared.tsx";
 
-/** What the embedding role costs to change, and the completion roles do not. */
-const embedCardProps = {
-  note: "Changing this leaves the index built on the old model. Search runs on text alone until it is rebuilt.",
-};
+/** The embedding role rebuilds the index when it changes; the others just save. */
+const embedCardProps = { reindexes: true };
 
 export function SettingsModelsPage() {
   const navigate = useNavigate();
@@ -282,6 +290,7 @@ function RoleCard({
   providers,
   onChanged,
   note,
+  reindexes,
 }: {
   role: RoleDescription;
   chain: ChainEntry[];
@@ -289,7 +298,13 @@ function RoleCard({
   onChanged: () => Promise<void>;
   /** What assigning this role costs, stated where the assignment is made. */
   note?: string;
+  /** Whether picking a model here rebuilds the search index with it. */
+  reindexes?: boolean;
 }) {
+  const queryClient = useQueryClient();
+  // Held while the confirmation is open, because rebuilding the index is the
+  // expensive half of this change and the admin should agree to it first.
+  const [pending, setPending] = useState<ChainEntry>();
   // The registry stores an ordered chain and resolves down it. This screen
   // assigns one model, which is a chain of one; a longer chain written through
   // the API still resolves, and shows here as the entry that runs.
@@ -302,12 +317,21 @@ function RoleCard({
 
   const save = useMutation({
     mutationFn: async (next?: ChainEntry) => {
-      if (next === undefined) await rpcClient.modelProviders.defaults.delete({ role: role.role });
-      else await rpcClient.modelProviders.defaults.put({ role: role.role, chain: [next] });
+      if (next === undefined) {
+        await rpcClient.modelProviders.defaults.delete({ role: role.role });
+        return undefined;
+      }
+      await rpcClient.modelProviders.defaults.put({ role: role.role, chain: [next] });
+      // The index is only as good as the model that wrote it, so the rebuild
+      // rides along with the change rather than waiting to be remembered.
+      return reindexes ? await rpcClient.items.reindex({}) : undefined;
     },
-    onSuccess: async (_result, next) => {
+    onSuccess: async (result, next) => {
       await onChanged();
-      toast.success(next === undefined ? `${role.label} unassigned` : `${role.label} saved`);
+      await queryClient.invalidateQueries({ queryKey: orpc.items.indexStatus.key() });
+      if (next === undefined) toast.success(`${role.label} unassigned`);
+      else if (result === undefined) toast.success(`${role.label} saved`);
+      else toast.success(`${role.label} saved, ${countFormat.format(result.embedded)} embedded`);
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -322,9 +346,6 @@ function RoleCard({
       <div className="min-w-0">
         <p className="text-chrome font-medium">{role.label}</p>
         <p className="mt-0.5 text-meta text-muted-foreground">{role.description}</p>
-        {assigned === undefined ? (
-          <p className="mt-0.5 text-meta text-muted-foreground">{role.unassigned}</p>
-        ) : null}
         {provider === undefined && assigned !== undefined ? (
           <p className="mt-0.5 text-meta text-muted-foreground">
             Its provider is gone, so this role cannot resolve.
@@ -341,7 +362,7 @@ function RoleCard({
             selected={selected}
             busy={save.isPending}
             choices={choices}
-            onPick={(entry) => save.mutate(entry)}
+            onPick={(entry) => (reindexes ? setPending(entry) : save.mutate(entry))}
           />
         )}
         {assigned === undefined ? null : (
@@ -356,6 +377,34 @@ function RoleCard({
           </Button>
         )}
       </div>
+      <AlertDialog
+        open={pending !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setPending(undefined);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Rebuild the index with this model?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vectors written by the old model stop counting the moment this changes. The rebuild
+              re-embeds everything indexed and runs while you wait; until it finishes, search
+              matches on text alone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pending !== undefined) save.mutate(pending);
+                setPending(undefined);
+              }}
+            >
+              Change and rebuild
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -385,7 +434,7 @@ function ModelCombobox({
           aria-expanded={open}
           aria-label={`Choose a model for ${label}`}
           disabled={busy}
-          className="max-w-72 justify-between font-normal"
+          className="w-64 max-w-full justify-between font-normal"
         >
           <span className="truncate">{selected ?? "Choose a model"}</span>
           <ChevronDown className="opacity-50" />

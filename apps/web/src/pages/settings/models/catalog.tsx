@@ -4,6 +4,14 @@ import { toast } from "sonner";
 
 import { Button } from "#web/components/ui/button.tsx";
 import { Checkbox } from "#web/components/ui/checkbox.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "#web/components/ui/dialog.tsx";
 import { Input } from "#web/components/ui/input.tsx";
 import {
   Select,
@@ -54,6 +62,49 @@ function withOffered(entry: CatalogEntry, offered: boolean): CatalogEntry {
 }
 
 export function ModelsSection({
+  providers,
+  onChanged,
+}: {
+  providers: ModelProvider[];
+  onChanged: () => Promise<void>;
+}) {
+  const catalog = providers.flatMap((provider) => provider.catalog);
+  const offered = catalog.filter((entry) => entry.offered === true).length;
+  const summary =
+    catalog.length === 0
+      ? providers.length === 0
+        ? "No models yet. Add a provider and its list is read from the provider itself."
+        : "No models yet. Refresh a provider from its page to read what it serves."
+      : `${offered} of ${catalog.length} offered in the model picker.`;
+
+  return (
+    <section data-slot="settings-section">
+      <h3 className="text-chrome font-medium text-foreground">Models</h3>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-md border bg-card px-4 py-3.5">
+        <p className="min-w-0 text-meta text-muted-foreground">{summary}</p>
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button size="sm" variant="outline" disabled={catalog.length === 0}>
+              Select models
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="flex max-h-[80svh] flex-col gap-0 p-0 sm:max-w-2xl">
+            <DialogHeader className="px-4 pt-4 pb-3">
+              <DialogTitle>Models</DialogTitle>
+              <DialogDescription>
+                Select the models offered in the model picker. A role can name any model, selected
+                or not.
+              </DialogDescription>
+            </DialogHeader>
+            <ModelPicker providers={providers} onChanged={onChanged} />
+          </DialogContent>
+        </Dialog>
+      </div>
+    </section>
+  );
+}
+
+function ModelPicker({
   providers,
   onChanged,
 }: {
@@ -140,90 +191,79 @@ export function ModelsSection({
   const busy = write.isPending || setAll.isPending;
 
   return (
-    <section data-slot="settings-section">
-      <h3 className="text-chrome font-medium text-foreground">Models</h3>
-      <div className="mt-2 divide-y rounded-md border bg-card">
-        {rows.length === 0 && providerName === allProviders ? (
+    <>
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+        <Input
+          className="min-w-48 flex-1"
+          aria-label="Search models"
+          placeholder="Search models"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        {providers.length > 1 ? (
+          <Select value={providerName} onValueChange={setProviderName}>
+            <SelectTrigger aria-label="Filter by provider" className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={allProviders}>Every provider</SelectItem>
+              {providers.map((provider) => (
+                <SelectItem key={provider.name} value={provider.name}>
+                  {provider.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-2.5">
+        <p className="text-meta text-muted-foreground">
+          {offeredCount === 0
+            ? `None of ${all.length} offered in the picker.`
+            : `${offeredCount} of ${all.length} offered in the picker.`}
+          {narrowed ? ` Select all covers the ${filtered.length} matching.` : ""}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy || filtered.length === 0}
+            onClick={() => setAll.mutate(true)}
+          >
+            Select all
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy || filtered.length === 0}
+            onClick={() => setAll.mutate(false)}
+          >
+            Deselect all
+          </Button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 divide-y overflow-y-auto">
+        {shownRows.length === 0 ? (
           <p className="px-4 py-3.5 text-meta text-muted-foreground">
-            {providers.length === 0
-              ? "No models yet. Add a provider and its list is read from the provider itself."
-              : "No models yet. Refresh a provider from its page to read what it serves."}
+            No model matches. Widen the search or the provider filter.
           </p>
         ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-              <Input
-                className="min-w-48 flex-1"
-                aria-label="Search models"
-                placeholder="Search models"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-              {providers.length > 1 ? (
-                <Select value={providerName} onValueChange={setProviderName}>
-                  <SelectTrigger aria-label="Filter by provider" className="w-48">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={allProviders}>Every provider</SelectItem>
-                    {providers.map((provider) => (
-                      <SelectItem key={provider.name} value={provider.name}>
-                        {provider.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-              <p className="text-meta text-muted-foreground">
-                {offeredCount === 0
-                  ? `No model is offered in the picker yet, of ${all.length}.`
-                  : `${offeredCount} of ${all.length} offered in the picker.`}
-                {narrowed ? ` Select all covers the ${filtered.length} matching.` : ""}
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy || filtered.length === 0}
-                  onClick={() => setAll.mutate(true)}
-                >
-                  Select all
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy || filtered.length === 0}
-                  onClick={() => setAll.mutate(false)}
-                >
-                  Deselect all
-                </Button>
-              </div>
-            </div>
-            {shownRows.length === 0 ? (
-              <p className="px-4 py-3.5 text-meta text-muted-foreground">
-                No model matches. Widen the search or the provider filter.
-              </p>
-            ) : (
-              shownRows.map((row) => (
-                <ModelListRow
-                  key={[row.provider.name, row.entry.id].join("\u0000")}
-                  row={row}
-                  busy={setAll.isPending || (write.isPending && writing === row.provider.name)}
-                  onToggle={toggle}
-                />
-              ))
-            )}
-            {hidden > 0 ? (
-              <p className="px-4 py-2.5 text-meta text-muted-foreground">
-                {hidden} more not shown. Search, or filter by provider, to reach them.
-              </p>
-            ) : null}
-          </>
+          shownRows.map((row) => (
+            <ModelListRow
+              key={[row.provider.name, row.entry.id].join("\u0000")}
+              row={row}
+              busy={setAll.isPending || (write.isPending && writing === row.provider.name)}
+              onToggle={toggle}
+            />
+          ))
         )}
+        {hidden > 0 ? (
+          <p className="px-4 py-2.5 text-meta text-muted-foreground">
+            {hidden} more not shown. Search, or filter by provider, to reach them.
+          </p>
+        ) : null}
       </div>
-    </section>
+    </>
   );
 }
 

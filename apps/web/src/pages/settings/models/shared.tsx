@@ -80,31 +80,27 @@ export type RoleDescription = {
   role: ModelRole;
   label: string;
   description: string;
-  unassigned: string;
 };
 
 const turnsRole: RoleDescription = {
   role: "turns",
   label: "Agent turns",
   description: "The model the agent loop runs on.",
-  unassigned: "No model assigned, so runs cannot start.",
 };
 
 const utilityRole: RoleDescription = {
   role: "utility",
   label: "Utility completions",
   description: "Short completions beside a run: titles, extraction, classification.",
-  unassigned: "No model assigned. Nothing calls this role yet.",
 };
 
 const embedRole: RoleDescription = {
   role: "embed",
   label: "Embedding model",
   description: "Vectors for memory retrieval and ingestion.",
-  unassigned: "No model assigned, so search falls back to lexical matching.",
 };
 
-/** The roles the registry assigns, and what an unassigned one costs. */
+/** The roles the registry assigns. */
 export const roleDescriptions: RoleDescription[] = [turnsRole, utilityRole, embedRole];
 
 /** What a model is asked to produce. One tab on the models screen each. */
