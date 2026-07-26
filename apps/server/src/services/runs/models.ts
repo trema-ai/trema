@@ -1,17 +1,8 @@
 import type { ModelPort, ModelRef } from "@trema/harness";
-import { createSdkModelPort, type ModelEndpoints } from "@trema/models";
-import { z } from "zod";
+import { createSdkModelPort } from "@trema/models";
 
-import type { Environment } from "#server/lib/env/schema.js";
-
-const endpointSchema = z.object({
-  protocol: z.literal("openai-compatible"),
-  baseUrl: z.string().trim().url(),
-  apiKey: z.string().trim().min(1),
-  headers: z.record(z.string(), z.string()).optional(),
-});
-
-const endpointsSchema = z.record(z.string().trim().min(1), endpointSchema);
+import type { Database } from "#server/lib/db/index.js";
+import { resolveEndpoints, resolveRoleChain } from "#server/services/model-providers/index.js";
 
 /** A deployment with no configured model endpoint cannot run the loop. */
 export class ModelConfigurationError extends Error {
@@ -21,69 +12,55 @@ export class ModelConfigurationError extends Error {
   }
 }
 
-/**
- * Parses the named endpoint map.
- * Model endpoints are customer configuration; there is no default endpoint and
- * no provider name in the code.
- * @throws {ModelConfigurationError} When the value is not a valid endpoint map.
- */
-export function parseModelEndpoints(raw: string): ModelEndpoints {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new ModelConfigurationError("TREMA_MODEL_ENDPOINTS must be a JSON object");
-  }
-  const result = endpointsSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new ModelConfigurationError(
-      `Invalid TREMA_MODEL_ENDPOINTS:\n${z.prettifyError(result.error)}`,
-    );
-  }
-  return Object.fromEntries(
-    Object.entries(result.data).map(([name, endpoint]) => [
-      name,
-      {
-        protocol: endpoint.protocol,
-        baseUrl: endpoint.baseUrl,
-        apiKey: endpoint.apiKey,
-        ...(endpoint.headers === undefined ? {} : { headers: endpoint.headers }),
-      },
-    ]),
-  );
-}
-
-/** The model port and the reference every run turn uses, both from configuration. */
+/** The model port and the reference every run turn uses, both from the registry. */
 export interface ConfiguredModel {
   modelPort: ModelPort;
   model: ModelRef;
 }
 
+/** How the run path reaches stored credentials. */
+export interface ResolveConfiguredModelOptions {
+  masterKey?: string;
+}
+
 /**
- * Builds the model port from the deployment's configuration.
- * @throws {ModelConfigurationError} When the endpoints, model, or provider are missing.
+ * Builds the model port from the organization's provider registry and its
+ * `turns` role default.
+ *
+ * Model configuration is control-plane data, not deployment configuration: it
+ * is resolved per organization, when a run opens, and held only for that run.
+ * @throws {ModelConfigurationError} When no provider or no `turns` default resolves.
  */
-export function resolveConfiguredModel(env: Environment): ConfiguredModel {
-  if (!env.TREMA_MODEL_ENDPOINTS) {
-    throw new ModelConfigurationError("TREMA_MODEL_ENDPOINTS is required to execute runs");
-  }
-  if (!env.TREMA_MODEL_ID) {
-    throw new ModelConfigurationError("TREMA_MODEL_ID is required to execute runs");
-  }
-  const endpoints = parseModelEndpoints(env.TREMA_MODEL_ENDPOINTS);
-  const provider = env.TREMA_MODEL_PROVIDER;
-  if (provider !== undefined && endpoints[provider] === undefined) {
-    throw new ModelConfigurationError(`TREMA_MODEL_PROVIDER names no endpoint: ${provider}`);
-  }
-  const names = Object.keys(endpoints);
-  if (provider === undefined && names.length !== 1) {
+export async function resolveConfiguredModel(
+  db: Database,
+  orgId: string,
+  options: ResolveConfiguredModelOptions = {},
+): Promise<ConfiguredModel> {
+  const endpoints = await resolveEndpoints(db, orgId, options);
+  if (Object.keys(endpoints).length === 0) {
     throw new ModelConfigurationError(
-      "TREMA_MODEL_PROVIDER is required when more than one endpoint is configured",
+      "No model provider is configured for this organization; add one before executing runs",
+    );
+  }
+
+  const chain = await resolveRoleChain(db, orgId, "turns");
+  if (chain.length === 0) {
+    throw new ModelConfigurationError(
+      "No model is assigned to the turns role for this organization",
+    );
+  }
+  // Walked against the resolved endpoints rather than against the rows, so a
+  // provider that exists but cannot be read falls through to the next entry
+  // instead of stopping the chain at itself.
+  const turns = chain.find((entry) => endpoints[entry.providerName] !== undefined);
+  if (turns === undefined) {
+    throw new ModelConfigurationError(
+      `The turns role names no usable provider: ${chain.map((entry) => entry.providerName).join(", ")}`,
     );
   }
 
   return {
     modelPort: createSdkModelPort({ endpoints }),
-    model: { id: env.TREMA_MODEL_ID, provider: provider ?? names[0]! },
+    model: { id: turns.modelId, provider: turns.providerName },
   };
 }

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Item, ItemVersion } from "#server/generated/prisma/client.js";
 import { orgScoped, requireCapability } from "#server/rpc/builders.js";
 import { authorize, type Capability } from "#server/services/authorize/index.js";
+import { hasEmbedAssignment, resolveEmbedder } from "#server/services/embeddings/index.js";
 import {
   activateItem,
   archiveItem,
@@ -16,6 +17,7 @@ import {
   restoreItem,
   updateItem,
 } from "#server/services/items/index.js";
+import { backfillEmbeddings, rebuildSearchIndex } from "#server/services/search/index.js";
 
 export const itemKindSchema = z
   .enum(["memory", "skill", "instruction", "connector", "conversation"])
@@ -351,6 +353,49 @@ function lifecycleRoute(action: "activate" | "archive" | "restore") {
     });
 }
 
+const reindex = requireCapability("manage_models")
+  .route({
+    method: "POST",
+    path: "/items/reindex",
+    summary: "Rebuild the item search index",
+    description:
+      "Rebuild every item's search text, then embed the items that have no vector or whose vector came from an earlier model. Run it after reassigning the `embed` role or changing its model.",
+    tags: ["Items"],
+  })
+  .output(
+    z
+      .object({
+        embedded: z.number().int().describe("How many items received a vector."),
+        failed: z.number().int().describe("How many items the endpoint could not embed."),
+      })
+      .describe("What the reindex did."),
+  )
+  .handler(async ({ context }) => {
+    const options = {
+      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+        : {}),
+    };
+    // Prove the embedder is buildable up front, so a broken credential
+    // configuration returns a clear error instead of a rebuild that embeds
+    // nothing. The rebuild itself reconciles rather than wipes, and the
+    // backfill re-resolves per batch, so a role change mid-run switches the
+    // remaining batches.
+    //
+    // The guard asks whether the role is assigned, not whether a provider backs
+    // it: a default outlives the provider it names, and a reindex that embedded
+    // nothing because that provider is gone must not report success.
+    const embedder = await resolveEmbedder(context.db, context.org.id, options);
+    if (embedder === undefined && (await hasEmbedAssignment(context.db, context.org.id))) {
+      throw new ORPCError("INTERNAL_SERVER_ERROR", {
+        message:
+          "The embed role names no usable provider; check that it still exists and that the server's credential master key can read its credential",
+      });
+    }
+    await rebuildSearchIndex(context.db, context.org.id);
+    return backfillEmbeddings(context.db, context.org.id, options);
+  });
+
 export const itemsRouter = {
   create,
   list,
@@ -360,4 +405,5 @@ export const itemsRouter = {
   activate: lifecycleRoute("activate"),
   archive: lifecycleRoute("archive"),
   restore: lifecycleRoute("restore"),
+  reindex,
 };

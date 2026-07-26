@@ -8,11 +8,12 @@ import { createAuth } from "#server/lib/auth/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
 import { createLogger, withLogger } from "#server/lib/logger/index.js";
-import { embeddingsRouter } from "#server/rpc/embeddings.js";
+import { itemsRouter } from "#server/rpc/items.js";
 import { orgRouter } from "#server/rpc/org.js";
 import { searchRouter } from "#server/rpc/search.js";
 import type { Embedder } from "#server/services/embeddings/index.js";
 import { createItem, updateItem } from "#server/services/items/index.js";
+import { putDefaults, putProvider } from "#server/services/model-providers/index.js";
 import {
   backfillEmbeddings,
   rebuildSearchIndex,
@@ -113,9 +114,20 @@ integration("item embeddings and hybrid search", () => {
     return { ...member, principal };
   }
 
-  function configure(orgId: string, model = "fake-embedding-model") {
-    return db.embeddingSettings.create({
-      data: { orgId, endpoint: "https://embeddings.example.test/v1", model },
+  // The `embed` role and one provider row: the only way embeddings are
+  // configured now that the registry owns model configuration.
+  async function configure(orgId: string, model = "fake-embedding-model") {
+    await putProvider(db, {
+      orgId,
+      name: "vectors",
+      protocol: "openai_compatible",
+      baseUrl: "https://embeddings.example.test/v1",
+      credentialMode: "none",
+    });
+    await putDefaults(db, {
+      orgId,
+      role: "embed",
+      chain: [{ providerName: "vectors", modelId: model }],
     });
   }
 
@@ -209,10 +221,7 @@ integration("item embeddings and hybrid search", () => {
     await configure(org.org.id, "model-a");
     const item = await createMemory(org, { ...paraphrase, embedder: fakeEmbedder("model-a") });
 
-    await db.embeddingSettings.update({
-      where: { orgId: org.org.id },
-      data: { model: "model-b" },
-    });
+    await configure(org.org.id, "model-b");
     const filters = { orgId: org.org.id, scopeIds: [org.orgScope.id], query, masterKey };
 
     const stale = await searchItems(db, { ...filters, embedder: fakeEmbedder("model-b") });
@@ -233,10 +242,7 @@ integration("item embeddings and hybrid search", () => {
       content: "Each rollout gets release notes.",
       embedder: fakeEmbedder("model-a"),
     });
-    await db.embeddingSettings.update({
-      where: { orgId: org.org.id },
-      data: { model: "model-b" },
-    });
+    await configure(org.org.id, "model-b");
 
     const lines: string[] = [];
     const logger = createLogger({ level: "info", write: (line) => lines.push(line) });
@@ -264,108 +270,14 @@ integration("item embeddings and hybrid search", () => {
     ).resolves.toEqual({ embedded: 0, failed: 0 });
   });
 
-  it("round-trips the settings without ever returning the key", async () => {
-    const org = await createOrg();
-    const apiKey = "sk-embedding-super-secret";
-
-    const stored = await call(
-      embeddingsRouter.settings.put,
-      { endpoint: "https://api.openai.example/v1/", model: "text-embedding-3-small", apiKey },
-      { context: org.context },
-    );
-    const fetched = await call(embeddingsRouter.settings.get, {}, { context: org.context });
-
-    expect(stored).toMatchObject({
-      configured: true,
-      endpoint: "https://api.openai.example/v1",
-      model: "text-embedding-3-small",
-      hasApiKey: true,
-    });
-    expect(fetched).toMatchObject({ configured: true, hasApiKey: true });
-    expect(JSON.stringify([stored, fetched])).not.toContain(apiKey);
-
-    const persisted = await db.embeddingSettings.findUniqueOrThrow({
-      where: { orgId: org.org.id },
-    });
-    expect(persisted.apiKeyCiphertext).not.toContain(apiKey);
-
-    // Omitting the key keeps the stored one; null clears it for a local endpoint.
-    await call(
-      embeddingsRouter.settings.put,
-      { endpoint: "http://127.0.0.1:8080/v1", model: "bge-small" },
-      { context: org.context },
-    );
-    await expect(
-      call(embeddingsRouter.settings.get, {}, { context: org.context }),
-    ).resolves.toMatchObject({ hasApiKey: true });
-
-    await call(
-      embeddingsRouter.settings.put,
-      { endpoint: "http://127.0.0.1:8080/v1", model: "bge-small", apiKey: null },
-      { context: org.context },
-    );
-    await expect(
-      call(embeddingsRouter.settings.get, {}, { context: org.context }),
-    ).resolves.toMatchObject({ hasApiKey: false });
-  });
-
-  it("reports an unconfigured organization instead of failing", async () => {
-    const org = await createOrg();
-
-    await expect(
-      call(embeddingsRouter.settings.get, {}, { context: org.context }),
-    ).resolves.toEqual({
-      configured: false,
-      endpoint: null,
-      model: null,
-      hasApiKey: false,
-      updatedAt: null,
-    });
-    await expect(
-      call(embeddingsRouter.settings.delete, {}, { context: org.context }),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
-  });
-
-  it("keeps the settings and the reindex behind the model capability", async () => {
+  it("keeps the reindex behind the model capability", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "member");
     await configure(org.org.id);
 
-    await expect(
-      call(embeddingsRouter.settings.get, {}, { context: member.context }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(
-      call(embeddingsRouter.reindex, {}, { context: member.context }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(
-      call(embeddingsRouter.settings.delete, {}, { context: member.context }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(
-      call(
-        embeddingsRouter.settings.put,
-        { endpoint: "https://api.openai.example/v1", model: "text-embedding-3-small" },
-        { context: member.context },
-      ),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-  });
-
-  it("rejects an endpoint that is not an absolute http URL", async () => {
-    const org = await createOrg();
-
-    await expect(
-      call(
-        embeddingsRouter.settings.put,
-        { endpoint: "ftp://files.example/v1", model: "text-embedding-3-small" },
-        { context: org.context },
-      ),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    await expect(
-      call(
-        embeddingsRouter.settings.put,
-        { endpoint: "not-a-url", model: "text-embedding-3-small" },
-        { context: org.context },
-      ),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(call(itemsRouter.reindex, {}, { context: member.context })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
   });
 
   it("rebuilds the text index and embeds through the reindex route", async () => {
@@ -383,7 +295,7 @@ integration("item embeddings and hybrid search", () => {
     ).resolves.toEqual([]);
 
     await db.itemSearchDoc.deleteMany({ where: { orgId: org.org.id } });
-    await call(embeddingsRouter.reindex, {}, { context: org.context });
+    await call(itemsRouter.reindex, {}, { context: org.context });
 
     // The reindex builds the real client from the settings row, which points at
     // an endpoint no test can reach, so only the text index comes back.
@@ -455,40 +367,45 @@ integration("item embeddings and hybrid search", () => {
     await expect(countVectors(org.org.id)).resolves.toBe(1);
   });
 
-  it("reports the missing master key when a key is stored without one", async () => {
+  it("refuses to reindex when the embed role names a provider that is gone", async () => {
     const org = await createOrg();
-    const envWithoutKey = parseEnv({
-      NODE_ENV: "test",
-      DATABASE_URL: databaseUrl,
-      TREMA_AUTH_SECRET: "item-embeddings-integration-secret-at-least-32",
-      TREMA_MODE: "hosted",
-      TREMA_WEB_ORIGINS: "https://trema.example",
-    });
+    await configure(org.org.id);
+    await createMemory(org, { ...paraphrase, embedder: fakeEmbedder() });
 
-    await expect(
-      call(
-        embeddingsRouter.settings.put,
-        {
-          endpoint: "https://embeddings.example.test/v1",
-          model: "fake-embedding-model",
-          apiKey: "sk-test",
-        },
-        { context: { ...org.context, env: envWithoutKey } },
-      ),
-    ).rejects.toThrow(/credential master key/i);
+    // A role default outlives the provider it names, by design: that is what
+    // makes a fallback chain a chain. With nothing left to fall back to, an
+    // explicit reindex must say so rather than quietly embedding nothing.
+    await db.modelProvider.deleteMany({ where: { orgId: org.org.id } });
+
+    await expect(call(itemsRouter.reindex, {}, { context: org.context })).rejects.toThrow(
+      /no usable provider/i,
+    );
+    await expect(countVectors(org.org.id)).resolves.toBe(1);
+
+    // An organization that never configured embeddings is a different case: it
+    // reindexes its text and reports an honest zero.
+    const plain = await createOrg("Unconfigured Reindex Org");
+    await expect(call(itemsRouter.reindex, {}, { context: plain.context })).resolves.toEqual({
+      embedded: 0,
+      failed: 0,
+    });
   });
 
   it("leaves vectors intact when reindex cannot build the embedder", async () => {
     const org = await createOrg();
-    await call(
-      embeddingsRouter.settings.put,
-      {
-        endpoint: "https://embeddings.example.test/v1",
-        model: "fake-embedding-model",
-        apiKey: "sk-test",
-      },
-      { context: org.context },
-    );
+    await putProvider(db, {
+      orgId: org.org.id,
+      name: "vectors",
+      protocol: "openai_compatible",
+      baseUrl: "https://embeddings.example.test/v1",
+      credential: "sk-test",
+      masterKey,
+    });
+    await putDefaults(db, {
+      orgId: org.org.id,
+      role: "embed",
+      chain: [{ providerName: "vectors", modelId: "fake-embedding-model" }],
+    });
     await createMemory(org, { ...paraphrase, embedder: fakeEmbedder() });
     await expect(countVectors(org.org.id)).resolves.toBe(1);
 
@@ -500,7 +417,7 @@ integration("item embeddings and hybrid search", () => {
       TREMA_WEB_ORIGINS: "https://trema.example",
     });
     await expect(
-      call(embeddingsRouter.reindex, {}, { context: { ...org.context, env: envWithoutKey } }),
+      call(itemsRouter.reindex, {}, { context: { ...org.context, env: envWithoutKey } }),
     ).rejects.toThrow(/credential master key/i);
 
     // The failed reindex must not have wiped the index or its vectors.
@@ -522,13 +439,13 @@ integration("item embeddings and hybrid search", () => {
     const deletingEmbedder: Embedder = {
       model: "fake-embedding-model",
       embed: async (texts) => {
-        await db.embeddingSettings.deleteMany({ where: { orgId: org.org.id } });
+        await db.modelDefault.deleteMany({ where: { orgId: org.org.id, role: "embed" } });
         return texts.map(fakeVector);
       },
     };
 
-    // The first batch embeds and then removes the settings; the re-resolution
-    // before the second batch sees no settings row and ends the run.
+    // The first batch embeds and then unassigns the role; the re-resolution
+    // before the second batch sees no embed default and ends the run.
     const result = await backfillEmbeddings(db, org.org.id, { embedder: deletingEmbedder });
     expect(result).toEqual({ embedded: 32, failed: 0 });
     await expect(countVectors(org.org.id)).resolves.toBe(32);

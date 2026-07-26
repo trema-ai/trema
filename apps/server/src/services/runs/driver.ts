@@ -38,6 +38,12 @@ const NO_USAGE = {
  */
 export interface RunExecutionPlan {
   model: ModelRef;
+  /**
+   * The port that reaches that model. It is planned rather than injected
+   * because model configuration is per-organization control-plane data that can
+   * be missing or unusable — which is a fact about the run, recorded on it.
+   */
+  modelPort: ModelPort;
   standing: SessionStanding;
   tools: ToolDef[];
   /** Messages already on the thread before this run's first turn. */
@@ -64,7 +70,6 @@ export class RunNotStartableError extends Error {
 export interface RunDriverOptions {
   store: RunStore;
   lifecycle: RunLifecycle;
-  modelPort: ModelPort;
   toolExecutor: ToolExecutor;
   /** Resolves the session-derived inputs for one execution. */
   plan: (run: RunRecord) => Promise<RunExecutionPlan>;
@@ -141,7 +146,7 @@ export function createRunDriver(options: RunDriverOptions): RunDriver {
             standing: plan.standing,
             threadMessages: plan.threadMessages,
             tools: plan.tools,
-            modelPort: options.modelPort,
+            modelPort: plan.modelPort,
             store: options.store,
             toolExecutor: options.toolExecutor,
             abort,

@@ -4,8 +4,8 @@ export interface OpenAICompatibleEndpoint {
   protocol: "openai-compatible";
   /** Base endpoint address passed to the model provider. */
   baseUrl: string;
-  /** Authentication key passed to the model provider. */
-  apiKey: string;
+  /** Omitted for endpoints that need no key, such as a server on the same host. */
+  apiKey?: string;
   /** Additional headers sent with model requests. */
   headers?: Record<string, string>;
 }

@@ -9,6 +9,7 @@ import {
   takeBootstrapLock,
   verifyBootstrapToken,
 } from "#server/services/bootstrap/index.js";
+import { seedModelProvidersFromEnv } from "#server/services/model-providers/index.js";
 import { createOrgWithOwner } from "#server/services/org/index.js";
 import { authed } from "./builders.js";
 
@@ -101,6 +102,11 @@ const redeem = authed
           },
         },
       );
+
+      // The dedicated first-boot path is the one place the environment may
+      // still configure models: an air-gapped deployment has no admin UI until
+      // this organization exists. Hosted organizations configure their own.
+      await seedModelProvidersFromEnv(context.db, context.env, result.org.id);
 
       log.info("Organization bootstrapped", {
         orgId: result.org.id,

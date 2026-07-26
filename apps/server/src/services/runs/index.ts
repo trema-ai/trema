@@ -4,8 +4,6 @@ import type {
   Clock,
   ContextSession,
   Engine,
-  ModelPort,
-  ModelRef,
   PrincipalRef,
   RunRecord,
   RunStore,
@@ -17,6 +15,7 @@ import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { ServerContextSession } from "#server/services/runs/context.js";
 import { createRunDriver, type RunDriver } from "#server/services/runs/driver.js";
+import type { ConfiguredModel } from "#server/services/runs/models.js";
 import { createSessionRunPlan } from "#server/services/runs/plan.js";
 import { PrismaRunStore } from "#server/services/runs/store.js";
 
@@ -33,8 +32,8 @@ export {
   HatchetEngine,
   RUN_TASK_NAME,
 } from "./hatchet.js";
-export type { ConfiguredModel } from "./models.js";
-export { ModelConfigurationError, parseModelEndpoints, resolveConfiguredModel } from "./models.js";
+export type { ConfiguredModel, ResolveConfiguredModelOptions } from "./models.js";
+export { ModelConfigurationError, resolveConfiguredModel } from "./models.js";
 export type { SessionRunPlanOptions } from "./plan.js";
 export { createSessionRunPlan, narrowTools } from "./plan.js";
 export type { PrismaRunStoreOptions } from "./store.js";
@@ -71,9 +70,7 @@ export interface RunServicesOptions {
   orgId: string;
   engine: Engine;
   /** Required to execute runs. The API process only creates and routes them. */
-  modelPort?: ModelPort;
-  /** Required to execute runs. The API process only creates and routes them. */
-  model?: ModelRef;
+  resolveModel?: () => Promise<ConfiguredModel>;
   toolExecutor?: ToolExecutor;
   context?: ContextSession;
   clock?: Clock;
@@ -149,16 +146,16 @@ export function createRunServices(options: RunServicesOptions): RunServices {
     ...(options.expiryPrincipal === undefined ? {} : { expiryPrincipal: options.expiryPrincipal }),
   });
 
-  if (options.modelPort !== undefined && options.model !== undefined) {
+  if (options.resolveModel !== undefined) {
+    const resolveModel = options.resolveModel;
     driver = createRunDriver({
       store,
       lifecycle,
-      modelPort: options.modelPort,
       toolExecutor: options.toolExecutor ?? createUnavailableToolExecutor(),
       plan: createSessionRunPlan({
         db: options.db,
         orgId: options.orgId,
-        model: options.model,
+        resolveModel,
         maxTurns: options.env.TREMA_RUN_MAX_TURNS,
         elicitationTtlMs: options.env.TREMA_ELICITATION_TTL_MS,
       }),

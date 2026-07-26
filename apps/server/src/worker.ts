@@ -46,14 +46,18 @@ async function executeDeliveredRun(
     log.warn("Run execution skipped", { runId, reason: "unknown_run" });
     return { status: "unknown" };
   }
-  const { modelPort, model } = resolveConfiguredModel(env);
   const services = createRunServices({
     db,
     env,
     orgId: row.orgId,
     engine: engineFor(row.orgId),
-    modelPort,
-    model,
+    // Resolved inside the driver's start guard, so an organization with no
+    // usable provider fails its run with a message rather than rejecting the
+    // task and retrying forever.
+    resolveModel: () =>
+      resolveConfiguredModel(db, row.orgId, {
+        ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
+      }),
   });
   if (services.driver === undefined) {
     throw new Error("The worker composed no run driver");
@@ -73,9 +77,9 @@ export async function startRunWorker({
   hatchet: provided,
 }: RunWorkerDependencies): Promise<RunWorker> {
   configureLogger(env);
-  // Fail before the worker registers if the deployment cannot call a model.
-  resolveConfiguredModel(env);
-
+  // No pre-flight model check: model configuration is per-organization
+  // control-plane data now, so whether a run can call a model is a fact about
+  // its organization, discovered when the run opens.
   const db = createPrismaClient(env.DATABASE_URL);
   const hatchet = provided ?? HatchetClient.init();
   const inFlight = new InFlightRuns();
