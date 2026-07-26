@@ -11,7 +11,11 @@ import { createLogger, withLogger } from "#server/lib/logger/index.js";
 import { embeddingsRouter } from "#server/rpc/embeddings.js";
 import { orgRouter } from "#server/rpc/org.js";
 import { searchRouter } from "#server/rpc/search.js";
-import type { Embedder } from "#server/services/embeddings/index.js";
+import {
+  EMBEDDINGS_PROVIDER_NAME,
+  type Embedder,
+  putEmbeddingSettings,
+} from "#server/services/embeddings/index.js";
 import { createItem, updateItem } from "#server/services/items/index.js";
 import {
   backfillEmbeddings,
@@ -114,8 +118,11 @@ integration("item embeddings and hybrid search", () => {
   }
 
   function configure(orgId: string, model = "fake-embedding-model") {
-    return db.embeddingSettings.create({
-      data: { orgId, endpoint: "https://embeddings.example.test/v1", model },
+    return putEmbeddingSettings(db, {
+      orgId,
+      endpoint: "https://embeddings.example.test/v1",
+      model,
+      masterKey,
     });
   }
 
@@ -209,10 +216,7 @@ integration("item embeddings and hybrid search", () => {
     await configure(org.org.id, "model-a");
     const item = await createMemory(org, { ...paraphrase, embedder: fakeEmbedder("model-a") });
 
-    await db.embeddingSettings.update({
-      where: { orgId: org.org.id },
-      data: { model: "model-b" },
-    });
+    await configure(org.org.id, "model-b");
     const filters = { orgId: org.org.id, scopeIds: [org.orgScope.id], query, masterKey };
 
     const stale = await searchItems(db, { ...filters, embedder: fakeEmbedder("model-b") });
@@ -233,10 +237,7 @@ integration("item embeddings and hybrid search", () => {
       content: "Each rollout gets release notes.",
       embedder: fakeEmbedder("model-a"),
     });
-    await db.embeddingSettings.update({
-      where: { orgId: org.org.id },
-      data: { model: "model-b" },
-    });
+    await configure(org.org.id, "model-b");
 
     const lines: string[] = [];
     const logger = createLogger({ level: "info", write: (line) => lines.push(line) });
@@ -284,10 +285,11 @@ integration("item embeddings and hybrid search", () => {
     expect(fetched).toMatchObject({ configured: true, hasApiKey: true });
     expect(JSON.stringify([stored, fetched])).not.toContain(apiKey);
 
-    const persisted = await db.embeddingSettings.findUniqueOrThrow({
-      where: { orgId: org.org.id },
+    // The key lands in the registry as an envelope, not as itself.
+    const persisted = await db.modelProvider.findUniqueOrThrow({
+      where: { orgId_name: { orgId: org.org.id, name: EMBEDDINGS_PROVIDER_NAME } },
     });
-    expect(persisted.apiKeyCiphertext).not.toContain(apiKey);
+    expect(persisted.credentialCiphertext).not.toContain(apiKey);
 
     // Omitting the key keeps the stored one; null clears it for a local endpoint.
     await call(
@@ -316,6 +318,7 @@ integration("item embeddings and hybrid search", () => {
       call(embeddingsRouter.settings.get, {}, { context: org.context }),
     ).resolves.toEqual({
       configured: false,
+      providerName: null,
       endpoint: null,
       model: null,
       hasApiKey: false,
@@ -522,13 +525,13 @@ integration("item embeddings and hybrid search", () => {
     const deletingEmbedder: Embedder = {
       model: "fake-embedding-model",
       embed: async (texts) => {
-        await db.embeddingSettings.deleteMany({ where: { orgId: org.org.id } });
+        await db.modelDefault.deleteMany({ where: { orgId: org.org.id, role: "embed" } });
         return texts.map(fakeVector);
       },
     };
 
-    // The first batch embeds and then removes the settings; the re-resolution
-    // before the second batch sees no settings row and ends the run.
+    // The first batch embeds and then unassigns the role; the re-resolution
+    // before the second batch sees no embed default and ends the run.
     const result = await backfillEmbeddings(db, org.org.id, { embedder: deletingEmbedder });
     expect(result).toEqual({ embedded: 32, failed: 0 });
     await expect(countVectors(org.org.id)).resolves.toBe(32);

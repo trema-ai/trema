@@ -3958,7 +3958,7 @@
       "get": {
         "operationId": "embeddings.settings.get",
         "summary": "Get the embedding settings",
-        "description": "Read the organization's embedding endpoint and model. The stored API key is never returned; only whether one is set.",
+        "description": "Read the provider and model serving the `embed` role. The stored API key is never returned; only whether one is set.",
         "tags": [
           "Embeddings"
         ],
@@ -3973,6 +3973,17 @@
                     "configured": {
                       "type": "boolean",
                       "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
+                    },
+                    "providerName": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The registry provider serving the `embed` role. Null when the role is unassigned."
                     },
                     "endpoint": {
                       "anyOf": [
@@ -4014,12 +4025,13 @@
                   },
                   "required": [
                     "configured",
+                    "providerName",
                     "endpoint",
                     "model",
                     "hasApiKey",
                     "updatedAt"
                   ],
-                  "description": "The organization's embedding settings. The API key is write-only."
+                  "description": "The `embed` role's provider and model, as this screen sees them. The API key is write-only. The registry can express a fallback chain this shape cannot; the Models API reports the whole of it."
                 }
               }
             }
@@ -4034,7 +4046,7 @@
       "put": {
         "operationId": "embeddings.settings.put",
         "summary": "Set the embedding settings",
-        "description": "Point the organization at an OpenAI-compatible embeddings endpoint. Existing items keep their vectors until a reindex re-embeds them under the new model.",
+        "description": "Point the `embed` role at an OpenAI-compatible embeddings endpoint, storing it as a model provider. Existing items keep their vectors until a reindex re-embeds them under the new model.",
         "tags": [
           "Embeddings"
         ],
@@ -4089,6 +4101,17 @@
                       "type": "boolean",
                       "description": "Whether the organization has an embedding endpoint. When false, search is text-only."
                     },
+                    "providerName": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The registry provider serving the `embed` role. Null when the role is unassigned."
+                    },
                     "endpoint": {
                       "anyOf": [
                         {
@@ -4129,12 +4152,13 @@
                   },
                   "required": [
                     "configured",
+                    "providerName",
                     "endpoint",
                     "model",
                     "hasApiKey",
                     "updatedAt"
                   ],
-                  "description": "The organization's embedding settings. The API key is write-only."
+                  "description": "The `embed` role's provider and model, as this screen sees them. The API key is write-only. The registry can express a fallback chain this shape cannot; the Models API reports the whole of it."
                 }
               }
             }
@@ -4149,7 +4173,7 @@
       "delete": {
         "operationId": "embeddings.settings.delete",
         "summary": "Delete the embedding settings",
-        "description": "Stop embedding this organization's items. Search falls back to text matching. Stored vectors are left in place and are ignored until an endpoint is configured again.",
+        "description": "Unassign the `embed` role, so this organization stops embedding its items and search falls back to text matching. The provider row stays in the registry, and stored vectors are left in place and ignored until the role is assigned again.",
         "tags": [
           "Embeddings"
         ],
@@ -4168,7 +4192,7 @@
                   "required": [
                     "deleted"
                   ],
-                  "description": "The settings were removed."
+                  "description": "The role assignment was removed."
                 }
               }
             }

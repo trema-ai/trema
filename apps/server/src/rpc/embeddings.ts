@@ -23,6 +23,12 @@ const settingsSchema = z
       .describe(
         "Whether the organization has an embedding endpoint. When false, search is text-only.",
       ),
+    providerName: z
+      .string()
+      .nullable()
+      .describe(
+        "The registry provider serving the `embed` role. Null when the role is unassigned.",
+      ),
     endpoint: z
       .string()
       .nullable()
@@ -38,7 +44,9 @@ const settingsSchema = z
       .nullable()
       .describe("When the settings last changed. An ISO 8601 date-time."),
   })
-  .describe("The organization's embedding settings. The API key is write-only.");
+  .describe(
+    "The `embed` role's provider and model, as this screen sees them. The API key is write-only. The registry can express a fallback chain this shape cannot; the Models API reports the whole of it.",
+  );
 
 function throwEmbeddingError(error: unknown): never {
   if (error instanceof EmbeddingSettingsNotFoundError) {
@@ -66,20 +74,28 @@ const get = requireCapability("manage_models")
     path: "/embedding-settings",
     summary: "Get the embedding settings",
     description:
-      "Read the organization's embedding endpoint and model. The stored API key is never returned; only whether one is set.",
+      "Read the provider and model serving the `embed` role. The stored API key is never returned; only whether one is set.",
     tags: ["Embeddings"],
   })
   .output(settingsSchema)
   .handler(async ({ context }) => {
     const settings = await getEmbeddingSettings(context.db, context.org.id);
     if (!settings) {
-      return { configured: false, endpoint: null, model: null, hasApiKey: false, updatedAt: null };
+      return {
+        configured: false,
+        providerName: null,
+        endpoint: null,
+        model: null,
+        hasApiKey: false,
+        updatedAt: null,
+      };
     }
     return {
       configured: true,
+      providerName: settings.providerName,
       endpoint: settings.endpoint,
       model: settings.model,
-      hasApiKey: settings.apiKeyCiphertext !== null,
+      hasApiKey: settings.hasApiKey,
       updatedAt: settings.updatedAt.toISOString(),
     };
   });
@@ -90,7 +106,7 @@ const put = requireCapability("manage_models")
     path: "/embedding-settings",
     summary: "Set the embedding settings",
     description:
-      "Point the organization at an OpenAI-compatible embeddings endpoint. Existing items keep their vectors until a reindex re-embeds them under the new model.",
+      "Point the `embed` role at an OpenAI-compatible embeddings endpoint, storing it as a model provider. Existing items keep their vectors until a reindex re-embeds them under the new model.",
     tags: ["Embeddings"],
   })
   .input(
@@ -130,9 +146,10 @@ const put = requireCapability("manage_models")
       });
       return {
         configured: true,
+        providerName: settings.providerName,
         endpoint: settings.endpoint,
         model: settings.model,
-        hasApiKey: settings.apiKeyCiphertext !== null,
+        hasApiKey: settings.hasApiKey,
         updatedAt: settings.updatedAt.toISOString(),
       };
     } catch (error) {
@@ -146,10 +163,10 @@ const remove = requireCapability("manage_models")
     path: "/embedding-settings",
     summary: "Delete the embedding settings",
     description:
-      "Stop embedding this organization's items. Search falls back to text matching. Stored vectors are left in place and are ignored until an endpoint is configured again.",
+      "Unassign the `embed` role, so this organization stops embedding its items and search falls back to text matching. The provider row stays in the registry, and stored vectors are left in place and ignored until the role is assigned again.",
     tags: ["Embeddings"],
   })
-  .output(z.object({ deleted: z.literal(true) }).describe("The settings were removed."))
+  .output(z.object({ deleted: z.literal(true) }).describe("The role assignment was removed."))
   .handler(async ({ context }) => {
     try {
       await deleteEmbeddingSettings(context.db, context.org.id);
@@ -187,10 +204,19 @@ const reindex = requireCapability("manage_models")
     // nothing. The rebuild itself reconciles rather than wipes, and the
     // backfill re-resolves per batch, so a settings change mid-run switches
     // the remaining batches.
+    let embedder: Awaited<ReturnType<typeof resolveEmbedder>>;
     try {
-      await resolveEmbedder(context.db, context.org.id, options);
+      embedder = await resolveEmbedder(context.db, context.org.id, options);
     } catch (error) {
       throwEmbeddingError(error);
+    }
+    // Indexing and search treat an unusable provider as the off state and stay
+    // lexical. A reindex was asked for explicitly, so it says so instead.
+    if (embedder === undefined && (await getEmbeddingSettings(context.db, context.org.id))) {
+      throw new ORPCError("INTERNAL_SERVER_ERROR", {
+        message:
+          "The embed role's provider cannot be used; check the server's credential master key and the provider's stored credential",
+      });
     }
     await rebuildSearchIndex(context.db, context.org.id);
     return backfillEmbeddings(context.db, context.org.id, options);

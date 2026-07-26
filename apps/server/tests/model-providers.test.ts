@@ -8,6 +8,7 @@ import { createPrismaClient } from "#server/lib/db/index.js";
 import { type Environment, parseEnv } from "#server/lib/env/schema.js";
 import { modelProvidersRouter } from "#server/rpc/model-providers.js";
 import { orgRouter } from "#server/rpc/org.js";
+import { getEmbeddingSettings, resolveEmbedder } from "#server/services/embeddings/index.js";
 import {
   resolveEndpoints,
   resolveRoleModel,
@@ -372,6 +373,38 @@ integration("model provider registry", () => {
     await expect(resolveConfiguredModel(db, org.org.id, { masterKey })).rejects.toBeInstanceOf(
       ModelConfigurationError,
     );
+  });
+
+  it("drives the embedder from the embed role, whichever screen assigned it", async () => {
+    const org = await createOrg();
+    expect(await resolveEmbedder(db, org.org.id, { masterKey })).toBeUndefined();
+
+    await call(
+      modelProvidersRouter.providers.put,
+      {
+        name: "vectors",
+        protocol: "openai_compatible",
+        baseUrl: "https://embeddings.example.test/v1",
+        credential: "vectors-secret",
+      },
+      { context: org.context },
+    );
+    await call(
+      modelProvidersRouter.defaults.put,
+      { role: "embed", chain: [{ providerName: "vectors", modelId: "text-embedding-3-small" }] },
+      { context: org.context },
+    );
+
+    // The embeddings screen and the Models screen are now the same two rows,
+    // so search picks this up without the settings screen ever being opened.
+    const embedder = await resolveEmbedder(db, org.org.id, { masterKey });
+    expect(embedder?.model).toBe("text-embedding-3-small");
+    expect(await getEmbeddingSettings(db, org.org.id)).toMatchObject({
+      providerName: "vectors",
+      endpoint: "https://embeddings.example.test/v1",
+      model: "text-embedding-3-small",
+      hasApiKey: true,
+    });
   });
 
   it("keeps one organization's providers out of another's", async () => {

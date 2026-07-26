@@ -230,7 +230,6 @@ model Org {
   connectorConnections      ConnectorConnection[]
   connectorOAuthStates      ConnectorOAuthState[]
   connectorProviderSettings ConnectorProviderSettings[]
-  embeddingSettings         EmbeddingSettings?
   modelProviders            ModelProvider[]
   modelDefaults             ModelDefault[]
   contextSessions           ContextSession[]
@@ -524,19 +523,6 @@ model ItemSearchDoc {
 
   @@id([orgId, itemId])
   @@index([tsv], type: Gin)
-}
-
-/// One organization's embedding endpoint. No row means embeddings are off for
-/// that organization and search stays lexical.
-model EmbeddingSettings {
-  id               String   @id @default(uuid(7))
-  orgId            String   @unique
-  endpoint         String
-  model            String
-  apiKeyCiphertext String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  org              Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
 }
 
 /// One entry in an organization's model provider registry: an endpoint
