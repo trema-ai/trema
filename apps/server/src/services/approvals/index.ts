@@ -1036,6 +1036,7 @@ export interface ListApprovalsInput {
   status?: ApprovalStatus;
   scopeId?: string;
   limit?: number;
+  now?: Date;
 }
 
 /**
@@ -1053,9 +1054,15 @@ export async function listResolvableApprovals(
   input: ListApprovalsInput,
 ): Promise<Approval[]> {
   const limit = input.limit ?? APPROVAL_PAGE_SIZE;
+  const status = input.status ?? "pending";
   const where = {
     orgId: input.orgId,
-    status: input.status ?? "pending",
+    status,
+    // An overdue ask is still `pending` until a sweep or a resolve attempt
+    // records the expiry, but approve and deny would refuse it — and the queue
+    // promises exactly the set the approve call would accept, so it never
+    // shows one.
+    ...(status === "pending" ? { expiresAt: { gt: input.now ?? new Date() } } : {}),
     ...(input.scopeId ? { scopeId: input.scopeId } : {}),
     // The one clause of resolvability the database can answer on its own: a
     // call the person who asked for it may not wave through is never theirs,

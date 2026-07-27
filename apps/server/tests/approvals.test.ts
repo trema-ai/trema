@@ -630,6 +630,51 @@ integration("approvals", () => {
     expect(all.approvals.map(({ id }) => id)).toEqual(resolvable);
   });
 
+  it("keeps an overdue ask out of the queue before any sweep records the expiry", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
+    const opened = await openSharedSession(org, {
+      name: "Overdue",
+      requesterPrincipalId: member.principal.id,
+    });
+
+    // Recorded an hour ago with a minute to live: past its deadline, but still
+    // `pending` because no sweep and no resolve attempt has touched it.
+    const overdue = await requestApproval(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      toolKey: "github:delete_branch",
+      sensitivity: "destructive",
+      args: { repo: "trema", branch: "stale" },
+      reason: "Cleaning up",
+      ttlMs: 60_000,
+      now: new Date(Date.now() - HOUR_MS),
+    });
+    const live = await requestApproval(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      toolKey: "github:delete_branch",
+      sensitivity: "destructive",
+      args: { repo: "trema", branch: "fresh" },
+      reason: "Cleaning up",
+    });
+    if (overdue.outcome !== "approval_required" || live.outcome !== "approval_required") {
+      throw new Error("unreachable");
+    }
+
+    // The queue promises what the approve call would accept, and approve would
+    // refuse the overdue ask as expired — so the listing never surfaces it.
+    const queue = await call(approvalsRouter.list, {}, { context: org.context });
+    expect(queue.approvals.map(({ id }) => id)).toEqual([live.approval.id]);
+    // Filtered, not expired: recording the expiry stays the sweep's job.
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: overdue.approval.id } },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: "pending" });
+  });
+
   it("treats activating from the control plane as the approval itself", async () => {
     const org = await createOrg();
     const asker = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
