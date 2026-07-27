@@ -64,8 +64,11 @@ export function generateOpenApiDocument() {
         },
       },
     },
-    // The tag order and descriptions drive the docs sidebar sections. Every
-    // route's `tags` must name one of these.
+    // The descriptions render as the section blurbs in the API reference. The
+    // docs renderer derives its own section order from the operation paths, so
+    // the order here only groups related tags for a reader of this file.
+    // Every route's `tags` must name one of these and every one of these must
+    // have routes behind it; `tests/openapi.test.ts` enforces both.
     tags: [
       {
         name: "System",
