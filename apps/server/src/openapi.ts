@@ -95,6 +95,11 @@ export function generateOpenApiDocument() {
         description: "Organization, shared, and personal context scopes.",
       },
       {
+        name: "Policies",
+        description:
+          "Which agent actions pause for a person, and which people may wave them through.",
+      },
+      {
         name: "Items",
         description:
           "The versioned content a scope holds — memories, skills, instructions — and search over it.",
@@ -124,6 +129,10 @@ export function generateOpenApiDocument() {
       {
         name: "Sessions",
         description: "The handshake a harness opens before it reads context or calls tools.",
+      },
+      {
+        name: "Approvals",
+        description: "The gated calls waiting on a person, and the decisions taken on them.",
       },
       {
         name: "Runs",

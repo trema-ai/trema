@@ -750,7 +750,79 @@ integration("approvals", () => {
     ).resolves.toMatchObject({ status: "active", confirmedById: member.principal.id });
   });
 
-  it("does not spend the execution claim on an activation that names no item", async () => {
+  it("retires every other ask about an item once it is on", async () => {
+    const org = await createOrg();
+    const scope = await call(
+      scopesRouter.create,
+      { name: "Twice Asked" },
+      { context: org.context },
+    );
+    const locationRef = `T1:${randomUUID()}`;
+    await call(
+      bindingsRouter.create,
+      { surface: "slack", locationRef, scopeId: scope.id },
+      { context: org.context },
+    );
+
+    // Two runs against the same scope: the re-ask dedup is per session, so each
+    // one legitimately holds its own pending ask about the same item.
+    const first = await call(
+      sessionsRouter.open,
+      { surface: "slack", locationRef },
+      { context: serviceContext(org.credential.secret) },
+    );
+    const second = await call(
+      sessionsRouter.open,
+      { surface: "slack", locationRef },
+      { context: serviceContext(org.credential.secret) },
+    );
+    const proposed = await createItem(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.agent.id,
+      scopeId: scope.id,
+      kind: "memory",
+      title: "Escalate refunds over $500",
+      body: { type: "rule", content: "Escalate any refund over $500 to finance." },
+      writerKind: "agent",
+      sourceSessionId: first.sessionId,
+    });
+    const asks = [];
+    for (const sessionId of [first.sessionId, second.sessionId]) {
+      asks.push(
+        await requestItemActivation(db, {
+          orgId: org.org.id,
+          sessionId,
+          itemId: proposed.id,
+          reason: "This rule came up twice this week",
+        }),
+      );
+    }
+    expect(new Set(asks.map(({ id }) => id)).size).toBe(2);
+
+    const resolved = await call(
+      approvalsRouter.approve,
+      { id: asks[0]?.id ?? "" },
+      { context: org.context },
+    );
+    expect(resolved.activatedItemId).toBe(proposed.id);
+
+    // The item is on, so the other ask is a question nobody needs answered. It
+    // ends visibly rather than sitting in a queue being nudged.
+    const other = await db.approval.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: asks[1]?.id ?? "" } },
+    });
+    expect(other.status).toBe("expired");
+    expect(
+      await db.auditLog.findFirst({
+        where: { orgId: org.org.id, action: "approval.superseded", subject: other.id },
+      }),
+    ).not.toBeNull();
+    expect(await sweepApprovals(db, { orgId: org.org.id })).toEqual({ expired: 0, nudged: 0 });
+    const queue = await call(approvalsRouter.list, {}, { context: org.context });
+    expect(queue.approvals).toHaveLength(0);
+  });
+
+  it("refuses an activation that names no item while it is still pending", async () => {
     const org = await createOrg();
     const opened = await openSharedSession(org, { name: "Malformed" });
     const approval = await db.approval.create({
@@ -772,14 +844,20 @@ integration("approvals", () => {
     await expect(
       call(approvalsRouter.approve, { id: approval.id }, { context: org.context }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    // The claim is the right to run the call once; a call that never ran must
-    // not have spent it.
+    // The refusal writes nothing: the claim is the right to run the call once
+    // and this call never ran, and the decision is not recorded either — an
+    // approval stuck `approved` and unexecutable could never be resolved again.
     await expect(
       db.approval.findUniqueOrThrow({
         where: { orgId_id: { orgId: org.org.id, id: approval.id } },
-        select: { executedAt: true },
+        select: { status: true, executedAt: true, resolvedById: true },
       }),
-    ).resolves.toMatchObject({ executedAt: null });
+    ).resolves.toMatchObject({ status: "pending", executedAt: null, resolvedById: null });
+
+    // Still pending means still answerable: it can be denied, and it expires
+    // like anything else nobody answers.
+    const denied = await call(approvalsRouter.deny, { id: approval.id }, { context: org.context });
+    expect(denied.status).toBe("denied");
   });
 
   it("skips the approval entirely where the policy allows the class", async () => {

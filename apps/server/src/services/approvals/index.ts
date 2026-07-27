@@ -637,6 +637,72 @@ function activationItemId(args: Prisma.JsonValue): string | undefined {
 }
 
 /**
+ * Retire the asks that a completed activation has answered.
+ *
+ * A pending activation approval is a question about an item that is not on
+ * yet, so once it is on, every other ask about it is moot. There can be
+ * others: re-ask dedup is per session by construction, so two sessions can
+ * each hold a pending ask for the same item, and leaving them would have the
+ * sweep nudging people about a decision already made. They end `expired` —
+ * nothing in the status vocabulary fits a question that stopped needing an
+ * answer, and the vocabulary is the permissions spec's, not this function's to
+ * widen — and the audit entry records which activation answered them.
+ */
+async function supersedeActivationApprovals(
+  db: Database,
+  input: { orgId: string; scopeId: string; itemId: string; exceptApprovalId?: string },
+): Promise<number> {
+  const stale = await db.approval.findMany({
+    where: {
+      orgId: input.orgId,
+      scopeId: input.scopeId,
+      toolKey: ACTIVATE_ITEM_TOOL_KEY,
+      argsHash: hashApprovalArgs({ itemId: input.itemId }),
+      status: "pending",
+      ...(input.exceptApprovalId ? { id: { not: input.exceptApprovalId } } : {}),
+    },
+  });
+
+  let superseded = 0;
+  for (const approval of stale) {
+    // The compare-and-swap the sweep expires with: a row someone else resolved
+    // in the meantime is theirs, and is left alone.
+    const claimed = await db.approval.updateMany({
+      where: { id: approval.id, orgId: approval.orgId, status: "pending" },
+      data: { status: "expired" },
+    });
+    if (claimed.count !== 1) continue;
+    await db.auditLog.create({
+      data: {
+        orgId: approval.orgId,
+        // Nobody answered this one. The activation did.
+        actorPrincipalId: null,
+        action: "approval.superseded",
+        subject: approval.id,
+        payload: {
+          sessionId: approval.sessionId,
+          scopeId: approval.scopeId,
+          toolKey: approval.toolKey,
+          sensitivity: approval.sensitivity,
+          itemId: input.itemId,
+          ...(input.exceptApprovalId ? { supersededBy: input.exceptApprovalId } : {}),
+        },
+      },
+    });
+    superseded += 1;
+  }
+
+  if (superseded > 0) {
+    log.info("Activation approvals superseded", {
+      itemId: input.itemId,
+      scopeId: input.scopeId,
+      superseded,
+    });
+  }
+  return superseded;
+}
+
+/**
  * Approve a pending call.
  *
  * Approving a `context:activate_item` approval also performs it: activation is
@@ -652,17 +718,24 @@ export async function approveApproval(
   const now = input.now ?? new Date();
   const approval = await requireApproval(db, input.orgId, input.approvalId);
   await assertResolvable(db, approval, input.approverPrincipalId, now);
-  const resolved = await recordResolution(db, approval, "approved", input.approverPrincipalId, now);
-  if (resolved.toolKey !== ACTIVATE_ITEM_TOOL_KEY) return { approval: resolved };
+  if (approval.toolKey !== ACTIVATE_ITEM_TOOL_KEY) {
+    return {
+      approval: await recordResolution(db, approval, "approved", input.approverPrincipalId, now),
+    };
+  }
 
-  // Read the item out before claiming. A claim is the right to run the call
-  // once, and an approval whose arguments name no item has no call to run:
-  // taking the claim first would spend it on nothing.
-  const itemId = activationItemId(resolved.argsJson);
+  // Read the item out before anything is written. An activation approval whose
+  // arguments name no item has no call to perform, and recording the decision
+  // first would strand the row: `approved`, never executed, and no longer
+  // pending for anyone to resolve. Refused while pending, it can still expire
+  // or be denied like any other.
+  const itemId = activationItemId(approval.argsJson);
   if (itemId === undefined) {
+    log.warn("Activation approval names no item", { approvalId: approval.id });
     throw new ApprovalValidationError("Activation approval carries no item");
   }
 
+  const resolved = await recordResolution(db, approval, "approved", input.approverPrincipalId, now);
   // The one execution whose arguments come from the approval row rather than
   // from a caller: activation is performed here, from what the approver saw, so
   // there is no payload in flight for exact-args binding to disagree with.
@@ -686,6 +759,12 @@ export async function approveApproval(
     await releaseApprovalExecution(db, { orgId: input.orgId, approvalId: resolved.id });
     throw error;
   }
+  await supersedeActivationApprovals(db, {
+    orgId: input.orgId,
+    scopeId: resolved.scopeId,
+    itemId,
+    exceptApprovalId: resolved.id,
+  });
   return { approval: claimed, activatedItemId: itemId };
 }
 
@@ -827,6 +906,9 @@ export async function confirmItemActivation(
     };
   }
 
+  // Any live ask about this item, whichever session made it: the decision is
+  // about the item, not about the run that happened to raise it. Approving one
+  // answers the rest, which `supersedeActivationApprovals` then retires.
   const waiting = await db.approval.findFirst({
     where: {
       orgId: input.orgId,
@@ -853,13 +935,19 @@ export async function confirmItemActivation(
     item,
     approverPrincipalId: input.approverPrincipalId,
   });
-  return {
-    item: await activateItem(db, {
-      orgId: input.orgId,
-      actorPrincipalId: input.approverPrincipalId,
-      itemId: item.id,
-    }),
-  };
+  const activated = await activateItem(db, {
+    orgId: input.orgId,
+    actorPrincipalId: input.approverPrincipalId,
+    itemId: item.id,
+  });
+  // Nothing live was waiting, but an ask past its deadline that no sweep has
+  // reached yet is still moot now.
+  await supersedeActivationApprovals(db, {
+    orgId: input.orgId,
+    scopeId: item.scopeId,
+    itemId: item.id,
+  });
+  return { item: activated };
 }
 
 export interface ClaimApprovalInput {
