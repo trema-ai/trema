@@ -73,25 +73,30 @@ export function roleAllowsCapability(role: Role, capability: Capability): boolea
 
 export type AuthorizePrincipal = Pick<Principal, "id" | "orgId" | "kind">;
 
-export async function authorize(
+/**
+ * The roles a principal effectively holds at one scope: its own grants, the
+ * org-scope grants that inherit into a shared scope, and the personal-scope
+ * special case.
+ *
+ * A personal scope's owner holds `admin` there and nothing above it: org
+ * settings and billing are the organization's question, not something owning a
+ * personal scope answers. Org roles deliberately do not reach the other way
+ * either — an org owner is not an owner of someone's personal scope.
+ *
+ * An agent principal holds no control-plane role at all, by construction.
+ */
+export async function effectiveRolesAtScope(
   principal: AuthorizePrincipal,
-  capability: Capability,
   scopeId: string,
   db: Database,
-): Promise<boolean> {
-  if (principal.kind === "agent") {
-    log.debug("Authorization denied", { capability, reason: "agent_principal" });
-    return false;
-  }
+): Promise<Role[]> {
+  if (principal.kind === "agent") return [];
 
   const scope = await db.scope.findFirst({
     where: { id: scopeId, orgId: principal.orgId },
     select: { id: true, kind: true, ownerId: true },
   });
-  if (!scope) {
-    log.debug("Authorization denied", { capability, scopeId, reason: "scope_not_found" });
-    return false;
-  }
+  if (!scope) return [];
 
   const effectiveRoles: Role[] = [];
   if (scope.kind === "personal" && scope.ownerId === principal.id) {
@@ -105,10 +110,7 @@ export async function authorize(
       where: { orgId: principal.orgId, kind: "org" },
       select: { id: true },
     });
-    if (!orgScope) {
-      log.debug("Authorization denied", { capability, scopeId, reason: "org_scope_not_found" });
-      return false;
-    }
+    if (!orgScope) return effectiveRoles;
     scopeIds.push(orgScope.id);
   }
 
@@ -121,6 +123,26 @@ export async function authorize(
     select: { role: true },
   });
   effectiveRoles.push(...grants.map(({ role }) => role));
+
+  return effectiveRoles;
+}
+
+export async function authorize(
+  principal: AuthorizePrincipal,
+  capability: Capability,
+  scopeId: string,
+  db: Database,
+): Promise<boolean> {
+  if (principal.kind === "agent") {
+    log.debug("Authorization denied", { capability, reason: "agent_principal" });
+    return false;
+  }
+
+  const effectiveRoles = await effectiveRolesAtScope(principal, scopeId, db);
+  if (effectiveRoles.length === 0) {
+    log.debug("Authorization denied", { capability, scopeId, reason: "no_effective_role" });
+    return false;
+  }
 
   return effectiveRoles.some((role) => roleAllowsCapability(role, capability));
 }

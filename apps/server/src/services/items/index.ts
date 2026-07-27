@@ -393,8 +393,16 @@ export async function transitionItem(db: Database, input: TransitionItemInput) {
       }),
     ]);
     if (!item) throw new ItemNotFoundError();
+    // A transition is a person's act. Activation in particular is the confirm
+    // step a `proposed` item exists for, so a run reaches it only by asking:
+    // `services/approvals` records the request and performs this same
+    // transition with the approving human as the actor.
     if (actor?.kind !== "human") {
-      throw new ItemValidationError("Item lifecycle actions require a human principal");
+      throw new ItemValidationError(
+        input.action === "activate"
+          ? "A run activates a proposed item through an approval, not directly"
+          : "Item lifecycle actions require a human principal",
+      );
     }
 
     const transition = lifecycleTransitions[input.action] as Partial<

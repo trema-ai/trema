@@ -14,6 +14,7 @@ import { bindingsRouter } from "#server/rpc/bindings.js";
 import { serviceCredentialsRouter } from "#server/rpc/credentials.js";
 import { orgRouter } from "#server/rpc/org.js";
 import { scopesRouter } from "#server/rpc/scopes.js";
+import { requestItemActivation } from "#server/services/approvals/index.js";
 import { createItem } from "#server/services/items/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -166,6 +167,64 @@ integration("acceptance", () => {
       body: { type: "fact", content: "Priya runs the release train and announces the freeze." },
     });
 
+    // A rule is not the run's to turn on. It lands proposed, and a proposed
+    // item is not readable from the data plane at all.
+    const proposed = (await client.callTool({
+      name: "save_memory",
+      arguments: {
+        type: "rule",
+        title: "Freeze notice",
+        content: "Announce the freeze in the channel before Monday evening.",
+      },
+    })) as CallToolResult;
+    const rule = proposed.structuredContent as { id: string };
+    expect(proposed.structuredContent).toMatchObject({ status: "proposed" });
+    const beforeApproval = (await client.callTool({
+      name: "get_item",
+      arguments: { id: rule.id },
+    })) as CallToolResult;
+    expect(beforeApproval.isError).toBe(true);
+
+    // The run asks for it, and a person says yes — here through the
+    // control-plane API, which is always an alternative approval surface.
+    const approval = await requestItemActivation(db, {
+      orgId: org.id,
+      sessionId: session.sessionId,
+      itemId: rule.id,
+      reason: "The freeze notice came up twice this week",
+    });
+    const approveResponse = await app.fetch(
+      new Request(`${origin}/api/v1/approvals/${approval.id}/approve`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: owner.context.headers.get("cookie") ?? "",
+        },
+      }),
+    );
+    expect(approveResponse.status).toBe(200);
+    const approved = (await approveResponse.json()) as {
+      approval: { status: string; executedAt: string | null };
+      activatedItemId?: string;
+    };
+    expect(approved).toMatchObject({
+      approval: { status: "approved" },
+      activatedItemId: rule.id,
+    });
+    expect(approved.approval.executedAt).not.toBeNull();
+
+    // Now the run can read the rule it proposed.
+    const afterApproval = (await client.callTool({
+      name: "get_item",
+      arguments: { id: rule.id },
+    })) as CallToolResult;
+    expect(afterApproval.isError).toBeFalsy();
+    expect(afterApproval.structuredContent).toMatchObject({
+      id: rule.id,
+      title: "Freeze notice",
+      body: { type: "rule" },
+    });
+
     // The harness reports what was said in the thread it answered in.
     const captureResponse = await app.fetch(
       new Request(`${origin}/api/v1/sessions/${session.sessionId}/messages`, {
@@ -245,6 +304,9 @@ integration("acceptance", () => {
         "dataplane.search_context",
         "dataplane.get_item",
         "dataplane.save_memory",
+        "approval.request",
+        "approval.approved",
+        "item.activate",
         "session.messages",
         "dataplane.fetch_transcript",
         "session.close",

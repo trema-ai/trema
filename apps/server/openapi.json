@@ -57,6 +57,10 @@
       "description": "Organization, shared, and personal context scopes."
     },
     {
+      "name": "Policies",
+      "description": "Which agent actions pause for a person, and which people may wave them through."
+    },
+    {
       "name": "Items",
       "description": "The versioned content a scope holds — memories, skills, instructions — and search over it."
     },
@@ -83,6 +87,10 @@
     {
       "name": "Sessions",
       "description": "The handshake a harness opens before it reads context or calls tools."
+    },
+    {
+      "name": "Approvals",
+      "description": "The gated calls waiting on a person, and the decisions taken on them."
     },
     {
       "name": "Runs",
@@ -195,6 +203,1156 @@
                     "principal"
                   ],
                   "description": "The organization and owner principal created by bootstrap."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/approvals": {
+      "get": {
+        "operationId": "approvals.list",
+        "summary": "List approvals awaiting you",
+        "description": "List the approvals the acting principal may resolve, pending ones by default. The rule pinned on each approval decides, so this is exactly the set the approve and deny calls accept.",
+        "tags": [
+          "Approvals"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "denied",
+                "expired"
+              ],
+              "type": "string",
+              "description": "Which approvals to list. Defaults to pending."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "scopeId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Only list this scope's approvals. A UUID."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "How many approvals to return. Defaults to 50."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approvals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The approval's unique ID. A UUID (version 7)."
+                          },
+                          "sessionId": {
+                            "type": "string",
+                            "description": "The session whose run asked for the call."
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "description": "The scope the approver roles are read at."
+                          },
+                          "toolKey": {
+                            "type": "string",
+                            "description": "The call waiting on a decision. `context:activate_item` is a proposed item waiting to be turned on."
+                          },
+                          "args": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {},
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "type": "string"
+                                      },
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {},
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "type": "string"
+                                      },
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                }
+                              }
+                            ],
+                            "description": "The call's arguments, verbatim. The approval covers these alone."
+                          },
+                          "argsHash": {
+                            "type": "string",
+                            "description": "A fingerprint of the arguments. Execution compares it."
+                          },
+                          "reason": {
+                            "type": "string",
+                            "description": "The model's one-line justification for the call."
+                          },
+                          "sensitivity": {
+                            "enum": [
+                              "read",
+                              "write",
+                              "destructive"
+                            ],
+                            "type": "string",
+                            "description": "The tool sensitivity class the policy gated."
+                          },
+                          "approverRoles": {
+                            "type": "array",
+                            "items": {
+                              "enum": [
+                                "owner",
+                                "admin",
+                                "member",
+                                "viewer"
+                              ],
+                              "type": "string"
+                            },
+                            "description": "The roles that may resolve it, as pinned when it was asked."
+                          },
+                          "allowRequesterApproval": {
+                            "type": "boolean",
+                            "description": "Whether the person who asked may resolve it themselves."
+                          },
+                          "requesterPrincipalId": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The person the run was acting for, when one is linked."
+                          },
+                          "status": {
+                            "enum": [
+                              "pending",
+                              "approved",
+                              "denied",
+                              "expired"
+                            ],
+                            "type": "string",
+                            "description": "Where the approval ended up. `expired` means nobody answered in time."
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "description": "When the approval expires. An ISO 8601 date-time."
+                          },
+                          "nudgeCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991,
+                            "description": "How many times it has been re-surfaced."
+                          },
+                          "resolvedById": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The person who resolved it, when resolved."
+                          },
+                          "resolvedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "When it was resolved. An ISO 8601 date-time."
+                          },
+                          "executedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "When the approved call ran. Set once, by the executor that claimed it."
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "description": "When the approval was asked for. An ISO 8601 date-time."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "sessionId",
+                          "scopeId",
+                          "toolKey",
+                          "args",
+                          "argsHash",
+                          "reason",
+                          "sensitivity",
+                          "approverRoles",
+                          "allowRequesterApproval",
+                          "requesterPrincipalId",
+                          "status",
+                          "expiresAt",
+                          "nudgeCount",
+                          "resolvedById",
+                          "resolvedAt",
+                          "executedAt",
+                          "createdAt"
+                        ],
+                        "description": "One gated call waiting on a person, and how it ended."
+                      }
+                    }
+                  },
+                  "required": [
+                    "approvals"
+                  ],
+                  "description": "The approvals this principal may resolve."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/approvals/{id}": {
+      "get": {
+        "operationId": "approvals.get",
+        "summary": "Get an approval",
+        "description": "Read one approval, including the arguments it covers and the reason the model gave. Readable by anyone who can read its scope.",
+        "tags": [
+          "Approvals"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the approval to read. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The approval's unique ID. A UUID (version 7)."
+                    },
+                    "sessionId": {
+                      "type": "string",
+                      "description": "The session whose run asked for the call."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The scope the approver roles are read at."
+                    },
+                    "toolKey": {
+                      "type": "string",
+                      "description": "The call waiting on a decision. `context:activate_item` is a proposed item waiting to be turned on."
+                    },
+                    "args": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The call's arguments, verbatim. The approval covers these alone."
+                    },
+                    "argsHash": {
+                      "type": "string",
+                      "description": "A fingerprint of the arguments. Execution compares it."
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "The model's one-line justification for the call."
+                    },
+                    "sensitivity": {
+                      "enum": [
+                        "read",
+                        "write",
+                        "destructive"
+                      ],
+                      "type": "string",
+                      "description": "The tool sensitivity class the policy gated."
+                    },
+                    "approverRoles": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "owner",
+                          "admin",
+                          "member",
+                          "viewer"
+                        ],
+                        "type": "string"
+                      },
+                      "description": "The roles that may resolve it, as pinned when it was asked."
+                    },
+                    "allowRequesterApproval": {
+                      "type": "boolean",
+                      "description": "Whether the person who asked may resolve it themselves."
+                    },
+                    "requesterPrincipalId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The person the run was acting for, when one is linked."
+                    },
+                    "status": {
+                      "enum": [
+                        "pending",
+                        "approved",
+                        "denied",
+                        "expired"
+                      ],
+                      "type": "string",
+                      "description": "Where the approval ended up. `expired` means nobody answered in time."
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "description": "When the approval expires. An ISO 8601 date-time."
+                    },
+                    "nudgeCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many times it has been re-surfaced."
+                    },
+                    "resolvedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The person who resolved it, when resolved."
+                    },
+                    "resolvedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When it was resolved. An ISO 8601 date-time."
+                    },
+                    "executedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the approved call ran. Set once, by the executor that claimed it."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the approval was asked for. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "sessionId",
+                    "scopeId",
+                    "toolKey",
+                    "args",
+                    "argsHash",
+                    "reason",
+                    "sensitivity",
+                    "approverRoles",
+                    "allowRequesterApproval",
+                    "requesterPrincipalId",
+                    "status",
+                    "expiresAt",
+                    "nudgeCount",
+                    "resolvedById",
+                    "resolvedAt",
+                    "executedAt",
+                    "createdAt"
+                  ],
+                  "description": "One gated call waiting on a person, and how it ended."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/approvals/{id}/approve": {
+      "post": {
+        "operationId": "approvals.approve",
+        "summary": "Approve a gated call",
+        "description": "Approve the recorded call. The approver must satisfy the rule pinned on the approval when it was asked, not the scope's current policy. Approving a `context:activate_item` approval also activates the item.",
+        "tags": [
+          "Approvals"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the approval to approve. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "The approval's unique ID. A UUID (version 7)."
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "description": "The session whose run asked for the call."
+                        },
+                        "scopeId": {
+                          "type": "string",
+                          "description": "The scope the approver roles are read at."
+                        },
+                        "toolKey": {
+                          "type": "string",
+                          "description": "The call waiting on a decision. `context:activate_item` is a proposed item waiting to be turned on."
+                        },
+                        "args": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "description": "The call's arguments, verbatim. The approval covers these alone."
+                        },
+                        "argsHash": {
+                          "type": "string",
+                          "description": "A fingerprint of the arguments. Execution compares it."
+                        },
+                        "reason": {
+                          "type": "string",
+                          "description": "The model's one-line justification for the call."
+                        },
+                        "sensitivity": {
+                          "enum": [
+                            "read",
+                            "write",
+                            "destructive"
+                          ],
+                          "type": "string",
+                          "description": "The tool sensitivity class the policy gated."
+                        },
+                        "approverRoles": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "owner",
+                              "admin",
+                              "member",
+                              "viewer"
+                            ],
+                            "type": "string"
+                          },
+                          "description": "The roles that may resolve it, as pinned when it was asked."
+                        },
+                        "allowRequesterApproval": {
+                          "type": "boolean",
+                          "description": "Whether the person who asked may resolve it themselves."
+                        },
+                        "requesterPrincipalId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The person the run was acting for, when one is linked."
+                        },
+                        "status": {
+                          "enum": [
+                            "pending",
+                            "approved",
+                            "denied",
+                            "expired"
+                          ],
+                          "type": "string",
+                          "description": "Where the approval ended up. `expired` means nobody answered in time."
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "description": "When the approval expires. An ISO 8601 date-time."
+                        },
+                        "nudgeCount": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "description": "How many times it has been re-surfaced."
+                        },
+                        "resolvedById": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The person who resolved it, when resolved."
+                        },
+                        "resolvedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "When it was resolved. An ISO 8601 date-time."
+                        },
+                        "executedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "When the approved call ran. Set once, by the executor that claimed it."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "description": "When the approval was asked for. An ISO 8601 date-time."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "sessionId",
+                        "scopeId",
+                        "toolKey",
+                        "args",
+                        "argsHash",
+                        "reason",
+                        "sensitivity",
+                        "approverRoles",
+                        "allowRequesterApproval",
+                        "requesterPrincipalId",
+                        "status",
+                        "expiresAt",
+                        "nudgeCount",
+                        "resolvedById",
+                        "resolvedAt",
+                        "executedAt",
+                        "createdAt"
+                      ],
+                      "description": "One gated call waiting on a person, and how it ended."
+                    },
+                    "activatedItemId": {
+                      "type": "string",
+                      "description": "The item this approval activated, for an item-activation approval."
+                    }
+                  },
+                  "required": [
+                    "approval"
+                  ],
+                  "description": "The resolved approval, and what approving it did."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/approvals/{id}/deny": {
+      "post": {
+        "operationId": "approvals.deny",
+        "summary": "Deny a gated call",
+        "description": "Refuse the recorded call. The run reads the denial as the tool's result and carries on without it.",
+        "tags": [
+          "Approvals"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the approval to deny. A UUID."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The approval's unique ID. A UUID (version 7)."
+                    },
+                    "sessionId": {
+                      "type": "string",
+                      "description": "The session whose run asked for the call."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The scope the approver roles are read at."
+                    },
+                    "toolKey": {
+                      "type": "string",
+                      "description": "The call waiting on a decision. `context:activate_item` is a proposed item waiting to be turned on."
+                    },
+                    "args": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The call's arguments, verbatim. The approval covers these alone."
+                    },
+                    "argsHash": {
+                      "type": "string",
+                      "description": "A fingerprint of the arguments. Execution compares it."
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "The model's one-line justification for the call."
+                    },
+                    "sensitivity": {
+                      "enum": [
+                        "read",
+                        "write",
+                        "destructive"
+                      ],
+                      "type": "string",
+                      "description": "The tool sensitivity class the policy gated."
+                    },
+                    "approverRoles": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "owner",
+                          "admin",
+                          "member",
+                          "viewer"
+                        ],
+                        "type": "string"
+                      },
+                      "description": "The roles that may resolve it, as pinned when it was asked."
+                    },
+                    "allowRequesterApproval": {
+                      "type": "boolean",
+                      "description": "Whether the person who asked may resolve it themselves."
+                    },
+                    "requesterPrincipalId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The person the run was acting for, when one is linked."
+                    },
+                    "status": {
+                      "enum": [
+                        "pending",
+                        "approved",
+                        "denied",
+                        "expired"
+                      ],
+                      "type": "string",
+                      "description": "Where the approval ended up. `expired` means nobody answered in time."
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "description": "When the approval expires. An ISO 8601 date-time."
+                    },
+                    "nudgeCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "How many times it has been re-surfaced."
+                    },
+                    "resolvedById": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The person who resolved it, when resolved."
+                    },
+                    "resolvedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When it was resolved. An ISO 8601 date-time."
+                    },
+                    "executedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "When the approved call ran. Set once, by the executor that claimed it."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the approval was asked for. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "sessionId",
+                    "scopeId",
+                    "toolKey",
+                    "args",
+                    "argsHash",
+                    "reason",
+                    "sensitivity",
+                    "approverRoles",
+                    "allowRequesterApproval",
+                    "requesterPrincipalId",
+                    "status",
+                    "expiresAt",
+                    "nudgeCount",
+                    "resolvedById",
+                    "resolvedAt",
+                    "executedAt",
+                    "createdAt"
+                  ],
+                  "description": "One gated call waiting on a person, and how it ended."
                 }
               }
             }
@@ -6174,7 +7332,7 @@
       "post": {
         "operationId": "items.activate",
         "summary": "Activate an item",
-        "description": "Apply the 'activate' lifecycle transition to an item.",
+        "description": "Turn a proposed item on. This is the same decision the approval on `context:activate_item` records, taken from the control plane: the caller must satisfy the scope's approver rule for the write class, and a pending activation approval for the item is resolved by this call rather than left waiting. Where a run asked, the rule pinned on that approval decides; where nothing asked, the scope's current policy does.",
         "tags": [
           "Items"
         ],
@@ -9021,6 +10179,900 @@
                     "principal"
                   ],
                   "description": "An organization and the caller's principal in it."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/policies": {
+      "get": {
+        "operationId": "policies.list",
+        "summary": "List approval policies",
+        "description": "List the stored approval policies in the active organization, optionally filtered to one scope. Scopes with no row for a class fall back to a wider scope or the built-in defaults; read the resolved view to see what a session would get.",
+        "tags": [
+          "Policies"
+        ],
+        "parameters": [
+          {
+            "name": "scopeId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Only list this scope's policies. A UUID."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "policies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The policy's unique ID. A UUID (version 7)."
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "description": "The scope the policy applies to."
+                          },
+                          "sensitivity": {
+                            "enum": [
+                              "read",
+                              "write",
+                              "destructive"
+                            ],
+                            "type": "string",
+                            "description": "The tool sensitivity class the policy governs."
+                          },
+                          "action": {
+                            "enum": [
+                              "allow",
+                              "require_approval",
+                              "deny"
+                            ],
+                            "type": "string",
+                            "description": "What happens when the agent calls a tool of this class."
+                          },
+                          "approverRoles": {
+                            "type": "array",
+                            "items": {
+                              "enum": [
+                                "owner",
+                                "admin",
+                                "member",
+                                "viewer"
+                              ],
+                              "type": "string",
+                              "description": "An organization role."
+                            },
+                            "description": "The roles that may resolve an approval. Empty unless the action requires one."
+                          },
+                          "allowRequesterApproval": {
+                            "type": "boolean",
+                            "description": "Whether the person who asked may approve their own request."
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "description": "When the policy was created. An ISO 8601 date-time."
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "description": "When the policy was last written. An ISO 8601 date-time."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "scopeId",
+                          "sensitivity",
+                          "action",
+                          "approverRoles",
+                          "allowRequesterApproval",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "description": "One scope's approval policy for one sensitivity class."
+                      }
+                    }
+                  },
+                  "required": [
+                    "policies"
+                  ],
+                  "description": "The matching approval policies."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/policies/resolved": {
+      "get": {
+        "operationId": "policies.resolved",
+        "summary": "Resolve a scope's approval policy",
+        "description": "The decision each sensitivity class resolves to for this scope right now: the narrowest scope in the chain holding a row wins, and a class with no row anywhere falls back to the built-in default. A session pins this same result for its whole life.",
+        "tags": [
+          "Policies"
+        ],
+        "parameters": [
+          {
+            "name": "scopeId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The scope to resolve the policy for. A UUID."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The scope the policy resolved for."
+                    },
+                    "scopeChain": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The scope IDs the policy resolved over, widest first."
+                    },
+                    "decisions": {
+                      "type": "object",
+                      "properties": {
+                        "read": {
+                          "type": "object",
+                          "properties": {
+                            "sensitivity": {
+                              "enum": [
+                                "read",
+                                "write",
+                                "destructive"
+                              ],
+                              "type": "string",
+                              "description": "The tool sensitivity class the policy governs."
+                            },
+                            "action": {
+                              "enum": [
+                                "allow",
+                                "require_approval",
+                                "deny"
+                              ],
+                              "type": "string",
+                              "description": "What happens when the agent calls a tool of this class."
+                            },
+                            "approverRoles": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "owner",
+                                  "admin",
+                                  "member",
+                                  "viewer"
+                                ],
+                                "type": "string",
+                                "description": "An organization role."
+                              },
+                              "description": "The roles that may resolve an approval."
+                            },
+                            "allowRequesterApproval": {
+                              "type": "boolean",
+                              "description": "Whether the person who asked may approve their own request."
+                            },
+                            "source": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {},
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string"
+                                        },
+                                        "additionalProperties": {}
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {},
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string"
+                                        },
+                                        "additionalProperties": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "description": "Where the decision came from: a stored policy or the default."
+                            }
+                          },
+                          "required": [
+                            "sensitivity",
+                            "action",
+                            "approverRoles",
+                            "allowRequesterApproval",
+                            "source"
+                          ],
+                          "description": "The resolved approval policy for one sensitivity class."
+                        },
+                        "write": {
+                          "type": "object",
+                          "properties": {
+                            "sensitivity": {
+                              "enum": [
+                                "read",
+                                "write",
+                                "destructive"
+                              ],
+                              "type": "string",
+                              "description": "The tool sensitivity class the policy governs."
+                            },
+                            "action": {
+                              "enum": [
+                                "allow",
+                                "require_approval",
+                                "deny"
+                              ],
+                              "type": "string",
+                              "description": "What happens when the agent calls a tool of this class."
+                            },
+                            "approverRoles": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "owner",
+                                  "admin",
+                                  "member",
+                                  "viewer"
+                                ],
+                                "type": "string",
+                                "description": "An organization role."
+                              },
+                              "description": "The roles that may resolve an approval."
+                            },
+                            "allowRequesterApproval": {
+                              "type": "boolean",
+                              "description": "Whether the person who asked may approve their own request."
+                            },
+                            "source": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {},
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string"
+                                        },
+                                        "additionalProperties": {}
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {},
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string"
+                                        },
+                                        "additionalProperties": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "description": "Where the decision came from: a stored policy or the default."
+                            }
+                          },
+                          "required": [
+                            "sensitivity",
+                            "action",
+                            "approverRoles",
+                            "allowRequesterApproval",
+                            "source"
+                          ],
+                          "description": "The resolved approval policy for one sensitivity class."
+                        },
+                        "destructive": {
+                          "type": "object",
+                          "properties": {
+                            "sensitivity": {
+                              "enum": [
+                                "read",
+                                "write",
+                                "destructive"
+                              ],
+                              "type": "string",
+                              "description": "The tool sensitivity class the policy governs."
+                            },
+                            "action": {
+                              "enum": [
+                                "allow",
+                                "require_approval",
+                                "deny"
+                              ],
+                              "type": "string",
+                              "description": "What happens when the agent calls a tool of this class."
+                            },
+                            "approverRoles": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "owner",
+                                  "admin",
+                                  "member",
+                                  "viewer"
+                                ],
+                                "type": "string",
+                                "description": "An organization role."
+                              },
+                              "description": "The roles that may resolve an approval."
+                            },
+                            "allowRequesterApproval": {
+                              "type": "boolean",
+                              "description": "Whether the person who asked may approve their own request."
+                            },
+                            "source": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {},
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string"
+                                        },
+                                        "additionalProperties": {}
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {},
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string"
+                                        },
+                                        "additionalProperties": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "description": "Where the decision came from: a stored policy or the default."
+                            }
+                          },
+                          "required": [
+                            "sensitivity",
+                            "action",
+                            "approverRoles",
+                            "allowRequesterApproval",
+                            "source"
+                          ],
+                          "description": "The resolved approval policy for one sensitivity class."
+                        }
+                      },
+                      "required": [
+                        "read",
+                        "write",
+                        "destructive"
+                      ],
+                      "description": "One resolved decision per sensitivity class."
+                    }
+                  },
+                  "required": [
+                    "scopeId",
+                    "scopeChain",
+                    "decisions"
+                  ],
+                  "description": "The approval policy a session opened against this scope would carry."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/policies/{scopeId}/{sensitivity}": {
+      "put": {
+        "operationId": "policies.set",
+        "summary": "Set an approval policy",
+        "description": "Create or replace one scope's policy for one sensitivity class. A scope holds at most one policy per class. Approver fields are stored only for `require_approval`; outside a personal scope such a policy needs an approver role, because the requester cannot be its sole approver.",
+        "tags": [
+          "Policies"
+        ],
+        "parameters": [
+          {
+            "name": "scopeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The scope the policy applies to. A UUID."
+            }
+          },
+          {
+            "name": "sensitivity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "read",
+                "write",
+                "destructive"
+              ],
+              "type": "string",
+              "description": "The tool sensitivity class the policy governs."
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "allow",
+                      "require_approval",
+                      "deny"
+                    ],
+                    "type": "string",
+                    "description": "What happens when the agent calls a tool of this class."
+                  },
+                  "approverRoles": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "owner",
+                        "admin",
+                        "member",
+                        "viewer"
+                      ],
+                      "type": "string",
+                      "description": "An organization role."
+                    },
+                    "description": "The roles that may resolve an approval. Ignored unless `require_approval`."
+                  },
+                  "allowRequesterApproval": {
+                    "type": "boolean",
+                    "description": "Whether the person who asked may approve their own request. Ignored unless `require_approval`; defaults to false."
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "description": "The approval policy to store."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The policy's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The scope the policy applies to."
+                    },
+                    "sensitivity": {
+                      "enum": [
+                        "read",
+                        "write",
+                        "destructive"
+                      ],
+                      "type": "string",
+                      "description": "The tool sensitivity class the policy governs."
+                    },
+                    "action": {
+                      "enum": [
+                        "allow",
+                        "require_approval",
+                        "deny"
+                      ],
+                      "type": "string",
+                      "description": "What happens when the agent calls a tool of this class."
+                    },
+                    "approverRoles": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "owner",
+                          "admin",
+                          "member",
+                          "viewer"
+                        ],
+                        "type": "string",
+                        "description": "An organization role."
+                      },
+                      "description": "The roles that may resolve an approval. Empty unless the action requires one."
+                    },
+                    "allowRequesterApproval": {
+                      "type": "boolean",
+                      "description": "Whether the person who asked may approve their own request."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the policy was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the policy was last written. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "sensitivity",
+                    "action",
+                    "approverRoles",
+                    "allowRequesterApproval",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "description": "One scope's approval policy for one sensitivity class."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "policies.delete",
+        "summary": "Delete an approval policy",
+        "description": "Remove one scope's policy for a class. The class then resolves through the wider scope, or through the built-in default when nothing else carries a row.",
+        "tags": [
+          "Policies"
+        ],
+        "parameters": [
+          {
+            "name": "scopeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The scope whose policy to remove. A UUID."
+            }
+          },
+          {
+            "name": "sensitivity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "read",
+                "write",
+                "destructive"
+              ],
+              "type": "string",
+              "description": "The tool sensitivity class the policy governs."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The policy's unique ID. A UUID (version 7)."
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "description": "The scope the policy applies to."
+                    },
+                    "sensitivity": {
+                      "enum": [
+                        "read",
+                        "write",
+                        "destructive"
+                      ],
+                      "type": "string",
+                      "description": "The tool sensitivity class the policy governs."
+                    },
+                    "action": {
+                      "enum": [
+                        "allow",
+                        "require_approval",
+                        "deny"
+                      ],
+                      "type": "string",
+                      "description": "What happens when the agent calls a tool of this class."
+                    },
+                    "approverRoles": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "owner",
+                          "admin",
+                          "member",
+                          "viewer"
+                        ],
+                        "type": "string",
+                        "description": "An organization role."
+                      },
+                      "description": "The roles that may resolve an approval. Empty unless the action requires one."
+                    },
+                    "allowRequesterApproval": {
+                      "type": "boolean",
+                      "description": "Whether the person who asked may approve their own request."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "When the policy was created. An ISO 8601 date-time."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the policy was last written. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "sensitivity",
+                    "action",
+                    "approverRoles",
+                    "allowRequesterApproval",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "description": "One scope's approval policy for one sensitivity class."
                 }
               }
             }
