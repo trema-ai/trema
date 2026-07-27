@@ -64,8 +64,11 @@ export function generateOpenApiDocument() {
         },
       },
     },
-    // The tag order and descriptions drive the docs sidebar sections. Every
-    // route's `tags` must name one of these.
+    // The descriptions render as the section blurbs in the API reference. The
+    // docs renderer derives its own section order from the operation paths, so
+    // the order here only groups related tags for a reader of this file.
+    // Every route's `tags` must name one of these and every one of these must
+    // have routes behind it; `tests/openapi.test.ts` enforces both.
     tags: [
       {
         name: "System",
@@ -92,12 +95,27 @@ export function generateOpenApiDocument() {
         description: "Organization, shared, and personal context scopes.",
       },
       {
+        name: "Items",
+        description:
+          "The versioned content a scope holds — memories, skills, instructions — and search over it.",
+      },
+      {
         name: "Surfaces",
         description: "Integration-backed locations that can bind to context scopes.",
       },
       {
         name: "Bindings",
         description: "Deterministic mappings from surface locations to context scopes.",
+      },
+      {
+        name: "Connectors",
+        description:
+          "Connector providers, installations, connections, and the proxied tool calls they serve.",
+      },
+      {
+        name: "Model providers",
+        description:
+          "Model endpoints, their credentials and catalogs, and the role defaults that resolve to them.",
       },
       {
         name: "Service credentials",
@@ -114,6 +132,10 @@ export function generateOpenApiDocument() {
       {
         name: "Schedules",
         description: "Standing configuration that starts runs on a cron expression.",
+      },
+      {
+        name: "Audit",
+        description: "The organization's record of who did what, and the actions it can record.",
       },
     ],
   });
