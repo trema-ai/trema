@@ -7308,7 +7308,7 @@
       "post": {
         "operationId": "items.activate",
         "summary": "Activate an item",
-        "description": "Apply the 'activate' lifecycle transition to an item.",
+        "description": "Turn a proposed item on. This is the same decision the approval on `context:activate_item` records, taken from the control plane: the caller must satisfy the scope's approver rule for the write class, and a pending activation approval for the item is resolved by this call rather than left waiting. Where a run asked, the rule pinned on that approval decides; where nothing asked, the scope's current policy does.",
         "tags": [
           "Items"
         ],

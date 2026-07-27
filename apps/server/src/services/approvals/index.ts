@@ -4,6 +4,7 @@ import type {
   Approval,
   ApprovalStatus,
   ContextSession,
+  Item,
   Prisma,
   Role,
   ScopeKind,
@@ -15,11 +16,12 @@ import {
   type AuthorizePrincipal,
   effectiveRolesAtScope,
 } from "#server/services/authorize/index.js";
-import { activateItem } from "#server/services/items/index.js";
+import { activateItem, getItem } from "#server/services/items/index.js";
 import {
   defaultDecisions,
   type PolicyAction,
   type PolicyDecision,
+  resolveScopePolicies,
 } from "#server/services/policies/index.js";
 
 /**
@@ -37,6 +39,20 @@ export const APPROVAL_NUDGE_INTERVAL_MS = 60 * 60 * 1000;
 
 /** How many approvals one listing or one sweep pass handles. */
 export const APPROVAL_PAGE_SIZE = 50;
+
+/**
+ * How many rows one listing reads before it stops looking.
+ *
+ * Resolvability is a per-scope role question the database cannot fully answer,
+ * so a listing filters rows it has already read. It therefore reads in pages
+ * until the caller's limit is filled — and stops here, so a principal who may
+ * resolve nothing costs a bounded scan rather than the whole table.
+ */
+export const APPROVAL_SCAN_LIMIT = 10 * APPROVAL_PAGE_SIZE;
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
 
 export class ApprovalNotFoundError extends Error {
   constructor(message = "Approval not found") {
@@ -290,7 +306,10 @@ export type ApprovalRequestOutcome =
  * conversation lives, and the control-plane UI is always an alternative
  * surface. Asking twice for the same call while the first ask is still pending
  * returns that same approval: a resumed run repeating its tool call is one
- * decision for a person, not two.
+ * decision for a person, not two. That holds under concurrency because the
+ * database holds it: the partial unique index
+ * `Approval_one_pending_per_session_call` lets exactly one pending row exist
+ * per call, and the loser of the race reads the winner's row.
  */
 export async function requestApproval(
   db: Database,
@@ -319,15 +338,16 @@ export async function requestApproval(
   if (!reason) throw new ApprovalValidationError("An approval needs a one-line reason");
   const argsHash = hashApprovalArgs(input.args);
 
+  const pendingForCall = {
+    orgId: input.orgId,
+    sessionId: session.id,
+    toolKey: input.toolKey,
+    argsHash,
+    status: "pending",
+  } as const;
+
   const pending = await db.approval.findFirst({
-    where: {
-      orgId: input.orgId,
-      sessionId: session.id,
-      toolKey: input.toolKey,
-      argsHash,
-      status: "pending",
-      expiresAt: { gt: now },
-    },
+    where: { ...pendingForCall, expiresAt: { gt: now } },
     orderBy: { createdAt: "desc" },
   });
   if (pending) {
@@ -335,48 +355,79 @@ export async function requestApproval(
     return { outcome: "approval_required", requirement, approval: pending };
   }
 
-  const approval = await db.$transaction(async (transaction) => {
-    const created = await transaction.approval.create({
-      data: {
-        orgId: input.orgId,
-        sessionId: session.id,
-        scopeId: session.scopeId,
-        toolKey: input.toolKey,
-        argsJson: (input.args ?? null) as Prisma.InputJsonValue,
-        argsHash,
-        reason,
-        sensitivity: input.sensitivity,
-        approverRoles: requirement.approverRoles,
-        allowRequesterApproval: requirement.allowRequesterApproval,
-        requesterPrincipalId: session.requesterPrincipalId,
-        requesterExternalRef: session.requesterExternalRef,
-        expiresAt: new Date(now.getTime() + (input.ttlMs ?? APPROVAL_TTL_MS)),
-      },
-    });
-    // The arguments and the model's reason stay in the row; the audit entry
-    // carries the fingerprint, which is what an auditor matches an execution
-    // against.
-    await transaction.auditLog.create({
-      data: {
-        orgId: input.orgId,
-        actorPrincipalId: session.actingPrincipalId,
-        action: "approval.request",
-        subject: created.id,
-        payload: {
+  const create = () =>
+    db.$transaction(async (transaction) => {
+      const created = await transaction.approval.create({
+        data: {
+          orgId: input.orgId,
           sessionId: session.id,
-          scopeId: created.scopeId,
-          toolKey: created.toolKey,
-          sensitivity: created.sensitivity,
-          argsHash: created.argsHash,
-          approverRoles: created.approverRoles,
-          allowRequesterApproval: created.allowRequesterApproval,
-          requesterPrincipalId: created.requesterPrincipalId,
-          expiresAt: created.expiresAt.toISOString(),
+          scopeId: session.scopeId,
+          toolKey: input.toolKey,
+          argsJson: (input.args ?? null) as Prisma.InputJsonValue,
+          argsHash,
+          reason,
+          sensitivity: input.sensitivity,
+          approverRoles: requirement.approverRoles,
+          allowRequesterApproval: requirement.allowRequesterApproval,
+          requesterPrincipalId: session.requesterPrincipalId,
+          requesterExternalRef: session.requesterExternalRef,
+          expiresAt: new Date(now.getTime() + (input.ttlMs ?? APPROVAL_TTL_MS)),
         },
-      },
+      });
+      // The arguments and the model's reason stay in the row; the audit entry
+      // carries the fingerprint, which is what an auditor matches an execution
+      // against.
+      await transaction.auditLog.create({
+        data: {
+          orgId: input.orgId,
+          actorPrincipalId: session.actingPrincipalId,
+          action: "approval.request",
+          subject: created.id,
+          payload: {
+            sessionId: session.id,
+            scopeId: created.scopeId,
+            toolKey: created.toolKey,
+            sensitivity: created.sensitivity,
+            argsHash: created.argsHash,
+            approverRoles: created.approverRoles,
+            allowRequesterApproval: created.allowRequesterApproval,
+            requesterPrincipalId: created.requesterPrincipalId,
+            expiresAt: created.expiresAt.toISOString(),
+          },
+        },
+      });
+      return created;
     });
-    return created;
-  });
+
+  let approval: Approval;
+  try {
+    approval = await create();
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    // Someone asked for the same call at the same moment, or an earlier ask is
+    // still `pending` past its deadline because no sweep has reached it. The
+    // first is another executor's row to return; the second is a row this call
+    // expires itself before asking again, so a stale ask cannot block a live
+    // one. A second violation is a genuine race with a third writer, and its
+    // row is the answer.
+    const existing = await db.approval.findFirst({
+      where: pendingForCall,
+      orderBy: { createdAt: "desc" },
+    });
+    if (!existing) throw error;
+    if (existing.expiresAt.getTime() > now.getTime()) {
+      log.debug("Approval already pending", { approvalId: existing.id, sessionId: session.id });
+      return { outcome: "approval_required", requirement, approval: existing };
+    }
+    await expireApproval(db, existing);
+    approval = await create().catch(async (retried: unknown) => {
+      if (!isUniqueViolation(retried)) throw retried;
+      return db.approval.findFirstOrThrow({
+        where: { ...pendingForCall, expiresAt: { gt: now } },
+        orderBy: { createdAt: "desc" },
+      });
+    });
+  }
 
   log.info("Approval requested", {
     approvalId: approval.id,
@@ -444,27 +495,39 @@ export async function requestItemActivation(
   return requested.approval;
 }
 
-async function assertResolvable(
+/**
+ * The person on the other side of an approval. Only a person resolves one: an
+ * agent holds no control-plane role by construction, so this is a guard against
+ * a caller, not against a role.
+ */
+async function requireApprover(
   db: Database,
-  approval: Approval,
+  orgId: string,
   approverPrincipalId: string,
-  now: Date,
-): Promise<void> {
+): Promise<AuthorizePrincipal> {
   const approver = await db.principal.findFirst({
-    where: { id: approverPrincipalId, orgId: approval.orgId },
+    where: { id: approverPrincipalId, orgId },
     select: { id: true, kind: true, deactivatedAt: true },
   });
   if (!approver) {
     throw new ApprovalApproverError("unknown_principal", "Approver principal not found");
   }
-  // Only a person resolves an approval. An agent holds no control-plane role by
-  // construction, so this is a guard against a caller, not against a role.
   if (approver.kind !== "human") {
     throw new ApprovalApproverError("not_a_human", "Only a person can resolve an approval");
   }
   if (approver.deactivatedAt) {
     throw new ApprovalApproverError("deactivated", "Approver principal is deactivated");
   }
+  return { id: approver.id, orgId, kind: approver.kind };
+}
+
+async function assertResolvable(
+  db: Database,
+  approval: Approval,
+  approverPrincipalId: string,
+  now: Date,
+): Promise<void> {
+  const approver = await requireApprover(db, approval.orgId, approverPrincipalId);
 
   if (approval.status !== "pending") {
     throw new ApprovalStateError("not_pending", `Approval is already ${approval.status}`);
@@ -476,11 +539,7 @@ async function assertResolvable(
     throw new ApprovalStateError("expired", "Approval has expired; the call needs a new one");
   }
 
-  const roles = await approverRolesAtScope(
-    db,
-    { id: approver.id, orgId: approval.orgId, kind: approver.kind },
-    approval.scopeId,
-  );
+  const roles = await approverRolesAtScope(db, approver, approval.scopeId);
   const check = canResolveApproval({
     approval,
     approverPrincipalId: approver.id,
@@ -567,6 +626,17 @@ export interface ApprovalResolution {
 }
 
 /**
+ * The item a `context:activate_item` approval names. Recorded arguments are
+ * whatever JSON was stored, so this reads them defensively: `null`, a list, or
+ * a row missing the field is an approval with nothing to activate, not a crash.
+ */
+function activationItemId(args: Prisma.JsonValue): string | undefined {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
+  const itemId = (args as Record<string, unknown>).itemId;
+  return typeof itemId === "string" ? itemId : undefined;
+}
+
+/**
  * Approve a pending call.
  *
  * Approving a `context:activate_item` approval also performs it: activation is
@@ -585,17 +655,23 @@ export async function approveApproval(
   const resolved = await recordResolution(db, approval, "approved", input.approverPrincipalId, now);
   if (resolved.toolKey !== ACTIVATE_ITEM_TOOL_KEY) return { approval: resolved };
 
+  // Read the item out before claiming. A claim is the right to run the call
+  // once, and an approval whose arguments name no item has no call to run:
+  // taking the claim first would spend it on nothing.
+  const itemId = activationItemId(resolved.argsJson);
+  if (itemId === undefined) {
+    throw new ApprovalValidationError("Activation approval carries no item");
+  }
+
+  // The one execution whose arguments come from the approval row rather than
+  // from a caller: activation is performed here, from what the approver saw, so
+  // there is no payload in flight for exact-args binding to disagree with.
   const claimed = await claimApprovalExecution(db, {
     orgId: input.orgId,
     approvalId: resolved.id,
     args: resolved.argsJson,
     now,
   });
-  const itemId = (resolved.argsJson as { itemId?: unknown }).itemId;
-  if (typeof itemId !== "string") {
-    await releaseApprovalExecution(db, { orgId: input.orgId, approvalId: resolved.id });
-    throw new ApprovalValidationError("Activation approval carries no item");
-  }
   try {
     await activateItem(db, {
       orgId: input.orgId,
@@ -621,11 +697,180 @@ export async function denyApproval(db: Database, input: ResolveApprovalInput): P
   return recordResolution(db, approval, "denied", input.approverPrincipalId, now);
 }
 
+type ProposedItem = { id: string; scopeId: string; sourceSessionId: string | null };
+type ActivationScope = { id: string; kind: ScopeKind; ownerId: string | null };
+
+/**
+ * Who counts as having asked for an activation nobody filed an approval for.
+ *
+ * The proposal came out of a run, so the person that run was acting for is the
+ * requester — that is the same person `requestApproval` would have recorded. A
+ * personal scope with no such link falls back to its owner, because a proposal
+ * in someone's personal scope is a proposal made for them.
+ */
+async function activationRequesterId(
+  db: Database,
+  orgId: string,
+  item: ProposedItem,
+  scope: ActivationScope,
+): Promise<string | null> {
+  if (item.sourceSessionId) {
+    const session = await db.contextSession.findFirst({
+      where: { id: item.sourceSessionId, orgId },
+      select: { requesterPrincipalId: true },
+    });
+    if (session?.requesterPrincipalId) return session.requesterPrincipalId;
+  }
+  return scope.kind === "personal" ? scope.ownerId : null;
+}
+
+/**
+ * May this person turn a proposed item on themselves?
+ *
+ * Activating a proposal is the approval, wherever it is done from, so the same
+ * rule decides it: the scope's approvers for the write class, and the person
+ * the proposal was made for only where that rule lets a requester confirm their
+ * own. Holding `write_items` is what lets someone reach the transition; it is
+ * not what lets them make the decision.
+ *
+ * One deliberate difference from resolving a recorded approval: there is no
+ * pinned snapshot here, because nobody asked. The policy that governs is the
+ * scope's policy as it stands now — a decision made now is made under today's
+ * rule, not under the rule some session pinned.
+ */
+async function assertMayConfirmActivation(
+  db: Database,
+  input: { orgId: string; item: ProposedItem; approverPrincipalId: string },
+): Promise<void> {
+  const approver = await requireApprover(db, input.orgId, input.approverPrincipalId);
+  const scope = await db.scope.findFirst({
+    where: { id: input.item.scopeId, orgId: input.orgId },
+    select: { id: true, kind: true, ownerId: true },
+  });
+  if (!scope) throw new ApprovalValidationError("Item scope not found");
+
+  const { decisions } = await resolveScopePolicies(db, {
+    orgId: input.orgId,
+    scopeId: scope.id,
+  });
+  const requirement = resolveApprovalRequirement({
+    decisions,
+    scopeKind: scope.kind,
+    toolKey: ACTIVATE_ITEM_TOOL_KEY,
+    sensitivity: "write",
+  });
+  const check = canResolveApproval({
+    approval: {
+      approverRoles: requirement.approverRoles,
+      allowRequesterApproval: requirement.allowRequesterApproval,
+      requesterPrincipalId: await activationRequesterId(db, input.orgId, input.item, scope),
+    },
+    approverPrincipalId: approver.id,
+    approverRoles: await approverRolesAtScope(db, approver, scope.id),
+  });
+  if (!check.ok) {
+    log.warn("Item activation refused", {
+      itemId: input.item.id,
+      scopeId: scope.id,
+      reason: check.reason,
+    });
+    throw new ApprovalApproverError(
+      check.reason,
+      check.reason === "requester_self_approval"
+        ? "The person this item was proposed for may not confirm it alone"
+        : "You do not hold a role that may confirm a proposed item in this scope",
+    );
+  }
+}
+
+export interface ConfirmItemActivationInput {
+  orgId: string;
+  itemId: string;
+  approverPrincipalId: string;
+  now?: Date;
+}
+
+export interface ItemActivationConfirmation {
+  item: Item;
+  /** The waiting approval this confirmation resolved, when one was waiting. */
+  approval?: Approval;
+}
+
+/**
+ * Activate an item from the control plane.
+ *
+ * The control-plane UI is an alternative approval surface, never a way around
+ * one: a person turning a proposal on here is performing the approval, so they
+ * face the same approver rule the approve endpoint would apply. Where a run
+ * already asked, this resolves that approval rather than leaving it waiting for
+ * a decision that has been made — one item, one decision, one audit trail.
+ */
+export async function confirmItemActivation(
+  db: Database,
+  input: ConfirmItemActivationInput,
+): Promise<ItemActivationConfirmation> {
+  const now = input.now ?? new Date();
+  const item = await db.item.findFirst({
+    where: { id: input.itemId, orgId: input.orgId },
+    select: { id: true, scopeId: true, status: true, sourceSessionId: true },
+  });
+  // A missing item, or one that is not `proposed`, is the item service's answer
+  // to give: there is no confirm step where there is no proposal, and the
+  // lifecycle table refuses the rest with its own error.
+  if (item?.status !== "proposed") {
+    return {
+      item: await activateItem(db, {
+        orgId: input.orgId,
+        actorPrincipalId: input.approverPrincipalId,
+        itemId: input.itemId,
+      }),
+    };
+  }
+
+  const waiting = await db.approval.findFirst({
+    where: {
+      orgId: input.orgId,
+      scopeId: item.scopeId,
+      toolKey: ACTIVATE_ITEM_TOOL_KEY,
+      argsHash: hashApprovalArgs({ itemId: item.id }),
+      status: "pending",
+      expiresAt: { gt: now },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (waiting) {
+    const resolved = await approveApproval(db, {
+      orgId: input.orgId,
+      approvalId: waiting.id,
+      approverPrincipalId: input.approverPrincipalId,
+      now,
+    });
+    return { item: await getItem(db, input.orgId, item.id), approval: resolved.approval };
+  }
+
+  await assertMayConfirmActivation(db, {
+    orgId: input.orgId,
+    item,
+    approverPrincipalId: input.approverPrincipalId,
+  });
+  return {
+    item: await activateItem(db, {
+      orgId: input.orgId,
+      actorPrincipalId: input.approverPrincipalId,
+      itemId: item.id,
+    }),
+  };
+}
+
 export interface ClaimApprovalInput {
   orgId: string;
   approvalId: string;
-  /** The call about to run. It must be exactly the call that was approved. */
-  args?: unknown;
+  /**
+   * The call about to run. It must be exactly the call that was approved, and
+   * it is required: an executor that cannot say what it is about to run cannot
+   * be told that the decision covers it.
+   */
+  args: unknown;
   now?: Date;
 }
 
@@ -634,7 +879,9 @@ export interface ClaimApprovalInput {
  *
  * Two checks, both non-negotiable. Exact-args binding: the call about to run is
  * compared against the recorded arguments, and a changed call is refused rather
- * than quietly covered by a decision that was made about something else.
+ * than quietly covered by a decision that was made about something else. There
+ * is no way past this comparison — the arguments are a required input, so a
+ * caller that omits them fails the comparison rather than skipping it.
  * At-most-once: the claim is a compare-and-swap on `executedAt`, so of any
  * number of concurrent executors exactly one proceeds and the rest are told the
  * call already ran.
@@ -648,7 +895,7 @@ export async function claimApprovalExecution(
   if (approval.status !== "approved") {
     throw new ApprovalStateError("not_approved", `Approval is ${approval.status}, not approved`);
   }
-  if (input.args !== undefined && hashApprovalArgs(input.args) !== approval.argsHash) {
+  if (hashApprovalArgs(input.args) !== approval.argsHash) {
     log.warn("Approval arguments changed", {
       approvalId: approval.id,
       toolKey: approval.toolKey,
@@ -706,33 +953,71 @@ export interface ListApprovalsInput {
 /**
  * The approvals one person may resolve. The pinned rule on each row decides,
  * so the queue is the same set the approve call would accept.
+ *
+ * The rule is half a database question and half a role lookup, so the listing
+ * reads pages and filters them until the caller's limit is filled rather than
+ * filtering one page and returning what survives — an approver whose approvals
+ * sit behind other people's must still see them. `APPROVAL_SCAN_LIMIT` bounds
+ * the reading, so an empty queue costs a bounded scan and not the table.
  */
 export async function listResolvableApprovals(
   db: Database,
   input: ListApprovalsInput,
 ): Promise<Approval[]> {
-  const approvals = await db.approval.findMany({
-    where: {
-      orgId: input.orgId,
-      status: input.status ?? "pending",
-      ...(input.scopeId ? { scopeId: input.scopeId } : {}),
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    take: input.limit ?? APPROVAL_PAGE_SIZE,
-  });
+  const limit = input.limit ?? APPROVAL_PAGE_SIZE;
+  const where = {
+    orgId: input.orgId,
+    status: input.status ?? "pending",
+    ...(input.scopeId ? { scopeId: input.scopeId } : {}),
+    // The one clause of resolvability the database can answer on its own: a
+    // call the person who asked for it may not wave through is never theirs,
+    // whatever roles they hold. The role half needs the scope chain, so it
+    // stays in the filter below.
+    OR: [
+      { allowRequesterApproval: true },
+      { requesterPrincipalId: null },
+      { requesterPrincipalId: { not: input.principal.id } },
+    ],
+  };
 
   const rolesByScope = new Map<string, Role[]>();
-  for (const scopeId of new Set(approvals.map((approval) => approval.scopeId))) {
-    rolesByScope.set(scopeId, await approverRolesAtScope(db, input.principal, scopeId));
-  }
-  return approvals.filter(
-    (approval) =>
-      canResolveApproval({
+  const resolvable: Approval[] = [];
+  let scanned = 0;
+  let cursor: string | undefined;
+
+  while (resolvable.length < limit && scanned < APPROVAL_SCAN_LIMIT) {
+    const take = Math.min(Math.max(limit, APPROVAL_PAGE_SIZE), APPROVAL_SCAN_LIMIT - scanned);
+    const page = await db.approval.findMany({
+      where,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take,
+      ...(cursor ? { cursor: { orgId_id: { orgId: input.orgId, id: cursor } }, skip: 1 } : {}),
+    });
+    if (page.length === 0) break;
+    scanned += page.length;
+    cursor = page[page.length - 1]?.id;
+
+    for (const approval of page) {
+      let roles = rolesByScope.get(approval.scopeId);
+      if (!roles) {
+        roles = await approverRolesAtScope(db, input.principal, approval.scopeId);
+        rolesByScope.set(approval.scopeId, roles);
+      }
+      const check = canResolveApproval({
         approval,
         approverPrincipalId: input.principal.id,
-        approverRoles: rolesByScope.get(approval.scopeId) ?? [],
-      }).ok,
-  );
+        approverRoles: roles,
+      });
+      if (check.ok) resolvable.push(approval);
+      if (resolvable.length === limit) return resolvable;
+    }
+    if (page.length < take) break;
+  }
+
+  if (resolvable.length < limit && scanned >= APPROVAL_SCAN_LIMIT) {
+    log.debug("Approval listing stopped at the scan limit", { scanned, found: resolvable.length });
+  }
+  return resolvable;
 }
 
 async function expireApproval(db: Database, approval: Approval): Promise<boolean> {

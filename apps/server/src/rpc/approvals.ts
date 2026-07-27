@@ -83,7 +83,11 @@ function serialize(approval: Approval) {
   };
 }
 
-function throwApprovalError(error: unknown): never {
+/**
+ * The approval vocabulary as HTTP. Exported because item activation is an
+ * approval taken from the control plane and answers with the same codes.
+ */
+export function throwApprovalError(error: unknown): never {
   if (error instanceof ApprovalNotFoundError) {
     throw new ORPCError("NOT_FOUND", { message: error.message });
   }

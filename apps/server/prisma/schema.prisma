@@ -717,6 +717,10 @@ model Approval {
   @@index([orgId, sessionId])
   @@index([orgId, requesterPrincipalId])
   @@index([orgId, resolvedById])
+  // A session holds at most one pending approval per call: the partial unique
+  // index Approval_one_pending_per_session_call, maintained in SQL because
+  // Prisma does not model partial uniques, is what makes the re-ask dedup in
+  // `services/approvals` hold under concurrent asks.
   @@index([orgId, sessionId, toolKey, argsHash])
 }
 

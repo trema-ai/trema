@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { Role } from "#server/generated/prisma/client.js";
+import { Prisma, type Role } from "#server/generated/prisma/client.js";
 import { createAuth } from "#server/lib/auth/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
@@ -164,6 +164,15 @@ integration("approvals", () => {
         orgId: org.org.id,
         approvalId: requested.approval.id,
         args: { ...args, branch: "release" },
+      }),
+    ).rejects.toBeInstanceOf(ApprovalArgsMismatchError);
+    // An executor that says nothing about the call it is running is refused too:
+    // the comparison is the binding, so there is no way to skip it.
+    await expect(
+      claimApprovalExecution(db, {
+        orgId: org.org.id,
+        approvalId: requested.approval.id,
+        args: undefined,
       }),
     ).rejects.toBeInstanceOf(ApprovalArgsMismatchError);
     // The refusal changes nothing: the approval is still there to execute.
@@ -515,6 +524,262 @@ integration("approvals", () => {
     await expect(
       call(approvalsRouter.approve, { id: approval.id }, { context: org.context }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("records one pending approval however many asks arrive at once", async () => {
+    const org = await createOrg();
+    const opened = await openSharedSession(org, { name: "Concurrent Asks" });
+
+    const ask = () =>
+      requestApproval(db, {
+        orgId: org.org.id,
+        sessionId: opened.session.sessionId,
+        toolKey: "github:delete_branch",
+        sensitivity: "destructive",
+        args: { repo: "trema", branch: "main" },
+        reason: "Cleaning up",
+      });
+
+    // A resumed run repeating its tool call is one decision for a person, and
+    // two runs racing to ask must not become two.
+    const asked = await Promise.all(Array.from({ length: 5 }, ask));
+    const ids = new Set(
+      asked.map((outcome) =>
+        outcome.outcome === "approval_required" ? outcome.approval.id : "not-required",
+      ),
+    );
+    expect(ids.size).toBe(1);
+    expect(await db.approval.count({ where: { orgId: org.org.id } })).toBe(1);
+  });
+
+  it("asks again once a stale pending ask is past its deadline", async () => {
+    const org = await createOrg();
+    const opened = await openSharedSession(org, { name: "Stale Ask" });
+    const sameCall = {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      toolKey: "github:delete_branch",
+      sensitivity: "destructive" as const,
+      args: { repo: "trema", branch: "main" },
+      reason: "Cleaning up",
+    };
+
+    const first = await requestApproval(db, { ...sameCall, ttlMs: HOUR_MS });
+    if (first.outcome !== "approval_required") throw new Error("unreachable");
+
+    // Nothing has swept the expired ask yet. The new ask is a new decision, and
+    // the stale one is recorded as expired rather than quietly reused.
+    const second = await requestApproval(db, {
+      ...sameCall,
+      now: new Date(Date.now() + 2 * HOUR_MS),
+    });
+    if (second.outcome !== "approval_required") throw new Error("unreachable");
+    expect(second.approval.id).not.toBe(first.approval.id);
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: first.approval.id } },
+        select: { status: true },
+      }),
+    ).resolves.toMatchObject({ status: "expired" });
+  });
+
+  it("fills the listing limit from behind approvals that are not the caller's", async () => {
+    const org = await createOrg();
+    const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Queue Admin");
+    // The admin asked for these, and a destructive call keeps the asker out of
+    // its own decision — so none of them belong in the admin's queue.
+    const theirs = await openSharedSession(org, {
+      name: "Own Asks",
+      requesterPrincipalId: admin.principal.id,
+    });
+    for (let index = 0; index < 6; index += 1) {
+      await requestApproval(db, {
+        orgId: org.org.id,
+        sessionId: theirs.session.sessionId,
+        toolKey: "github:delete_branch",
+        sensitivity: "destructive",
+        args: { repo: "trema", branch: `own-${index}` },
+        reason: "Cleaning up",
+      });
+    }
+
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Someone Else");
+    const others = await openSharedSession(org, {
+      name: "Other Asks",
+      requesterPrincipalId: member.principal.id,
+    });
+    const resolvable: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const requested = await requestApproval(db, {
+        orgId: org.org.id,
+        sessionId: others.session.sessionId,
+        toolKey: "github:delete_branch",
+        sensitivity: "destructive",
+        args: { repo: "trema", branch: `other-${index}` },
+        reason: "Cleaning up",
+      });
+      if (requested.outcome !== "approval_required") throw new Error("unreachable");
+      resolvable.push(requested.approval.id);
+    }
+
+    // The oldest six rows are not the admin's to resolve. A limit of two is two
+    // approvals they can act on, not two rows read and none returned.
+    const listed = await call(approvalsRouter.list, { limit: 2 }, { context: admin.context });
+    expect(listed.approvals.map(({ id }) => id)).toEqual(resolvable.slice(0, 2));
+    const all = await call(approvalsRouter.list, {}, { context: admin.context });
+    expect(all.approvals.map(({ id }) => id)).toEqual(resolvable);
+  });
+
+  it("treats activating from the control plane as the approval itself", async () => {
+    const org = await createOrg();
+    const asker = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
+    const bystander = await addMember(org.org.id, org.orgScope.id, "member", "Bystander");
+    const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Confirming Admin");
+    const opened = await openSharedSession(org, {
+      name: "Control Plane",
+      requesterPrincipalId: asker.principal.id,
+    });
+
+    async function propose(title: string) {
+      return createItem(db, {
+        orgId: org.org.id,
+        actorPrincipalId: org.agent.id,
+        scopeId: opened.scope.id,
+        kind: "memory",
+        title,
+        body: { type: "rule", content: `${title}: always.` },
+        writerKind: "agent",
+        sourceSessionId: opened.session.sessionId,
+      });
+    }
+
+    const asked = await propose("Escalate refunds over $500");
+    const approval = await requestItemActivation(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      itemId: asked.id,
+      reason: "This rule came up twice this week",
+    });
+
+    // A member holds write_items, so the route is reachable — and refuses,
+    // because the decision is the approval's and they cannot resolve it.
+    await expect(
+      call(itemsRouter.activate, { id: asked.id }, { context: bystander.context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      db.item.findUniqueOrThrow({ where: { orgId_id: { orgId: org.org.id, id: asked.id } } }),
+    ).resolves.toMatchObject({ status: "proposed", confirmedById: null });
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: approval.id } },
+        select: { status: true },
+      }),
+    ).resolves.toMatchObject({ status: "pending" });
+
+    // An approver confirming from the control plane resolves the waiting
+    // approval rather than leaving it behind: one item, one decision.
+    const activated = await call(
+      itemsRouter.activate,
+      { id: asked.id },
+      { context: admin.context },
+    );
+    expect(activated).toMatchObject({ status: "active", confirmedById: admin.principal.id });
+    const resolvedApproval = await db.approval.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: approval.id } },
+    });
+    expect(resolvedApproval).toMatchObject({
+      status: "approved",
+      resolvedById: admin.principal.id,
+    });
+    expect(resolvedApproval.executedAt).not.toBeNull();
+
+    // Nothing asked for this one, so the scope's policy as it stands decides.
+    const unasked = await propose("Escalate chargebacks");
+    await expect(
+      call(itemsRouter.activate, { id: unasked.id }, { context: bystander.context }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      call(itemsRouter.activate, { id: unasked.id }, { context: admin.context }),
+    ).resolves.toMatchObject({ status: "active", confirmedById: admin.principal.id });
+    // Confirming without an approval creates none: the audit entry is the
+    // item's own activation.
+    expect(await db.approval.count({ where: { orgId: org.org.id } })).toBe(1);
+
+    // Archiving and restoring are ordinary lifecycle edits, and write_items
+    // still governs them alone.
+    await expect(
+      call(itemsRouter.archive, { id: unasked.id }, { context: bystander.context }),
+    ).resolves.toMatchObject({ status: "archived" });
+    await expect(
+      call(itemsRouter.restore, { id: unasked.id }, { context: bystander.context }),
+    ).resolves.toMatchObject({ status: "active" });
+  });
+
+  it("lets the person a proposal was made for confirm it in their own scope", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Dm Owner");
+    await db.identityLink.create({
+      data: {
+        orgId: org.org.id,
+        surface: "slack",
+        externalUserId: "U-OWN",
+        principalId: member.principal.id,
+      },
+    });
+    const session = await call(
+      sessionsRouter.open,
+      { surface: "slack", locationRef: "T1:D2", dm: true, requester: { externalUserId: "U-OWN" } },
+      { context: serviceContext(org.credential.secret) },
+    );
+    const personalScopeId = session.scopeChain.at(-1)?.id ?? "";
+    const proposed = await createItem(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.agent.id,
+      scopeId: personalScopeId,
+      kind: "memory",
+      title: "Draft replies in the morning",
+      body: { type: "rule", content: "Draft replies before 10:00." },
+      writerKind: "agent",
+      sourceSessionId: session.sessionId,
+    });
+
+    // The personal defaults make the confirm step the owner's own, and nobody
+    // asked, so the control-plane route is where it happens.
+    await expect(
+      call(itemsRouter.activate, { id: proposed.id }, { context: member.context }),
+    ).resolves.toMatchObject({ status: "active", confirmedById: member.principal.id });
+  });
+
+  it("does not spend the execution claim on an activation that names no item", async () => {
+    const org = await createOrg();
+    const opened = await openSharedSession(org, { name: "Malformed" });
+    const approval = await db.approval.create({
+      data: {
+        orgId: org.org.id,
+        sessionId: opened.session.sessionId,
+        scopeId: opened.scope.id,
+        toolKey: ACTIVATE_ITEM_TOOL_KEY,
+        argsJson: Prisma.JsonNull,
+        argsHash: "0".repeat(64),
+        reason: "Recorded without an item",
+        sensitivity: "write",
+        approverRoles: ["owner", "admin"],
+        allowRequesterApproval: false,
+        expiresAt: new Date(Date.now() + HOUR_MS),
+      },
+    });
+
+    await expect(
+      call(approvalsRouter.approve, { id: approval.id }, { context: org.context }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    // The claim is the right to run the call once; a call that never ran must
+    // not have spent it.
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: approval.id } },
+        select: { executedAt: true },
+      }),
+    ).resolves.toMatchObject({ executedAt: null });
   });
 
   it("skips the approval entirely where the policy allows the class", async () => {

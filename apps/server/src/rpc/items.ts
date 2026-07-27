@@ -2,11 +2,12 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import type { Item, ItemVersion } from "#server/generated/prisma/client.js";
+import { throwApprovalError } from "#server/rpc/approvals.js";
 import { orgScoped, requireCapability } from "#server/rpc/builders.js";
+import { confirmItemActivation } from "#server/services/approvals/index.js";
 import { authorize, type Capability } from "#server/services/authorize/index.js";
 import { hasEmbedAssignment, resolveEmbedder } from "#server/services/embeddings/index.js";
 import {
-  activateItem,
   archiveItem,
   createItem,
   getItem,
@@ -126,7 +127,9 @@ function throwItemError(error: unknown): never {
   if (error instanceof ItemValidationError) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
-  throw error;
+  // Activation is an approval, so it answers with the approval vocabulary: a
+  // person who may not confirm gets FORBIDDEN, a decision already taken CONFLICT.
+  throwApprovalError(error);
 }
 
 function itemScoped(capability: Capability) {
@@ -330,8 +333,32 @@ const update = itemScoped("write_items")
     }
   });
 
-function lifecycleRoute(action: "activate" | "archive" | "restore") {
-  const operation = { activate: activateItem, archive: archiveItem, restore: restoreItem }[action];
+const activate = itemScoped("write_items")
+  .route({
+    method: "POST",
+    path: "/items/{id}/activate",
+    summary: "Activate an item",
+    description:
+      "Turn a proposed item on. This is the same decision the approval on `context:activate_item` records, taken from the control plane: the caller must satisfy the scope's approver rule for the write class, and a pending activation approval for the item is resolved by this call rather than left waiting. Where a run asked, the rule pinned on that approval decides; where nothing asked, the scope's current policy does.",
+    tags: ["Items"],
+  })
+  .input(z.object({ id: z.uuid().describe("The ID of the item to activate. A UUID.") }))
+  .output(itemSchema)
+  .handler(async ({ context, input }) => {
+    try {
+      const confirmed = await confirmItemActivation(context.db, {
+        orgId: context.org.id,
+        itemId: input.id,
+        approverPrincipalId: context.principal.id,
+      });
+      return serializeItem(confirmed.item);
+    } catch (error) {
+      throwItemError(error);
+    }
+  });
+
+function lifecycleRoute(action: "archive" | "restore") {
+  const operation = { archive: archiveItem, restore: restoreItem }[action];
   return itemScoped("write_items")
     .route({
       method: "POST",
@@ -470,7 +497,7 @@ export const itemsRouter = {
   get,
   versions,
   update,
-  activate: lifecycleRoute("activate"),
+  activate,
   archive: lifecycleRoute("archive"),
   restore: lifecycleRoute("restore"),
   reindex,
