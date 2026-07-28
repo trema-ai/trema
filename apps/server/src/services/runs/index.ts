@@ -21,8 +21,13 @@ import { withToolOutputRefs } from "#server/services/runs/outputs.js";
 import { createSessionRunPlan } from "#server/services/runs/plan.js";
 import { PrismaRunStore } from "#server/services/runs/store.js";
 
-export type { ResolveRunAccessOptions, RunAccess, RunAccessLevel } from "./access.js";
-export { resolveRunAccess } from "./access.js";
+export type {
+  ResolveRunAccessOptions,
+  ResolveRunsAccessOptions,
+  RunAccess,
+  RunAccessLevel,
+} from "./access.js";
+export { resolveRunAccess, resolveRunsAccess } from "./access.js";
 export type { CaptureOpeningMessages, QueuedMessage, RunCaptureOptions } from "./capture.js";
 export { createRunCapture, openingMessages } from "./capture.js";
 export { ContextCapabilityUnavailableError, ServerContextSession } from "./context.js";

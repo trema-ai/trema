@@ -12431,7 +12431,7 @@
       "get": {
         "operationId": "runs.listByThread",
         "summary": "List a thread's runs",
-        "description": "The thread's runs in run order, each with the opening message its log derives — what the run was asked, by whom. Only runs the caller may fully read are listed; a thread whose runs are all invisible is indistinguishable from an empty one.",
+        "description": "The thread's most recent runs in run order, each with the opening message its log derives — what the run was asked, by whom. Only runs the caller may fully read are listed; a thread whose runs are all invisible is indistinguishable from an empty one.",
         "tags": [
           "Threads"
         ],
@@ -12445,6 +12445,19 @@
               "minLength": 1,
               "description": "The thread whose runs to list."
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100,
+              "description": "How many of the thread's most recent runs to consider. Defaults to 100."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
           }
         ],
         "responses": {

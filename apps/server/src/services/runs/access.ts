@@ -62,41 +62,99 @@ export async function resolveRunAccess(options: ResolveRunAccessOptions): Promis
   const run = await db.agentRun.findUnique({ where: { orgId_id: { orgId, id: runId } } });
   if (run === null) return { access: "none" };
 
-  const session =
-    run.sessionId === null
-      ? null
-      : await db.contextSession.findUnique({
-          where: { orgId_id: { orgId, id: run.sessionId } },
-        });
-  if (session === null) {
-    return (await holdsOrgAuditRole(principal, db))
-      ? { access: "metadata", run, session: null, scope: null }
-      : { access: "none" };
+  const [verdict] = await resolveRunsAccess({ db, orgId, principal, runs: [run] });
+  return verdict ?? { access: "none" };
+}
+
+/** Dependencies plus the question: what may this principal see of these runs? */
+export interface ResolveRunsAccessOptions {
+  db: Database;
+  orgId: string;
+  principal: AuthorizePrincipal;
+  runs: readonly AgentRun[];
+}
+
+/**
+ * The same rule as {@link resolveRunAccess}, over already-fetched runs at
+ * once — the list reads' shape, where per-run resolution would multiply
+ * queries by the thread's length. Sessions and scopes load in one query each,
+ * and role lookups run once per distinct scope, not once per run — a thread's
+ * runs overwhelmingly share one. Verdicts return in input order.
+ */
+export async function resolveRunsAccess(options: ResolveRunsAccessOptions): Promise<RunAccess[]> {
+  const { db, orgId, principal, runs } = options;
+  if (runs.length === 0) return [];
+  if (principal.orgId !== orgId || principal.kind === "agent") {
+    return runs.map(() => ({ access: "none" }));
   }
 
-  const scope = await db.scope.findUnique({
-    where: { orgId_id: { orgId, id: session.scopeId } },
-  });
-  // The session's foreign key guarantees the scope row; a session that lost
-  // its scope cannot exist, so this branch is unreachable and deny is the
-  // only sane answer if it ever fires.
-  if (scope === null) return { access: "none" };
+  const sessionIds = [...new Set(runs.flatMap((run) => run.sessionId ?? []))];
+  const sessions = new Map(
+    (await db.contextSession.findMany({ where: { orgId, id: { in: sessionIds } } })).map(
+      (session) => [session.id, session],
+    ),
+  );
+  const scopeIds = [...new Set([...sessions.values()].map((session) => session.scopeId))];
+  const scopes = new Map(
+    (await db.scope.findMany({ where: { orgId, id: { in: scopeIds } } })).map((scope) => [
+      scope.id,
+      scope,
+    ]),
+  );
 
-  if (scope.kind === "personal") {
-    if (scope.ownerId === principal.id) return { access: "full", run, session, scope };
-    // Org roles deliberately do not inherit into personal scopes
-    // (`effectiveRolesAtScope`), so the audit view is an explicit org-scope
-    // role check, not a scope-read check.
-    return (await holdsOrgAuditRole(principal, db))
-      ? { access: "metadata", run, session, scope }
-      : { access: "none" };
-  }
+  let auditRole: boolean | null = null;
+  const holdsAudit = async () => (auditRole ??= await holdsOrgAuditRole(principal, db));
+  const scopeReads = new Map<string, boolean>();
+  const holdsRead = async (scopeId: string) => {
+    let allowed = scopeReads.get(scopeId);
+    if (allowed === undefined) {
+      const roles = await effectiveRolesAtScope(principal, scopeId, db);
+      allowed = roles.some((role) => roleAllowsCapability(role, "read"));
+      scopeReads.set(scopeId, allowed);
+    }
+    return allowed;
+  };
 
-  const roles = await effectiveRolesAtScope(principal, scope.id, db);
-  if (roles.some((role) => roleAllowsCapability(role, "read"))) {
-    return { access: "full", run, session, scope };
+  const verdicts: RunAccess[] = [];
+  for (const run of runs) {
+    const session = run.sessionId === null ? null : (sessions.get(run.sessionId) ?? null);
+    if (session === null) {
+      verdicts.push(
+        (await holdsAudit())
+          ? { access: "metadata", run, session: null, scope: null }
+          : { access: "none" },
+      );
+      continue;
+    }
+
+    const scope = scopes.get(session.scopeId) ?? null;
+    // The session's foreign key guarantees the scope row; a session that lost
+    // its scope cannot exist, so this branch is unreachable and deny is the
+    // only sane answer if it ever fires.
+    if (scope === null) {
+      verdicts.push({ access: "none" });
+      continue;
+    }
+
+    if (scope.kind === "personal") {
+      if (scope.ownerId === principal.id) {
+        verdicts.push({ access: "full", run, session, scope });
+        continue;
+      }
+      // Org roles deliberately do not inherit into personal scopes
+      // (`effectiveRolesAtScope`), so the audit view is an explicit org-scope
+      // role check, not a scope-read check.
+      verdicts.push(
+        (await holdsAudit()) ? { access: "metadata", run, session, scope } : { access: "none" },
+      );
+      continue;
+    }
+
+    verdicts.push(
+      (await holdsRead(scope.id)) ? { access: "full", run, session, scope } : { access: "none" },
+    );
   }
-  return { access: "none" };
+  return verdicts;
 }
 
 /** Whether the principal's org-scope role is audit-grade: admin or owner. */

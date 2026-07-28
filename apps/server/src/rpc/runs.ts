@@ -15,6 +15,7 @@ import {
   deriveOpeningMessage,
   renderToolOutputBlocks,
   resolveRunAccess,
+  resolveRunsAccess,
 } from "#server/services/runs/index.js";
 
 /** Default page size for the event read. */
@@ -31,6 +32,11 @@ export const RUN_EVENT_PAGE_LIMIT = 1000;
  * stops at the first event that is neither.
  */
 const OPENING_EVENT_WINDOW = 50;
+
+/** Default number of runs the thread list serves. */
+export const THREAD_RUN_LIST_SIZE = 100;
+/** The largest thread list served. */
+export const THREAD_RUN_LIST_LIMIT = 200;
 
 const runStateSchema = z
   .enum([
@@ -445,12 +451,21 @@ const listByThread = orgScoped
     path: "/threads/{threadRef}/runs",
     summary: "List a thread's runs",
     description:
-      "The thread's runs in run order, each with the opening message its log derives — what the run was asked, by whom. Only runs the caller may fully read are listed; a thread whose runs are all invisible is indistinguishable from an empty one.",
+      "The thread's most recent runs in run order, each with the opening message its log derives — what the run was asked, by whom. Only runs the caller may fully read are listed; a thread whose runs are all invisible is indistinguishable from an empty one.",
     tags: ["Threads"],
   })
   .input(
     z.object({
       threadRef: z.string().trim().min(1).describe("The thread whose runs to list."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(THREAD_RUN_LIST_LIMIT)
+        .default(THREAD_RUN_LIST_SIZE)
+        .describe(
+          `How many of the thread's most recent runs to consider. Defaults to ${THREAD_RUN_LIST_SIZE}.`,
+        ),
     }),
   )
   .output(
@@ -481,41 +496,51 @@ const listByThread = orgScoped
       .describe("The thread's visible runs."),
   )
   .handler(async ({ context, input }) => {
-    const rows = await context.db.agentRun.findMany({
-      where: { orgId: context.org.id, threadRef: input.threadRef },
-      // The same (createdAt, id) order dispatch serializes on: two runs in one
-      // millisecond still list in a stable run order.
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      select: { id: true },
+    // The most recent runs, bounded — the tail is what the thread screen
+    // renders. Read newest-first, then restore the (createdAt, id) run order
+    // dispatch serializes on: two runs in one millisecond still list stably.
+    const rows = (
+      await context.db.agentRun.findMany({
+        where: { orgId: context.org.id, threadRef: input.threadRef },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: input.limit,
+      })
+    ).reverse();
+
+    const verdicts = await resolveRunsAccess({
+      db: context.db,
+      orgId: context.org.id,
+      principal: context.principal,
+      runs: rows,
     });
+    const visible = verdicts.flatMap((verdict) => (verdict.access === "full" ? [verdict.run] : []));
+    if (visible.length === 0) return { runs: [] };
 
-    const runs = [];
-    for (const row of rows) {
-      const verdict = await resolveRunAccess({
-        db: context.db,
+    // One query for every visible run's leading events: `seq` is dense from 1,
+    // so the window is a `lte` filter rather than a per-run `take`.
+    const leading = await context.db.runEvent.findMany({
+      where: {
         orgId: context.org.id,
-        principal: context.principal,
-        runId: row.id,
-      });
-      if (verdict.access !== "full") continue;
+        runId: { in: visible.map((run) => run.id) },
+        seq: { lte: OPENING_EVENT_WINDOW },
+      },
+      orderBy: [{ runId: "asc" }, { seq: "asc" }],
+      select: { runId: true, seq: true, at: true, v: true, event: true },
+    });
+    const leadingByRun = Map.groupBy(leading, (event) => event.runId);
 
-      const leading = await context.db.runEvent.findMany({
-        where: { orgId: context.org.id, runId: row.id },
-        orderBy: { seq: "asc" },
-        take: OPENING_EVENT_WINDOW,
-        select: { seq: true, at: true, v: true, event: true },
-      });
+    const runs = visible.map((run) => {
       // Aligned with the events read: recorded events validate before they are
       // used, so a malformed payload — one that would throw here or emerge
       // shaped wrong for the response — costs the run its opening message,
       // never the run or the rest of the thread. Derivation stops at the first
       // malformed row: past it, "what opened this run" cannot be trusted.
       const validated: RunEventData[] = [];
-      for (const event of leading) {
+      for (const event of leadingByRun.get(run.id) ?? []) {
         try {
           validated.push(
             parseRunEvent({
-              runId: row.id,
+              runId: run.id,
               seq: event.seq,
               at: event.at.toISOString(),
               v: event.v,
@@ -526,15 +551,14 @@ const listByThread = orgScoped
           break;
         }
       }
-      const openingMessage = deriveOpeningMessage(validated);
-      runs.push({
-        id: verdict.run.id,
-        state: verdict.run.state,
-        trigger: verdict.run.trigger,
-        createdAt: verdict.run.createdAt.toISOString(),
-        openingMessage,
-      });
-    }
+      return {
+        id: run.id,
+        state: run.state,
+        trigger: run.trigger,
+        createdAt: run.createdAt.toISOString(),
+        openingMessage: deriveOpeningMessage(validated),
+      };
+    });
     return { runs };
   });
 

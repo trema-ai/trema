@@ -393,6 +393,41 @@ integration("run reads", () => {
       ]);
     });
 
+    it("bounds the list to the thread's most recent runs, still in run order", async () => {
+      const { org, alice, session, run } = await setup();
+      await appendEvents(org.org.id, run.id, [
+        { type: "run-started", trigger: "message" },
+        steering(alice.principal.id, "Oldest question."),
+      ]);
+      const later: string[] = [];
+      for (const offset of [1000, 2000]) {
+        const created = await createRun({
+          orgId: org.org.id,
+          sessionId: session.id,
+          threadRef: "web:alice",
+          createdAt: new Date(run.createdAt.getTime() + offset),
+        });
+        await appendEvents(org.org.id, created.id, [
+          { type: "run-started", trigger: "message" },
+          steering(alice.principal.id, `Question at ${offset}.`),
+        ]);
+        later.push(created.id);
+      }
+
+      const listed = await call(
+        runsRouter.listByThread,
+        { threadRef: "web:alice", limit: 2 },
+        { context: alice.context },
+      );
+
+      // The oldest run falls off the bound; the survivors keep run order.
+      expect(listed.runs.map(({ id }) => id)).toEqual(later);
+      expect(listed.runs.map(({ openingMessage }) => openingMessage?.text)).toEqual([
+        "Question at 1000.",
+        "Question at 2000.",
+      ]);
+    });
+
     it("keeps listing the thread when one run's log holds a malformed event", async () => {
       const { org, alice, session, run } = await setup();
       // A recorded event that is JSON null: deriving from it throws, which
