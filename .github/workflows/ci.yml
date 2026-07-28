@@ -202,29 +202,102 @@ jobs:
         run: scripts/verify-image.sh trema:ci
 
   # Publishes to GHCR only after every check is green, so a broken build can
-  # never ship. The amd64 half reuses the cache the image job wrote; the arm64
-  # half builds fresh under QEMU, which is what the long timeout is for.
+  # never ship. Each architecture builds on a runner of its own architecture:
+  # arm64 under QEMU on an amd64 runner is what the hour-long timeout used to
+  # be for. Neither half carries tags — both push by digest, and the publish
+  # job below merges the two digests into one tagged manifest. Caching is left
+  # to the Blacksmith builder's own sticky disk, which the image job above
+  # already populated for amd64; `type=gha` is a second, colder cache that only
+  # duplicates it.
   push:
-    name: Push image
+    name: Push image (${{ matrix.arch }})
     # Only push events for main or a version tag publish; a workflow_dispatch
     # from an arbitrary branch must not.
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [lint, format, typecheck, test, prose, build, image]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 60
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: blacksmith-4vcpu-ubuntu-2404
+          - arch: arm64
+            platform: linux/arm64
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Setup Blacksmith Builder
         uses: useblacksmith/setup-docker-builder@v1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Labels only. Tags belong to the merged manifest, not to either half.
+      - name: Compute image labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - name: Push image by digest
+        id: build
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+
+      # An empty file named for the digest: the publish job needs only the
+      # names, and this is the cheapest thing to hand between jobs.
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v5
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Names what the two push jobs published. Skipped automatically when they are.
+  publish:
+    name: Publish image
+    needs: push
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@v5
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -246,13 +319,29 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - name: Push image
-        uses: useblacksmith/build-push-action@v2
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create the multi-arch manifest
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          # Both substitutions are meant to split: one `-t` pair per tag, one
+          # argument per digest file.
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      # A manifest listing one platform means a push job was skipped rather
+      # than failed, which nothing else in this workflow would catch.
+      - name: Verify both platforms are in the manifest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          platforms="$(docker buildx imagetools inspect --format '{{json .Manifest}}' \
+            "${IMAGE}:${VERSION}" \
+            | jq -r '[.manifests[].platform | select(.os != "unknown")
+                     | "\(.os)/\(.architecture)"] | sort | join(",")')"
+          echo "published platforms: $platforms"
+          test "$platforms" = "linux/amd64,linux/arm64"
