@@ -66,7 +66,12 @@ export type ConnectorInstallation = {
   connectionId: string;
   enabledTools: "all" | string[];
   sensitivityOverrides: Record<string, Sensitivity>;
-  syncedTools: Array<{ name: string; description?: string; sensitivity: Sensitivity }>;
+  syncedTools: Array<{
+    name: string;
+    description?: string;
+    sensitivity: Sensitivity;
+    declaredSensitivity?: Sensitivity;
+  }>;
   status: "proposed" | "active" | "archived";
   updatedAt: string;
 };

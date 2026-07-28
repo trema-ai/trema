@@ -19,14 +19,27 @@ describe("MCP sensitivity classification", () => {
     expect(sensitivityFromMcpAnnotations(annotations)).toBe(expected);
   });
 
-  it("maps name, description, and annotations to the stored shape", () => {
+  it("floors a declared read at write and keeps the declaration", () => {
     expect(
       mapMcpTool({
         name: "read_page",
         description: "Read a page",
         annotations: { readOnlyHint: true },
       }),
-    ).toEqual({ name: "read_page", description: "Read a page", sensitivity: "read" });
+    ).toEqual({
+      name: "read_page",
+      description: "Read a page",
+      sensitivity: "write",
+      declaredSensitivity: "read",
+    });
+  });
+
+  it("keeps a declared destructive above the floor", () => {
+    expect(mapMcpTool({ name: "drop_db" })).toEqual({
+      name: "drop_db",
+      sensitivity: "destructive",
+      declaredSensitivity: "destructive",
+    });
   });
 });
 
@@ -84,5 +97,36 @@ describe("MCP tool drift merge", () => {
       { name: "removed", sensitivity: "destructive" },
     ]).body;
     expect(returned.sensitivityOverrides).toEqual({ removed: "read" });
+  });
+
+  it("never lowers a stored sensitivity on re-sync", () => {
+    const merged = mergeSyncedTools(
+      {
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: "all",
+        syncedTools: [{ name: "kept", sensitivity: "destructive" }],
+      },
+      [{ name: "kept", sensitivity: "write", declaredSensitivity: "write" }],
+    );
+    expect(merged.body.syncedTools).toEqual([
+      { name: "kept", sensitivity: "destructive", declaredSensitivity: "write" },
+    ]);
+    expect(merged.report.changed).toEqual(["kept"]);
+  });
+
+  it("raises a legacy read entry to the floored fresh class", () => {
+    const merged = mergeSyncedTools(
+      {
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: "all",
+        syncedTools: [{ name: "kept", sensitivity: "read" }],
+      },
+      [mapMcpTool({ name: "kept", annotations: { readOnlyHint: true } })],
+    );
+    expect(merged.body.syncedTools).toEqual([
+      { name: "kept", sensitivity: "write", declaredSensitivity: "read" },
+    ]);
   });
 });

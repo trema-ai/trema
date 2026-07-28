@@ -18,6 +18,7 @@ export const syncedToolSchema = z
     name: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
     sensitivity: sensitivitySchema,
+    declaredSensitivity: sensitivitySchema.optional(),
   })
   .strict();
 

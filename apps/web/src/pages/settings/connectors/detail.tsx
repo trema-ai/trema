@@ -770,6 +770,7 @@ function ConfigureToolsDialog({
               const initialSensitivity =
                 installation.sensitivityOverrides[tool.name] ?? tool.sensitivity;
               const sensitivity = overrides[tool.name] ?? tool.sensitivity;
+              const declared = "declaredSensitivity" in tool ? tool.declaredSensitivity : undefined;
               return (
                 <div
                   key={tool.name}
@@ -796,6 +797,11 @@ function ConfigureToolsDialog({
                       <span className="block truncate text-meta text-muted-foreground">
                         {tool.description ?? "No description provided."}
                       </span>
+                      {declared && declared !== sensitivity ? (
+                        <span className="block text-meta text-muted-foreground">
+                          Provider declares {declared}.
+                        </span>
+                      ) : null}
                     </span>
                   </label>
                   {editingSensitivity === tool.name || sensitivity !== initialSensitivity ? (

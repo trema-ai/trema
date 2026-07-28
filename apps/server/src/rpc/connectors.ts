@@ -478,6 +478,7 @@ const listedInstallationSchema = z.object({
       name: z.string(),
       description: z.string().optional(),
       sensitivity: sensitivitySchema,
+      declaredSensitivity: sensitivitySchema.optional(),
     }),
   ),
   status: z.enum(["proposed", "active", "archived"]),

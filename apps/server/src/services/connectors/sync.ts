@@ -38,11 +38,21 @@ export function sensitivityFromMcpAnnotations(
   return "destructive";
 }
 
+const sensitivityRank: Record<Sensitivity, number> = { read: 0, write: 1, destructive: 2 };
+
+function maxSensitivity(a: Sensitivity, b: Sensitivity): Sensitivity {
+  return sensitivityRank[a] >= sensitivityRank[b] ? a : b;
+}
+
 export function mapMcpTool(tool: McpListedTool): SyncedTool {
+  const declared = sensitivityFromMcpAnnotations(tool.annotations);
   return {
     name: tool.name,
     ...(tool.description ? { description: tool.description } : {}),
-    sensitivity: sensitivityFromMcpAnnotations(tool.annotations),
+    // Annotations are the server's own claim; `read` executes ungated, so it
+    // is only ever granted by an admin override — synced classes floor at write.
+    sensitivity: maxSensitivity(declared, "write"),
+    declaredSensitivity: declared,
   };
 }
 
@@ -57,7 +67,19 @@ export function mergeSyncedTools(
   freshTools: readonly SyncedTool[],
 ): { body: ConnectorInstallationBody; report: SyncReport } {
   const previous = new Map((body.syncedTools ?? []).map((tool) => [tool.name, tool]));
-  const fresh = new Map(freshTools.map((tool) => [tool.name, tool]));
+  // A re-sync may raise a tool's sensitivity, never lower it; lowering goes
+  // through an admin's sensitivityOverrides.
+  const fresh = new Map(
+    freshTools.map((tool) => {
+      const before = previous.get(tool.name);
+      return [
+        tool.name,
+        before
+          ? { ...tool, sensitivity: maxSensitivity(tool.sensitivity, before.sensitivity) }
+          : tool,
+      ] as const;
+    }),
+  );
   const added = [...fresh.keys()].filter((name) => !previous.has(name));
   const removed = [...previous.keys()].filter((name) => !fresh.has(name));
   const changed = [...fresh.entries()].flatMap(([name, tool]) => {
