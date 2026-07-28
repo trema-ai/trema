@@ -91,7 +91,7 @@ describe("opening messages", () => {
     expect(messageBatches([])).toEqual([]);
   });
 
-  it("lands the batches after a failed one, and still reports the failure", async () => {
+  it("stops at a failed batch, so what lands is a prefix of the queue", async () => {
     const batches = messageBatches(
       openingMessages(
         Array.from({ length: MESSAGE_BATCH_LIMIT * 2 + 1 }, (_, index) =>
@@ -107,9 +107,11 @@ describe("opening messages", () => {
         if (batch === batches[1]) throw new Error("connection reset");
         landed.push(batch.length);
       }),
-    ).rejects.toThrow("capture failed for 1 of 3 batches");
-    // The failed batch loses only itself; the queue is drained either way.
-    expect(landed).toEqual([MESSAGE_BATCH_LIMIT, 1]);
+    ).rejects.toThrow("capture stopped at batch 2 of 3");
+    // A batch landed past the failure would trade a truncated transcript for
+    // a scrambled one: a redelivery re-reporting the failed batch would give
+    // its messages a later arrival order than the batch that jumped ahead.
+    expect(landed).toEqual([MESSAGE_BATCH_LIMIT]);
   });
 
   it("joins a message's text blocks and keeps queue order", () => {

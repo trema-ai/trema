@@ -85,31 +85,27 @@ export function messageBatches(
 }
 
 /**
- * Lands every batch, even past a failure.
+ * Lands batches in order and stops at the first failure.
  *
- * The loop drains the queue whether the capture succeeded or not, so a batch
- * skipped because an earlier one failed would be lost for good. Attempting
- * each batch bounds a failure to its own messages — the same loss the
- * single-batch report always had — and the error still reaches the driver's
- * warning after the rest have landed.
+ * What lands is always a prefix of the queue. The conversation orders its
+ * transcript by arrival, so a batch landed past a failed one would put the
+ * failed batch's messages after it if a redelivered execution reports them —
+ * a scrambled transcript, where stopping merely truncates it. A redelivery
+ * before the loop drains the queue re-reports everything: the landed prefix
+ * upserts unchanged and the rest extends it, still in order.
  */
 export async function reportBatches(
   batches: readonly (readonly CapturedMessageInput[])[],
   report: (batch: readonly CapturedMessageInput[]) => Promise<void>,
 ): Promise<void> {
-  const failures: unknown[] = [];
-  for (const batch of batches) {
+  for (const [index, batch] of batches.entries()) {
     try {
       await report(batch);
     } catch (error) {
-      failures.push(error);
+      throw new Error(`capture stopped at batch ${index + 1} of ${batches.length}`, {
+        cause: error,
+      });
     }
-  }
-  if (failures.length > 0) {
-    throw new AggregateError(
-      failures,
-      `capture failed for ${failures.length} of ${batches.length} batches`,
-    );
   }
 }
 
