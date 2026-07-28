@@ -1,4 +1,4 @@
-import type { RunRecord, TurnRecord } from "@trema/harness";
+import type { RunRecord, TranscriptMessage, TurnRecord } from "@trema/harness";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createPrismaClient } from "#server/lib/db/index.js";
@@ -196,6 +196,33 @@ integration("Prisma run store", () => {
     await expect(store.commitTurn({ turn: turn({ index: 2 }) })).rejects.toThrow(
       "turn index 2 is not next for run run-1",
     );
+  });
+
+  it("keeps the input a turn was given, across a pending completion", async () => {
+    const input: TranscriptMessage[] = [
+      { role: "user", blocks: [{ type: "text", text: "also check production" }] },
+    ];
+    await store.createRun(record());
+    await store.commitTurn({
+      turn: turn({
+        input,
+        stopReason: "paused",
+        pendingToolCall: { callId: "call-1", elicitationId: "elicit-1" },
+      }),
+    });
+
+    expect((await store.listTurns("run-1"))[0]?.input).toEqual(input);
+
+    await store.completePendingTurn("run-1", 0, []);
+
+    expect((await store.listTurns("run-1"))[0]?.input).toEqual(input);
+  });
+
+  it("reports a turn given no input without an empty input list", async () => {
+    await store.createRun(record());
+    await store.commitTurn({ turn: turn() });
+
+    expect((await store.listTurns("run-1"))[0]).not.toHaveProperty("input");
   });
 
   it("completes a pending turn once and rejects a repeat", async () => {

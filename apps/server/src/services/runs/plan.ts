@@ -83,8 +83,9 @@ export function createSessionRunPlan(
     }
 
     // What the thread said before this run, derived from the prior runs' logs.
-    // This run's own opening message is not here: it is queued as steering and
-    // the loop drains it at the first turn boundary.
+    // This run's own opening message is not here: it is queued as steering, and
+    // the loop drains it at the first turn boundary and commits it with the turn
+    // it fed — which is where a resumed execution reads it back.
     const threadMessages = await readThreadMessages({
       db: options.db,
       orgId: options.orgId,

@@ -923,6 +923,10 @@ model Turn {
   runId                String
   index                Int
   model                Json
+  /// Steering and follow-ups drained just before this turn's model call. A
+  /// resumed execution replays the model context from committed turns, so the
+  /// turn that consumed the input is where the input is recorded.
+  input                Json           @default("[]")
   message              Json
   toolResults          Json
   /// Set while the turn waits on a gated tool call. Cleared when the approved

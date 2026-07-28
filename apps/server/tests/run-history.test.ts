@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import type { ModelPort, RunEventData, RunState, TranscriptMessage, Usage } from "@trema/harness";
+import { runLoop } from "@trema/harness";
+import { FauxModelPort } from "@trema/harness/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createPrismaClient } from "#server/lib/db/index.js";
@@ -187,6 +189,82 @@ integration("thread history", () => {
     });
 
     expect(messages).toEqual([user("Same thread."), assistant("Answered.")]);
+  });
+
+  it("replays a resumed run's own opening message after the thread's record", async () => {
+    await recordRun({ id: "run-1", opening: "What broke the deploy?", answer: "A timeout." });
+    const second = await queueRun("run-2");
+    await store.enqueueSteering("run-2", {
+      id: "intent-1",
+      author,
+      message: user("Retry the deploy."),
+    });
+    await store.transitionRun({
+      runId: "run-2",
+      state: "running",
+      event: { type: "run-started", trigger: "message" },
+    });
+    const scripted = new FauxModelPort([
+      {
+        events: [
+          {
+            type: "elicitation",
+            elicitationId: "elicit-1",
+            kind: "approval",
+            prompt: "Redeploy?",
+            options: [{ id: "approve", label: "Approve" }],
+            blocking: true,
+          },
+        ],
+        result: {
+          message: assistant("May I redeploy?"),
+          toolCalls: [],
+          stopReason: "paused",
+          usage,
+        },
+      },
+      {
+        events: [],
+        result: { message: assistant("It is green."), toolCalls: [], stopReason: "stop", usage },
+      },
+    ]);
+    const plan = createSessionRunPlan({
+      db,
+      orgId,
+      resolveModel: async () => ({ model: { id: "test/model" }, modelPort: scripted }),
+    });
+    // Each execution plans afresh and reads the log: nothing is carried over.
+    const execute = async () => {
+      const run = await store.getRun(second.id);
+      if (run === undefined) throw new Error("the run under test disappeared");
+      const planned = await plan(run);
+      return runLoop({
+        runId: run.id,
+        threadRef: run.threadRef,
+        model: planned.model,
+        standing: planned.standing,
+        threadMessages: planned.threadMessages,
+        tools: [],
+        modelPort: planned.modelPort,
+        store,
+        toolExecutor: {
+          execute: () => {
+            throw new Error("the run under test calls no tools");
+          },
+        },
+        abort: new AbortController().signal,
+      });
+    };
+
+    expect(await execute()).toMatchObject({ status: "paused" });
+    expect(await execute()).toMatchObject({ status: "finished", outcome: "completed" });
+
+    expect(scripted.turnRequests[1]?.messages).toEqual([
+      user("What broke the deploy?"),
+      assistant("A timeout."),
+      user("Retry the deploy."),
+      assistant("May I redeploy?"),
+    ]);
   });
 
   it("carries a failed run's message and not its half-written answer", async () => {

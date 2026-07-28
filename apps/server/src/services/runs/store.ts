@@ -61,6 +61,7 @@ type TurnRow = {
   runId: string;
   index: number;
   model: Prisma.JsonValue;
+  input: Prisma.JsonValue;
   message: Prisma.JsonValue;
   toolResults: Prisma.JsonValue;
   pendingCallId: string | null;
@@ -121,10 +122,12 @@ function toRunRecord(row: AgentRunRow): RunRecord {
 }
 
 function toTurnRecord(row: TurnRow): TurnRecord {
+  const input = row.input as unknown as TranscriptMessage[] | null;
   return {
     runId: row.runId,
     index: row.index,
     model: row.model as unknown as TurnRecord["model"],
+    ...(input === null || input.length === 0 ? {} : { input }),
     message: row.message as unknown as TranscriptMessage,
     toolResults: row.toolResults as unknown as TranscriptMessage[],
     stopReason: row.stopReason,
@@ -273,6 +276,7 @@ export class PrismaRunStore implements RunStore {
           runId: turn.runId,
           index: turn.index,
           model: json(turn.model),
+          input: json(turn.input ?? []),
           message: json(turn.message),
           toolResults: json(turn.toolResults),
           stopReason: turn.stopReason,

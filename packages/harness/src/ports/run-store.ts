@@ -33,6 +33,16 @@ export interface TurnRecord {
   /** Zero-based index that must follow the prior committed turn. */
   index: number;
   model: ModelRef;
+  /**
+   * Input delivered to the model at this turn's boundary — steering and
+   * follow-ups drained just before the call, in delivery order.
+   *
+   * A resumed execution rebuilds the model context from committed turns, so
+   * the turn that consumed the input is where the input has to be recorded.
+   * The `steering` event says *when* the run absorbed a message; this says
+   * *what* the model was given, whole and in place.
+   */
+  input?: TranscriptMessage[];
   message: TranscriptMessage;
   /** Tool results already completed for this turn. */
   toolResults: TranscriptMessage[];
