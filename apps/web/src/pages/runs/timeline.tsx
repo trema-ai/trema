@@ -10,6 +10,7 @@ import { ChevronRight, ScrollText } from "lucide-react";
 import { Fragment } from "react";
 
 import { ActivityCard, type ActivityState } from "#web/components/trema/activity-card.tsx";
+import { ApprovalCard } from "#web/components/trema/approval-card.tsx";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { ErrorItem } from "#web/components/trema/error-item.tsx";
 import { OutputViewer } from "#web/components/trema/output-viewer.tsx";
@@ -33,7 +34,6 @@ import {
   steeringSeq,
   type TimelineMeta,
 } from "#web/lib/run-timeline.ts";
-import { cn } from "#web/lib/utils.ts";
 
 /** One undrained steer or follow-up, as the run read reports it. */
 export interface QueuedInputItem {
@@ -168,10 +168,15 @@ function chunkParts(parts: readonly Part[]): PartChunk[] {
     "error",
     "elicitation",
   ]);
+  // A live elicitation is the one part that must not recede: it renders as a
+  // card at conversation level until its resolution arrives on the tail,
+  // then collapses into a history line inside the machinery group.
+  const isMachinery = (part: Part) =>
+    machinery.has(part.kind) && !(part.kind === "elicitation" && part.resolution === undefined);
   const chunks: PartChunk[] = [];
   for (const part of parts) {
     const last = chunks[chunks.length - 1];
-    if (!machinery.has(part.kind)) {
+    if (!isMachinery(part)) {
       chunks.push({ kind: "prose", part, key: `${part.kind}:${part.id}` });
     } else if (last !== undefined && last.kind === "machinery") {
       last.parts.push(part);
@@ -318,53 +323,48 @@ function SteeringView({
   );
 }
 
-const awaitingWord: Record<ElicitationPart["elicitationKind"], string> = {
-  approval: "awaiting approval",
-  confirmation: "awaiting confirmation",
-  choice: "awaiting choice",
-  form: "awaiting input",
-};
-
 /**
- * An elicitation as one collapsible line. Unresolved and blocking is the one
- * machinery state that must not recede: the prompt keeps full contrast and
- * carries a wait marker. Resolution renders from the log, never optimistically;
- * resolve controls arrive with web intents (phase 4).
+ * A live elicitation is the run's open question: it renders as a full card
+ * until the resolution arrives on the tail (never optimistically), then
+ * collapses into a one-line history row. Resolve controls arrive with web
+ * intents (phase 4); until then the card states why its options cannot act.
  */
 function ElicitationView({ part }: { part: ElicitationPart }) {
   const resolved = part.resolution;
+  if (resolved === undefined) {
+    return (
+      <ApprovalCard
+        headline={part.prompt}
+        kind={part.elicitationKind}
+        options={part.options.map((option) => ({
+          id: option.id,
+          label: option.label,
+          variant:
+            option.style === "primary"
+              ? ("primary" as const)
+              : option.style === "danger"
+                ? ("destructive" as const)
+                : ("secondary" as const),
+        }))}
+        disabledReason="Resolving from the web is not yet available."
+      />
+    );
+  }
+
   const outcome =
-    resolved === undefined
-      ? undefined
-      : (part.options.find((option) => option.id === resolved.optionId)?.label ??
-        resolved.optionId);
+    part.options.find((option) => option.id === resolved.optionId)?.label ?? resolved.optionId;
   return (
     <Collapsible data-slot="elicitation-row">
       <CollapsibleTrigger className="group -mx-1.5 flex w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left hover:bg-muted/50">
         <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
         <span className="flex min-w-0 items-baseline gap-2 text-chrome">
-          <span
-            className={cn(
-              "truncate",
-              resolved === undefined
-                ? "font-medium"
-                : "shrink-0 text-muted-foreground group-hover:text-foreground",
-            )}
-          >
+          <span className="shrink-0 text-muted-foreground group-hover:text-foreground">
             {part.prompt}
           </span>
-          {resolved !== undefined && (
-            <span className="truncate text-meta text-muted-foreground group-data-[state=open]:hidden">
-              {outcome} by {principalLabel(resolved.by)}
-            </span>
-          )}
-        </span>
-        {resolved === undefined && (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 text-meta text-muted-foreground">
-            {awaitingWord[part.elicitationKind]}
-            <StatusDot tone="wait" />
+          <span className="truncate text-meta text-muted-foreground group-data-[state=open]:hidden">
+            {outcome} by {principalLabel(resolved.by)}
           </span>
-        )}
+        </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="mt-1 mb-1.5 ml-[5px] space-y-1.5 border-l pl-4 text-meta">
@@ -372,11 +372,9 @@ function ElicitationView({ part }: { part: ElicitationPart }) {
           <p className="text-muted-foreground">
             Options: {part.options.map((option) => option.label).join(" · ")}
           </p>
-          {resolved !== undefined && (
-            <p className="text-muted-foreground">
-              {outcome} by {principalLabel(resolved.by)} · <RelativeTime date={resolved.at} />
-            </p>
-          )}
+          <p className="text-muted-foreground">
+            {outcome} by {principalLabel(resolved.by)} · <RelativeTime date={resolved.at} />
+          </p>
         </div>
       </CollapsibleContent>
     </Collapsible>

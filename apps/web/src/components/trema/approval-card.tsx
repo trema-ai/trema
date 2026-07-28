@@ -28,7 +28,8 @@ type ApprovalCardProps = {
     escalationReason?: string;
     argsSummary: string;
   };
-  requestedBy: string;
+  /** Provenance for card surfaces; omit where the context already says it. */
+  requestedBy?: string;
   prompt?: string;
   options: ApprovalOption[];
   runHref?: string;
@@ -150,15 +151,20 @@ function ApprovalCard({
         <p className="mt-2 text-meta text-muted-foreground">{disabledReason}</p>
       )}
 
-      {/* Provenance footer: who asked, where to dig. */}
-      <div className="mt-3 flex items-center justify-between gap-3 border-t pt-2.5 text-meta text-muted-foreground">
-        <span className="min-w-0 truncate">requested by {requestedBy}</span>
-        {runHref !== undefined && (
-          <a href={runHref} className="shrink-0 text-moss hover:underline">
-            View run →
-          </a>
-        )}
-      </div>
+      {/* Provenance footer: who asked, where to dig. Absent when the
+          surrounding page already answers both. */}
+      {(requestedBy !== undefined || runHref !== undefined) && (
+        <div className="mt-3 flex items-center justify-between gap-3 border-t pt-2.5 text-meta text-muted-foreground">
+          {requestedBy !== undefined && (
+            <span className="min-w-0 truncate">requested by {requestedBy}</span>
+          )}
+          {runHref !== undefined && (
+            <a href={runHref} className="ml-auto shrink-0 text-moss hover:underline">
+              View run →
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
