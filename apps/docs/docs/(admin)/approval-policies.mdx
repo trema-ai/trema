@@ -37,7 +37,7 @@ Each call's effective mode is the thread's chosen mode clamped to a ceiling:
 
 ## Writing a policy
 
-Members with the `admin` or `owner` role write policies through the policies endpoints in the [API reference](/api). Nothing in the current release edits them from the web app. A scope holds at most one row per connector plus one scope-wide row, so writing one replaces the last. Deleting one lets resolution fall through the remaining rows, or to the built-in default. One rule holds: a row needs an approver role or requester approval, because a row with neither would route approvals nobody could resolve.
+Members with the `admin` or `owner` role write policies on the **Policies** page in settings, or through the policies endpoints in the [API reference](/api). A scope holds at most one row per connector plus one scope-wide row, so writing one replaces the last. Deleting one lets resolution fall through the remaining rows, or to the built-in default. One rule holds: a row needs an approver role or requester approval, because a row with neither would route approvals nobody could resolve.
 
 The resolved endpoint shows what a scope resolves to right now—the ceiling, the routing, and the rows they came from. Pass a connector key to see one connector's view.
 
@@ -63,7 +63,7 @@ A repeated ask for the same call returns the same pending approval. A resumed ru
 
 ## Responding to an approval
 
-Approvals are listed and resolved through the approvals endpoints in the [API reference](/api). Nothing in the current release renders an approvals inbox in the web app. The list returns exactly the approvals you may resolve. Each one carries the call's arguments verbatim and the model's one-line reason. A call the delegated-mode classifier paused also carries the classifier's reason for escalating.
+Approvals are listed and resolved on the **Approvals** page in settings, or through the approvals endpoints in the [API reference](/api). The list returns exactly the approvals you may resolve. Each one carries the call's arguments verbatim and the model's one-line reason. A call the delegated-mode classifier paused also carries the classifier's reason for escalating.
 
 Approving names how wide the yes is, `once` by default:
 

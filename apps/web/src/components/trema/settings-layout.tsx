@@ -3,20 +3,37 @@ import {
   Boxes,
   Building2,
   Cable,
+  Inbox,
   LogOut,
   Monitor,
   ScrollText,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   UserRound,
   UsersRound,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { Link, NavLink } from "react-router";
+import { Link, useLocation } from "react-router";
 
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { Button } from "#web/components/ui/button.tsx";
-import { cn } from "#web/lib/utils.ts";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar,
+} from "#web/components/ui/sidebar.tsx";
 import { useAuthenticatedSession, useViewerRole } from "#web/pages/home.tsx";
 
 const personalItems = [
@@ -29,6 +46,8 @@ const adminItems = [
   { label: "Members", href: "/settings/members", icon: UsersRound },
   { label: "Scopes", href: "/settings/scopes", icon: SlidersHorizontal },
   { label: "Connectors", href: "/settings/connectors", icon: Cable },
+  { label: "Policies", href: "/settings/policies", icon: ShieldCheck },
+  { label: "Approvals", href: "/settings/approvals", icon: Inbox },
   { label: "Models", href: "/settings/models", icon: Boxes },
   { label: "Audit log", href: "/settings/audit", icon: ScrollText },
 ];
@@ -40,27 +59,37 @@ function SettingsMenu({
   label: string;
   items: { label: string; href: string; icon: typeof UserRound }[];
 }) {
+  const location = useLocation();
+  // Route changes reconcile this layout in place, so the mobile drawer must
+  // close itself when a destination is picked.
+  const { setOpenMobile } = useSidebar();
   return (
-    <div>
-      <div className="mb-1 px-2 text-chrome font-medium text-muted-foreground">{label}</div>
-      <nav className="space-y-1" aria-label={`${label} settings`}>
-        {items.map((item) => (
-          <NavLink
-            key={item.href}
-            to={item.href}
-            className={({ isActive }) =>
-              cn(
-                "flex h-8 items-center gap-2 rounded-md px-2 text-chrome hover:bg-muted",
-                isActive && "bg-muted font-medium",
-              )
-            }
-          >
-            <item.icon className="size-4 text-muted-foreground" aria-hidden="true" />
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
-    </div>
+    <SidebarGroup>
+      <SidebarGroupLabel>{label}</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu aria-label={`${label} settings`}>
+          {items.map((item) => (
+            <SidebarMenuItem key={item.href}>
+              <SidebarMenuButton
+                asChild
+                isActive={
+                  location.pathname === item.href || location.pathname.startsWith(`${item.href}/`)
+                }
+              >
+                <Link
+                  to={item.href}
+                  className="text-(length:--text-chrome)"
+                  onClick={() => setOpenMobile(false)}
+                >
+                  <item.icon />
+                  <span>{item.label}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   );
 }
 
@@ -70,22 +99,22 @@ function SettingsLayout({ children }: { children: ReactNode }) {
   const canAdminister = role === "owner" || role === "admin";
 
   return (
-    <div className="grid min-h-svh bg-background md:grid-cols-[14rem_minmax(0,1fr)]">
-      <aside className="flex flex-col border-b bg-sidebar md:h-svh md:border-r md:border-b-0">
-        <div className="flex min-w-0 flex-1 flex-col p-3 md:overflow-y-auto">
-          <Button variant="ghost" size="sm" className="mb-5 w-fit" asChild>
+    <SidebarProvider>
+      <Sidebar>
+        <SidebarHeader>
+          <Button variant="ghost" size="sm" className="w-fit" asChild>
             <Link to="/">
               <ArrowLeft />
               Back to app
             </Link>
           </Button>
-          <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-1">
-            <SettingsMenu label="Personal" items={personalItems} />
-            {canAdminister ? <SettingsMenu label="Admin" items={adminItems} /> : null}
-          </div>
-        </div>
-        <div className="border-t p-3">
-          <div className="mb-2 flex min-w-0 items-center gap-2 px-2">
+        </SidebarHeader>
+        <SidebarContent>
+          <SettingsMenu label="Personal" items={personalItems} />
+          {canAdminister ? <SettingsMenu label="Admin" items={adminItems} /> : null}
+        </SidebarContent>
+        <SidebarFooter>
+          <div className="flex min-w-0 items-center gap-2 px-2 pt-1">
             <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <div className="min-w-0">
               <p className="truncate text-chrome font-medium">{session.membership.org.name}</p>
@@ -102,10 +131,16 @@ function SettingsLayout({ children }: { children: ReactNode }) {
             <LogOut />
             Log out
           </Button>
-        </div>
-      </aside>
-      <div className="min-w-0 md:h-svh md:overflow-y-auto">{children}</div>
-    </div>
+        </SidebarFooter>
+      </Sidebar>
+      <SidebarInset className="h-svh overflow-hidden">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4 md:hidden">
+          <SidebarTrigger className="-ml-1" />
+          <span className="text-chrome font-medium">Settings</span>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
 
