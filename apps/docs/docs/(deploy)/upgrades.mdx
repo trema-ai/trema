@@ -32,7 +32,7 @@ Confirm the result with `trema doctor` and a request to `/ready`—see [Logging 
 
 ## Container images
 
-The image built by the repository's `Dockerfile` runs the `serve` and `worker` commands. The `migrate` and `doctor` commands do not work inside it: both shell out to the `prisma` command-line tool, which is pruned from the runtime stage. Apply migrations from a separate job or from the build stage.
+The image built by the repository's `Dockerfile` runs every [host command](/cli), with `serve` as its default. To apply migrations from the image, run `node dist/cli.js migrate` in a container with the deployment's `DATABASE_URL` before restarting the long-running containers.
 
 ## Back up
 
