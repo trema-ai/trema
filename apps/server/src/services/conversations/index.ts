@@ -6,6 +6,89 @@ import { SessionClosedError, SessionExpiredError } from "#server/services/sessio
 /** How many messages one capture call may report. */
 export const MESSAGE_BATCH_LIMIT = 200;
 
+/** How many conversations one list call returns unless the caller asks for fewer. */
+export const CONVERSATION_LIST_LIMIT = 50;
+
+/** One conversation as the sidebar lists it. */
+export interface ConversationListEntry {
+  id: string;
+  surface: string;
+  /** The surface-specific location the thread lives at. */
+  locationRef: string;
+  /** The thread's surface identifier. Empty for a surface without threads. */
+  threadRef: string;
+  startedAt: Date;
+  lastActivityAt: Date;
+  /** The earliest captured message's text — the title until digests exist. */
+  firstMessageText: string | null;
+}
+
+/** Tenancy and filters for one scope's conversation list. */
+export interface ListConversationsOptions {
+  orgId: string;
+  /** The scope whose conversations the caller may read. The caller decides. */
+  scopeId: string;
+  surface?: string;
+  /**
+   * Cap on returned conversations.
+   * @defaultValue {@link CONVERSATION_LIST_LIMIT}
+   */
+  limit?: number;
+}
+
+/**
+ * Lists one scope's conversations, newest activity first.
+ *
+ * Authorization is the caller's: this read answers for whatever scope it is
+ * handed, and the API layer decides whose scope that may be. Each entry
+ * carries its earliest message's text — found by the lowest surviving `seq`
+ * rather than `seq = 1`, because a retracted first message must not blank the
+ * title — fetched in one batch, never per conversation.
+ */
+export async function listConversations(
+  db: Database,
+  options: ListConversationsOptions,
+): Promise<ConversationListEntry[]> {
+  const conversations = await db.conversation.findMany({
+    where: {
+      orgId: options.orgId,
+      scopeId: options.scopeId,
+      ...(options.surface === undefined ? {} : { surface: options.surface }),
+    },
+    // Ties on activity are broken on id, so the order is stable across reads.
+    orderBy: [{ lastActivityAt: "desc" }, { id: "desc" }],
+    take: options.limit ?? CONVERSATION_LIST_LIMIT,
+  });
+  if (conversations.length === 0) return [];
+
+  const minima = await db.message.groupBy({
+    by: ["conversationId"],
+    where: { orgId: options.orgId, conversationId: { in: conversations.map(({ id }) => id) } },
+    _min: { seq: true },
+  });
+  const earliest = minima.flatMap((row) =>
+    row._min.seq === null ? [] : [{ conversationId: row.conversationId, seq: row._min.seq }],
+  );
+  const firsts =
+    earliest.length === 0
+      ? []
+      : await db.message.findMany({
+          where: { orgId: options.orgId, OR: earliest },
+          select: { conversationId: true, text: true },
+        });
+  const firstTextByConversation = new Map(firsts.map((row) => [row.conversationId, row.text]));
+
+  return conversations.map((conversation) => ({
+    id: conversation.id,
+    surface: conversation.surface,
+    locationRef: conversation.locationRef,
+    threadRef: conversation.threadRef,
+    startedAt: conversation.startedAt,
+    lastActivityAt: conversation.lastActivityAt,
+    firstMessageText: firstTextByConversation.get(conversation.id) ?? null,
+  }));
+}
+
 export class ConversationValidationError extends Error {
   constructor(message: string) {
     super(message);

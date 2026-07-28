@@ -1,4 +1,10 @@
-import type { RunEventData, RunState, TextBlock, TranscriptMessage } from "@trema/harness";
+import type {
+  PrincipalRef,
+  RunEventData,
+  RunState,
+  TextBlock,
+  TranscriptMessage,
+} from "@trema/harness";
 
 import type { Database } from "#server/lib/db/index.js";
 
@@ -139,6 +145,31 @@ export function deriveRunMessages(events: readonly RunEventData[]): TranscriptMe
 
   flushAnswer();
   return messages;
+}
+
+/** The message a run opened with, as the log recorded it. */
+export interface OpeningMessage {
+  author: PrincipalRef;
+  text: string;
+}
+
+/**
+ * Derives the message a run opened with from its log.
+ *
+ * The rule is {@link deriveRunMessages}'s opening exchange: the `steering`
+ * events before anything but `run-started` are what the run was asked, because
+ * the loop drains the triggering message into the log at the first turn
+ * boundary. The first of them is the opening message; any further leading
+ * steers are still in the log, where a projection renders them as steering.
+ * A run with no leading steering — a schedule firing, a resume — opened with
+ * nothing, and the answer is null.
+ */
+export function deriveOpeningMessage(events: readonly RunEventData[]): OpeningMessage | null {
+  for (const event of events) {
+    if (event.type === "steering") return { author: event.author, text: event.text };
+    if (event.type !== "run-started") return null;
+  }
+  return null;
 }
 
 /** Derives a thread's conversational record from its prior runs' logs, in run order. */
