@@ -9,12 +9,13 @@ import {
 } from "#web/components/ui/collapsible.tsx";
 import { cn } from "#web/lib/utils.ts";
 
-type ActivityState = "running" | "ok" | "error";
+type ActivityState = "running" | "ok" | "error" | "denied";
 
 const stateTone: Record<ActivityState, "run" | "go" | "destructive"> = {
   running: "run",
   ok: "go",
   error: "destructive",
+  denied: "destructive",
 };
 
 type ActivityCardProps = {
@@ -51,7 +52,14 @@ function ActivityCard({
             <span className="truncate font-mono text-meta text-muted-foreground">{kind}</span>
           )}
         </span>
-        {state !== undefined && <StatusDot tone={stateTone[state]} className="ml-auto" />}
+        {state !== undefined && (
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {/* Denied is not an error: the call was refused, so the dot alone
+                would read as a failure. The word makes the refusal explicit. */}
+            {state === "denied" && <span className="text-meta text-destructive">denied</span>}
+            <StatusDot tone={stateTone[state]} />
+          </span>
+        )}
       </div>
 
       {input !== undefined && (

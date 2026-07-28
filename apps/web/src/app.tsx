@@ -16,6 +16,7 @@ import {
   Loading,
 } from "#web/pages/home.tsx";
 import { JoinPage } from "#web/pages/join.tsx";
+import { RunPage } from "#web/pages/runs/index.tsx";
 import { ScopesPage } from "#web/pages/scopes.tsx";
 import { SettingsAppearancePage } from "#web/pages/settings/appearance.tsx";
 import { SettingsAuditPage } from "#web/pages/settings/audit.tsx";
@@ -88,6 +89,7 @@ function AppRoutes() {
       <Route path="/join" element={<JoinPage />} />
       <Route path="/gallery" element={shell(<Gallery />)} />
       <Route path="/automations" element={shell(<AutomationsPage />)} />
+      <Route path="/runs/:id" element={shell(<RunPage />)} />
       <Route path="/customize" element={shell(<CustomizePage />)} />
       <Route path="/context" element={<Navigate to="/customize" replace />} />
       <Route path="/scopes" element={<Navigate to="/settings/scopes" replace />} />

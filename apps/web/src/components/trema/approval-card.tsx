@@ -35,6 +35,11 @@ type ApprovalCardProps = {
   expiresAt?: Date | string;
   resolution?: ApprovalResolution;
   onResolve?: (optionId: string) => void;
+  /**
+   * Renders the option buttons disabled with this line explaining why —
+   * for surfaces that show a pending decision they cannot yet take.
+   */
+  disabledReason?: string;
   className?: string;
 };
 
@@ -75,6 +80,7 @@ function ApprovalCard({
   expiresAt,
   resolution,
   onResolve,
+  disabledReason,
   className,
 }: ApprovalCardProps) {
   return (
@@ -120,6 +126,7 @@ function ApprovalCard({
                 key={option.id}
                 type="button"
                 size="sm"
+                disabled={disabledReason !== undefined}
                 variant={option.variant === "primary" ? "default" : "outline"}
                 className={cn(
                   option.variant === "destructive" && "text-destructive hover:text-destructive",
@@ -138,6 +145,10 @@ function ApprovalCard({
           </span>
         )}
       </div>
+
+      {resolution === undefined && disabledReason !== undefined && (
+        <p className="mt-2 text-meta text-muted-foreground">{disabledReason}</p>
+      )}
 
       {/* Provenance footer: who asked, where to dig. */}
       <div className="mt-3 flex items-center justify-between gap-3 border-t pt-2.5 text-meta text-muted-foreground">
