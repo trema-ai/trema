@@ -29,7 +29,7 @@ A class no policy covers falls back to the built-in default for the scope's kind
 
 ## Writing a policy
 
-Members with the `admin` or `owner` role write policies through the policies endpoints in the [API reference](/api). Nothing in the current release edits them from the web app. A scope holds at most one policy per class, so writing one replaces the last. Deleting one lets the class fall back to a wider scope's policy, or to the built-in default.
+Members with the `admin` or `owner` role write policies on the **Policies** page in settings, or through the policies endpoints in the [API reference](/api). A scope holds at most one policy per class, so writing one replaces the last. Deleting one lets the class fall back to a wider scope's policy, or to the built-in default.
 
 Two rules hold for `require_approval`. The policy needs an approver role or requester approval—to refuse a class outright, use `deny`. And outside a personal scope it needs an approver role, because the requester cannot be its sole approver.
 
@@ -55,7 +55,7 @@ A repeated ask for the same call returns the same pending approval. A resumed ru
 
 ## Responding to an approval
 
-Approvals are listed and resolved through the approvals endpoints in the [API reference](/api). Nothing in the current release renders an approvals inbox in the web app. The list returns exactly the approvals you may resolve. Each one carries the call's arguments verbatim and the model's one-line reason. Approve or deny by ID:
+Approvals are listed and resolved on the **Approvals** page in settings, or through the approvals endpoints in the [API reference](/api). The list returns exactly the approvals you may resolve. Each one carries the call's arguments verbatim and the model's one-line reason. Approve or deny by ID:
 
 - Approving permits one execution of exactly the recorded arguments. A call whose arguments changed is refused and needs a new approval.
 - Denying refuses the call; the run reads the denial as the tool's result and carries on without it.
