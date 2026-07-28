@@ -28,6 +28,7 @@ import {
 } from "#web/components/ui/command.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "#web/components/ui/popover.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
+import { fuzzyMatch } from "#web/lib/fuzzy.ts";
 import { AvailableModelsRow } from "#web/pages/settings/models/catalog.tsx";
 import { CreateProviderDialog } from "#web/pages/settings/models/create-dialog.tsx";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
@@ -432,8 +433,12 @@ function ModelCombobox({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
         <Command
+          // The same fuzzy matching as the catalog dialog, so "gpt4m" reaches
+          // "gpt-4o-mini" here too. cmdk drops items scoring zero and ranks
+          // the rest by score; a blank search keeps every item, since cmdk
+          // still filters on whitespace alone.
           filter={(_value, search, keywords) =>
-            (keywords ?? []).join(" ").toLowerCase().includes(search.trim().toLowerCase()) ? 1 : 0
+            search.trim() === "" ? 1 : (fuzzyMatch(search, keywords ?? []) ?? 0)
           }
         >
           <CommandInput placeholder="Search models…" />

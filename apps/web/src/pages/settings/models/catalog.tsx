@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "#web/components/ui/select.tsx";
 import { rpcClient } from "#web/lib/api.ts";
+import { fuzzyMatch } from "#web/lib/fuzzy.ts";
 import {
   type CatalogEntry,
   descriptorOf,
@@ -41,14 +42,12 @@ const allProviders = "__every__";
 /** One model, and the provider that serves it. Model identity is the pair. */
 type ModelRow = { provider: ModelProvider; entry: CatalogEntry };
 
-function matches(row: ModelRow, needle: string): boolean {
-  const haystack = [
-    row.entry.id,
-    row.entry.label ?? "",
-    row.provider.label,
-    row.provider.name,
-  ].join(" ");
-  return haystack.toLowerCase().includes(needle);
+/**
+ * The strings a search word can land on. The fields stay separate so a match
+ * never spans two of them by accident.
+ */
+function searchFieldsOf(row: ModelRow): string[] {
+  return [row.entry.id, row.entry.label ?? "", row.provider.label, row.provider.name];
 }
 
 /** The entry a picker edit writes. Not offered is stored as no flag at all. */
@@ -132,8 +131,20 @@ function ModelPicker({
       if (left.entry.id !== right.entry.id) return left.entry.id < right.entry.id ? -1 : 1;
       return left.provider.name < right.provider.name ? -1 : 1;
     });
-  const needle = search.trim().toLowerCase();
-  const filtered = needle === "" ? rows : rows.filter((row) => matches(row, needle));
+  // With no query the list keeps its curated order. With one, matching is
+  // fuzzy — "gpt4m" reaches "gpt-4o-mini" — and the matches rank by score, so
+  // the row the searcher meant surfaces before the twenty-row window cuts off.
+  const needle = search.trim();
+  const filtered =
+    needle === ""
+      ? rows
+      : rows
+          .map((row) => ({ row, score: fuzzyMatch(needle, searchFieldsOf(row)) }))
+          .filter((scored) => scored.score !== undefined)
+          // The sort is stable, so rows scoring alike keep the offered-first
+          // order they already had.
+          .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
+          .map((scored) => scored.row);
   const shownRows = filtered.slice(0, pageSize);
   const hidden = filtered.length - shownRows.length;
   // Counted over every model, not the matches: the search and the provider
