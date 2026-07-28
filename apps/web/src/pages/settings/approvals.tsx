@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, CircleX, Clock, Inbox, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
@@ -9,10 +9,15 @@ import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import type { ApprovalModeValue } from "#web/components/trema/mode-badge.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import { Skeleton } from "#web/components/ui/skeleton.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { scopeDisplayName } from "#web/lib/scopes.ts";
+
+// The server's page size and its hard cap; the list has no cursor beyond that.
+const PAGE_SIZE = 50;
+const MAX_LIMIT = 200;
 
 type Status = "pending" | "approved" | "denied" | "expired";
 
@@ -135,14 +140,17 @@ export function SettingsApprovalsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [resolving, setResolving] = useState<{ id: string; option: string }>();
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const statusParam = searchParams.get("status");
   const status: Status = isStatus(statusParam) ? statusParam : "pending";
 
   const approvals = useQuery(
     orpc.approvals.list.queryOptions({
-      input: { status },
+      input: { status, limit },
       // Someone else may answer first, so the pending list keeps itself honest.
       refetchInterval: status === "pending" ? 30_000 : false,
+      // Growing the limit re-keys the query; keep the list up while it loads.
+      placeholderData: keepPreviousData,
     }),
   );
   const members = useQuery(orpc.members.list.queryOptions({}));
@@ -183,6 +191,7 @@ export function SettingsApprovalsPage() {
   });
 
   function selectStatus(next: string) {
+    setLimit(PAGE_SIZE);
     setSearchParams(
       (current) => {
         const params = new URLSearchParams(current);
@@ -203,6 +212,8 @@ export function SettingsApprovalsPage() {
     (approval) => approval.status === status,
   );
   const empty = emptyStates[status];
+  // A full page means there may be more; the server offers no cursor past its cap.
+  const maybeMore = (approvals.data?.approvals.length ?? 0) >= limit;
 
   return (
     <main className="mx-auto w-full max-w-3xl p-4 sm:p-6 lg:p-8">
@@ -245,6 +256,26 @@ export function SettingsApprovalsPage() {
                   onResolve={handleResolve}
                 />
               ))}
+              {maybeMore ? (
+                limit < MAX_LIMIT ? (
+                  <div className="flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={approvals.isFetching}
+                      onClick={() =>
+                        setLimit((current) => Math.min(current + PAGE_SIZE, MAX_LIMIT))
+                      }
+                    >
+                      {approvals.isFetching ? "Loading…" : "Show more"}
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-center text-meta text-muted-foreground">
+                    Only the first {MAX_LIMIT} approvals are shown.
+                  </p>
+                )
+              ) : null}
             </div>
           )}
         </TabsContent>
