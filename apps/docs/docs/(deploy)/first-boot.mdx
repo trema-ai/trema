@@ -42,3 +42,5 @@ Redeeming the token creates everything in one transaction:
 ## After setup
 
 The token is accepted only while zero organizations exist. Once the first organization is created, redeeming it returns a conflict, and no new token is generated. From then on, people sign in normally and join through [invite links](/members-and-invites).
+
+Account creation closes with it: a dedicated deployment refuses a sign-up that carries no pending invite. Set [`TREMA_OPEN_SIGNUP=true`](/configuration#account-creation) to keep it open.

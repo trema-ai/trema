@@ -14,10 +14,12 @@ export function BootstrapPage({
   needsBootstrap,
   providers,
   legal,
+  openSignup,
 }: {
   needsBootstrap: boolean;
   providers: { password: boolean; google: boolean };
   legal: { termsUrl: string | null; privacyUrl: string | null };
+  openSignup: boolean;
 }) {
   const session = authClient.useSession();
   const navigate = useNavigate();
@@ -25,7 +27,10 @@ export function BootstrapPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   if (!needsBootstrap) return <Navigate to="/" replace />;
-  if (!session.data) return <SignInPage providers={providers} legal={legal} defaultCreating />;
+  if (!session.data)
+    return (
+      <SignInPage providers={providers} legal={legal} openSignup={openSignup} defaultCreating />
+    );
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);

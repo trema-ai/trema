@@ -2049,6 +2049,10 @@
                       "type": "boolean",
                       "description": "True when the deployment is dedicated and has no organization yet. The first user must redeem the bootstrap token."
                     },
+                    "openSignup": {
+                      "type": "boolean",
+                      "description": "True when the sign-in page may offer account creation without an invite. A bootstrapped dedicated deployment creates accounts through member invites instead."
+                    },
                     "providers": {
                       "type": "object",
                       "properties": {
@@ -2103,6 +2107,7 @@
                   "required": [
                     "mode",
                     "needsBootstrap",
+                    "openSignup",
                     "providers",
                     "legal"
                   ],

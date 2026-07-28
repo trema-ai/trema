@@ -399,12 +399,20 @@ export async function createInvite(db: Database, env: Environment, input: Create
   return { invite, link: `${origin}/join?token=${encodeURIComponent(token)}` };
 }
 
-export async function previewInvite(db: Database, token: string) {
+export async function findRedeemableInvite(db: Database, token: string) {
   const invite = await db.invite.findUnique({
     where: { tokenHash: hashInviteToken(token) },
     include: { org: true, createdBy: true },
   });
   if (!invite || invite.redeemedAt || invite.revokedAt || invite.expiresAt <= new Date()) {
+    return null;
+  }
+  return invite;
+}
+
+export async function previewInvite(db: Database, token: string) {
+  const invite = await findRedeemableInvite(db, token);
+  if (!invite) {
     throw new MemberNotFoundError("Invite is invalid, expired, or already redeemed");
   }
   return { orgName: invite.org.name, invitedBy: invite.createdBy.displayName };

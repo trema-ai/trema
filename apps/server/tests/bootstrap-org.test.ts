@@ -343,6 +343,7 @@ integration("bootstrap and organizations", () => {
     ).resolves.toEqual({
       mode: "dedicated",
       needsBootstrap: true,
+      openSignup: true,
       providers: { password: false, google: true },
       legal: { termsUrl: "https://trema.example/terms", privacyUrl: null },
     });

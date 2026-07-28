@@ -23,6 +23,11 @@ const get = pub
           .describe(
             "True when the deployment is dedicated and has no organization yet. The first user must redeem the bootstrap token.",
           ),
+        openSignup: z
+          .boolean()
+          .describe(
+            "True when the sign-in page may offer account creation without an invite. A bootstrapped dedicated deployment creates accounts through member invites instead.",
+          ),
         providers: z
           .object({
             password: z.boolean().describe("True when password sign-in is enabled."),
@@ -44,18 +49,27 @@ const get = pub
       })
       .describe("Public deployment and sign-in configuration."),
   )
-  .handler(async ({ context }) => ({
-    mode: context.env.TREMA_MODE,
-    needsBootstrap: context.env.TREMA_MODE === "dedicated" && (await context.db.org.count()) === 0,
-    providers: {
-      password: context.env.TREMA_PASSWORD_AUTH_ENABLED,
-      google: Boolean(context.env.TREMA_GOOGLE_CLIENT_ID && context.env.TREMA_GOOGLE_CLIENT_SECRET),
-    },
-    legal: {
-      termsUrl: context.env.TREMA_TERMS_URL ?? null,
-      privacyUrl: context.env.TREMA_PRIVACY_URL ?? null,
-    },
-  }));
+  .handler(async ({ context }) => {
+    const needsBootstrap =
+      context.env.TREMA_MODE === "dedicated" && (await context.db.org.count()) === 0;
+
+    return {
+      mode: context.env.TREMA_MODE,
+      needsBootstrap,
+      openSignup:
+        context.env.TREMA_MODE === "hosted" || context.env.TREMA_OPEN_SIGNUP || needsBootstrap,
+      providers: {
+        password: context.env.TREMA_PASSWORD_AUTH_ENABLED,
+        google: Boolean(
+          context.env.TREMA_GOOGLE_CLIENT_ID && context.env.TREMA_GOOGLE_CLIENT_SECRET,
+        ),
+      },
+      legal: {
+        termsUrl: context.env.TREMA_TERMS_URL ?? null,
+        privacyUrl: context.env.TREMA_PRIVACY_URL ?? null,
+      },
+    };
+  });
 
 export const configRouter = {
   get,
