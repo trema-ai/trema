@@ -534,19 +534,22 @@ const listByThread = orgScoped
       // used, so a malformed payload — one that would throw here or emerge
       // shaped wrong for the response — costs the run its opening message,
       // never the run or the rest of the thread. Derivation stops at the first
-      // malformed row: past it, "what opened this run" cannot be trusted.
+      // malformed row: past it, "what opened this run" cannot be trusted. An
+      // *unknown* event type is different — additive by the interface
+      // contract, written by a newer server — so it skips rather than
+      // terminates: a steering behind it is still the opening.
       const validated: RunEventData[] = [];
       for (const event of leadingByRun.get(run.id) ?? []) {
         try {
-          validated.push(
-            parseRunEvent({
-              runId: run.id,
-              seq: event.seq,
-              at: event.at.toISOString(),
-              v: event.v,
-              event: event.event,
-            }).value.event as RunEventData,
-          );
+          const parsed = parseRunEvent({
+            runId: run.id,
+            seq: event.seq,
+            at: event.at.toISOString(),
+            v: event.v,
+            event: event.event,
+          });
+          if (parsed.kind === "unknown") continue;
+          validated.push(parsed.value.event as RunEventData);
         } catch {
           break;
         }

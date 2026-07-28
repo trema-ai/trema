@@ -428,6 +428,25 @@ integration("run reads", () => {
       ]);
     });
 
+    it("derives the opening message across an unknown leading event type", async () => {
+      const { org, alice, run } = await setup();
+      // A newer server's additive event lands between run-started and the
+      // opening steering: unknown types skip, they never terminate.
+      await appendEvents(org.org.id, run.id, [
+        { type: "run-started", trigger: "message" },
+        { type: "attachment-noted", ref: "a1" },
+        steering(alice.principal.id, "Behind the unknown."),
+      ]);
+
+      const listed = await call(
+        runsRouter.listByThread,
+        { threadRef: "web:alice" },
+        { context: alice.context },
+      );
+
+      expect(listed.runs[0]?.openingMessage).toMatchObject({ text: "Behind the unknown." });
+    });
+
     it("keeps listing the thread when one run's log holds a malformed event", async () => {
       const { org, alice, session, run } = await setup();
       // A recorded event that is JSON null: deriving from it throws, which
