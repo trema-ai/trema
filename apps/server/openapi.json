@@ -12279,6 +12279,154 @@
         ]
       }
     },
+    "/runs/{id}/outputs/{outputRef}": {
+      "get": {
+        "operationId": "runs.output",
+        "summary": "Read a tool call's full output",
+        "description": "Read the full output behind one tool call, as the run's transcript stores it — the `tool-result` event carries only a summary, and its `outputRef` names what this endpoint resolves. Content-private: only a viewer with full access to the run reads outputs; anyone else — the audit view included — finds nothing, indistinguishable from a run or a reference that does not exist. Text is cut at a byte cap with the cut declared; an oversized image keeps its media type but ships no data.",
+        "tags": [
+          "Runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The ID of the run the output belongs to."
+            }
+          },
+          {
+            "name": "outputRef",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The output reference from the run's `tool-result` event — the tool call's id."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "callId": {
+                      "type": "string",
+                      "description": "The tool call the output belongs to."
+                    },
+                    "status": {
+                      "enum": [
+                        "ok",
+                        "error",
+                        "denied"
+                      ],
+                      "type": "string",
+                      "description": "How the call ended: its output is a result, an error body, or a refusal."
+                    },
+                    "summary": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The summary the run's `tool-result` event carried, when the log has one — so the client renders the expansion without re-joining the event."
+                    },
+                    "blocks": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "text",
+                                "description": "Plain text output."
+                              },
+                              "text": {
+                                "type": "string",
+                                "description": "The text, cut at the byte cap when it exceeds it."
+                              },
+                              "truncated": {
+                                "type": "boolean",
+                                "description": "Whether the text was cut at the byte cap."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "text",
+                              "truncated"
+                            ],
+                            "description": "One text block of the output."
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "image",
+                                "description": "Base64-encoded image output."
+                              },
+                              "mediaType": {
+                                "type": "string",
+                                "description": "The image's media type, e.g. `image/png`."
+                              },
+                              "data": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "The base64 image data, or null when the image was omitted for size."
+                              },
+                              "omitted": {
+                                "type": "boolean",
+                                "description": "Whether the image exceeded the inline cap and its data was omitted."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "mediaType",
+                              "data",
+                              "omitted"
+                            ],
+                            "description": "One image block of the output."
+                          }
+                        ]
+                      },
+                      "description": "The output's content blocks, in transcript order."
+                    }
+                  },
+                  "required": [
+                    "callId",
+                    "status",
+                    "summary",
+                    "blocks"
+                  ],
+                  "description": "One tool call's full output, rendered by content type under size caps."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/threads/{threadRef}/runs": {
       "get": {
         "operationId": "runs.listByThread",

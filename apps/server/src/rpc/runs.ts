@@ -11,7 +11,11 @@ import { z } from "zod";
 import type { AgentRun } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { orgScoped } from "#server/rpc/builders.js";
-import { deriveOpeningMessage, resolveRunAccess } from "#server/services/runs/index.js";
+import {
+  deriveOpeningMessage,
+  renderToolOutputBlocks,
+  resolveRunAccess,
+} from "#server/services/runs/index.js";
 
 /** Default page size for the event read. */
 export const RUN_EVENT_PAGE_SIZE = 200;
@@ -329,6 +333,112 @@ const events = orgScoped
     };
   });
 
+const outputTextBlockSchema = z
+  .object({
+    kind: z.literal("text").describe("Plain text output."),
+    text: z.string().describe("The text, cut at the byte cap when it exceeds it."),
+    truncated: z.boolean().describe("Whether the text was cut at the byte cap."),
+  })
+  .describe("One text block of the output.");
+
+const outputImageBlockSchema = z
+  .object({
+    kind: z.literal("image").describe("Base64-encoded image output."),
+    mediaType: z.string().describe("The image's media type, e.g. `image/png`."),
+    data: z
+      .string()
+      .nullable()
+      .describe("The base64 image data, or null when the image was omitted for size."),
+    omitted: z
+      .boolean()
+      .describe("Whether the image exceeded the inline cap and its data was omitted."),
+  })
+  .describe("One image block of the output.");
+
+const output = orgScoped
+  .route({
+    method: "GET",
+    path: "/runs/{id}/outputs/{outputRef}",
+    summary: "Read a tool call's full output",
+    description:
+      "Read the full output behind one tool call, as the run's transcript stores it — the `tool-result` event carries only a summary, and its `outputRef` names what this endpoint resolves. Content-private: only a viewer with full access to the run reads outputs; anyone else — the audit view included — finds nothing, indistinguishable from a run or a reference that does not exist. Text is cut at a byte cap with the cut declared; an oversized image keeps its media type but ships no data.",
+    tags: ["Runs"],
+  })
+  .input(
+    z.object({
+      id: z.string().trim().min(1).describe("The ID of the run the output belongs to."),
+      outputRef: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("The output reference from the run's `tool-result` event — the tool call's id."),
+    }),
+  )
+  .output(
+    z
+      .object({
+        callId: z.string().describe("The tool call the output belongs to."),
+        status: z
+          .enum(["ok", "error", "denied"])
+          .describe("How the call ended: its output is a result, an error body, or a refusal."),
+        summary: z
+          .string()
+          .nullable()
+          .describe(
+            "The summary the run's `tool-result` event carried, when the log has one — so the client renders the expansion without re-joining the event.",
+          ),
+        blocks: z
+          .array(z.discriminatedUnion("kind", [outputTextBlockSchema, outputImageBlockSchema]))
+          .describe("The output's content blocks, in transcript order."),
+      })
+      .describe("One tool call's full output, rendered by content type under size caps."),
+  )
+  .handler(async ({ context, input }) => {
+    const verdict = await resolveRunAccess({
+      db: context.db,
+      orgId: context.org.id,
+      principal: context.principal,
+      runId: input.id,
+    });
+    if (verdict.access !== "full") runNotFound();
+
+    // Full outputs live in the committed turns, keyed by the tool call id —
+    // resolution reads the transcript, not the event, so runs recorded before
+    // refs were minted still resolve.
+    const turns = await context.db.turn.findMany({
+      where: { orgId: context.org.id, runId: verdict.run.id },
+      orderBy: { index: "asc" },
+      select: { toolResults: true },
+    });
+    const result = turns
+      .flatMap((turn) => (Array.isArray(turn.toolResults) ? turn.toolResults : []))
+      .map((entry) => entry as unknown as TranscriptMessage)
+      .find((message) => message.role === "toolResult" && message.toolCallId === input.outputRef);
+    // An unknown reference reads exactly like a run the caller may not see.
+    if (result === undefined) runNotFound();
+
+    const eventRow = await context.db.runEvent.findFirst({
+      where: {
+        orgId: context.org.id,
+        runId: verdict.run.id,
+        AND: [
+          { event: { path: ["type"], equals: "tool-result" } },
+          { event: { path: ["callId"], equals: input.outputRef } },
+        ],
+      },
+      orderBy: { seq: "asc" },
+      select: { event: true },
+    });
+    const summary = (eventRow?.event as { summary?: unknown } | undefined)?.summary;
+
+    return {
+      callId: input.outputRef,
+      status: result.status ?? "ok",
+      summary: typeof summary === "string" ? summary : null,
+      blocks: renderToolOutputBlocks(result),
+    };
+  });
+
 const listByThread = orgScoped
   .route({
     method: "GET",
@@ -408,4 +518,4 @@ const listByThread = orgScoped
     return { runs };
   });
 
-export const runsRouter = { get, events, listByThread };
+export const runsRouter = { get, events, output, listByThread };
