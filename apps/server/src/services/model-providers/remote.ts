@@ -1,10 +1,16 @@
+import type { ModelEndpoint } from "@trema/models";
+import { AwsV4Signer } from "aws4fetch";
+import { GoogleAuth } from "google-auth-library";
 import {
   CredentialDecryptionError,
   CredentialEncryptionConfigError,
 } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
-import { resolveProviderTransport } from "#server/services/model-providers/index.js";
+import {
+  ModelProviderValidationError,
+  resolveProviderTransport,
+} from "#server/services/model-providers/index.js";
 
 /** What one probe learned. A failure carries a sentence an admin can act on. */
 export type ModelProviderProbeResult =
@@ -79,6 +85,223 @@ async function discard(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
 }
 
+/** The call one protocol's model listing is made with, or why it cannot be made. */
+type ListingRequest =
+  | { ok: true; url: string; headers: Record<string, string> }
+  | { ok: false; reason: string };
+
+/**
+ * How each protocol asks for its model list: the address it answers at, and the
+ * headers that authenticate the ask. It used to be two records, a URL and a
+ * header set, which held while every protocol spent its credential the same
+ * way. Signing broke that: an address and its headers are computed together
+ * there, from the same key, and the computation is asynchronous. So there is
+ * one builder per protocol now, and the protocol is still the branch key —
+ * never a vendor.
+ *
+ * A builder may refuse: a call it cannot authenticate is a sentence an admin
+ * can act on, not an unsigned request the provider will reject with a 403.
+ *
+ * A builder is handed the same fetch the listing itself will use, because one
+ * protocol authenticates by asking somebody else first: a token exchange is
+ * another call, and it belongs on the same wire as the one it authorizes. It is
+ * handed the listing's deadline with it, for the same reason: the exchange
+ * spends the same time budget as the call it authorizes, so a token endpoint
+ * that hangs cannot leave the probe pending past the limit the listing honors.
+ *
+ * What a builder returns is the whole header set the request goes out with,
+ * the row's stored headers included. The call site adds nothing of its own: a
+ * signed request carries its header names as the signature computed them, and
+ * spreading the stored ones over that afterwards would put a second,
+ * differently-cased copy of each beside the names the signature covers.
+ */
+type ListingRequestBuilders = {
+  [Protocol in ModelEndpoint["protocol"]]: (
+    endpoint: Extract<ModelEndpoint, { protocol: Protocol }>,
+    query: string,
+    call: typeof globalThis.fetch,
+    signal: AbortSignal,
+  ) => ListingRequest | Promise<ListingRequest>;
+};
+
+/** Appends the stored listing query, which most rows leave empty. */
+function withQuery(url: string, query: string): string {
+  return query === "" ? url : `${url}?${query}`;
+}
+
+/**
+ * The control-plane host that answers `ListFoundationModels` for a region.
+ * Bedrock splits its API in two: a runtime host serves model calls, and this
+ * one serves the catalog. The runtime address is what a row stores, so the
+ * listing derives its counterpart.
+ */
+function bedrockControlPlaneUrl(baseUrl: string, region: string): string {
+  const runtime = new URL(baseUrl);
+  // Swapping the leading label keeps everything the admin put after it, which
+  // is what a partition other than the commercial one needs: the China suffix
+  // rides through untouched. Any other host is a customer's own gateway or a
+  // VPC endpoint, and a host that proxies the runtime API says nothing about
+  // serving the catalog one, so the region's own control-plane host is the
+  // honest guess. The tradeoff is stated rather than hidden: against a private
+  // deployment that listing fails legibly, which is better than asking a
+  // gateway for a path it never claimed to serve. Such a deployment can still
+  // keep its catalog by hand.
+  const derived = runtime.hostname.startsWith("bedrock-runtime.")
+    ? `${runtime.protocol}//${runtime.hostname.replace(/^bedrock-runtime\./, "bedrock.")}`
+    : `https://bedrock.${region}.amazonaws.com`;
+  return `${derived}/foundation-models`;
+}
+
+const listingRequests: ListingRequestBuilders = {
+  // The stored headers come last in every plain builder: an admin who set a
+  // header the protocol also sets meant the one they typed, which is how a
+  // gateway that names its own authentication scheme is reached.
+  "openai-compatible": (endpoint, query) => ({
+    ok: true,
+    url: withQuery(`${endpoint.baseUrl}/models`, query),
+    headers: {
+      ...(endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` }),
+      ...endpoint.headers,
+    },
+  }),
+  anthropic: (endpoint, query) => ({
+    ok: true,
+    url: withQuery(`${endpoint.baseUrl}/models`, query),
+    headers: {
+      "anthropic-version": "2023-06-01",
+      ...(endpoint.apiKey === undefined ? {} : { "x-api-key": endpoint.apiKey }),
+      ...endpoint.headers,
+    },
+  }),
+  google: (endpoint, query) => ({
+    ok: true,
+    url: withQuery(`${endpoint.baseUrl}/models`, query),
+    headers: {
+      ...(endpoint.apiKey === undefined ? {} : { "x-goog-api-key": endpoint.apiKey }),
+      ...endpoint.headers,
+    },
+  }),
+  // The Responses surface keeps the OpenAI-shaped listing beside it, so the
+  // path is the same one and the answer parses as the same `data` array.
+  "openai-responses": (endpoint, query) => ({
+    ok: true,
+    url: withQuery(`${endpoint.baseUrl}/models`, query),
+    headers: {
+      ...(endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` }),
+      ...endpoint.headers,
+    },
+  }),
+  bedrock: async (endpoint, query) => {
+    // Only this row's own credential is ever spent. The run path may sign with
+    // the worker's ambient role, through the SDK; a listing speaks for one
+    // registry row, and signing it with somebody else's identity would report
+    // on a catalog the row cannot reach.
+    if (endpoint.accessKeyId === undefined || endpoint.secretAccessKey === undefined) {
+      return {
+        ok: false,
+        reason:
+          "Reading this provider's models needs stored AWS keys. Enter them, then refresh the model list.",
+      };
+    }
+    const url = withQuery(bedrockControlPlaneUrl(endpoint.baseUrl, endpoint.region), query);
+    // The stored headers are signed with the rest: added afterwards they would
+    // travel outside the signature, which is a difference worth not having. The
+    // signer names them as it normalizes them, so what comes back out is the
+    // complete set, each header once and cased the way the signature covers it.
+    const signer = new AwsV4Signer({
+      method: "GET",
+      url,
+      headers: endpoint.headers ?? {},
+      region: endpoint.region,
+      service: "bedrock",
+      accessKeyId: endpoint.accessKeyId,
+      secretAccessKey: endpoint.secretAccessKey,
+      ...(endpoint.sessionToken === undefined ? {} : { sessionToken: endpoint.sessionToken }),
+    });
+    const signed = await signer.sign();
+    return { ok: true, url, headers: Object.fromEntries(signed.headers) };
+  },
+  vertex: async (endpoint, query, call, signal) => {
+    // Only this row's own credential is ever spent, for the reason the Bedrock
+    // builder above gives: the run path may let the provider fall back to the
+    // worker's own application-default credential, but a listing speaks for one
+    // registry row, and borrowing the server's identity would report on a
+    // catalog the row cannot reach.
+    if (endpoint.serviceAccount === undefined) {
+      return {
+        ok: false,
+        reason:
+          "Reading this provider's models needs a stored service account. Add one, then refresh the model list.",
+      };
+    }
+    // The exchange rides the same fetch the listing will, so a deployment that
+    // routes this module's egress routes all of it — and it carries the
+    // listing's own deadline, because the auth library would otherwise wait on
+    // its own terms and a stuck token endpoint would hang the probe past the
+    // limit every other call here honors.
+    const timed: typeof globalThis.fetch = (input, init) =>
+      call(input, {
+        ...init,
+        signal: init?.signal == null ? signal : AbortSignal.any([signal, init.signal]),
+      });
+    const auth = new GoogleAuth({
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+      credentials: {
+        client_email: endpoint.serviceAccount.clientEmail,
+        private_key: endpoint.serviceAccount.privateKey,
+      },
+      clientOptions: { transporterOptions: { fetchImplementation: timed } },
+    });
+    let token: string | null | undefined;
+    try {
+      token = await auth.getAccessToken();
+    } catch (error) {
+      // Hitting the deadline is reported as the timeout it is, through the
+      // same sentence the listing call would produce; the signal's reason is
+      // thrown rather than the library's wrapper so the name survives.
+      if (signal.aborted) throw signal.reason ?? error;
+      // Any other failure of the exchange is this provider's answer, not a
+      // crash: a key that has been revoked, or a clock too far off to sign
+      // with, reads the same way to an admin as a listing that came back
+      // empty-handed.
+      return { ok: false, reason: "The stored service account could not be exchanged for a token" };
+    }
+    if (!token) {
+      return { ok: false, reason: "The stored service account could not be exchanged for a token" };
+    }
+    return {
+      // Model Garden's publisher listing, which is what this protocol has that
+      // is both cheap and authenticated. It hangs off the stored base URL like
+      // every other protocol's listing does — no project in the path, because
+      // the catalog is the publisher's and the token says whose quota reads it.
+      ok: true,
+      url: withQuery(`${endpoint.baseUrl}/publishers/google/models`, query),
+      headers: { authorization: `Bearer ${token}`, ...endpoint.headers },
+    };
+  },
+};
+
+/**
+ * Picks the builder the endpoint's protocol names. The cast is what TypeScript
+ * cannot see for itself: the record's keys and its parameter types come from
+ * the same union, so the builder found under a protocol takes exactly the
+ * endpoint that carries it.
+ */
+function listingRequest(
+  endpoint: ModelEndpoint,
+  query: string,
+  call: typeof globalThis.fetch,
+  signal: AbortSignal,
+): ListingRequest | Promise<ListingRequest> {
+  const build = listingRequests[endpoint.protocol] as (
+    endpoint: ModelEndpoint,
+    query: string,
+    call: typeof globalThis.fetch,
+    signal: AbortSignal,
+  ) => ListingRequest | Promise<ListingRequest>;
+  return build(endpoint, query, call, signal);
+}
+
 /** A model list that came back, or the sentence explaining why it did not. */
 type ListingResult = { ok: true; latencyMs: number; body: unknown } | { ok: false; reason: string };
 
@@ -117,35 +340,55 @@ async function listModels(
         reason: "The stored credential cannot be read. Enter it again to replace it.",
       };
     }
+    // A row whose stored settings or credential no longer parse is this
+    // provider's answer too, not a crash: both screens document a failed call
+    // as a result carrying a sentence, and a hand-edited column is exactly the
+    // kind of thing an admin fixes by saving the provider again.
+    if (error instanceof ModelProviderValidationError) {
+      log.warn("Model provider configuration unreadable", { providerName: name, error });
+      return {
+        ok: false,
+        reason: "The stored configuration cannot be read. Save the provider again to replace it.",
+      };
+    }
     throw error;
   }
 
   const { endpoint, listQuery } = transport;
-  // The listing call each protocol answers cheapest. A new protocol member adds
-  // its line here rather than a branch further down.
-  const listUrl: Record<typeof endpoint.protocol, string> = {
-    "openai-compatible": `${endpoint.baseUrl}/models`,
-  };
   // The stored query is the row's own, seeded by whatever preset created it, so
   // no vendor is named here. The base URL carries none of its own — it is
   // refused a query string at write time — which is what makes appending safe.
   const query = new URLSearchParams(listQuery).toString();
+  const call = options.fetch ?? globalThis.fetch;
+  // One deadline covers the builder and the listing together: a protocol that
+  // authenticates by making its own call first spends the same budget as the
+  // call it authorizes, so nothing here can outwait the limit.
+  const signal = AbortSignal.timeout(timeoutMs);
+  let request: ListingRequest;
+  try {
+    request = await listingRequest(endpoint, query, call, signal);
+  } catch (error) {
+    log.warn("Model provider call failed", {
+      providerName: name,
+      errorName: error instanceof Error ? error.name : "unknown",
+      ...(causeCode(error) === undefined ? {} : { code: causeCode(error) }),
+    });
+    return { ok: false, reason: unreachableReason(error, timeoutMs) };
+  }
+  if (!request.ok) return request;
 
   const started = performance.now();
-  const call = options.fetch ?? globalThis.fetch;
   let response: Response;
   try {
-    response = await call(`${listUrl[endpoint.protocol]}${query === "" ? "" : `?${query}`}`, {
+    response = await call(request.url, {
       method: "GET",
-      headers: {
-        ...(endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` }),
-        ...endpoint.headers,
-      },
+      // The builder's set goes on the wire verbatim, stored headers and all.
+      headers: request.headers,
       // Nothing is followed: a redirect to another host would carry the stored
       // headers there, and the admin should point the base URL at whatever
       // answers instead.
       redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     });
   } catch (error) {
     log.warn("Model provider call failed", {
@@ -187,11 +430,55 @@ async function listModels(
   }
 }
 
-/** The `data` array of an OpenAI-shaped listing, or undefined when it has none. */
+/**
+ * The array a listing puts its models in, or undefined when it has none. Four
+ * names are read in one pass rather than per vendor: `data`, which the
+ * OpenAI-compatible shape uses, `models`, which the Gemini API uses,
+ * `modelSummaries`, which Bedrock's foundation-model listing uses, and
+ * `publisherModels`, which Vertex's Model Garden listing uses.
+ */
 function listedEntries(body: unknown): unknown[] | undefined {
   if (typeof body !== "object" || body === null) return undefined;
-  const data = (body as { data?: unknown }).data;
-  return Array.isArray(data) ? data : undefined;
+  const shaped = body as {
+    data?: unknown;
+    models?: unknown;
+    modelSummaries?: unknown;
+    publisherModels?: unknown;
+  };
+  if (Array.isArray(shaped.data)) return shaped.data;
+  if (Array.isArray(shaped.models)) return shaped.models;
+  if (Array.isArray(shaped.modelSummaries)) return shaped.modelSummaries;
+  return Array.isArray(shaped.publisherModels) ? shaped.publisherModels : undefined;
+}
+
+/**
+ * What a resource name puts in front of the model's own id. Two listings
+ * address models as resources and neither takes the prefix back on the wire:
+ * the Gemini API names a model `models/gemini-2.0-flash`, and Vertex's Model
+ * Garden qualifies the same thing by its publisher,
+ * `publishers/google/models/gemini-2.5-flash`. Only those two shapes come off,
+ * so an id that happens to contain the word survives intact.
+ */
+const resourcePrefixPattern = /^(?:publishers\/[^/]+\/)?models\//;
+
+/**
+ * The id a listing entry goes by, as the wire protocol will take it back. An
+ * entry may name itself `id`, `modelId`, or, where the listing addresses models
+ * as resources, `name` — and a resource name is path-qualified, so the
+ * collection prefix comes off. What is stored has to be what a request can put
+ * on the wire.
+ */
+function listedId(entry: unknown): string | undefined {
+  if (typeof entry === "string") return entry.trim() === "" ? undefined : entry.trim();
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const shaped = entry as { id?: unknown; modelId?: unknown; name?: unknown };
+  if (typeof shaped.id === "string" && shaped.id.trim() !== "") return shaped.id.trim();
+  if (typeof shaped.modelId === "string" && shaped.modelId.trim() !== "") {
+    return shaped.modelId.trim();
+  }
+  if (typeof shaped.name !== "string") return undefined;
+  const name = shaped.name.trim().replace(resourcePrefixPattern, "");
+  return name === "" ? undefined : name;
 }
 
 /**
@@ -214,17 +501,30 @@ const modelTypes: Record<string, boolean> = {
 /**
  * What a listing entry says about producing vectors: true, false, or nothing.
  *
- * Two shapes carry it, and both are read in one pass rather than per vendor: a
- * top-level `type` (Together) and `architecture.output_modalities`
- * (OpenRouter). An unrecognized shape yields undefined — unknown, never "no" —
- * so the screen falls back to reading the model's name, which is all the plain
- * OpenAI-compatible listing offers.
+ * Four shapes carry it, and all are read in one pass rather than per vendor: a
+ * top-level `type` (Together), `architecture.output_modalities` (OpenRouter),
+ * `supportedGenerationMethods` (the Gemini API), and `outputModalities`
+ * (Bedrock), where the presence of the embedding value in a stated list is a
+ * yes and its absence from one is a no. An unrecognized shape yields
+ * undefined — unknown, never "no" — so the screen falls back to reading the
+ * model's name, which is all the plain OpenAI-compatible listing offers, and
+ * all Vertex's publisher listing offers too: its entries describe console
+ * actions and launch stages, never what a model produces.
  */
 function embeddingHint(entry: Record<string, unknown>): boolean | undefined {
   const modalities = (entry.architecture as { output_modalities?: unknown } | undefined)
     ?.output_modalities;
   if (Array.isArray(modalities) && modalities.every((value) => typeof value === "string")) {
     return modalities.includes("embeddings");
+  }
+  const methods = entry.supportedGenerationMethods;
+  if (Array.isArray(methods) && methods.every((value) => typeof value === "string")) {
+    return methods.includes("embedContent");
+  }
+  // Bedrock states the modalities in capitals: TEXT, IMAGE, EMBEDDING.
+  const outputs = entry.outputModalities;
+  if (Array.isArray(outputs) && outputs.every((value) => typeof value === "string")) {
+    return outputs.includes("EMBEDDING");
   }
   const type = entry.type;
   return typeof type === "string" ? modelTypes[type.toLowerCase()] : undefined;
@@ -276,12 +576,12 @@ export async function fetchRemoteModels(
 
   const models = new Map<string, RemoteModel>();
   for (const entry of listed) {
+    const id = listedId(entry);
+    if (id === undefined) continue;
     const shaped =
       typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : undefined;
-    const id = shaped === undefined ? entry : shaped.id;
-    if (typeof id !== "string" || id.trim().length === 0) continue;
     const hint = shaped === undefined ? undefined : embeddingHint(shaped);
-    models.set(id.trim(), { id: id.trim(), ...(hint === undefined ? {} : { embedding: hint }) });
+    models.set(id, { id, ...(hint === undefined ? {} : { embedding: hint }) });
   }
   const sorted = [...models.values()].sort((left, right) => (left.id < right.id ? -1 : 1));
   log.info("Model provider models listed", {

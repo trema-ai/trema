@@ -7,6 +7,10 @@ import {
 } from "#server/lib/crypto/index.js";
 import { requireCapability } from "#server/rpc/builders.js";
 import {
+  importProviderCatalog,
+  refreshProviderCatalog,
+} from "#server/services/model-providers/catalog.js";
+import {
   deleteDefault,
   deleteProvider,
   getProvider,
@@ -18,23 +22,19 @@ import {
   putDefaults,
   putProvider,
 } from "#server/services/model-providers/index.js";
-import {
-  importProviderCatalog,
-  refreshProviderCatalog,
-} from "#server/services/model-providers/catalog.js";
 import { listPresets } from "#server/services/model-providers/presets.js";
 import { fetchRemoteModels, probeProvider } from "#server/services/model-providers/remote.js";
 
 const protocolSchema = z
-  .enum(["openai_compatible"])
+  .enum(["openai_compatible", "anthropic", "google", "openai_responses", "bedrock", "vertex"])
   .describe(
     "The wire protocol the provider speaks. One value per protocol, not per vendor: a vendor is a preset over a protocol.",
   );
 
 const credentialModeSchema = z
-  .enum(["api_key", "none"])
+  .enum(["api_key", "none", "aws_sigv4", "gcp_adc"])
   .describe(
-    "How the provider authenticates. `none` is for endpoints that need no credential, such as a model server on the same host.",
+    "How the provider authenticates. `none` is for endpoints that need no credential, such as a model server on the same host. `aws_sigv4` signs each request with a stored AWS key pair, or with the role the server itself runs under when the provider stores none. `gcp_adc` mints a token from a stored Google service account, or from the application-default credential the server itself can reach when the provider stores none.",
   );
 
 const roleSchema = z
@@ -52,6 +52,31 @@ const catalogEntrySchema = z.object({
     .describe("Whether this model is offered in the model picker. Omitted means it is not."),
   contextWindow: z.number().int().positive().optional().describe("Context window, in tokens."),
 });
+
+const settingsSchema = z
+  .object({
+    region: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("The AWS region every request to this provider is signed for."),
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("The Google Cloud project a Vertex provider addresses its models under."),
+    location: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("The Vertex location a provider addresses its models in."),
+  })
+  .describe(
+    "Protocol configuration that is neither address nor secret. Every field is optional here and required by the protocol that declares it: `bedrock` needs a region, `vertex` needs a project and a location, and every other protocol refuses a value outright. It is all read back in full, unlike the credential and the headers, because a signature names a region and a model lives under a project whatever host answers the call — so an admin has to be able to see and correct them.",
+  );
 
 const listQuerySchema = z
   .record(z.string(), z.string())
@@ -80,6 +105,7 @@ const providerSchema = z
       .array(catalogEntrySchema)
       .describe("The models this provider offers, as of the last catalog refresh."),
     listQuery: listQuerySchema,
+    settings: settingsSchema.optional(),
     updatedAt: z.string().describe("When the provider last changed. An ISO 8601 date-time."),
   })
   .describe("One provider in the registry. The credential is write-only.");
@@ -191,7 +217,7 @@ const providerWriteSchema = z
       .nullable()
       .optional()
       .describe(
-        "The credential, stored encrypted and never returned. Omit to keep the stored value; send null to clear it.",
+        "The credential, stored encrypted and never returned. Omit to keep the stored value; send null to clear it. In `api_key` mode it is the key itself; in `aws_sigv4` mode it is a JSON object holding accessKeyId, secretAccessKey, and an optional sessionToken, and clearing it leaves the provider signing with the role the server runs under; in `gcp_adc` mode it is a Google service-account key file, as the JSON it was downloaded as, and clearing it leaves the provider minting tokens from the application-default credential the server itself can reach.",
       ),
     catalog: z
       .array(catalogEntrySchema)
@@ -206,6 +232,12 @@ const providerWriteSchema = z
       .optional()
       .describe(
         "Query parameters for the model-listing call, as the provider's preset supplies them. Omit to keep the stored query; send null to clear it.",
+      ),
+    settings: settingsSchema
+      .nullable()
+      .optional()
+      .describe(
+        "Protocol configuration, for the protocols that take any. A `bedrock` provider needs a region here and a `vertex` provider needs a project and a location; every other protocol refuses a value. Omit to keep the stored settings; send null to clear them.",
       ),
   })
   .describe("The provider to store.");
@@ -228,6 +260,7 @@ function writeInput(
     ...(input.credential === undefined ? {} : { credential: input.credential }),
     ...(input.catalog === undefined ? {} : { catalog: input.catalog }),
     ...(input.listQuery === undefined ? {} : { listQuery: input.listQuery }),
+    ...(input.settings === undefined ? {} : { settings: input.settings }),
     ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
       ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
       : {}),
@@ -378,6 +411,7 @@ const presetSchema = z
       .optional()
       .describe("Which bundled brand mark the screen draws for this vendor."),
     listQuery: listQuerySchema.optional(),
+    settings: settingsSchema.optional(),
   })
   .describe(
     "A bundled provider, ready to store as a registry row. A vendor is a preset over a protocol, never code. It carries no model list: a provider is asked what it serves.",

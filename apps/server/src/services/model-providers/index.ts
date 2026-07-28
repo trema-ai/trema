@@ -19,6 +19,11 @@ import { log } from "#server/lib/logger/index.js";
  */
 const descriptorProtocols: Record<ModelProtocol, ModelEndpoint["protocol"]> = {
   openai_compatible: "openai-compatible",
+  anthropic: "anthropic",
+  google: "google",
+  openai_responses: "openai-responses",
+  bedrock: "bedrock",
+  vertex: "vertex",
 };
 
 /** One link in a role's fallback chain: a provider by name, and a model on it. */
@@ -50,6 +55,172 @@ export type ModelCatalogEntry = z.infer<typeof catalogEntrySchema>;
 const headersSchema = z.record(z.string().trim().min(1), z.string());
 
 const listQuerySchema = z.record(z.string().trim().min(1), z.string());
+
+/**
+ * The settings the Bedrock protocol takes. One field so far: the region every
+ * SigV4 signature names. It is protocol configuration and not a secret, so it
+ * is read back in full, which is exactly why it cannot ride the write-only
+ * credential; and a private endpoint or a gateway leaves nothing to read it
+ * off the base URL with.
+ */
+const bedrockSettingsSchema = z.object({ region: z.string().trim().min(1) });
+
+/**
+ * The settings the Vertex protocol takes. Vertex addresses a model under a
+ * project and a location both, and neither is readable off the base URL: the
+ * address there is the API surface, and a private endpoint carries neither name
+ * at all. Configuration rather than secrets, so both are read back in full.
+ */
+const vertexSettingsSchema = z.object({
+  project: z.string().trim().min(1),
+  location: z.string().trim().min(1),
+});
+
+/**
+ * Everything a provider row can carry as settings, across every protocol that
+ * takes any. The fields are optional here and required by the protocol that
+ * declares them: a row's protocol says which are filled, and a value sent for a
+ * field its protocol does not name is refused rather than stored.
+ */
+export type ModelProviderSettings = {
+  /** The region a Bedrock signature names, whatever host answers the call. */
+  region?: string | undefined;
+  /** The Google Cloud project a Vertex row addresses its models under. */
+  project?: string | undefined;
+  /** The Vertex location a row addresses its models in. */
+  location?: string | undefined;
+};
+
+/** A protocol's settings, and the sentence said when a row arrives without them. */
+interface ProtocolSettings {
+  schema: z.ZodType<ModelProviderSettings>;
+  needs: string;
+}
+
+/**
+ * What each protocol accepts as settings. Every protocol has a line, so adding
+ * one is a decision made rather than a default inherited, and `undefined` says
+ * outright that the protocol takes none: settings sent for it are refused, not
+ * stored and ignored.
+ */
+const protocolSettings: Record<ModelProtocol, ProtocolSettings | undefined> = {
+  openai_compatible: undefined,
+  anthropic: undefined,
+  google: undefined,
+  openai_responses: undefined,
+  bedrock: { schema: bedrockSettingsSchema, needs: "a region" },
+  vertex: { schema: vertexSettingsSchema, needs: "a project and a location" },
+};
+
+/**
+ * Which credential modes each protocol can spend. A protocol and a mode are one
+ * decision, not two: a Bedrock row in `api_key` mode holds a plain string
+ * nothing can sign with, and it would read as configured on the screen while
+ * `resolveEndpoints` dropped it. Every protocol has a line, so adding one is a
+ * decision made rather than a default inherited, and the first entry is the
+ * mode a create lands in when it names none.
+ */
+const protocolCredentialModes: Record<
+  ModelProtocol,
+  [ModelCredentialMode, ...ModelCredentialMode[]]
+> = {
+  openai_compatible: ["api_key", "none"],
+  anthropic: ["api_key", "none"],
+  google: ["api_key", "none"],
+  openai_responses: ["api_key", "none"],
+  bedrock: ["aws_sigv4"],
+  vertex: ["gcp_adc"],
+};
+
+/**
+ * The credential shape `aws_sigv4` stores: a key pair and, for temporary
+ * credentials, the session token that goes with them. It is one JSON object in
+ * the same encrypted column every other mode's single string uses — the column
+ * holds a credential, and what a credential looks like is the mode's business.
+ */
+const awsCredentialSchema = z.strictObject({
+  accessKeyId: z.string().trim().min(1),
+  secretAccessKey: z.string().trim().min(1),
+  sessionToken: z.string().trim().min(1).optional(),
+});
+
+/** The signing material a Bedrock row stores, when it stores any. */
+export type AwsCredential = z.infer<typeof awsCredentialSchema>;
+
+/**
+ * Reads a stored signing credential. Neither failure repeats the value it was
+ * given: a credential that travelled back out inside an error message would be
+ * readable everywhere that message goes.
+ */
+function parseAwsCredential(value: string): AwsCredential {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value);
+  } catch {
+    throw new ModelProviderValidationError(
+      "An AWS credential is a JSON object holding accessKeyId, secretAccessKey, and an optional sessionToken",
+    );
+  }
+  const parsed = awsCredentialSchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new ModelProviderValidationError(
+      "An AWS credential needs a non-empty accessKeyId and secretAccessKey, and nothing else beyond an optional sessionToken",
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * The credential shape `gcp_adc` stores, and the shape an admin arrives with:
+ * a downloaded service-account key file. Only two of its fields mint a token,
+ * so only those two are named — and the schema is deliberately not strict, so
+ * the file can be pasted whole rather than hand-edited down to a pair. What the
+ * rest of it carries (a key id, a project, four fixed URLs) is stripped by
+ * `parseGcpCredential` rather than stored: a credential column holds what will
+ * be spent and no more.
+ */
+const gcpCredentialSchema = z.object({
+  client_email: z.string().trim().min(1),
+  private_key: z.string().trim().min(1),
+});
+
+/**
+ * The service-account material a Vertex row stores, when it stores any. Kept in
+ * the key file's own field names rather than renamed: one parser then serves
+ * both the write and the read, and what is stored stays recognizable as a
+ * shrunken copy of what was pasted.
+ */
+export type GcpCredential = z.infer<typeof gcpCredentialSchema>;
+
+/**
+ * Reads a stored service account, from the key file it was pasted as. Neither
+ * failure repeats the value it was given: a credential that travelled back out
+ * inside an error message would be readable everywhere that message goes.
+ */
+function parseGcpCredential(value: string): GcpCredential {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value);
+  } catch {
+    throw new ModelProviderValidationError(
+      "A Google credential is a service-account key file, as the JSON it was downloaded as",
+    );
+  }
+  const parsed = gcpCredentialSchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new ModelProviderValidationError(
+      "A Google credential needs the client_email and private_key its key file carries",
+    );
+  }
+  return { client_email: parsed.data.client_email, private_key: parsed.data.private_key };
+}
+
+/**
+ * The modes whose stored credential is a JSON object rather than one string.
+ * The shape belongs to the mode that wrote it, so a kept credential cannot
+ * cross into or out of one of these: what wrote it is what can read it.
+ */
+const structuredCredentialModes = new Set<ModelCredentialMode>(["aws_sigv4", "gcp_adc"]);
 
 /**
  * What an HTTP header field cannot carry, in either half. Scanned rather than
@@ -138,6 +309,41 @@ function normalizeListQuery(listQuery: Record<string, string>): Record<string, s
   return normalized;
 }
 
+/**
+ * Checks the settings a row carries against the shape its protocol declares.
+ * The rule is a lookup, not a judgement: a protocol that declares no shape
+ * refuses settings outright rather than storing something no code will read.
+ */
+function normalizeSettings(
+  protocol: ModelProtocol,
+  settings: ModelProviderSettings,
+): ModelProviderSettings {
+  const declared = protocolSettings[protocol];
+  if (declared === undefined) {
+    throw new ModelProviderValidationError(`The ${protocol} protocol takes no settings`);
+  }
+  const parsed = declared.schema.safeParse(settings);
+  if (!parsed.success) {
+    throw new ModelProviderValidationError(
+      `The ${protocol} protocol needs ${declared.needs}, as non-empty strings`,
+    );
+  }
+  const normalized: ModelProviderSettings = {};
+  for (const [field, value] of Object.entries(parsed.data)) {
+    const trimmed = String(value).trim();
+    // Every one of these is read back in full and spent on a request line, so
+    // the same rule the base URL keeps applies: a control character cannot
+    // travel in either.
+    if (hasControlCharacter(trimmed)) {
+      throw new ModelProviderValidationError(
+        `The ${field} setting cannot contain control characters`,
+      );
+    }
+    normalized[field as keyof ModelProviderSettings] = trimmed;
+  }
+  return normalized;
+}
+
 export function normalizeCatalog(catalog: ModelCatalogEntry[]): ModelCatalogEntry[] {
   const parsed = catalogSchema.parse(catalog);
   const seen = new Set<string>();
@@ -213,6 +419,20 @@ export function providerListQuery(provider: ModelProvider): Record<string, strin
   return parseJsonColumn(listQuerySchema, provider.listQueryJson, "provider listing query");
 }
 
+/**
+ * The row's protocol settings, or undefined where it stores none. Read through
+ * the schema its protocol declares, so a row hand-edited into a shape the
+ * protocol does not take is malformed rather than half-usable.
+ */
+export function providerSettings(provider: ModelProvider): ModelProviderSettings | undefined {
+  if (provider.settingsJson === null) return undefined;
+  const declared = protocolSettings[provider.protocol];
+  if (declared === undefined) {
+    throw new ModelProviderValidationError("Stored provider settings are malformed");
+  }
+  return parseJsonColumn(declared.schema, provider.settingsJson, "provider settings");
+}
+
 export function defaultChain(row: ModelDefault): ModelChainEntry[] {
   return parseJsonColumn(chainSchema, row.chainJson, "role default");
 }
@@ -238,10 +458,17 @@ export interface ModelProviderSummary {
    * for a secret.
    */
   listQuery: Record<string, string>;
+  /**
+   * The protocol configuration this row carries, where its protocol takes any.
+   * Read back like the base URL and for the same reason: it is configuration an
+   * admin has to be able to see and correct, not a secret.
+   */
+  settings?: ModelProviderSettings;
   updatedAt: Date;
 }
 
 export function toProviderSummary(provider: ModelProvider): ModelProviderSummary {
+  const settings = providerSettings(provider);
   return {
     name: provider.name,
     label: provider.label,
@@ -252,6 +479,7 @@ export function toProviderSummary(provider: ModelProvider): ModelProviderSummary
     hasCredential: provider.credentialCiphertext !== null,
     catalog: providerCatalog(provider),
     listQuery: providerListQuery(provider),
+    ...(settings === undefined ? {} : { settings }),
     updatedAt: provider.updatedAt,
   };
 }
@@ -271,6 +499,8 @@ export interface PutModelProviderInput {
   catalog?: ModelCatalogEntry[] | null;
   /** Omit to keep the stored listing query; `null` clears it. */
   listQuery?: Record<string, string> | null;
+  /** Omit to keep the stored settings; `null` clears them. */
+  settings?: ModelProviderSettings | null;
   masterKey?: string;
   /**
    * What a name already in the registry means. `reject` refuses it through the
@@ -313,7 +543,20 @@ export async function putProvider(
   const existing = await db.modelProvider.findUnique({
     where: { orgId_name: { orgId: input.orgId, name } },
   });
-  const credentialMode = input.credentialMode ?? existing?.credentialMode ?? "api_key";
+  // A create that names no mode lands in the one its protocol leads with, so
+  // adding a Bedrock row without saying `aws_sigv4` is a row that signs rather
+  // than a row refused for a word it never had to type.
+  const allowedModes = protocolCredentialModes[input.protocol];
+  const credentialMode = input.credentialMode ?? existing?.credentialMode ?? allowedModes[0];
+  // The pair is checked where it is written, because nothing downstream can
+  // repair it: a mode the protocol cannot spend produces a credential
+  // `toEndpoint` refuses to read, and a row dropped there is a row the screen
+  // still shows as configured.
+  if (!allowedModes.includes(credentialMode)) {
+    throw new ModelProviderValidationError(
+      `The ${input.protocol} protocol authenticates with ${allowedModes.join(" or ")}, not ${credentialMode}`,
+    );
+  }
 
   // A provider with no way to authenticate is a configuration error caught
   // here, not a 401 the run loop discovers three turns in.
@@ -324,18 +567,47 @@ export async function putProvider(
   if (credentialMode === "api_key" && typeof input.credential !== "string" && !keepsCredential) {
     throw new ModelProviderValidationError("A provider in api_key mode needs a credential");
   }
-  if (typeof input.credential === "string") {
-    assertHeaderValue(input.credential, "The provider credential");
+  // A signing mode takes a key pair or nothing at all: nothing at all is the
+  // ambient role the spec names, a supported configuration and not a hole. What
+  // it will not take is a credential shaped like some other mode's.
+  if (credentialMode === "aws_sigv4" && typeof input.credential === "string") {
+    parseAwsCredential(input.credential);
+  }
+  // The Google mode also takes a JSON object or nothing at all, and what it is
+  // given is the key file an admin downloaded, formatting and spare fields and
+  // all. It is stored as the pair a token exchange spends, so the value written
+  // is the parse rather than the paste.
+  const credential =
+    credentialMode === "gcp_adc" && typeof input.credential === "string"
+      ? JSON.stringify(parseGcpCredential(input.credential))
+      : input.credential;
+  // The stored credential's shape belongs to the mode that wrote it, so a row
+  // moving into or out of a structured one cannot keep a credential it did not
+  // write. Every other mode stores a plain string, which is why only these
+  // pairings have to ask.
+  if (
+    keepsCredential &&
+    existing !== null &&
+    credentialMode !== existing.credentialMode &&
+    (structuredCredentialModes.has(credentialMode) ||
+      structuredCredentialModes.has(existing.credentialMode))
+  ) {
+    throw new ModelProviderValidationError(
+      "Switching a provider between credential shapes means entering its credential again",
+    );
+  }
+  if (typeof credential === "string") {
+    assertHeaderValue(credential, "The provider credential");
   }
 
   const credentialCiphertext =
     credentialMode === "none"
       ? null
-      : input.credential === undefined
+      : credential === undefined
         ? undefined
-        : input.credential === null
+        : credential === null
           ? null
-          : encryptEnvelope(input.credential, input.masterKey);
+          : encryptEnvelope(credential, input.masterKey);
 
   const headersJson =
     input.headers === undefined
@@ -355,6 +627,38 @@ export async function putProvider(
       : input.listQuery === null
         ? Prisma.DbNull
         : normalizeListQuery(input.listQuery);
+  const settingsJson =
+    input.settings === undefined
+      ? undefined
+      : input.settings === null
+        ? Prisma.DbNull
+        : normalizeSettings(input.protocol, input.settings);
+  // A protocol that declares a settings shape needs it filled, and the row it
+  // is stored on carries the protocol, so a row switched to one after the fact
+  // is caught here rather than at the first call it cannot sign. What is
+  // already stored counts: an edit to the label does not restate the region.
+  const declaredSettings = protocolSettings[input.protocol];
+  if (
+    declaredSettings !== undefined &&
+    settingsJson === undefined &&
+    (existing === null ||
+      existing.protocol !== input.protocol ||
+      existing.settingsJson === null ||
+      existing.settingsJson === undefined)
+  ) {
+    throw new ModelProviderValidationError(
+      `The ${input.protocol} protocol needs ${declaredSettings.needs}`,
+    );
+  }
+  // Settings the new protocol cannot read are dropped rather than left to fail
+  // the next read: a row moved off a protocol keeps nothing that belonged to it.
+  const clearedSettings =
+    settingsJson === undefined &&
+    declaredSettings === undefined &&
+    existing !== null &&
+    existing.settingsJson !== null
+      ? Prisma.DbNull
+      : undefined;
 
   const written = {
     label,
@@ -365,6 +669,8 @@ export async function putProvider(
     ...(credentialCiphertext === undefined ? {} : { credentialCiphertext }),
     ...(catalogJson === undefined ? {} : { catalogJson }),
     ...(listQueryJson === undefined ? {} : { listQueryJson }),
+    ...(settingsJson === undefined ? {} : { settingsJson }),
+    ...(clearedSettings === undefined ? {} : { settingsJson: clearedSettings }),
   };
 
   const provider =
@@ -486,14 +792,74 @@ export interface ResolveEndpointsOptions {
  */
 function toEndpoint(provider: ModelProvider, options: ResolveEndpointsOptions): ModelEndpoint {
   const headers = providerHeaders(provider);
-  const apiKey =
+  const stored =
     provider.credentialCiphertext === null
       ? undefined
       : decryptEnvelope<string>(provider.credentialCiphertext, options.masterKey);
+  const protocol = descriptorProtocols[provider.protocol];
+
+  const settings = providerSettings(provider);
+
+  if (protocol === "bedrock") {
+    if (settings?.region === undefined) {
+      // Unusable rather than half-configured: nothing can sign for a region
+      // nobody stated, and `resolveEndpoints` drops the row with a warning.
+      throw new ModelProviderValidationError("A Bedrock provider needs a stored region");
+    }
+    // No stored credential is a supported state, not a missing one: the
+    // resolver then lets the SDK sign with whatever role the worker runs under.
+    const credential = stored === undefined ? undefined : parseAwsCredential(stored);
+    return {
+      protocol,
+      baseUrl: provider.baseUrl,
+      region: settings.region,
+      ...(credential === undefined
+        ? {}
+        : {
+            accessKeyId: credential.accessKeyId,
+            secretAccessKey: credential.secretAccessKey,
+            ...(credential.sessionToken === undefined
+              ? {}
+              : { sessionToken: credential.sessionToken }),
+          }),
+      ...(headers === undefined ? {} : { headers }),
+    };
+  }
+
+  if (protocol === "vertex") {
+    if (settings?.project === undefined || settings.location === undefined) {
+      // Unusable rather than half-configured, for the same reason as above:
+      // there is no model to address without both, and the address alone
+      // carries neither.
+      throw new ModelProviderValidationError(
+        "A Vertex provider needs a stored project and location",
+      );
+    }
+    // No stored credential is a supported state, not a missing one: the
+    // resolver then leaves the provider its own credential chain, which reads
+    // whatever the worker itself can reach.
+    const credential = stored === undefined ? undefined : parseGcpCredential(stored);
+    return {
+      protocol,
+      baseUrl: provider.baseUrl,
+      project: settings.project,
+      location: settings.location,
+      ...(credential === undefined
+        ? {}
+        : {
+            serviceAccount: {
+              clientEmail: credential.client_email,
+              privateKey: credential.private_key,
+            },
+          }),
+      ...(headers === undefined ? {} : { headers }),
+    };
+  }
+
   return {
-    protocol: descriptorProtocols[provider.protocol],
+    protocol,
     baseUrl: provider.baseUrl,
-    ...(apiKey === undefined ? {} : { apiKey }),
+    ...(stored === undefined ? {} : { apiKey: stored }),
     ...(headers === undefined ? {} : { headers }),
   };
 }

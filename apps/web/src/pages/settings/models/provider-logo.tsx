@@ -1,5 +1,7 @@
 import anthropicIcon from "@lobehub/icons-static-svg/icons/anthropic.svg";
+import awsIcon from "@lobehub/icons-static-svg/icons/aws-color.svg";
 import azureIcon from "@lobehub/icons-static-svg/icons/azure-color.svg";
+import bedrockIcon from "@lobehub/icons-static-svg/icons/bedrock-color.svg";
 import cohereIcon from "@lobehub/icons-static-svg/icons/cohere-color.svg";
 import deepseekIcon from "@lobehub/icons-static-svg/icons/deepseek-color.svg";
 import fireworksIcon from "@lobehub/icons-static-svg/icons/fireworks-color.svg";
@@ -13,6 +15,7 @@ import openaiIcon from "@lobehub/icons-static-svg/icons/openai.svg";
 import openrouterIcon from "@lobehub/icons-static-svg/icons/openrouter-color.svg";
 import perplexityIcon from "@lobehub/icons-static-svg/icons/perplexity-color.svg";
 import togetherIcon from "@lobehub/icons-static-svg/icons/together-color.svg";
+import vertexaiIcon from "@lobehub/icons-static-svg/icons/vertexai-color.svg";
 import vllmIcon from "@lobehub/icons-static-svg/icons/vllm-color.svg";
 import xaiIcon from "@lobehub/icons-static-svg/icons/xai.svg";
 
@@ -23,7 +26,9 @@ import xaiIcon from "@lobehub/icons-static-svg/icons/xai.svg";
  */
 const brandIcons: Record<string, string> = {
   anthropic: anthropicIcon,
+  aws: awsIcon,
   azure: azureIcon,
+  bedrock: bedrockIcon,
   cohere: cohereIcon,
   deepseek: deepseekIcon,
   fireworks: fireworksIcon,
@@ -37,6 +42,8 @@ const brandIcons: Record<string, string> = {
   openrouter: openrouterIcon,
   perplexity: perplexityIcon,
   together: togetherIcon,
+  vertex: vertexaiIcon,
+  vertexai: vertexaiIcon,
   vllm: vllmIcon,
   xai: xaiIcon,
 };
