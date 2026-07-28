@@ -4,13 +4,13 @@ import { z } from "zod";
 import type { Approval } from "#server/generated/prisma/client.js";
 import { orgScoped } from "#server/rpc/builders.js";
 import {
-  approveApproval,
+  APPROVAL_PAGE_SIZE,
   ApprovalApproverError,
   ApprovalArgsMismatchError,
   ApprovalNotFoundError,
   ApprovalStateError,
   ApprovalValidationError,
-  APPROVAL_PAGE_SIZE,
+  approveApproval,
   denyApproval,
   listResolvableApprovals,
   requireApproval,
@@ -34,9 +34,11 @@ const approvalSchema = z
     args: z.json().describe("The call's arguments, verbatim. The approval covers these alone."),
     argsHash: z.string().describe("A fingerprint of the arguments. Execution compares it."),
     reason: z.string().describe("The model's one-line justification for the call."),
-    sensitivity: z
-      .enum(["read", "write", "destructive"])
-      .describe("The tool sensitivity class the policy gated."),
+    mode: z.enum(["ask", "delegated", "full"]).describe("The approval mode the call paused under."),
+    escalationReason: z
+      .string()
+      .nullable()
+      .describe("The classifier's one-line reason for pausing a delegated-mode call."),
     approverRoles: z
       .array(z.enum(["owner", "admin", "member", "viewer"]))
       .describe("The roles that may resolve it, as pinned when it was asked."),
@@ -69,7 +71,8 @@ function serialize(approval: Approval) {
     args: approval.argsJson as z.infer<typeof approvalSchema>["args"],
     argsHash: approval.argsHash,
     reason: approval.reason,
-    sensitivity: approval.sensitivity,
+    mode: approval.mode,
+    escalationReason: approval.escalationReason,
     approverRoles: approval.approverRoles,
     allowRequesterApproval: approval.allowRequesterApproval,
     requesterPrincipalId: approval.requesterPrincipalId,
@@ -174,10 +177,20 @@ const approve = orgScoped
     path: "/approvals/{id}/approve",
     summary: "Approve a gated call",
     description:
-      "Approve the recorded call. The approver must satisfy the rule pinned on the approval when it was asked, not the scope's current policy. Approving a `context:activate_item` approval also activates the item.",
+      "Approve the recorded call. The approver must satisfy the rule pinned on the approval when it was asked, not the scope's current policy. `grantScope` widens the yes: `run` covers the tool for the rest of the thread, `always` is a standing exemption for the requester at this scope. Approving a `context:activate_item` approval also activates the item.",
     tags: ["Approvals"],
   })
-  .input(z.object({ id: z.uuid().describe("The ID of the approval to approve. A UUID.") }))
+  .input(
+    z.object({
+      id: z.uuid().describe("The ID of the approval to approve. A UUID."),
+      grantScope: z
+        .enum(["once", "run", "always"])
+        .optional()
+        .describe(
+          "How wide the yes is. `once` (the default) covers the recorded arguments alone; `run` covers the tool for the rest of the thread; `always` stands until revoked.",
+        ),
+    }),
+  )
   .output(
     z
       .object({
@@ -195,6 +208,7 @@ const approve = orgScoped
         orgId: context.org.id,
         approvalId: input.id,
         approverPrincipalId: context.principal.id,
+        ...(input.grantScope === undefined ? {} : { grantScope: input.grantScope }),
       });
       return {
         approval: serialize(resolved.approval),

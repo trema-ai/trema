@@ -9,7 +9,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createApp } from "#server/app.js";
-import type { Prisma, ScopeKind } from "#server/generated/prisma/client.js";
+import type { ApprovalMode, Prisma, ScopeKind } from "#server/generated/prisma/client.js";
 import { createAuth } from "#server/lib/auth/index.js";
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
@@ -150,7 +150,11 @@ integration("data plane connector proxy", () => {
     connectionId: string;
     catalogKey?: string;
     /** What an MCP provider's tool sync last reported. */
-    syncedTools?: { name: string; sensitivity: "read" | "write" | "destructive" }[];
+    syncedTools?: {
+      name: string;
+      description?: string;
+      annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+    }[];
   }) {
     const catalogKey = input.catalogKey ?? "google_workspace";
     return db.item.create({
@@ -173,9 +177,20 @@ integration("data plane connector proxy", () => {
   }
 
   /**
+   * A scope-wide policy row that raises the ceiling to `full`. The rows a
+   * session pins are what let a `full`-mode request actually run ungated;
+   * without one the default ceiling clamps every call back down.
+   */
+  function allowFullMode(orgId: string, scopeId: string, connectorKey?: string) {
+    return db.policy.create({
+      data: { orgId, scopeId, connectorKey: connectorKey ?? null, maxMode: "full" },
+    });
+  }
+
+  /**
    * A session row without the binding plumbing: the proxy reads the scope
-   * chain, the scope kind, and the pinned snapshot, and those are exactly what
-   * this writes.
+   * chain, the scope kind, the requester's chosen approval mode, and the
+   * pinned snapshot, and those are exactly what this writes.
    */
   async function openTestSession(
     owner: Fixture,
@@ -183,6 +198,8 @@ integration("data plane connector proxy", () => {
       scope: { id: string; kind: ScopeKind };
       actingPrincipalId: string;
       requesterPrincipalId?: string;
+      /** The requester's chosen mode for the thread; the gate clamps per call. */
+      approvalMode?: ApprovalMode;
       /** Overrides the resolved chain, for the isolation tests. */
       scopeChain?: string[];
     },
@@ -194,7 +211,6 @@ integration("data plane connector proxy", () => {
       orgId: owner.org.id,
       scopeId: input.scope.id,
       scopeChain,
-      scopeKind: input.scope.kind,
     });
     const token = `${SESSION_TOKEN_PREFIX}${randomUUID()}`;
     const row = await db.contextSession.create({
@@ -204,6 +220,7 @@ integration("data plane connector proxy", () => {
         surface: "slack",
         locationRef: `T1:${randomUUID()}`,
         mode: input.scope.kind === "personal" ? "delegated" : "service",
+        approvalMode: input.approvalMode ?? "ask",
         scopeChain,
         actingPrincipalId: input.actingPrincipalId,
         requesterPrincipalId: input.requesterPrincipalId ?? null,
@@ -223,6 +240,8 @@ integration("data plane connector proxy", () => {
       actingPrincipalId: row.actingPrincipalId,
       requesterPrincipalId: row.requesterPrincipalId,
       requesterExternalRef: row.requesterExternalRef,
+      approvalMode: row.approvalMode,
+      policyRows: policySnapshot.rows,
     };
     return { row, token, session };
   }
@@ -320,10 +339,14 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: narrow.id,
     });
+    // A policy row grants `full` scope-wide, and the requester chose it, so
+    // the call runs ungated.
+    await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
+      approvalMode: "full",
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ messages: [] }));
 
@@ -335,7 +358,7 @@ integration("data plane connector proxy", () => {
       fetch,
     });
 
-    expect(outcome).toMatchObject({ status: "executed", sensitivity: "read" });
+    expect(outcome).toMatchObject({ status: "executed", mode: "full" });
     expect(authorizationOf(fetch)).toBe("Bearer shared-token");
     const [entry] = await auditEntries(owner.org.id);
     expect(entry?.subject).toBe(narrowItem.id);
@@ -344,7 +367,8 @@ integration("data plane connector proxy", () => {
     expect(entry?.payload).toMatchObject({
       outcome: "executed",
       toolKey: READ_TOOL,
-      sensitivity: "read",
+      mode: "full",
+      authority: "mode_full",
       installationItemId: narrowItem.id,
       argsHash: hashApprovalArgs({}),
       requesterPrincipalId: owner.human.id,
@@ -376,8 +400,8 @@ integration("data plane connector proxy", () => {
       connectionId: orgConnection.id,
       catalogKey: "notion",
       syncedTools: [
-        { name: "search_pages", sensitivity: "read" },
-        { name: "delete_page", sensitivity: "destructive" },
+        { name: "search_pages", annotations: { readOnlyHint: true } },
+        { name: "delete_page", annotations: { destructiveHint: true } },
       ],
     });
     await installation({
@@ -386,7 +410,7 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: sharedConnection.id,
       catalogKey: "notion",
-      syncedTools: [{ name: "search_pages", sensitivity: "read" }],
+      syncedTools: [{ name: "search_pages", annotations: { readOnlyHint: true } }],
     });
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
@@ -442,12 +466,15 @@ integration("data plane connector proxy", () => {
       connectionId: personalConnection.id,
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ messages: [] }));
+    // Full mode everywhere, so the isolation answer is resolution's alone.
+    await allowFullMode(owner.org.id, owner.orgScope.id);
 
     // A shared session reaching into a personal scope is refused by kind, not
     // merely by the chain: the filter holds even when the chain names it.
     const shared = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
+      approvalMode: "full",
       scopeChain: [owner.orgScope.id, owner.personalScope.id, owner.sharedScope.id],
     });
     const fromShared = await useConnector(db, shared.session, {
@@ -466,6 +493,7 @@ integration("data plane connector proxy", () => {
       scope: owner.personalScope,
       actingPrincipalId: owner.human.id,
       requesterPrincipalId: owner.human.id,
+      approvalMode: "full",
     });
     const fromPersonal = await useConnector(db, personal.session, {
       toolKey: READ_TOOL,
@@ -521,7 +549,7 @@ integration("data plane connector proxy", () => {
     };
 
     const paused = await useConnector(db, opened.session, call);
-    expect(paused).toMatchObject({ status: "approval_required", sensitivity: "write" });
+    expect(paused).toMatchObject({ status: "approval_required", mode: "ask" });
     expect(fetch).not.toHaveBeenCalled();
     const approvalId = (paused as { approvalId: string }).approvalId;
 
@@ -732,38 +760,6 @@ integration("data plane connector proxy", () => {
     ]);
   });
 
-  it("refuses an approved call whose tool was reclassified as more sensitive", async () => {
-    const owner = await fixture();
-    const approved = await approvedWrite(owner);
-
-    // Same installation, same connection, but the class the approver saw is no
-    // longer the class that would run.
-    await db.item.update({
-      where: { orgId_id: { orgId: owner.org.id, id: approved.item.id } },
-      data: {
-        body: {
-          catalogKey: "google_workspace",
-          connectionId: approved.first.id,
-          enabledTools: "all",
-          sensitivityOverrides: { create_draft: "destructive" },
-        } satisfies Prisma.InputJsonObject,
-      },
-    });
-
-    await expect(
-      useConnector(db, approved.opened.session, {
-        ...approved.call,
-        approvalId: approved.approvalId,
-      }),
-    ).rejects.toMatchObject({ code: "approval_superseded" });
-    expect(approved.fetch).not.toHaveBeenCalled();
-    await expect(
-      db.approval.findUniqueOrThrow({
-        where: { orgId_id: { orgId: owner.org.id, id: approved.approvalId } },
-      }),
-    ).resolves.toMatchObject({ status: "approved", executedAt: null });
-  });
-
   it("refuses an approval replayed against a different tool in the same session", async () => {
     const owner = await fixture();
     const stored = await connection({
@@ -812,16 +808,8 @@ integration("data plane connector proxy", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("reports a policy denial as a result rather than an error", async () => {
+  it("clamps a full-mode request to the policy ceiling and still pauses", async () => {
     const owner = await fixture();
-    await db.policy.create({
-      data: {
-        orgId: owner.org.id,
-        scopeId: owner.sharedScope.id,
-        sensitivity: "write",
-        action: "deny",
-      },
-    });
     const stored = await connection({
       orgId: owner.org.id,
       principalId: owner.agent.id,
@@ -833,41 +821,46 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: stored.id,
     });
+    // The requester chose `full`, but no policy row grants it: the default
+    // ceiling is `delegated`, and with no classifier configured that degrades
+    // to `ask`. Choosing a loose mode is never what loosens the gate.
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
+      approvalMode: "full",
     });
     const fetch: FetchMock = vi.fn();
 
-    const denied = await useConnector(db, opened.session, {
-      toolKey: WRITE_TOOL,
-      args: { message: { raw: "body" } },
-      reason: "Draft the reply",
+    const paused = await useConnector(db, opened.session, {
+      toolKey: READ_TOOL,
+      args: {},
+      reason: "Read the shared inbox",
       masterKey,
       fetch,
     });
 
-    expect(denied).toMatchObject({ status: "denied", sensitivity: "write" });
+    expect(paused).toMatchObject({ status: "approval_required", mode: "ask" });
     expect(fetch).not.toHaveBeenCalled();
-    expect(await db.approval.count({ where: { orgId: owner.org.id } })).toBe(0);
+    expect(await db.approval.count({ where: { orgId: owner.org.id } })).toBe(1);
     const [entry] = await auditEntries(owner.org.id);
-    expect(entry?.payload).toMatchObject({ outcome: "denied" });
+    expect(entry?.payload).toMatchObject({ outcome: "approval_required", mode: "ask" });
 
-    // The policy's answer survives an audit outage: a refusal to record the
-    // denial is the operator's incident, never a different answer to the run.
+    // The gate's answer survives an audit outage: a refusal to record the
+    // pause is the operator's incident, never a different answer to the run.
     const lines: string[] = [];
     const logger = createLogger({ level: "debug", write: (line) => lines.push(line) });
-    const deniedUnrecorded = await withLogger(logger, () =>
+    const pausedUnrecorded = await withLogger(logger, () =>
       useConnector(withFailingAuditWrite(db), opened.session, {
-        toolKey: WRITE_TOOL,
-        args: { message: { raw: "body" } },
-        reason: "Draft the reply",
+        toolKey: READ_TOOL,
+        args: {},
+        reason: "Read the shared inbox",
         masterKey,
         fetch,
       }),
     );
-    expect(deniedUnrecorded).toMatchObject({ status: "denied" });
+    expect(pausedUnrecorded).toMatchObject({ status: "approval_required" });
+    expect(fetch).not.toHaveBeenCalled();
     expect(lines.join("\n")).toContain("Connector audit write failed");
   });
 
@@ -932,9 +925,13 @@ integration("data plane connector proxy", () => {
     });
     // The connection the installation points at is gone.
     await db.connectorConnection.delete({ where: { id: stored.id } });
+    // Full mode, so the call reaches execution and fails there rather than
+    // pausing at the gate.
+    await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
+      approvalMode: "full",
     });
     const connectorFetch: FetchMock = vi.fn();
     const app = createApp({ db, auth, env, connectorFetch });
@@ -969,9 +966,11 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: stored.id,
     });
+    await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
+      approvalMode: "full",
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ messages: [] }));
 
@@ -1105,9 +1104,11 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: stored.id,
     });
+    await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
+      approvalMode: "full",
     });
     // A chatty provider: it echoes the credential it was given, first in a
     // result body and then in a failure body. Both are the model's to read.
@@ -1167,9 +1168,11 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: revoked.id,
     });
+    await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
+      approvalMode: "full",
     });
     const connectorFetch: FetchMock = vi.fn();
     const app = createApp({ db, auth, env, connectorFetch });
@@ -1281,9 +1284,11 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: stored.id,
     });
+    await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
+      approvalMode: "full",
     });
     // The call is refused, and then recording the refusal fails too. The
     // reconnect answer is what the harness acts on, so it must survive the
@@ -1331,11 +1336,13 @@ integration("data plane connector proxy", () => {
       principalId: owner.agent.id,
       connectionId: stored.id,
       catalogKey: "notion",
-      syncedTools: [{ name: "search_pages", sensitivity: "read" }],
+      syncedTools: [{ name: "search_pages", annotations: { readOnlyHint: true } }],
     });
+    await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
       actingPrincipalId: owner.agent.id,
+      approvalMode: "full",
     });
     const received: { query: string; authorization: string | null }[] = [];
     const app = createApp({ db, auth, env, connectorFetch: providerMcpServer(received) });

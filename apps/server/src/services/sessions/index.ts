@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import type {
+  ApprovalMode,
   ContextSession,
   Principal,
   Prisma,
@@ -104,6 +105,12 @@ export interface OpenSessionInput {
   dm?: boolean;
   threadRef?: string;
   requester?: SessionRequester;
+  /**
+   * The approval mode the requester chose for this thread. Defaults to `ask`;
+   * the gate clamps it to the policy ceiling per call, so a choice above the
+   * ceiling costs nothing and grants nothing.
+   */
+  approvalMode?: ApprovalMode;
   standingBudgetTokens?: number;
   now?: Date;
 }
@@ -362,7 +369,6 @@ export async function openSession(
     orgId: input.orgId,
     scopeId: scope.id,
     scopeChain: scopeChainIds,
-    scopeKind: scope.kind,
   });
   // Connector tool definitions join the session when the connector proxy
   // reaches the data plane.
@@ -385,6 +391,7 @@ export async function openSession(
         locationRef: input.locationRef,
         ...(input.threadRef ? { threadRef: input.threadRef } : {}),
         mode,
+        ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
         scopeChain: scopeChainIds,
         actingPrincipalId: actingPrincipal.id,
         requesterPrincipalId: requester.principal?.id ?? null,

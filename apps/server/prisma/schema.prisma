@@ -97,19 +97,14 @@ enum Role {
   viewer
 }
 
-/// The sensitivity class every executable tool carries. Approval policies are
-/// written per class, never per tool.
-enum Sensitivity {
-  read
-  write
-  destructive
-}
-
-/// What an approval policy does with a tool call of its sensitivity class.
-enum PolicyAction {
-  allow
-  require_approval
-  deny
+/// The approval mode governing a session's connector calls. `ask` pauses every
+/// call for a human; `delegated` executes and lets a call-time classifier
+/// escalate unsafe calls; `full` executes ungated. Policies bound which of
+/// these a human may choose — they never decide individual calls.
+enum ApprovalMode {
+  ask
+  delegated
+  full
 }
 
 /// Where a pending approval ended up. `expired` is a real outcome, not the
@@ -257,6 +252,7 @@ model Org {
   grants                    Grant[]
   policies                  Policy[]
   approvals                 Approval[]
+  toolGrants                ToolGrant[]
   invites                   Invite[]
   serviceCredentials        ServiceCredential[]
   auditLogs                 AuditLog[]
@@ -316,6 +312,8 @@ model Principal {
   activatedSchedules        Schedule[]            @relation("ScheduleActivator")
   requestedApprovals        Approval[]            @relation("ApprovalRequester")
   resolvedApprovals         Approval[]            @relation("ApprovalResolver")
+  toolGrantsRequested       ToolGrant[]           @relation("ToolGrantRequester")
+  toolGrantsCreated         ToolGrant[]           @relation("ToolGrantCreator")
 
   @@unique([orgId, authId])
   @@unique([orgId, id])
@@ -353,6 +351,7 @@ model Scope {
   grants        Grant[]
   policies      Policy[]
   approvals     Approval[]
+  toolGrants    ToolGrant[]
   invites       Invite[]
   bindings      Binding[]
   items         Item[]
@@ -376,6 +375,9 @@ model ContextSession {
   locationRef          String
   threadRef            String?
   mode                 SessionMode
+  /// The approval mode the requester chose for this thread. The gate clamps it
+  /// to the policy ceiling per call; this is the choice, never the outcome.
+  approvalMode         ApprovalMode @default(ask)
   /// Scope IDs in resolution order, widest first.
   scopeChain           String[]    @default([])
   actingPrincipalId    String
@@ -397,6 +399,7 @@ model ContextSession {
   requesterPrincipal   Principal?  @relation("ContextSessionRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Restrict)
   agentRuns            AgentRun[]
   approvals            Approval[]
+  toolGrants           ToolGrant[]
 
   @@unique([orgId, id])
   @@index([orgId, scopeId])
@@ -658,26 +661,35 @@ model Grant {
   @@map("grants")
 }
 
-/// An approval policy: which agent tool calls pause for a human in this scope,
-/// and which humans may wave them through. A scope holds at most one row per
-/// sensitivity class; a session resolves the narrowest scope in its chain that
-/// has a row, and falls back to the built-in defaults when none does.
+/// An approval policy bounds what humans may choose, per scope and optionally
+/// per connector: the loosest approval mode selectable there, and who may
+/// resolve the interrupts that pause there. The effective ceiling for a call
+/// is the most restrictive `maxMode` across the scope chain and the
+/// connector's rows; absent any row, trusted catalog entries cap at
+/// `delegated`, untrusted entries pin to `ask`, and `full` is reachable only
+/// through an explicit row.
 model Policy {
   id                     String       @id @default(uuid(7))
   orgId                  String
   scopeId                String
-  sensitivity            Sensitivity
-  action                 PolicyAction
-  /// The roles that may resolve an approval. Empty unless `action` is `require_approval`.
+  /// The connector catalog key the row governs; null bounds every connector in the scope.
+  connectorKey           String?
+  maxMode                ApprovalMode
+  /// The roles that may resolve an interrupt routed by this row.
   approverRoles          Role[]       @default([])
-  /// Whether the person who asked may approve their own request.
-  allowRequesterApproval Boolean      @default(false)
+  /// Whether the person who asked may approve their own action.
+  allowRequesterApproval Boolean      @default(true)
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
   org                    Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
   scope                  Scope        @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
 
-  @@unique([orgId, scopeId, sensitivity])
+  // A scope holds at most one row per connector and one scope-wide row: the
+  // partial unique indexes Policy_org_scope_connector_key and
+  // Policy_org_scope_default_key, maintained in SQL because Prisma cannot
+  // express partial unique indexes.
+  @@unique([orgId, id])
+  @@index([orgId, scopeId])
 }
 
 /// One gated call waiting on a human, and how it ended.
@@ -704,7 +716,11 @@ model Approval {
   argsHash               String
   /// The model's one-line justification, rendered to the approver.
   reason                 String
-  sensitivity            Sensitivity
+  /// The approval mode the call ran under when it paused: `ask` pauses every
+  /// call, `delegated` pauses the calls its classifier escalates.
+  mode                   ApprovalMode
+  /// The classifier's one-line reason for pausing a delegated-mode call.
+  escalationReason       String?
   /// The roles that may resolve this approval, copied from the pinned snapshot.
   approverRoles          Role[]         @default([])
   /// Whether the person who asked may resolve it, copied from the pinned snapshot.
@@ -729,6 +745,7 @@ model Approval {
   scope                  Scope          @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
   requesterPrincipal     Principal?     @relation("ApprovalRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Restrict)
   resolvedBy             Principal?     @relation("ApprovalResolver", fields: [orgId, resolvedById], references: [orgId, id], onDelete: Restrict)
+  toolGrants             ToolGrant[]
 
   @@unique([orgId, id])
   @@index([orgId, status, expiresAt])
@@ -741,6 +758,38 @@ model Approval {
   // Prisma does not model partial uniques, is what makes the re-ask dedup in
   // `services/approvals` hold under concurrent asks.
   @@index([orgId, sessionId, toolKey, argsHash])
+}
+
+/// A human's wider consent for one connector tool, minted when an approval is
+/// resolved with the `run` or `always` variant. A row naming a session covers
+/// that thread and dies with it; a row naming no session is a standing,
+/// admin-visible exemption and lives until revoked. The approval gate reads
+/// these before pausing a call; nothing else creates them.
+model ToolGrant {
+  id                   String          @id @default(uuid(7))
+  orgId                String
+  scopeId              String
+  toolKey              String
+  /// The session (thread) the grant covers; null is a standing grant.
+  sessionId            String?
+  /// The requester the grant covers. A standing grant always names one.
+  requesterPrincipalId String?
+  /// The approval whose resolution minted this grant.
+  sourceApprovalId     String
+  /// The human who resolved that approval.
+  createdById          String
+  createdAt            DateTime        @default(now())
+  revokedAt            DateTime?
+  org                  Org             @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope                Scope           @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  session              ContextSession? @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: Cascade)
+  requesterPrincipal   Principal?      @relation("ToolGrantRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Cascade)
+  sourceApproval       Approval        @relation(fields: [orgId, sourceApprovalId], references: [orgId, id], onDelete: Cascade)
+  createdBy            Principal       @relation("ToolGrantCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
+
+  @@unique([orgId, id])
+  @@index([orgId, sessionId, toolKey])
+  @@index([orgId, scopeId, toolKey])
 }
 
 model Invite {

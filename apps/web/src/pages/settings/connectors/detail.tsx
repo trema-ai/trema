@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   MoreHorizontal,
-  Pencil,
   Plus,
   RefreshCw,
   Settings2,
@@ -16,7 +15,6 @@ import { CredentialStatusBadge } from "#web/components/trema/credential-status-b
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
-import { SensitivityBadge } from "#web/components/trema/sensitivity-badge.tsx";
 import { SettingRow, SettingsSection } from "#web/components/trema/settings-section.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import {
@@ -47,13 +45,6 @@ import {
 } from "#web/components/ui/dropdown-menu.tsx";
 import { Input } from "#web/components/ui/input.tsx";
 import { Label } from "#web/components/ui/label.tsx";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "#web/components/ui/select.tsx";
 import { Switch } from "#web/components/ui/switch.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { scopeDisplayName } from "#web/lib/scopes.ts";
@@ -71,7 +62,6 @@ import {
   providerLogo,
   type Registration,
   type Scope,
-  type Sensitivity,
 } from "#web/pages/settings/connectors/shared.tsx";
 
 type DriftReport = { added: string[]; removed: string[]; changed: string[] };
@@ -585,12 +575,10 @@ function BindingRow({
     provider.transport.type === "rest"
       ? (provider.toolManifest?.length ?? 0)
       : installation.syncedTools.length;
-  const overrides = Object.keys(installation.sensitivityOverrides).length;
   const summary = [
     installation.enabledTools === "all"
       ? "All tools"
       : `${installation.enabledTools.length} of ${total} tools`,
-    overrides > 0 ? `${overrides} override${overrides === 1 ? "" : "s"}` : undefined,
     provider.transport.type === "mcp" ? `${installation.syncedTools.length} synced` : undefined,
   ]
     .filter(Boolean)
@@ -702,21 +690,15 @@ function ConfigureToolsDialog({
       ? available.map((tool) => tool.name)
       : installation.enabledTools,
   );
-  const [overrides, setOverrides] = useState<Record<string, Sensitivity>>(
-    installation.sensitivityOverrides,
-  );
-  const [editingSensitivity, setEditingSensitivity] = useState<string>();
   useEffect(() => {
     if (!open) return;
     setSearch("");
-    setEditingSensitivity(undefined);
     setAllTools(installation.enabledTools === "all");
     setEnabled(
       installation.enabledTools === "all"
         ? available.map((tool) => tool.name)
         : installation.enabledTools,
     );
-    setOverrides(installation.sensitivityOverrides);
   }, [open, installation, available]);
   const filtered = available.filter((tool) =>
     `${tool.name} ${tool.description ?? ""}`.toLowerCase().includes(search.toLowerCase()),
@@ -726,7 +708,6 @@ function ConfigureToolsDialog({
       rpcClient.connectors.installations.update({
         installationItemId: installation.id,
         enabledTools: allTools ? "all" : enabled,
-        sensitivityOverrides: overrides,
       }),
     onSuccess: async () => {
       await onChanged();
@@ -741,7 +722,8 @@ function ConfigureToolsDialog({
         <DialogHeader>
           <DialogTitle>Configure tools</DialogTitle>
           <DialogDescription>
-            Tool choices and sensitivity overrides apply only to this scope binding.
+            Tool choices apply only to this scope binding. Whether a call pauses for approval is the
+            session&apos;s approval mode, bounded by policy.
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
@@ -766,79 +748,33 @@ function ConfigureToolsDialog({
             placeholder="Search tools"
           />
           <div className="divide-y rounded-md border">
-            {filtered.map((tool) => {
-              const initialSensitivity =
-                installation.sensitivityOverrides[tool.name] ?? tool.sensitivity;
-              const sensitivity = overrides[tool.name] ?? tool.sensitivity;
-              return (
-                <div
-                  key={tool.name}
-                  className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+            {filtered.map((tool) => (
+              <div key={tool.name} className="px-3 py-3">
+                <label
+                  htmlFor={`tool-enabled-${installation.id}-${tool.name}`}
+                  className="flex min-w-0 items-start gap-3"
                 >
-                  <label
-                    htmlFor={`tool-enabled-${installation.id}-${tool.name}`}
-                    className="flex min-w-0 items-start gap-3"
-                  >
-                    <Checkbox
-                      id={`tool-enabled-${installation.id}-${tool.name}`}
-                      checked={allTools || enabled.includes(tool.name)}
-                      disabled={allTools}
-                      onCheckedChange={(checked) =>
-                        setEnabled((current) =>
-                          checked
-                            ? [...current, tool.name]
-                            : current.filter((name) => name !== tool.name),
-                        )
-                      }
-                    />
-                    <span className="min-w-0">
-                      <span className="block font-medium text-chrome">{tool.name}</span>
-                      <span className="block truncate text-meta text-muted-foreground">
-                        {tool.description ?? "No description provided."}
-                      </span>
+                  <Checkbox
+                    id={`tool-enabled-${installation.id}-${tool.name}`}
+                    checked={allTools || enabled.includes(tool.name)}
+                    disabled={allTools}
+                    onCheckedChange={(checked) =>
+                      setEnabled((current) =>
+                        checked
+                          ? [...current, tool.name]
+                          : current.filter((name) => name !== tool.name),
+                      )
+                    }
+                  />
+                  <span className="min-w-0">
+                    <span className="block font-medium text-chrome">{tool.name}</span>
+                    <span className="block truncate text-meta text-muted-foreground">
+                      {tool.description ?? "No description provided."}
                     </span>
-                  </label>
-                  {editingSensitivity === tool.name || sensitivity !== initialSensitivity ? (
-                    <Select
-                      value={sensitivity}
-                      onValueChange={(value) => {
-                        setOverrides((current) => ({
-                          ...current,
-                          [tool.name]: value as Sensitivity,
-                        }));
-                        setEditingSensitivity(undefined);
-                      }}
-                    >
-                      <SelectTrigger
-                        className="w-36"
-                        aria-label={`Sensitivity for ${tool.name}`}
-                        autoFocus
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="read">Read</SelectItem>
-                        <SelectItem value="write">Write</SelectItem>
-                        <SelectItem value="destructive">Destructive</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <SensitivityBadge sensitivity={sensitivity} />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Edit sensitivity for ${tool.name}`}
-                        onClick={() => setEditingSensitivity(tool.name)}
-                      >
-                        <Pencil />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                  </span>
+                </label>
+              </div>
+            ))}
           </div>
         </div>
         <DialogFooter>

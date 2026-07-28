@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // documented Generate API is broadly available and is the self-service option.
 export const gammaProvider = {
   key: "gamma",
+  trusted: true,
   displayName: "Gamma",
   description: "Generate presentations, documents, webpages, and social content with Gamma.",
   logoUrl: "/connector-logos/gamma.svg",
@@ -44,7 +45,6 @@ export const gammaProvider = {
         },
         required: ["inputText", "format"],
       },
-      sensitivity: "write",
     },
     {
       name: "generate_document",
@@ -61,7 +61,6 @@ export const gammaProvider = {
         },
         required: ["inputText", "format"],
       },
-      sensitivity: "write",
     },
     {
       name: "generate_webpage",
@@ -78,7 +77,6 @@ export const gammaProvider = {
         },
         required: ["inputText", "format"],
       },
-      sensitivity: "write",
     },
     {
       name: "generate_social_post",
@@ -95,7 +93,6 @@ export const gammaProvider = {
         },
         required: ["inputText", "format"],
       },
-      sensitivity: "write",
     },
     {
       name: "generate_from_template",
@@ -111,7 +108,6 @@ export const gammaProvider = {
         },
         required: ["templateId", "inputText"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_generation",
@@ -123,7 +119,6 @@ export const gammaProvider = {
         properties: { generationId: { type: "string" } },
         required: ["generationId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_themes",
@@ -131,7 +126,6 @@ export const gammaProvider = {
       method: "GET",
       path: "/v1.0/themes",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "list_folders",
@@ -139,7 +133,6 @@ export const gammaProvider = {
       method: "GET",
       path: "/v1.0/folders",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
   ],
   memberConnectable: false,

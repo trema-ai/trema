@@ -8,11 +8,11 @@ import {
   type ConnectorInstallationBody,
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
-  type Sensitivity,
+  type ToolAnnotations,
 } from "#server/services/connectors/installations.js";
 import {
-  collectCredentialStrings,
   ConnectorReconnectRequiredError,
+  collectCredentialStrings,
   type ResolvedConnectionCredential,
   resolveConnectionCredential,
 } from "#server/services/connectors/refresh.js";
@@ -48,7 +48,6 @@ export class ConnectorApprovalRequiredError extends Error {
 
   constructor(
     readonly toolKey: string,
-    readonly sensitivity: Sensitivity,
     readonly installationItemId: string,
   ) {
     super(`Connector tool '${toolKey}' requires approval`);
@@ -91,20 +90,28 @@ export class ConnectorTransportError extends Error {
 }
 
 /**
- * What lets a tool whose sensitivity is not `read` run.
+ * What lets a connector call run at all.
  *
  * There is no default and no boolean: a caller that says nothing gets the
- * refusal, so a new call site cannot execute a sensitive tool by forgetting to
- * ask. Both values are the answer `services/approvals` gave for this exact
- * call, and the data-plane proxy is the only thing that supplies one — the
- * model never sees this field, because it is not part of the `use_connector`
- * tool's input.
+ * refusal, so a new call site cannot execute a tool by forgetting to ask the
+ * gate. Every value is the approval gate's answer for this exact call, and
+ * the data-plane proxy is the only thing that supplies one — the model never
+ * sees this field, because it is not part of the `use_connector` tool's input.
  *
- * - `policy_allowed` — the session's pinned policy allowed the call outright.
+ * - `mode_full` — the session's effective mode is `full`; policy explicitly
+ *   allows ungated execution here.
+ * - `thread_grant` — a person already approved this tool for the thread (or
+ *   standing, for this requester at this scope).
+ * - `delegated_proceed` — the delegated-mode classifier judged this call safe
+ *   to run without a pause.
  * - `approval_claimed` — a recorded approval covering exactly these arguments
  *   was claimed, at most once.
  */
-export type ConnectorCallAuthority = "policy_allowed" | "approval_claimed";
+export type ConnectorCallAuthority =
+  | "mode_full"
+  | "thread_grant"
+  | "delegated_proceed"
+  | "approval_claimed";
 
 export interface ResolveConnectorToolInput {
   orgId: string;
@@ -120,8 +127,8 @@ export interface ResolveConnectorToolInput {
    * both ways: a personal session resolves only installations in personal
    * scopes, and an org or shared session never resolves one
    * ([06-connectors.md](../../../../../wiki/docs/specs/context/06-connectors.md)).
-   * Absent for the capability-gated control-plane route, where an admin names
-   * the scopes explicitly.
+   * Every session-serving caller passes it; absent, resolution spans the
+   * chain's scopes unfiltered.
    */
   sessionScopeKind?: ScopeKind;
   toolKey: string;
@@ -139,12 +146,12 @@ export interface ExecuteConnectorToolInput extends ResolveConnectorToolInput {
   sleep?: (milliseconds: number) => Promise<void>;
   authority?: ConnectorCallAuthority;
   /**
-   * The already-resolved tool, when the caller resolved it to ask the policy
-   * about its sensitivity. Passing it back keeps one call to one resolution
-   * *within a single call*: the sensitivity the policy answered about is the
-   * sensitivity that executes. It says nothing about an approval granted
-   * earlier — that round trip re-resolves from scratch, and comparing the two
-   * resolutions is `useConnector`'s job, not this one's.
+   * The already-resolved tool, when the caller resolved it to run the
+   * approval gate. Passing it back keeps one call to one resolution *within a
+   * single call*: the installation the gate answered about is the one that
+   * executes. It says nothing about an approval granted earlier — that round
+   * trip re-resolves from scratch, and comparing the two resolutions is
+   * `useConnector`'s job, not this one's.
    */
   resolved?: ResolvedConnectorTool;
 }
@@ -164,8 +171,10 @@ export interface ResolvedConnectorTool {
   toolKey: string;
   connectorKey: string;
   toolName: string;
-  /** The effective class after the installation's overrides. */
-  sensitivity: Sensitivity;
+  /** The tool's description, as the provider declared it. Classifier signal. */
+  description?: string;
+  /** The provider's own MCP annotations, verbatim. Classifier signal only. */
+  annotations?: ToolAnnotations;
   body: ConnectorInstallationBody;
   provider: ProviderDef;
 }
@@ -362,7 +371,8 @@ export async function resolveConnectorTool(
         toolKey: input.toolKey,
         connectorKey: provider.key,
         toolName,
-        sensitivity: effective.sensitivity,
+        ...(effective.description ? { description: effective.description } : {}),
+        ...(effective.annotations ? { annotations: effective.annotations } : {}),
         body: parsed.data,
         provider,
       };
@@ -963,13 +973,9 @@ export async function executeConnectorTool(
   const connector = installation.provider.key;
   const tool = installation.toolName;
 
-  if (installation.sensitivity !== "read" && !input.authority) {
+  if (!input.authority) {
     log.warn("Connector tool call rejected", { connector, tool, reason: "approval_required" });
-    throw new ConnectorApprovalRequiredError(
-      input.toolKey,
-      installation.sensitivity,
-      installation.installationItemId,
-    );
+    throw new ConnectorApprovalRequiredError(input.toolKey, installation.installationItemId);
   }
 
   const redactor = new CredentialRedactor();

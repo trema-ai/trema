@@ -523,7 +523,7 @@ integration("connector connections and installations", () => {
     expect(listed[0]).toMatchObject({
       id: installation.id,
       connectionId: bound.id,
-      syncedTools: [{ name: "read_page", sensitivity: "read" }],
+      syncedTools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
     });
 
     await db.connectorConnection.update({

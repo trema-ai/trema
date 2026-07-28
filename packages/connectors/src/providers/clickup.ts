@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const clickupProvider = {
   key: "clickup",
+  trusted: true,
   displayName: "ClickUp",
   description:
     "Manage ClickUp tasks, docs, comments, time, and workspace workflows through its MCP server.",

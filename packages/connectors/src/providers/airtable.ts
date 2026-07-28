@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const airtableProvider = {
   key: "airtable",
+  trusted: true,
   displayName: "Airtable",
   description:
     "Access bases, records, and workspace content. Tools come from Airtable's official MCP server.",

@@ -348,7 +348,7 @@ integration("acceptance", () => {
     expect(gated.structuredContent).toMatchObject({
       status: "approval_required",
       toolKey: "google_workspace:create_draft",
-      sensitivity: "write",
+      mode: "ask",
     });
     const gatedCall = gated.structuredContent as { approvalId: string };
     expect(providerCalls).toEqual([]);

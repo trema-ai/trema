@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // clients, so the GA REST API is the production transport for this provider.
 export const vercelProvider = {
   key: "vercel",
+  trusted: true,
   displayName: "Vercel",
   description: "Inspect and manage Vercel users, teams, projects, deployments, and domains.",
   logoUrl: "/connector-logos/vercel.svg",
@@ -34,7 +35,6 @@ export const vercelProvider = {
       method: "GET",
       path: "/v2/user",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "list_teams",
@@ -49,7 +49,6 @@ export const vercelProvider = {
           until: { type: "number" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "list_projects",
@@ -65,7 +64,6 @@ export const vercelProvider = {
           slug: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_project",
@@ -81,7 +79,6 @@ export const vercelProvider = {
         },
         required: ["idOrName"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_deployments",
@@ -99,7 +96,6 @@ export const vercelProvider = {
           slug: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_deployment",
@@ -116,7 +112,6 @@ export const vercelProvider = {
         },
         required: ["idOrUrl"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_deployment",
@@ -135,7 +130,6 @@ export const vercelProvider = {
           slug: { type: "string" },
         },
       },
-      sensitivity: "write",
     },
     {
       name: "cancel_deployment",
@@ -151,7 +145,6 @@ export const vercelProvider = {
         },
         required: ["id"],
       },
-      sensitivity: "destructive",
     },
     {
       name: "list_domains",
@@ -168,7 +161,6 @@ export const vercelProvider = {
           slug: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
   ],
   memberConnectable: false,

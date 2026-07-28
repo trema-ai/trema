@@ -30,12 +30,10 @@ export type MemoryBody = {
 
 export type InstructionBody = { content: string };
 
-export type Sensitivity = "read" | "write" | "destructive";
-
 export type ConnectorTool = {
   name: string;
   description?: string;
-  sensitivity: Sensitivity;
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 };
 
 export type ConnectorBody = {
@@ -43,7 +41,6 @@ export type ConnectorBody = {
   connectionId: string;
   enabledTools: "all" | string[];
   syncedTools?: ConnectorTool[];
-  sensitivityOverrides?: Record<string, Sensitivity>;
 };
 
 export type SkillBody = { source?: string; files?: Record<string, string> };

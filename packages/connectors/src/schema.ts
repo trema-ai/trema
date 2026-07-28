@@ -132,7 +132,6 @@ export const toolDefinitionSchema = z
     baseUrl: z.string().trim().min(1).optional(),
     paramsSchema: z.record(z.string(), z.unknown()),
     authInjection: z.record(z.string(), z.unknown()).optional(),
-    sensitivity: z.enum(["read", "write", "destructive"]),
   })
   .strict();
 
@@ -159,6 +158,10 @@ export const providerDefSchema = z
       .min(1)
       .regex(/^[a-z0-9]+(?:_[a-z0-9]+)*$/),
     displayName: z.string().trim().min(1),
+    // Curated entries in this package declare true; a custom or imported
+    // definition stays untrusted — and pinned to ask-mode — until an admin
+    // vets it (wiki specs/context/06-connectors.md).
+    trusted: z.boolean().default(false),
     description: z.string().trim().min(1).optional(),
     logoUrl: z.string().trim().min(1).optional(),
     categories: z.array(z.string().trim().min(1)).min(1),

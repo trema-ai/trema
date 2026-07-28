@@ -1,48 +1,52 @@
-import type {
-  Policy,
-  PolicyAction,
-  Role,
-  ScopeKind,
-  Sensitivity,
-} from "#server/generated/prisma/client.js";
+import type { ApprovalMode, Policy, Role, ScopeKind } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 
-export type { PolicyAction, Sensitivity };
+export type { ApprovalMode };
 
-export const sensitivityClasses = [
-  "read",
-  "write",
-  "destructive",
-] as const satisfies readonly Sensitivity[];
-
-export const policyActions = [
-  "allow",
-  "require_approval",
-  "deny",
-] as const satisfies readonly PolicyAction[];
+export const approvalModes = [
+  "ask",
+  "delegated",
+  "full",
+] as const satisfies readonly ApprovalMode[];
 
 // Bump when the snapshot shape changes so old rows stay readable.
-export const POLICY_SNAPSHOT_VERSION = 1;
+export const POLICY_SNAPSHOT_VERSION = 2;
 
-/** Where a resolved decision came from: a stored policy, or the built-in default. */
-export type PolicyDecisionSource =
-  | { kind: "default"; scopeKind: ScopeKind }
-  | { kind: "policy"; policyId: string; scopeId: string };
+/**
+ * Permissiveness order. A policy's `maxMode` is a ceiling: the loosest mode a
+ * human may choose where it applies, and the most restrictive applicable
+ * ceiling wins.
+ */
+const MODE_RANK: Record<ApprovalMode, number> = { ask: 0, delegated: 1, full: 2 };
 
-export interface PolicyDecision {
-  sensitivity: Sensitivity;
-  action: PolicyAction;
-  approverRoles: Role[];
-  allowRequesterApproval: boolean;
-  source: PolicyDecisionSource;
+export function strictestMode(left: ApprovalMode, right: ApprovalMode): ApprovalMode {
+  return MODE_RANK[left] <= MODE_RANK[right] ? left : right;
 }
 
+/** The stored fields resolution reads. Narrower than the Prisma row on purpose. */
+export type PolicyRow = Pick<
+  Policy,
+  "id" | "scopeId" | "connectorKey" | "maxMode" | "approverRoles" | "allowRequesterApproval"
+>;
+
+/**
+ * The policy rows a session pins for its whole life. Resolution happens per
+ * call — the ceiling depends on which connector the call reaches — so the
+ * snapshot carries the applicable rows, not a precomputed decision.
+ */
 export interface PolicySnapshot {
   version: number;
   scopeId: string;
   scopeChain: string[];
-  decisions: Record<Sensitivity, PolicyDecision>;
+  rows: PolicyRow[];
+}
+
+/** Who may resolve an interrupt, and whether the asker may resolve their own. */
+export interface ApprovalRouting {
+  approverRoles: Role[];
+  allowRequesterApproval: boolean;
+  source: { kind: "default"; scopeKind: ScopeKind } | { kind: "policy"; policyId: string };
 }
 
 export class PolicyValidationError extends Error {
@@ -59,144 +63,161 @@ export class PolicyNotFoundError extends Error {
   }
 }
 
-const approverRoles: Role[] = ["owner", "admin"];
+/**
+ * The ceiling nothing wrote a row for. `delegated` — never `full`: full access
+ * exists only where a policy explicitly grants it, and `delegated` itself is
+ * selectable only when a classifier model is configured, so the out-of-the-box
+ * posture is that every call asks.
+ */
+export const DEFAULT_MODE_CEILING: ApprovalMode = "delegated";
 
-// The defaults from the permissions spec. Shared and organization scopes gate
-// writes and destructive calls; a personal scope treats the ask itself as the
-// approval for writes and keeps a confirm step for destructive calls. The
-// requester may never be the sole approver of a destructive call in a scope
-// other people share.
-function defaultDecision(sensitivity: Sensitivity, scopeKind: ScopeKind): PolicyDecision {
-  const source: PolicyDecisionSource = { kind: "default", scopeKind };
-  const personal = scopeKind === "personal";
-
-  if (sensitivity === "read") {
-    return {
-      sensitivity,
-      action: "allow",
-      approverRoles: [],
-      allowRequesterApproval: true,
-      source,
-    };
-  }
-  if (sensitivity === "write") {
-    return {
-      sensitivity,
-      action: personal ? "allow" : "require_approval",
-      approverRoles: personal ? [] : approverRoles,
-      allowRequesterApproval: true,
-      source,
-    };
-  }
+/**
+ * Routing when no policy row supplies one. The requester may resolve their own
+ * interrupt everywhere — an ask-mode approval is the person confirming their
+ * own agent's call, and separation of duties is a policy an org writes, not a
+ * default that taxes every thread. Admins and owners can always step in; in a
+ * personal scope the owner is the only approver there is.
+ */
+export function defaultRouting(scopeKind: ScopeKind): ApprovalRouting {
   return {
-    sensitivity,
-    action: "require_approval",
-    approverRoles: personal ? ["owner"] : approverRoles,
-    allowRequesterApproval: personal,
-    source,
+    approverRoles: scopeKind === "personal" ? ["owner"] : ["admin", "owner"],
+    allowRequesterApproval: true,
+    source: { kind: "default", scopeKind },
   };
 }
 
-export function defaultDecisions(scopeKind: ScopeKind): Record<Sensitivity, PolicyDecision> {
-  return {
-    read: defaultDecision("read", scopeKind),
-    write: defaultDecision("write", scopeKind),
-    destructive: defaultDecision("destructive", scopeKind),
-  };
-}
-
-/** The stored fields resolution reads. Narrower than the Prisma row on purpose. */
-export type PolicyRow = Pick<
-  Policy,
-  "id" | "scopeId" | "sensitivity" | "action" | "approverRoles" | "allowRequesterApproval"
->;
-
-function decisionFromRow(row: PolicyRow): PolicyDecision {
-  return {
-    sensitivity: row.sensitivity,
-    action: row.action,
-    approverRoles: [...row.approverRoles],
-    allowRequesterApproval: row.allowRequesterApproval,
-    source: { kind: "policy", policyId: row.id, scopeId: row.scopeId },
-  };
+export interface ResolveModeCeilingInput {
+  /** The pinned rows ({@link PolicySnapshot.rows}) or a live read of the chain's rows. */
+  rows: readonly PolicyRow[];
+  /** Scope IDs in resolution order, widest first. */
+  scopeChain: readonly string[];
+  /** The connector the call reaches; absent for calls that are not a connector's. */
+  connectorKey?: string;
+  /**
+   * Whether the connector's catalog entry is trusted. An untrusted entry —
+   * a custom MCP server, an unvetted import — pins to `ask` regardless of
+   * policy; vetting the entry is the gate to anything looser.
+   */
+  connectorTrusted?: boolean;
 }
 
 /**
- * Most-specific-wins, one class at a time: the narrowest scope in the chain
- * holding a row for that sensitivity decides it, and a class nobody wrote a row
- * for falls back to the built-in default. Classes resolve independently, so a
- * shared scope can gate deletions without restating the org's read rule.
+ * The loosest mode a human may choose for one call: the most restrictive
+ * `maxMode` across every applicable row — scope-wide rows for scopes in the
+ * chain, plus the connector's own rows — and {@link DEFAULT_MODE_CEILING} when
+ * nothing wrote one. A narrower scope therefore tightens a wider scope's
+ * ceiling and never loosens it.
  */
-export function resolveDecisions(input: {
-  scopeKind: ScopeKind;
+export function resolveModeCeiling(input: ResolveModeCeilingInput): ApprovalMode {
+  if (input.connectorKey !== undefined && input.connectorTrusted !== true) return "ask";
+  const chain = new Set(input.scopeChain);
+  const applicable = input.rows.filter(
+    (row) =>
+      chain.has(row.scopeId) &&
+      (row.connectorKey === null ||
+        (input.connectorKey !== undefined && row.connectorKey === input.connectorKey)),
+  );
+  return applicable.reduce<ApprovalMode>(
+    (ceiling, row) => strictestMode(ceiling, row.maxMode),
+    applicable.length === 0 ? DEFAULT_MODE_CEILING : "full",
+  );
+}
+
+export interface ResolveApprovalRoutingInput {
+  rows: readonly PolicyRow[];
   /** Scope IDs in resolution order, widest first. */
   scopeChain: readonly string[];
-  policies: readonly PolicyRow[];
-}): Record<Sensitivity, PolicyDecision> {
-  const decisions = defaultDecisions(input.scopeKind);
+  scopeKind: ScopeKind;
+  connectorKey?: string;
+}
 
-  for (const sensitivity of sensitivityClasses) {
+/**
+ * Who resolves an interrupt: the most specific applicable row — the
+ * connector's own row before a scope-wide one, a narrower scope before a wider
+ * one — and the built-in defaults when nothing wrote a row.
+ */
+export function resolveApprovalRouting(input: ResolveApprovalRoutingInput): ApprovalRouting {
+  for (const connectorSpecific of [true, false]) {
     for (let index = input.scopeChain.length - 1; index >= 0; index -= 1) {
-      const row = input.policies.find(
-        (policy) =>
-          policy.scopeId === input.scopeChain[index] && policy.sensitivity === sensitivity,
+      const row = input.rows.find(
+        (candidate) =>
+          candidate.scopeId === input.scopeChain[index] &&
+          (connectorSpecific
+            ? input.connectorKey !== undefined && candidate.connectorKey === input.connectorKey
+            : candidate.connectorKey === null),
       );
       if (!row) continue;
-      decisions[sensitivity] = decisionFromRow(row);
-      break;
+      return {
+        approverRoles: [...row.approverRoles],
+        allowRequesterApproval: row.allowRequesterApproval,
+        source: { kind: "policy", policyId: row.id },
+      };
     }
   }
-
-  return decisions;
+  return defaultRouting(input.scopeKind);
 }
+
+export interface ResolveEffectiveModeInput extends ResolveModeCeilingInput {
+  /** The mode the requester chose for the thread. */
+  requestedMode: ApprovalMode;
+  /**
+   * Whether a classifier model is configured. Without one `delegated` is
+   * unavailable — the safe default needs no LLM — so a delegated choice or
+   * ceiling degrades to `ask`.
+   */
+  classifierAvailable: boolean;
+}
+
+/**
+ * The mode one call actually runs under: the requester's choice clamped to
+ * the ceiling, with `delegated` degrading to `ask` when no classifier exists.
+ */
+export function resolveEffectiveMode(input: ResolveEffectiveModeInput): ApprovalMode {
+  const clamped = strictestMode(input.requestedMode, resolveModeCeiling(input));
+  return clamped === "delegated" && !input.classifierAvailable ? "ask" : clamped;
+}
+
+const policyRowSelect = {
+  id: true,
+  scopeId: true,
+  connectorKey: true,
+  maxMode: true,
+  approverRoles: true,
+  allowRequesterApproval: true,
+} as const;
 
 export interface ResolvePolicySnapshotInput {
   orgId: string;
   scopeId: string;
   /** Scope IDs in resolution order, widest first. */
   scopeChain: readonly string[];
-  scopeKind: ScopeKind;
 }
 
 /**
- * Resolve the approval policy that governs a session for its whole life.
+ * Pin the policy rows that govern a session for its whole life.
  *
- * The caller pins the returned snapshot on the session row, so a policy edited
- * mid-run reaches the next session and never the running one.
+ * The caller stores the returned snapshot on the session row, so a policy
+ * edited mid-run reaches the next session and never the running one.
  */
 export async function resolvePolicySnapshot(
   db: Database,
   input: ResolvePolicySnapshotInput,
 ): Promise<PolicySnapshot> {
-  const policies = await db.policy.findMany({
+  const rows = await db.policy.findMany({
     where: { orgId: input.orgId, scopeId: { in: [...input.scopeChain] } },
-    select: {
-      id: true,
-      scopeId: true,
-      sensitivity: true,
-      action: true,
-      approverRoles: true,
-      allowRequesterApproval: true,
-    },
-  });
-  const decisions = resolveDecisions({
-    scopeKind: input.scopeKind,
-    scopeChain: input.scopeChain,
-    policies,
+    select: policyRowSelect,
+    orderBy: [{ scopeId: "asc" }, { connectorKey: "asc" }],
   });
   log.debug("Policy snapshot resolved", {
     scopeId: input.scopeId,
-    scopeKind: input.scopeKind,
     version: POLICY_SNAPSHOT_VERSION,
-    storedPolicies: policies.length,
-    write: decisions.write.action,
-    destructive: decisions.destructive.action,
+    storedPolicies: rows.length,
   });
   return {
     version: POLICY_SNAPSHOT_VERSION,
     scopeId: input.scopeId,
     scopeChain: [...input.scopeChain],
-    decisions,
+    rows,
   };
 }
 
@@ -208,69 +229,45 @@ export interface ListPoliciesInput {
 export async function listPolicies(db: Database, input: ListPoliciesInput): Promise<Policy[]> {
   return db.policy.findMany({
     where: { orgId: input.orgId, ...(input.scopeId ? { scopeId: input.scopeId } : {}) },
-    orderBy: [{ scopeId: "asc" }, { sensitivity: "asc" }],
+    orderBy: [{ scopeId: "asc" }, { connectorKey: { sort: "asc", nulls: "first" } }],
   });
 }
 
-export interface PolicyWrite {
-  action: PolicyAction;
+export interface SetPolicyInput {
+  orgId: string;
+  actorPrincipalId: string;
+  scopeId: string;
+  /** The connector the row governs; absent bounds every connector in the scope. */
+  connectorKey?: string;
+  maxMode: ApprovalMode;
   approverRoles?: Role[];
   allowRequesterApproval?: boolean;
 }
 
-interface NormalizedWrite {
-  action: PolicyAction;
+/**
+ * Validate one written policy. The one rule is that a row's interrupts must be
+ * resolvable by someone: a row naming no approver role and refusing requester
+ * approval promises a pause nobody can end.
+ */
+function normalizeWrite(input: SetPolicyInput): {
+  maxMode: ApprovalMode;
   approverRoles: Role[];
   allowRequesterApproval: boolean;
-}
-
-/**
- * Validate one written policy against the scope it lands in.
- *
- * Both rules are about who can actually resolve the approval a row promises. A
- * row nobody may resolve is a `deny` written the confusing way. And in a scope
- * other people share, an approver role is required: the separation of duties
- * the permissions spec builds the destructive default around only holds if
- * someone other than the requester can say yes. A personal scope is the
- * exception, because there the requester alone is the point — the approval is
- * the owner's own confirm step.
- *
- * An `allow` or `deny` row has no approval to resolve, so its approver fields
- * are stored empty rather than kept as dead configuration a reader would have
- * to interpret.
- */
-function normalizeWrite(write: PolicyWrite, scopeKind: ScopeKind): NormalizedWrite {
-  if (write.action !== "require_approval") {
-    return { action: write.action, approverRoles: [], allowRequesterApproval: false };
-  }
-
-  const approverRoles = [...new Set(write.approverRoles ?? [])];
-  const allowRequesterApproval = write.allowRequesterApproval ?? false;
-
+} {
+  const approverRoles = [...new Set(input.approverRoles ?? [])];
+  const allowRequesterApproval = input.allowRequesterApproval ?? true;
   if (approverRoles.length === 0 && !allowRequesterApproval) {
     throw new PolicyValidationError(
-      "A require_approval policy needs an approver role or requester approval; use deny to disable the class",
+      "A policy needs an approver role or requester approval; nobody could resolve its interrupts",
     );
   }
-  if (approverRoles.length === 0 && scopeKind !== "personal") {
-    throw new PolicyValidationError(
-      "A require_approval policy outside a personal scope needs an approver role: the requester cannot be its sole approver",
-    );
-  }
-
-  return { action: write.action, approverRoles, allowRequesterApproval };
-}
-
-export interface SetPolicyInput extends PolicyWrite {
-  orgId: string;
-  actorPrincipalId: string;
-  scopeId: string;
-  sensitivity: Sensitivity;
+  return { maxMode: input.maxMode, approverRoles, allowRequesterApproval };
 }
 
 /**
- * Create or replace the policy for one scope and sensitivity class. A scope
- * holds at most one row per class, so writing is a set, not an append.
+ * Create or replace the policy for one scope and connector (or the scope-wide
+ * row). A scope holds at most one row per key, so writing is a set, not an
+ * append; the partial unique indexes hold that under concurrency.
  */
 export async function setPolicy(db: Database, input: SetPolicyInput): Promise<Policy> {
   const scope = await db.scope.findFirst({
@@ -281,26 +278,21 @@ export async function setPolicy(db: Database, input: SetPolicyInput): Promise<Po
     log.warn("Policy target scope not found", { scopeId: input.scopeId });
     throw new PolicyNotFoundError("Policy target scope not found");
   }
-
-  const written = normalizeWrite(input, scope.kind);
+  const connectorKey = input.connectorKey?.trim() || null;
+  const written = normalizeWrite(input);
 
   const policy = await db.$transaction(async (transaction) => {
-    const policy = await transaction.policy.upsert({
-      where: {
-        orgId_scopeId_sensitivity: {
-          orgId: input.orgId,
-          scopeId: input.scopeId,
-          sensitivity: input.sensitivity,
-        },
-      },
-      create: {
-        orgId: input.orgId,
-        scopeId: input.scopeId,
-        sensitivity: input.sensitivity,
-        ...written,
-      },
-      update: written,
+    const existing = await transaction.policy.findFirst({
+      where: { orgId: input.orgId, scopeId: input.scopeId, connectorKey },
     });
+    const policy = existing
+      ? await transaction.policy.update({
+          where: { orgId_id: { orgId: input.orgId, id: existing.id } },
+          data: written,
+        })
+      : await transaction.policy.create({
+          data: { orgId: input.orgId, scopeId: input.scopeId, connectorKey, ...written },
+        });
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
@@ -309,8 +301,8 @@ export async function setPolicy(db: Database, input: SetPolicyInput): Promise<Po
         subject: policy.id,
         payload: {
           scopeId: policy.scopeId,
-          sensitivity: policy.sensitivity,
-          action: policy.action,
+          connectorKey: policy.connectorKey,
+          maxMode: policy.maxMode,
           approverRoles: policy.approverRoles,
           allowRequesterApproval: policy.allowRequesterApproval,
         },
@@ -322,8 +314,8 @@ export async function setPolicy(db: Database, input: SetPolicyInput): Promise<Po
   log.info("Approval policy set", {
     policyId: policy.id,
     scopeId: policy.scopeId,
-    sensitivity: policy.sensitivity,
-    action: policy.action,
+    connectorKey: policy.connectorKey,
+    maxMode: policy.maxMode,
   });
   return policy;
 }
@@ -332,22 +324,25 @@ export interface DeletePolicyInput {
   orgId: string;
   actorPrincipalId: string;
   scopeId: string;
-  sensitivity: Sensitivity;
+  connectorKey?: string;
 }
 
 /**
- * Remove one scope's policy for a class. The class then resolves through the
- * wider scope, or through the built-in default when nothing else carries a row.
+ * Remove one scope's row for a connector (or its scope-wide row). The ceiling
+ * then resolves through the remaining rows, or the built-in default.
  */
 export async function deletePolicy(db: Database, input: DeletePolicyInput): Promise<Policy> {
+  const connectorKey = input.connectorKey?.trim() || null;
   const policy = await db.$transaction(async (transaction) => {
     const existing = await transaction.policy.findFirst({
-      where: { orgId: input.orgId, scopeId: input.scopeId, sensitivity: input.sensitivity },
+      where: { orgId: input.orgId, scopeId: input.scopeId, connectorKey },
     });
     if (!existing) {
       throw new PolicyNotFoundError("Policy not found");
     }
-    await transaction.policy.delete({ where: { id: existing.id } });
+    await transaction.policy.delete({
+      where: { orgId_id: { orgId: input.orgId, id: existing.id } },
+    });
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
@@ -356,8 +351,8 @@ export async function deletePolicy(db: Database, input: DeletePolicyInput): Prom
         subject: existing.id,
         payload: {
           scopeId: existing.scopeId,
-          sensitivity: existing.sensitivity,
-          action: existing.action,
+          connectorKey: existing.connectorKey,
+          maxMode: existing.maxMode,
         },
       },
     });
@@ -367,20 +362,9 @@ export async function deletePolicy(db: Database, input: DeletePolicyInput): Prom
   log.info("Approval policy removed", {
     policyId: policy.id,
     scopeId: policy.scopeId,
-    sensitivity: policy.sensitivity,
+    connectorKey: policy.connectorKey,
   });
   return policy;
-}
-
-export interface ResolveScopePoliciesInput {
-  orgId: string;
-  scopeId: string;
-}
-
-export interface ResolvedScopePolicies {
-  scopeId: string;
-  scopeChain: string[];
-  decisions: Record<Sensitivity, PolicyDecision>;
 }
 
 async function resolveScopeChainIds(
@@ -397,10 +381,28 @@ async function resolveScopeChainIds(
   return [orgScope.id, scope.id];
 }
 
+export interface ResolveScopePoliciesInput {
+  orgId: string;
+  scopeId: string;
+  /** Resolve the ceiling one connector would get; absent resolves the scope-wide view. */
+  connectorKey?: string;
+  /** The connector's catalog trust; only read when `connectorKey` is present. */
+  connectorTrusted?: boolean;
+}
+
+export interface ResolvedScopePolicies {
+  scopeId: string;
+  scopeChain: string[];
+  rows: PolicyRow[];
+  /** The loosest mode a human may choose here, before classifier availability. */
+  ceiling: ApprovalMode;
+  routing: ApprovalRouting;
+}
+
 /**
  * What a session opened against this scope would resolve right now. The
  * control-plane read of the same logic sessions pin, so an admin can see the
- * effective policy without opening one.
+ * effective ceiling without opening one.
  */
 export async function resolveScopePolicies(
   db: Database,
@@ -420,7 +422,21 @@ export async function resolveScopePolicies(
     orgId: input.orgId,
     scopeId: scope.id,
     scopeChain,
-    scopeKind: scope.kind,
   });
-  return { scopeId: scope.id, scopeChain, decisions: snapshot.decisions };
+  const connector =
+    input.connectorKey === undefined
+      ? {}
+      : { connectorKey: input.connectorKey, connectorTrusted: input.connectorTrusted ?? false };
+  return {
+    scopeId: scope.id,
+    scopeChain,
+    rows: snapshot.rows,
+    ceiling: resolveModeCeiling({ rows: snapshot.rows, scopeChain, ...connector }),
+    routing: resolveApprovalRouting({
+      rows: snapshot.rows,
+      scopeChain,
+      scopeKind: scope.kind,
+      ...(input.connectorKey === undefined ? {} : { connectorKey: input.connectorKey }),
+    }),
+  };
 }

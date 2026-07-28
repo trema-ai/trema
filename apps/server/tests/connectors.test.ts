@@ -694,7 +694,7 @@ integration("connector connection flows", () => {
         {
           name: "notion-search",
           description: "Search the connected Notion workspace",
-          sensitivity: "read",
+          annotations: { readOnlyHint: true },
         },
       ],
     });

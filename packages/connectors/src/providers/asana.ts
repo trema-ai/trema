@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const asanaProvider = {
   key: "asana",
+  trusted: true,
   displayName: "Asana",
   description:
     "Find, create, and update tasks and projects in Asana. Tools come from Asana's official MCP server.",

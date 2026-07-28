@@ -8,7 +8,6 @@ import {
   type ConnectorInstallationBody,
   ConnectorInstallationNotFoundError,
   createConnectorInstallationBodySchema,
-  type Sensitivity,
   type SyncedTool,
 } from "#server/services/connectors/installations.js";
 import {
@@ -30,19 +29,23 @@ export interface McpListedTool {
     | undefined;
 }
 
-export function sensitivityFromMcpAnnotations(
-  annotations: McpListedTool["annotations"],
-): Sensitivity {
-  if (annotations?.readOnlyHint === true) return "read";
-  if (annotations?.destructiveHint === false) return "write";
-  return "destructive";
-}
-
+/**
+ * The stored shape of one listed tool. Annotations ride along verbatim as
+ * classifier signal for delegated mode; they gate nothing.
+ */
 export function mapMcpTool(tool: McpListedTool): SyncedTool {
+  const annotations = {
+    ...(tool.annotations?.readOnlyHint !== undefined
+      ? { readOnlyHint: tool.annotations.readOnlyHint }
+      : {}),
+    ...(tool.annotations?.destructiveHint !== undefined
+      ? { destructiveHint: tool.annotations.destructiveHint }
+      : {}),
+  };
   return {
     name: tool.name,
     ...(tool.description ? { description: tool.description } : {}),
-    sensitivity: sensitivityFromMcpAnnotations(tool.annotations),
+    ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
   };
 }
 

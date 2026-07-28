@@ -66,38 +66,36 @@ const standingSchema = z
   })
   .describe("The bounded set of context injected into every turn of this session.");
 
-const policyDecisionSchema = z
+const policyRowSchema = z
   .object({
-    sensitivity: z
-      .enum(["read", "write", "destructive"])
-      .describe("The tool sensitivity class the decision governs."),
-    action: z
-      .enum(["allow", "require_approval", "deny"])
-      .describe("What happens when the agent calls a tool of this class."),
+    id: z.string().describe("The policy row's unique ID."),
+    scopeId: z.string().describe("The scope the row applies to."),
+    connectorKey: z
+      .string()
+      .nullable()
+      .describe("The connector the row governs; null bounds every connector in the scope."),
+    maxMode: z
+      .enum(["ask", "delegated", "full"])
+      .describe("The loosest approval mode a human may choose where this row applies."),
     approverRoles: z
       .array(z.enum(["owner", "admin", "member", "viewer"]))
-      .describe("The roles that may resolve an approval for this class."),
+      .describe("The roles that may resolve an interrupt routed by this row."),
     allowRequesterApproval: z
       .boolean()
-      .describe("Whether the person who asked may approve their own request."),
-    source: z.json().describe("Where the decision came from: a stored policy or the default."),
+      .describe("Whether the person who asked may approve their own action."),
   })
-  .describe("The resolved approval policy for one sensitivity class.");
+  .describe("One pinned approval-policy row.");
 
 const policySnapshotSchema = z
   .object({
     version: z.number().int().describe("The snapshot format version."),
     scopeId: z.string().describe("The scope the session opened against."),
     scopeChain: z.array(z.string()).describe("The scope IDs the policy resolved over."),
-    decisions: z
-      .object({
-        read: policyDecisionSchema,
-        write: policyDecisionSchema,
-        destructive: policyDecisionSchema,
-      })
-      .describe("One resolved decision per sensitivity class."),
+    rows: z
+      .array(policyRowSchema)
+      .describe("The policy rows the approval gate resolves against, pinned at open."),
   })
-  .describe("The approval policy pinned for the session's whole life.");
+  .describe("The approval-policy rows pinned for the session's whole life.");
 
 const sessionSchema = z
   .object({
@@ -234,6 +232,12 @@ const open = serviceAuthed
           ])
           .optional()
           .describe("Who asked. Omit it for scheduled work that nobody triggered."),
+        approvalMode: z
+          .enum(["ask", "delegated", "full"])
+          .optional()
+          .describe(
+            "The approval mode the requester chose for this thread. Defaults to ask; the gate clamps it to the policy ceiling per call.",
+          ),
       })
       .describe("The location and requester to open a session for."),
   )
@@ -249,6 +253,7 @@ const open = serviceAuthed
           ...(input.dm === undefined ? {} : { dm: input.dm }),
           ...(input.threadRef === undefined ? {} : { threadRef: input.threadRef }),
           ...(input.requester === undefined ? {} : { requester: input.requester }),
+          ...(input.approvalMode === undefined ? {} : { approvalMode: input.approvalMode }),
         }),
       );
     } catch (error) {

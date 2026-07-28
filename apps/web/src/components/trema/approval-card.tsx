@@ -1,7 +1,7 @@
 import { CircleCheck, CircleX, Clock } from "lucide-react";
 
+import { type ApprovalModeValue, ModeBadge } from "#web/components/trema/mode-badge.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
-import { type Sensitivity, SensitivityBadge } from "#web/components/trema/sensitivity-badge.tsx";
 import { Button } from "#web/components/ui/button.tsx";
 import { cn } from "#web/lib/utils.ts";
 
@@ -23,7 +23,9 @@ type ApprovalCardProps = {
   action?: {
     toolTitle: string;
     connector: string;
-    sensitivity: Sensitivity;
+    mode: ApprovalModeValue;
+    /** Why a delegated-mode call paused, from the classifier. */
+    escalationReason?: string;
     argsSummary: string;
   };
   requestedBy: string;
@@ -81,12 +83,10 @@ function ApprovalCard({
       data-kind={kind}
       className={cn("rounded-md border bg-card p-4", className)}
     >
-      {/* What is being asked, and how risky it is — the two glance signals. */}
+      {/* What is being asked, and why it paused — the two glance signals. */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 text-[15px] leading-snug font-semibold">{headline}</div>
-        {action !== undefined && (
-          <SensitivityBadge sensitivity={action.sensitivity} className="mt-0.5 shrink-0" />
-        )}
+        {action !== undefined && <ModeBadge mode={action.mode} className="mt-0.5 shrink-0" />}
       </div>
 
       {prompt !== undefined && <p className="mt-1.5 text-chrome text-muted-foreground">{prompt}</p>}
@@ -101,6 +101,11 @@ function ApprovalCard({
           <div className="mt-1 line-clamp-3 font-mono text-log text-muted-foreground">
             {action.argsSummary}
           </div>
+          {action.escalationReason !== undefined && (
+            <div className="mt-1.5 text-meta text-muted-foreground">
+              Paused by the classifier: {action.escalationReason}
+            </div>
+          )}
         </div>
       )}
 

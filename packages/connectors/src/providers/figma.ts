@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const figmaProvider = {
   key: "figma",
+  trusted: true,
   displayName: "Figma",
   description:
     "A curated set of tools to read files, browse team projects, and read and post file comments over the Figma REST API.",
@@ -72,7 +73,6 @@ export const figmaProvider = {
         },
         required: ["fileKey"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_file_comments",
@@ -86,7 +86,6 @@ export const figmaProvider = {
         },
         required: ["fileKey"],
       },
-      sensitivity: "read",
     },
     {
       name: "post_comment",
@@ -105,7 +104,6 @@ export const figmaProvider = {
         },
         required: ["fileKey", "message"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_team_projects",
@@ -119,7 +117,6 @@ export const figmaProvider = {
         },
         required: ["teamId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_project_files",
@@ -133,7 +130,6 @@ export const figmaProvider = {
         },
         required: ["projectId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_file_nodes",
@@ -151,7 +147,6 @@ export const figmaProvider = {
         },
         required: ["fileKey", "ids"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_image_renders",
@@ -169,7 +164,6 @@ export const figmaProvider = {
         },
         required: ["fileKey", "ids"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_file_versions",
@@ -183,7 +177,6 @@ export const figmaProvider = {
         },
         required: ["fileKey"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_team_components",
@@ -199,7 +192,6 @@ export const figmaProvider = {
         },
         required: ["teamId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_comment_reactions",
@@ -215,7 +207,6 @@ export const figmaProvider = {
         },
         required: ["fileKey", "commentId"],
       },
-      sensitivity: "read",
     },
   ],
   memberConnectable: true,
