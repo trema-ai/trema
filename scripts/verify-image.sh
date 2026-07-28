@@ -58,3 +58,37 @@ echo "ok  no package sources shipped"
 # The image serves the web build itself, so the assets must be in it.
 docker run --rm --entrypoint sh "$image" -c 'test -f /srv/trema/web/index.html'
 echo "ok  web assets"
+
+# `migrate` and `doctor` shell out to the Prisma CLI, which must survive the
+# pruned production install as a runtime dependency. Run both against a
+# throwaway postgres to prove the image applies the checked-in migrations.
+network="verify-image-net-$$"
+postgres="verify-image-pg-$$"
+cleanup() {
+  docker rm -f "$postgres" >/dev/null 2>&1 || true
+  docker network rm "$network" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker network create "$network" >/dev/null
+docker run --detach --name "$postgres" --network "$network" \
+  --env POSTGRES_DB=verify \
+  --env POSTGRES_USER=postgres \
+  --env POSTGRES_PASSWORD=postgres \
+  --health-cmd "pg_isready -U postgres -d verify" \
+  --health-interval 1s \
+  --health-retries 60 \
+  pgvector/pgvector:pg16 >/dev/null
+
+until [ "$(docker inspect --format '{{.State.Health.Status}}' "$postgres")" = "healthy" ]; do
+  sleep 1
+done
+
+for command in migrate doctor; do
+  docker run --rm --network "$network" \
+    --env DATABASE_URL="postgresql://postgres:postgres@${postgres}:5432/verify" \
+    --env TREMA_AUTH_SECRET="verify-secret-0123456789abcdef0123" \
+    --env TREMA_MODE="hosted" \
+    "$image" node dist/cli.js "$command"
+  echo "ok  trema $command"
+done
