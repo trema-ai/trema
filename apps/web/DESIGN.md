@@ -79,6 +79,16 @@ use `text-chrome` and `text-meta` directly.
 - **Thread.** Centered 740px column on `card` background.
 - **Run view.** 860px timeline column plus a right panel rail; the
   rail collapses into tabs under 1200px.
+- **Timeline items.** Flat collapsible rows on the page background —
+  one line collapsed, detail indented behind a left rule when
+  expanded (Cursor-style). Cards nested inside a timeline card were
+  tried and rejected. The one bordered block in a timeline is a live
+  elicitation: the run's open question renders as a card until its
+  resolution arrives, then collapses into a one-line history row.
+  Controls that cannot act yet are hidden, never rendered disabled —
+  except a live elicitation's options, which show with a line stating
+  why they cannot act, because the pending decision itself is the
+  content.
 - **Admin lists.** Filter bar of select pills above a table; row click
   opens the detail route. Empty states get an icon, one line, and one
   action.

@@ -181,7 +181,16 @@ const swatchClasses: Record<(typeof colorTokens)[number], string> = {
   "wait-soft": "bg-wait-soft",
 };
 
-const runStates: RunState[] = ["queued", "running", "paused", "finished", "failed", "stale"];
+const runStates: RunState[] = [
+  "queued",
+  "running",
+  "awaiting_approval",
+  "awaiting_input",
+  "completed",
+  "failed",
+  "cancelled",
+  "stale",
+];
 
 type RunRow = {
   id: string;
@@ -771,6 +780,25 @@ function ApprovalsSection() {
             resolution={{ outcome: "expired" }}
           />
         </Variant>
+        <Variant label="Pending, resolving disabled">
+          <ApprovalCard
+            className="w-105 max-w-full"
+            headline="Create an issue in Linear"
+            kind="approval"
+            action={{
+              toolTitle: "Create issue",
+              connector: "Linear",
+              mode: "ask",
+              argsSummary: '{"team":"SUP","title":"Widget fails to sync","priority":2}',
+            }}
+            requestedBy="Nightly digest #1041"
+            options={[
+              { id: "approve", label: "Approve", variant: "primary" },
+              { id: "deny", label: "Deny", variant: "destructive" },
+            ]}
+            disabledReason="Resolving from the web is not yet available."
+          />
+        </Variant>
       </div>
     </Section>
   );
@@ -780,7 +808,7 @@ function TimelineSection() {
   return (
     <Section title="Run timeline" bare>
       <div className="space-y-6">
-        <div className="max-w-215 space-y-4 rounded-md border bg-card p-6">
+        <div className="max-w-215 space-y-3">
           <SteeringNote author="Nelson" at={new Date(Date.now() - 4 * 3_600_000)}>
             Skip anything already triaged this week and keep titles short.
           </SteeringNote>
@@ -809,6 +837,13 @@ function TimelineSection() {
             kind="slack.chat.postMessage"
             state="running"
             notes="Waiting for the Slack API to acknowledge the message."
+          />
+          <ActivityCard
+            title="Delete records"
+            kind="crm.records.delete"
+            state="denied"
+            input='{"table":"contacts","ids":[311,318,319]}'
+            resultSummary="Denied by Ada: bulk deletes need a review first."
           />
           <ErrorItem
             title="Turn failed"

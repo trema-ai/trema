@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    // Browser-safe: no ambient Node globals may leak into this package. The
+    // dom lib stands in for the browser globals the referenced harness
+    // sources use (AbortSignal, structuredClone) under the development
+    // condition, exactly as apps/web typechecks them.
+    "lib": ["es2024", "dom"],
+    "types": [],
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

@@ -14,13 +14,17 @@ type ReasoningBlockProps = {
   className?: string;
 };
 
+/** Reasoning as a machinery row; a redacted block shows presence, never content. */
 function ReasoningBlock({ redacted, children, className }: ReasoningBlockProps) {
   if (redacted) {
     return (
       <div
         data-slot="reasoning-block"
         data-redacted="true"
-        className={cn("flex items-center gap-1.5 text-meta text-muted-foreground", className)}
+        className={cn(
+          "flex items-center gap-2 py-0.5 text-chrome text-muted-foreground",
+          className,
+        )}
       >
         <Lock className="size-3 shrink-0" />
         Reasoning (redacted)
@@ -30,12 +34,14 @@ function ReasoningBlock({ redacted, children, className }: ReasoningBlockProps) 
 
   return (
     <Collapsible data-slot="reasoning-block" className={className}>
-      <CollapsibleTrigger className="group flex items-center gap-1 text-meta text-muted-foreground hover:text-foreground">
+      <CollapsibleTrigger className="group -mx-1.5 flex items-center gap-2 rounded-sm px-1.5 py-0.5 text-chrome text-muted-foreground hover:bg-muted/50 hover:text-foreground">
         <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
         Reasoning
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="mt-1.5 border-l-2 pl-3 text-meta text-muted-foreground">{children}</div>
+        <div className="mt-1 mb-1.5 ml-[5px] border-l pl-4 text-meta text-muted-foreground">
+          {children}
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );

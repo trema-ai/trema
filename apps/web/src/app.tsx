@@ -33,6 +33,9 @@ const CustomizePage = lazy(() =>
 );
 const Gallery = lazy(() => import("#web/pages/gallery.tsx").then((m) => ({ default: m.Gallery })));
 const JoinPage = lazy(() => import("#web/pages/join.tsx").then((m) => ({ default: m.JoinPage })));
+const RunPage = lazy(() =>
+  import("#web/pages/runs/index.tsx").then((m) => ({ default: m.RunPage })),
+);
 const ScopesPage = lazy(() =>
   import("#web/pages/scopes.tsx").then((m) => ({ default: m.ScopesPage })),
 );
@@ -144,6 +147,7 @@ function AppRoutes() {
         <Route path="/join" element={<JoinPage />} />
         <Route path="/gallery" element={shell(<Gallery />)} />
         <Route path="/automations" element={shell(<AutomationsPage />)} />
+        <Route path="/runs/:id" element={shell(<RunPage />)} />
         <Route path="/customize" element={shell(<CustomizePage />)} />
         <Route path="/context" element={<Navigate to="/customize" replace />} />
         <Route path="/scopes" element={<Navigate to="/settings/scopes" replace />} />
