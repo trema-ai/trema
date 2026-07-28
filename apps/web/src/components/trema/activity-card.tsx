@@ -1,4 +1,4 @@
-import { ChevronRight, Wrench } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type * as React from "react";
 
 import { StatusDot } from "#web/components/trema/status-dot.tsx";
@@ -11,13 +11,6 @@ import { cn } from "#web/lib/utils.ts";
 
 type ActivityState = "running" | "ok" | "error" | "denied";
 
-const stateTone: Record<ActivityState, "run" | "go" | "destructive"> = {
-  running: "run",
-  ok: "go",
-  error: "destructive",
-  denied: "destructive",
-};
-
 type ActivityCardProps = {
   title: string;
   kind?: string;
@@ -29,6 +22,13 @@ type ActivityCardProps = {
   className?: string;
 };
 
+/**
+ * One tool call as a machinery row: muted, one line collapsed, detail behind
+ * a left rule when expanded. Success stays quiet — only running, denied, and
+ * error states carry a marker, so a clean run reads as plain activity, not a
+ * wall of green. Detail content is unmounted while closed, so anything lazy
+ * inside `children` loads on first expand.
+ */
 function ActivityCard({
   title,
   kind,
@@ -39,49 +39,74 @@ function ActivityCard({
   children,
   className,
 }: ActivityCardProps) {
-  return (
-    <div
-      data-slot="activity-card"
-      className={cn("rounded-md border bg-card px-3 py-2.5", className)}
-    >
-      <div className="flex items-center gap-2">
-        <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="flex min-w-0 items-baseline gap-2">
-          <span className="text-chrome font-medium">{title}</span>
-          {kind !== undefined && (
-            <span className="truncate font-mono text-meta text-muted-foreground">{kind}</span>
-          )}
-        </span>
-        {state !== undefined && (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            {/* Denied is not an error: the call was refused, so the dot alone
-                would read as a failure. The word makes the refusal explicit. */}
-            {state === "denied" && <span className="text-meta text-destructive">denied</span>}
-            <StatusDot tone={stateTone[state]} />
+  const expandable =
+    input !== undefined || notes !== undefined || kind !== undefined || children !== undefined;
+
+  const row = (
+    <>
+      <span className="flex min-w-0 items-baseline gap-2 text-chrome text-muted-foreground">
+        <span className="shrink-0 group-hover:text-foreground">{title}</span>
+        {resultSummary !== undefined && (
+          <span
+            className={cn(
+              "truncate text-meta group-data-[state=open]:hidden",
+              // A refusal marks itself: the denial text carries the color.
+              state === "denied" && "text-destructive",
+            )}
+          >
+            {resultSummary}
           </span>
         )}
+      </span>
+      {(state === "running" || state === "error") && (
+        <span
+          className={cn(
+            "flex shrink-0 items-center gap-1.5 pl-2 text-meta",
+            state === "running" ? "text-muted-foreground" : "text-destructive",
+          )}
+        >
+          {state}
+          <StatusDot tone={state === "running" ? "run" : "destructive"} />
+        </span>
+      )}
+    </>
+  );
+
+  if (!expandable) {
+    return (
+      <div data-slot="activity-card" className={cn("flex items-center gap-2 py-0.5", className)}>
+        <span className="size-3 shrink-0" />
+        {row}
       </div>
+    );
+  }
 
-      {input !== undefined && (
-        <div className="mt-2 rounded-sm bg-muted px-2 py-1.5 font-mono text-log break-all">
-          {input}
+  return (
+    <Collapsible data-slot="activity-card" className={className}>
+      <CollapsibleTrigger className="group -mx-1.5 flex w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left hover:bg-muted/50">
+        <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        {row}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 mb-1.5 ml-[5px] space-y-2 border-l pl-4">
+          {kind !== undefined && (
+            <div className="font-mono text-meta text-muted-foreground">{kind}</div>
+          )}
+          {input !== undefined && (
+            <div className="rounded-sm bg-muted px-2 py-1.5 font-mono text-log break-all">
+              {input}
+            </div>
+          )}
+          {notes !== undefined && <p className="text-meta text-muted-foreground">{notes}</p>}
+          {resultSummary !== undefined && (
+            <p className={cn("text-meta", state === "denied" && "text-destructive")}>
+              {resultSummary}
+            </p>
+          )}
+          {children}
         </div>
-      )}
-      {notes !== undefined && <p className="mt-1.5 text-meta text-muted-foreground">{notes}</p>}
-      {resultSummary !== undefined && <p className="mt-1.5 text-meta">{resultSummary}</p>}
-
-      {children !== undefined && (
-        <Collapsible className="mt-2">
-          <CollapsibleTrigger className="group flex items-center gap-1 text-meta text-muted-foreground hover:text-foreground">
-            <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-            Show output
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-2">{children}</div>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

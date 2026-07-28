@@ -10,7 +10,6 @@ import { ChevronRight, ScrollText } from "lucide-react";
 import { Fragment } from "react";
 
 import { ActivityCard, type ActivityState } from "#web/components/trema/activity-card.tsx";
-import { ApprovalCard } from "#web/components/trema/approval-card.tsx";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { ErrorItem } from "#web/components/trema/error-item.tsx";
 import { OutputViewer } from "#web/components/trema/output-viewer.tsx";
@@ -34,6 +33,7 @@ import {
   steeringSeq,
   type TimelineMeta,
 } from "#web/lib/run-timeline.ts";
+import { cn } from "#web/lib/utils.ts";
 
 /** One undrained steer or follow-up, as the run read reports it. */
 export interface QueuedInputItem {
@@ -68,9 +68,9 @@ export function RunTimeline({
   }
   if (phase === "loading" && projection.segments.length === 0) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         {[1, 2, 3].map((key) => (
-          <div key={key} className="h-20 animate-pulse rounded-md border bg-muted/30" />
+          <div key={key} className="h-5 animate-pulse rounded-sm bg-muted/40" />
         ))}
       </div>
     );
@@ -92,7 +92,7 @@ export function RunTimeline({
   const unknownCount = projection.unknownEvents + snapshot.serverMalformed;
 
   return (
-    <div className="space-y-4 rounded-md border bg-card p-4 sm:p-6">
+    <div className="space-y-3">
       {projection.segments.length === 0 && (
         <EmptyState
           icon={ScrollText}
@@ -104,15 +104,29 @@ export function RunTimeline({
         const detail = dividerDetail.get(segment.index);
         return (
           <Fragment key={segment.index}>
-            {segment.parts.map((part) => (
-              <TimelinePart
-                key={`${part.kind}:${part.id}`}
-                runId={runId}
-                runCreatedAt={runCreatedAt}
-                part={part}
-                meta={meta}
-              />
-            ))}
+            {chunkParts(segment.parts).map((chunk) =>
+              chunk.kind === "machinery" ? (
+                <div key={chunk.key} className="space-y-0.5">
+                  {chunk.parts.map((part) => (
+                    <TimelinePart
+                      key={`${part.kind}:${part.id}`}
+                      runId={runId}
+                      runCreatedAt={runCreatedAt}
+                      part={part}
+                      meta={meta}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <TimelinePart
+                  key={`${chunk.part.kind}:${chunk.part.id}`}
+                  runId={runId}
+                  runCreatedAt={runCreatedAt}
+                  part={chunk.part}
+                  meta={meta}
+                />
+              ),
+            )}
             {segment.end !== undefined && (
               <SegmentDivider
                 reason={segment.end.reason}
@@ -134,6 +148,38 @@ export function RunTimeline({
       <UnknownEventsLine count={unknownCount} />
     </div>
   );
+}
+
+/**
+ * The hierarchy of the timeline: conversation (steering, text, elicitations)
+ * reads at full contrast with room around it; machinery (tools, reasoning,
+ * data, errors) is muted and consecutive rows stack tight, so a burst of
+ * activity reads as one recessed group between the words.
+ */
+type PartChunk =
+  | { kind: "prose"; part: Part; key: string }
+  | { kind: "machinery"; parts: Part[]; key: string };
+
+function chunkParts(parts: readonly Part[]): PartChunk[] {
+  const machinery = new Set<Part["kind"]>([
+    "activity",
+    "reasoning",
+    "data",
+    "error",
+    "elicitation",
+  ]);
+  const chunks: PartChunk[] = [];
+  for (const part of parts) {
+    const last = chunks[chunks.length - 1];
+    if (!machinery.has(part.kind)) {
+      chunks.push({ kind: "prose", part, key: `${part.kind}:${part.id}` });
+    } else if (last !== undefined && last.kind === "machinery") {
+      last.parts.push(part);
+    } else {
+      chunks.push({ kind: "machinery", parts: [part], key: `${part.kind}:${part.id}` });
+    }
+  }
+  return chunks;
 }
 
 function TimelinePart({
@@ -272,35 +318,68 @@ function SteeringView({
   );
 }
 
+const awaitingWord: Record<ElicitationPart["elicitationKind"], string> = {
+  approval: "awaiting approval",
+  confirmation: "awaiting confirmation",
+  choice: "awaiting choice",
+  form: "awaiting input",
+};
+
+/**
+ * An elicitation as one collapsible line. Unresolved and blocking is the one
+ * machinery state that must not recede: the prompt keeps full contrast and
+ * carries a wait marker. Resolution renders from the log, never optimistically;
+ * resolve controls arrive with web intents (phase 4).
+ */
 function ElicitationView({ part }: { part: ElicitationPart }) {
   const resolved = part.resolution;
+  const outcome =
+    resolved === undefined
+      ? undefined
+      : (part.options.find((option) => option.id === resolved.optionId)?.label ??
+        resolved.optionId);
   return (
-    <ApprovalCard
-      headline={part.prompt}
-      kind={part.elicitationKind}
-      requestedBy="this run"
-      options={part.options.map((option) => ({
-        id: option.id,
-        label: option.label,
-        variant:
-          option.style === "primary"
-            ? ("primary" as const)
-            : option.style === "danger"
-              ? ("destructive" as const)
-              : ("secondary" as const),
-      }))}
-      {...(resolved === undefined
-        ? { disabledReason: "Resolving from the web is not yet available." }
-        : {
-            resolution: {
-              outcome:
-                part.options.find((option) => option.id === resolved.optionId)?.label ??
-                resolved.optionId,
-              by: principalLabel(resolved.by),
-              at: resolved.at,
-            },
-          })}
-    />
+    <Collapsible data-slot="elicitation-row">
+      <CollapsibleTrigger className="group -mx-1.5 flex w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left hover:bg-muted/50">
+        <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        <span className="flex min-w-0 items-baseline gap-2 text-chrome">
+          <span
+            className={cn(
+              "truncate",
+              resolved === undefined
+                ? "font-medium"
+                : "shrink-0 text-muted-foreground group-hover:text-foreground",
+            )}
+          >
+            {part.prompt}
+          </span>
+          {resolved !== undefined && (
+            <span className="truncate text-meta text-muted-foreground group-data-[state=open]:hidden">
+              {outcome} by {principalLabel(resolved.by)}
+            </span>
+          )}
+        </span>
+        {resolved === undefined && (
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 text-meta text-muted-foreground">
+            {awaitingWord[part.elicitationKind]}
+            <StatusDot tone="wait" />
+          </span>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 mb-1.5 ml-[5px] space-y-1.5 border-l pl-4 text-meta">
+          <p>{part.prompt}</p>
+          <p className="text-muted-foreground">
+            Options: {part.options.map((option) => option.label).join(" · ")}
+          </p>
+          {resolved !== undefined && (
+            <p className="text-muted-foreground">
+              {outcome} by {principalLabel(resolved.by)} · <RelativeTime date={resolved.at} />
+            </p>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -312,12 +391,14 @@ function DataPartView({ part }: { part: DataPart }) {
   if (part.data === null) return null;
   return (
     <Collapsible data-slot="data-part">
-      <CollapsibleTrigger className="group flex items-center gap-1 text-meta text-muted-foreground hover:text-foreground">
+      <CollapsibleTrigger className="group -mx-1.5 flex items-center gap-2 rounded-sm px-1.5 py-0.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground">
         <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-        <span className="font-mono">{part.name}</span>
+        <span className="font-mono text-meta">{part.name}</span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <OutputViewer className="mt-2" output={{ type: "json", value: part.data }} />
+        <div className="mt-1 mb-1.5 ml-[5px] border-l pl-4">
+          <OutputViewer output={{ type: "json", value: part.data }} />
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );

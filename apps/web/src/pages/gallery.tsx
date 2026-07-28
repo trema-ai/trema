@@ -808,7 +808,7 @@ function TimelineSection() {
   return (
     <Section title="Run timeline" bare>
       <div className="space-y-6">
-        <div className="max-w-215 space-y-4 rounded-md border bg-card p-6">
+        <div className="max-w-215 space-y-3">
           <SteeringNote author="Nelson" at={new Date(Date.now() - 4 * 3_600_000)}>
             Skip anything already triaged this week and keep titles short.
           </SteeringNote>

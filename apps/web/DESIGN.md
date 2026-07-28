@@ -79,6 +79,12 @@ use `text-chrome` and `text-meta` directly.
 - **Thread.** Centered 740px column on `card` background.
 - **Run view.** 860px timeline column plus a right panel rail; the
   rail collapses into tabs under 1200px.
+- **Timeline items.** Flat collapsible rows on the page background —
+  one line collapsed, detail indented behind a left rule when
+  expanded (Cursor-style). Cards nested inside a timeline card were
+  tried and rejected; the only bordered block in a timeline is an
+  interactive card (approvals). Controls that cannot act yet are
+  hidden, never rendered disabled.
 - **Admin lists.** Filter bar of select pills above a table; row click
   opens the detail route. Empty states get an icon, one line, and one
   action.

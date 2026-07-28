@@ -9,7 +9,6 @@ import { IdChip } from "#web/components/trema/id-chip.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
 import { RunStateBadge } from "#web/components/trema/run-state-badge.tsx";
-import { Button } from "#web/components/ui/button.tsx";
 import { Tabs, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
 import { useRunStream } from "#web/hooks/use-run-stream.ts";
 import { orpc, type rpcClient } from "#web/lib/api.ts";
@@ -109,33 +108,17 @@ function FullRunView({ run }: { run: FullRun }) {
   return (
     <main className="mx-auto w-full max-w-[1240px] p-4 sm:p-6 lg:p-8">
       <PageHeader
-        title={
-          <span className="flex items-center gap-2.5">
-            Run
+        title="Run"
+        description={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <IdChip id={run.id} visibleChars={14} />
+            <span>
+              Started by {triggerPhrase[run.trigger]} · {sourceLabel(run)} · created{" "}
+              <RelativeTime date={run.createdAt} /> · updated <RelativeTime date={run.updatedAt} />
+            </span>
           </span>
         }
-        description={
-          <>
-            Started by {triggerPhrase[run.trigger]} · {sourceLabel(run)} · created{" "}
-            <RelativeTime date={run.createdAt} /> · updated <RelativeTime date={run.updatedAt} />
-          </>
-        }
-        actions={
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-3">
-              <RunStateBadge state={run.state} />
-              {/* Read-only for now: stop and retry are intents this page does
-                  not yet send, so the buttons state that instead of hiding. */}
-              <Button size="sm" variant="outline" disabled>
-                {terminal ? "Retry" : "Stop"}
-              </Button>
-            </div>
-            <span className="text-meta text-muted-foreground">
-              Run controls from the web are not yet available.
-            </span>
-          </div>
-        }
+        actions={<RunStateBadge state={run.state} />}
       />
       {run.error !== null && <ErrorItem className="mb-4" title="Run failed" message={run.error} />}
       <Tabs
@@ -182,17 +165,15 @@ function MetadataRunView({ run }: { run: MetadataRun }) {
   return (
     <main className="mx-auto w-full max-w-3xl p-4 sm:p-6 lg:p-8">
       <PageHeader
-        title={
-          <span className="flex items-center gap-2.5">
-            Run
-            <IdChip id={run.id} visibleChars={14} />
-          </span>
-        }
+        title="Run"
         description={
-          <>
-            Started by {triggerPhrase[run.trigger]} · created <RelativeTime date={run.createdAt} />{" "}
-            · updated <RelativeTime date={run.updatedAt} />
-          </>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <IdChip id={run.id} visibleChars={14} />
+            <span>
+              Started by {triggerPhrase[run.trigger]} · created{" "}
+              <RelativeTime date={run.createdAt} /> · updated <RelativeTime date={run.updatedAt} />
+            </span>
+          </span>
         }
         actions={<RunStateBadge state={run.state} />}
       />
