@@ -25,6 +25,7 @@ describe("parseEnv", () => {
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
       TREMA_PASSWORD_AUTH_ENABLED: true,
+      TREMA_OPEN_SIGNUP: false,
       TREMA_SESSION_STANDING_BUDGET_TOKENS: 4000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
       TREMA_WORKER_NAME: "trema-runs",
@@ -58,6 +59,7 @@ describe("parseEnv", () => {
       TREMA_AUTH_BASE_URL: "http://127.0.0.1:3000",
       TREMA_WEB_ORIGINS: ["http://127.0.0.1:5173"],
       TREMA_PASSWORD_AUTH_ENABLED: true,
+      TREMA_OPEN_SIGNUP: false,
       TREMA_SESSION_STANDING_BUDGET_TOKENS: 4000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
       TREMA_WORKER_NAME: "trema-runs",
@@ -81,6 +83,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: "false",
+      TREMA_OPEN_SIGNUP: "true",
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
       TREMA_SESSION_STANDING_BUDGET_TOKENS: "2000",
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
@@ -99,6 +102,7 @@ describe("parseEnv", () => {
       TREMA_GOOGLE_CLIENT_ID: "google-client",
       TREMA_GOOGLE_CLIENT_SECRET: "google-secret",
       TREMA_PASSWORD_AUTH_ENABLED: false,
+      TREMA_OPEN_SIGNUP: true,
       TREMA_BOOTSTRAP_TOKEN: "bootstrap-token",
       TREMA_SESSION_STANDING_BUDGET_TOKENS: 2000,
       TREMA_CREDENTIAL_MASTER_KEY: credentialMasterKey,
@@ -235,6 +239,14 @@ describe("parseEnv", () => {
         TREMA_PASSWORD_AUTH_ENABLED: "yes",
       },
       "TREMA_PASSWORD_AUTH_ENABLED",
+    ],
+    [
+      {
+        DATABASE_URL: "postgresql://localhost/trema",
+        TREMA_AUTH_SECRET: authSecret,
+        TREMA_OPEN_SIGNUP: "yes",
+      },
+      "TREMA_OPEN_SIGNUP",
     ],
     [
       {

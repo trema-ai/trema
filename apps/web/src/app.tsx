@@ -68,7 +68,13 @@ function AppRoutes() {
     <Routes>
       <Route
         path="/sign-in"
-        element={<SignInPage providers={config.data.providers} legal={config.data.legal} />}
+        element={
+          <SignInPage
+            providers={config.data.providers}
+            legal={config.data.legal}
+            openSignup={config.data.openSignup}
+          />
+        }
       />
       <Route
         path="/bootstrap"
@@ -77,6 +83,7 @@ function AppRoutes() {
             needsBootstrap={config.data.needsBootstrap}
             providers={config.data.providers}
             legal={config.data.legal}
+            openSignup={config.data.openSignup}
           />
         }
       />

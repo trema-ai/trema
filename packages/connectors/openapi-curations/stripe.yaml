@@ -5,7 +5,7 @@
 # Retrieved: 2026-07-23
 #
 # Regenerate with:
-#   pnpm exec tsx scripts/openapi-to-manifest.ts <spec> --curation openapi-curations/stripe.yaml --format ts
+#   pnpm exec tsx --conditions=development scripts/openapi-to-manifest.ts <spec> --curation openapi-curations/stripe.yaml --format ts
 # Stripe request bodies are form-encoded (no application/json schema), so the
 # converter emits no body properties for create_refund/create_customer/
 # update_customer — those body parameters are hand-authored in the provider

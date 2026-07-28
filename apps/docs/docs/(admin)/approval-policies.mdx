@@ -1,49 +1,57 @@
 ---
 title: Approval policies
-description: Decide which agent tool calls run, which wait for a person, and who may approve them.
+description: Bound how freely the agent's connector calls run in each scope, and decide who resolves the calls that pause.
 ---
 
-An approval policy decides what happens when the agent calls a tool: the call runs, waits for a person, or is refused. A policy belongs to a scope and covers one sensitivity class, so a team scope can gate deletions without restating the organization's read rule.
+Every connector call a session makes runs under an approval mode: it pauses for a person, runs with a classifier watching, or runs ungated. The person the run acts for chooses the mode per thread. An approval policy bounds that choice for a scope and names who resolves the calls that pause.
 
-## What a policy decides
+## The three modes
 
-Every tool carries a sensitivity class—`read`, `write`, or `destructive`. Connector tools declare theirs in the provider's tool manifest, and an installation can override the class per tool. A tool with no declared class counts as `destructive`. The policy maps each class to one action:
-
-| Action | Effect |
-| --- | --- |
-| `allow` | The call runs. |
-| `require_approval` | The call waits until a person approves it. |
-| `deny` | The call is refused. |
-
-A `require_approval` policy also names who may answer: the roles that may resolve the approval, and whether the requester may approve their own request. The requester is the person the run was acting for.
-
-## Built-in defaults
-
-A class no policy covers falls back to the built-in default for the scope's kind:
-
-| Class | Personal scope | Shared and organization scopes |
+| Mode | In the web app | Effect |
 | --- | --- | --- |
-| `read` | Runs. | Runs. |
-| `write` | Runs. | Waits for an `admin` or `owner`; the requester may confirm their own. |
-| `destructive` | Waits for the scope's owner. | Waits for an `admin` or `owner`; the requester may never approve their own. |
+| `ask` | Ask for approval | Every connector call pauses as an approval and waits for a person. |
+| `delegated` | Approve for me | Calls run; a call-time classifier escalates a call it judges unsafe into the same approval flow. |
+| `full` | Full access | Calls run with no pause and no classifier. |
+
+The mode is chosen when the session opens, `ask` by default, and each call clamps the choice to the policy ceiling. The classifier in `delegated` mode can only add a pause, never widen access. Whether a session may reach a tool at all is settled by the [installation's tool choices](/connectors)—a lookup the model takes no part in.
+
+## What a policy sets
+
+A policy is one scope's row for one connector, or a scope-wide row covering every connector there:
+
+| Field | What it sets |
+| --- | --- |
+| `connectorKey` | The connector the row governs. Omitted, the row bounds every connector in the scope. |
+| `maxMode` | The loosest mode a person may choose where the row applies. |
+| `approverRoles` | The roles that may resolve an approval routed by this row. |
+| `allowRequesterApproval` | Whether the person who asked may approve their own call. Defaults to true. |
+
+## How a call's mode resolves
+
+Each call's effective mode is the thread's chosen mode clamped to a ceiling:
+
+- The ceiling is the most restrictive `maxMode` across every applicable row—the scope-wide rows on the scope chain plus the connector's own rows. A narrower scope tightens a wider scope's ceiling, never loosens it.
+- A connector whose catalog entry is not marked trusted—a custom or imported definition, rather than a curated catalog provider—is pinned to `ask` whatever the rows say.
+- Where no row applies, the ceiling is `delegated`. Full access exists only where a policy explicitly grants it.
+- Running `delegated` requires a classifier model. No classifier ships in the current release, so a `delegated` choice or ceiling runs as `ask`.
 
 ## Writing a policy
 
-Members with the `admin` or `owner` role write policies on the **Policies** page in settings, or through the policies endpoints in the [API reference](/api). A scope holds at most one policy per class, so writing one replaces the last. Deleting one lets the class fall back to a wider scope's policy, or to the built-in default.
+Members with the `admin` or `owner` role write policies on the **Policies** page in settings, or through the policies endpoints in the [API reference](/api). A scope holds at most one row per connector plus one scope-wide row, so writing one replaces the last. Deleting one lets resolution fall through the remaining rows, or to the built-in default. One rule holds: a row needs an approver role or requester approval, because a row with neither would route approvals nobody could resolve.
 
-Two rules hold for `require_approval`. The policy needs an approver role or requester approval—to refuse a class outright, use `deny`. And outside a personal scope it needs an approver role, because the requester cannot be its sole approver.
+The resolved endpoint shows what a scope resolves to right now—the ceiling, the routing, and the rows they came from. Pass a connector key to see one connector's view.
 
-Resolution is most-specific-wins, one class at a time: the scope's own policy beats the organization's, which beats the built-in default. The resolved endpoint shows what each class resolves to for a scope right now—exactly what a session opened against it would get.
-
-A session pins the resolved policy when it opens and keeps it for its whole life. A policy edit therefore reaches the next session, never a run already underway.
+A session pins the applicable rows when it opens and keeps them for its whole life. A policy edit therefore reaches the next session, never a run already underway.
 
 ## Who gets asked
 
-An approval carries the rule pinned when it was asked: the approver roles, and whether the requester may resolve it themselves. Who may answer never changes under a later policy edit. Three checks decide:
+The routing—the approver roles and whether the requester may approve their own call—comes from the most specific applicable row. A connector's own row anywhere in the chain beats every scope-wide row. Among rows of the same kind, the session's scope beats the organization's. When no row supplies one, the defaults apply: in a personal scope the scope's owner approves; elsewhere an `admin` or `owner` does. The requester may approve their own call by default everywhere—refusing that is a separation-of-duties rule an organization writes, not a built-in.
+
+An approval carries the routing pinned when it was asked, so who may answer never changes under a later policy edit. Three checks decide:
 
 - Only a person resolves an approval; the agent principal cannot.
-- The requester is refused unless the rule allows requester approval—holding an approver role does not buy past this.
-- Anyone else needs one of the rule's roles at the approval's scope. In a personal scope, the scope's owner satisfies the `owner` role.
+- The requester is refused unless the pinned routing allows requester approval—holding an approver role does not buy past this.
+- Anyone else needs one of the pinned roles at the approval's scope. In a personal scope, the scope's owner satisfies the `owner` role.
 
 Roles are described in [Members and invites](/members-and-invites).
 
@@ -55,10 +63,19 @@ A repeated ask for the same call returns the same pending approval. A resumed ru
 
 ## Responding to an approval
 
-Approvals are listed and resolved on the **Approvals** page in settings, or through the approvals endpoints in the [API reference](/api). The list returns exactly the approvals you may resolve. Each one carries the call's arguments verbatim and the model's one-line reason. Approve or deny by ID:
+Approvals are listed and resolved on the **Approvals** page in settings, or through the approvals endpoints in the [API reference](/api). The list returns exactly the approvals you may resolve. Each one carries the call's arguments verbatim and the model's one-line reason. A call the delegated-mode classifier paused also carries the classifier's reason for escalating.
 
-- Approving permits one execution of exactly the recorded arguments. A call whose arguments changed is refused and needs a new approval.
-- Denying refuses the call; the run reads the denial as the tool's result and carries on without it.
+Approving names how wide the yes is, `once` by default:
+
+| Width | Covers |
+| --- | --- |
+| `once` | One execution of exactly the recorded arguments. A call whose arguments changed is refused and needs a new approval. |
+| `run` | The tool for the rest of the thread: later calls to it in the same session skip the gate. |
+| `always` | The tool for the requester at the approval's scope, standing across sessions. Refused when the approval has no linked requester. |
+
+The two wider variants mint a tool grant, recorded in the [audit log](/audit-log) as `tool_grant.minted`. Nothing in the current release lists or revokes a standing grant.
+
+Denying refuses the call; the run reads the denial as the tool's result and carries on without it.
 
 ## When nobody answers
 
@@ -68,6 +85,6 @@ Every ask and outcome is recorded: `approval.request`, `approval.approved`, `app
 
 ## Activating proposed items
 
-A rule, instruction, or skill the agent proposes lands as a `proposed` item, and turning it on is an approval like any other. Activation always requires one, whatever the policy says; the policy still decides who confirms, through the `write` class. Approving activates the item in the same step, and any other pending ask about the same item retires as superseded.
+A rule, instruction, or skill the agent proposes lands as a `proposed` item, and turning it on is an approval like any other. Activation always pauses, whatever the mode; the scope's routing decides who confirms, and the wider approval variants do not apply. Approving activates the item in the same step, and any other pending ask about the same item retires as superseded.
 
 In the web app, open the item on the **Customize** page and select **Activate**. The button performs the approval, so it faces the same approver rule: in a personal scope, the person the item was proposed for confirms it.

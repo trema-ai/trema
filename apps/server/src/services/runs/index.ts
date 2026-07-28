@@ -17,9 +17,17 @@ import { createRunCapture } from "#server/services/runs/capture.js";
 import { ServerContextSession } from "#server/services/runs/context.js";
 import { createRunDriver, type RunDriver } from "#server/services/runs/driver.js";
 import type { ConfiguredModel } from "#server/services/runs/models.js";
+import { withToolOutputRefs } from "#server/services/runs/outputs.js";
 import { createSessionRunPlan } from "#server/services/runs/plan.js";
 import { PrismaRunStore } from "#server/services/runs/store.js";
 
+export type {
+  ResolveRunAccessOptions,
+  ResolveRunsAccessOptions,
+  RunAccess,
+  RunAccessLevel,
+} from "./access.js";
+export { resolveRunAccess, resolveRunsAccess } from "./access.js";
 export type { CaptureOpeningMessages, QueuedMessage, RunCaptureOptions } from "./capture.js";
 export { createRunCapture, openingMessages } from "./capture.js";
 export { ContextCapabilityUnavailableError, ServerContextSession } from "./context.js";
@@ -35,15 +43,23 @@ export {
   HatchetEngine,
   RUN_TASK_NAME,
 } from "./hatchet.js";
-export type { ThreadHistoryOptions, ThreadRunLog } from "./history.js";
+export type { OpeningMessage, ThreadHistoryOptions, ThreadRunLog } from "./history.js";
 export {
   DEFAULT_THREAD_HISTORY_RUNS,
+  deriveOpeningMessage,
   deriveRunMessages,
   deriveThreadMessages,
   readThreadMessages,
 } from "./history.js";
 export type { ConfiguredModel, ResolveConfiguredModelOptions } from "./models.js";
 export { ModelConfigurationError, resolveConfiguredModel } from "./models.js";
+export type { RenderedOutputBlock } from "./outputs.js";
+export {
+  renderToolOutputBlocks,
+  TOOL_OUTPUT_IMAGE_BYTE_CAP,
+  TOOL_OUTPUT_TEXT_BYTE_CAP,
+  withToolOutputRefs,
+} from "./outputs.js";
 export type { SessionRunPlanOptions } from "./plan.js";
 export { createSessionRunPlan, narrowTools } from "./plan.js";
 export type { PrismaRunStoreOptions } from "./store.js";
@@ -161,7 +177,9 @@ export function createRunServices(options: RunServicesOptions): RunServices {
     driver = createRunDriver({
       store,
       lifecycle,
-      toolExecutor: options.toolExecutor ?? createUnavailableToolExecutor(),
+      // Every executor is wrapped so results carrying a body are addressable:
+      // the ref is what the run view's lazy output expansion fetches by.
+      toolExecutor: withToolOutputRefs(options.toolExecutor ?? createUnavailableToolExecutor()),
       capture: createRunCapture({ db: options.db, orgId: options.orgId }),
       plan: createSessionRunPlan({
         db: options.db,

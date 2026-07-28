@@ -181,8 +181,8 @@ Every model-provider operation requires `manage_models`, so the minimum role thr
 | --- | --- | --- | --- |
 | List policies | `GET /policies` | `read` at each policy's scope, filtered | `viewer` |
 | Resolve a scope's policy | `GET /policies/resolved` | `read` at that scope | `viewer` |
-| Set a policy | `PUT /policies/{scopeId}/{sensitivity}` | `edit_policies` at that scope | `admin` |
-| Delete a policy | `DELETE /policies/{scopeId}/{sensitivity}` | `edit_policies` at that scope | `admin` |
+| Set a policy | `PUT /policies/{scopeId}` | `edit_policies` at that scope | `admin` |
+| Delete a policy | `DELETE /policies/{scopeId}` | `edit_policies` at that scope | `admin` |
 
 What the policies decide—which calls pause for a person, and who that person is—is covered in [Approval policies](/approval-policies).
 

@@ -11,7 +11,7 @@ Trema is built from a small set of primitives, applied uniformly. Everything the
 | Principal | An actor: a person, or the organization's agent. |
 | Item | The uniform envelope for context: memories, instructions, connector installations. |
 | Grant | One principal holding one role at one scope. |
-| Policy | An approval rule for one sensitivity class at one scope. |
+| Policy | A per-scope bound on how freely the agent's tool calls run, and who approves the ones that pause. |
 | Context session | The runtime handshake that fixes what one stretch of agent work sees and may do. |
 | Run | One durable agent execution with a checkpoint at every turn. |
 
@@ -41,9 +41,9 @@ A grant gives one principal one role at one scope, and the roles are `owner`, `a
 
 ## Approval policies
 
-Every tool a connector exposes carries a sensitivity class: `read`, `write`, or `destructive`. An approval policy names the action for one class at one scope: allow, require approval, or deny. Each class resolves independently down the scope chain. The narrowest scope with a policy for a class decides it, and built-in defaults cover classes nobody wrote a policy for. The defaults allow reads everywhere and gate writes and destructive calls behind approval in shared and organization scopes. A personal scope allows writes and keeps a confirm step for destructive calls.
+Every connector call runs under an approval mode: pause every call for a person (`ask`), run with a classifier that escalates unsafe calls (`delegated`), or run ungated (`full`). The person the run acts for chooses the mode per thread, and a policy bounds the choice. Per scope, and optionally per connector, it sets the loosest mode selectable there and names who resolves the calls that pause. The most restrictive applicable ceiling wins down the scope chain, the built-in ceiling is `delegated`, and `full` exists only where a policy explicitly grants it. A connector whose catalog entry is not vetted as trusted is pinned to `ask` whatever the policies say. No classifier ships in the current release, so `delegated` runs as `ask`.
 
-A gated call becomes an approval: a durable record of the exact arguments, resolved as approved, denied, or expired. Execution runs exactly what was approved and nothing else. See [Approval policies](/approval-policies).
+A paused call becomes an approval: a durable record of the exact arguments, resolved as approved, denied, or expired. Execution runs exactly what was approved and nothing else. See [Approval policies](/approval-policies).
 
 ## Context sessions
 

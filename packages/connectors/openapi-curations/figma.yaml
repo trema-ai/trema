@@ -5,7 +5,7 @@
 # Retrieved: 2026-07-23
 #
 # Regenerate with:
-#   pnpm exec tsx scripts/openapi-to-manifest.ts <spec> --curation openapi-curations/figma.yaml --format ts
+#   pnpm exec tsx --conditions=development scripts/openapi-to-manifest.ts <spec> --curation openapi-curations/figma.yaml --format ts
 # Path placeholders are normalized from the spec's {file_key}/{team_id} to
 # camelCase (fileKey/teamId) to match the existing tools; descriptions trimmed.
 tools:

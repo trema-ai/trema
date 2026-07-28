@@ -1,9 +1,13 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { log } from "#server/lib/logger/index.js";
+import { findRedeemableInvite } from "#server/services/members/index.js";
+
+const INVITE_TOKEN_HEADER = "x-trema-invite-token";
 
 export interface AuthDependencies {
   db: Database;
@@ -37,6 +41,36 @@ function createConfiguredAuth({ db, env }: AuthDependencies) {
       enabled: env.TREMA_PASSWORD_AUTH_ENABLED,
     },
     socialProviders,
+    hooks: {
+      // Account creation on a bootstrapped dedicated deployment happens through
+      // member invites. Social sign-in is out of scope for this gate.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-up/email") {
+          return;
+        }
+        if (env.TREMA_MODE === "hosted" || env.TREMA_OPEN_SIGNUP) {
+          return;
+        }
+        // The bootstrap window: the operator creates an account before there is
+        // an organization to be invited into.
+        if ((await db.org.count()) === 0) {
+          return;
+        }
+
+        const token = ctx.headers?.get(INVITE_TOKEN_HEADER);
+        if (!token) {
+          log.warn("Account creation rejected", { reason: "invite_required" });
+          throw new APIError("FORBIDDEN", { message: "Account creation requires an invite" });
+        }
+        // Validation only — the invite is redeemed later, through the authed
+        // members.invites.redeem procedure.
+        const invite = await findRedeemableInvite(db, token);
+        if (!invite) {
+          log.warn("Account creation rejected", { reason: "invalid_invite" });
+          throw new APIError("FORBIDDEN", { message: "Account creation requires an invite" });
+        }
+      }),
+    },
     databaseHooks: {
       user: {
         update: {

@@ -53,6 +53,9 @@ const environmentSchema = z
     TREMA_GOOGLE_CLIENT_ID: optionalString,
     TREMA_GOOGLE_CLIENT_SECRET: optionalString,
     TREMA_PASSWORD_AUTH_ENABLED: boolean.default(true),
+    // Dedicated deployments close account creation once they are bootstrapped;
+    // people join through invites. This reopens it.
+    TREMA_OPEN_SIGNUP: boolean.default(false),
     TREMA_TERMS_URL: optionalUrl,
     TREMA_PRIVACY_URL: optionalUrl,
     TREMA_BOOTSTRAP_TOKEN: optionalString,
