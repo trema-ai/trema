@@ -5,6 +5,8 @@ description: Recover access, manage bootstrap state, and maintain a Trema deploy
 
 The `trema` command provides host-level recovery and maintenance tools. Run these commands on the server with `DATABASE_URL` set.
 
+The build places the command at `apps/server/dist/cli.js`—invoke it as `node apps/server/dist/cli.js <command>`, shortened to `trema` on this page.
+
 The command runs `serve` when you omit a command name.
 
 These commands report in plain text: progress on stdout, errors on stderr. The exception is `trema serve`, which starts the server and from then on emits [structured log records](/configuration#logging).

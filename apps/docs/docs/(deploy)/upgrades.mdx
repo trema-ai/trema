@@ -19,7 +19,7 @@ An upgrade is a build, a migration, and a restart, in that order. Starting the s
 2. Apply pending migrations with the [migrate command](/cli#apply-migrations):
 
    ```sh
-   trema migrate
+   node apps/server/dist/cli.js migrate
    ```
 
    If migration fails, the command exits nonzero and nothing has restarted—the running processes stay on the old version. Fix the cause and re-run; the [doctor command](/cli#check-deployment-health) reports whether migrations are still pending.
@@ -58,6 +58,6 @@ A dump alone does not restore a deployment. Connector credentials and OAuth clie
 
 3. Configure the server with the environment the dump ran under, including the same `TREMA_CREDENTIAL_MASTER_KEY`.
 
-4. Run `trema doctor`. It checks the environment, database access, migration status, and the organization count.
+4. Run `node apps/server/dist/cli.js doctor`. It checks the environment, database access, migration status, and the organization count.
 
 5. Start the server and the worker.

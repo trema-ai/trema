@@ -33,7 +33,7 @@ OAuth-app providers mint tokens through a client app registered at the provider.
 2. Copy the callback URL from the dialog and create an OAuth app at the provider with that callback URL. The linked provider guide shows where.
 3. Paste the app's client ID and client secret, and save. The secret is stored encrypted and cannot be viewed again.
 
-Your organization's app takes precedence over a platform app for new connections. Removing an app stops new connections through it; existing credentials keep working.
+Your organization's app takes precedence over a platform app for new connections. Removing an app stops new connections through it. Existing connections also lose token refresh: they fail once the current access token expires, and need a reconnect.
 
 MCP and API-key providers skip this step. For an MCP provider, Trema discovers the provider's authorization server and registers a client automatically where the server supports dynamic registration.
 
@@ -60,7 +60,7 @@ Use **Add to scope** on a connection to bind more scopes later, and **Remove fro
 **Configure tools** on a scope binding controls what the agent can call there:
 
 - Turn individual tools on or off, or keep **All tools** on—new synced tools then arrive enabled.
-- Override a tool's sensitivity. A `write` or `destructive` tool requires approval before the agent runs it.
+- Override a tool's sensitivity. The scope's [approval policy](/approval-policies) decides what a `write` or `destructive` call needs—by default, approval in shared and organization scopes.
 - Choices apply only to that binding, so the same connection can expose different tools in different scopes.
 
 ## Sync MCP tools

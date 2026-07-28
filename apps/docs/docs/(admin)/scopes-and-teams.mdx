@@ -25,7 +25,7 @@ Personal scopes sit outside this inheritance. Each member acts with `admin` righ
 
 ## Bind a location to a scope
 
-A binding ties a surface location—an identifier for a place the agent is reachable—to an organization or shared scope. A session opened at that location resolves to the bound scope, so the agent works with that scope's context there. A location no binding covers does not resolve, and the session is rejected.
+A binding ties a surface location—an identifier for a place the agent is reachable—to an organization or shared scope. A session opened at that location resolves to the bound scope, so the agent works with that scope's context there. A location no binding covers does not resolve, and the session is rejected. The one exception is a direct message, which can resolve to the sender's personal scope as described below.
 
 Create a binding from the scopes page—select **New binding**—or through the bindings endpoints in the [API reference](/api). Either way it takes a surface, a location reference, and a target scope. Three rules apply:
 
