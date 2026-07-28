@@ -695,6 +695,8 @@ model Approval {
   requesterPrincipalId   String?
   /// The raw surface id of a requester with no identity link.
   requesterExternalRef   String?
+  /// What the approved call will run against, recorded when the approval is asked and compared when it is claimed. Null for approvals that bind nothing, such as `context:activate_item`.
+  executionBinding       Json?
   status                 ApprovalStatus @default(pending)
   expiresAt              DateTime
   /// When the re-nudge job last re-surfaced this approval.

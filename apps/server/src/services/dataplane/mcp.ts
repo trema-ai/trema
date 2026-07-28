@@ -7,6 +7,13 @@ import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { bindLogger, log } from "#server/lib/logger/index.js";
 import {
+  type ConnectorFetch,
+  type McpClientFactory,
+  type PlatformAppDirectory,
+  sensitivities,
+} from "#server/services/connectors/index.js";
+import { describeConnectorFailure, useConnector } from "#server/services/dataplane/connector.js";
+import {
   type DataPlaneSession,
   DataPlaneToolError,
   getContextItem,
@@ -47,6 +54,10 @@ const searchResultSchema = z
 export interface DataPlaneDependencies {
   db: Database;
   env: Environment;
+  /** The outbound fetch connector calls are proxied through. */
+  connectorFetch?: ConnectorFetch;
+  mcpClientFactory?: McpClientFactory;
+  platformApps?: PlatformAppDirectory;
 }
 
 function textResult(payload: unknown): { type: "text"; text: string }[] {
@@ -57,18 +68,56 @@ function toolError(message: string): CallToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
+/**
+ * A refusal the harness can switch on. The message is for the model; the code
+ * is the machine-readable half — `reconnect_needed` means send the person to
+ * the reconnect flow, `args_changed` means ask for a new approval, and neither
+ * is something to retry blindly.
+ */
+function codedToolError(code: string, message: string): CallToolResult {
+  return { content: textResult({ code, message }), isError: true };
+}
+
+interface ToolErrorHandling {
+  /** Turn a known failure into a result the model can act on. */
+  describe?: (error: unknown) => { code: string; message: string } | undefined;
+  /**
+   * Whether an unexplained failure may be logged with the raw error object.
+   * The connector path says no: a provider library's error can quote the
+   * request that produced it, credential header included, and that path has
+   * already logged a redacted summary where the failure happened.
+   */
+  logRawFailure?: boolean;
+}
+
 // A tool call reports its own failures as data: an MCP client shows the text to
 // the model, which can then try something else. Only an unexplained failure is
 // the server's incident, and its detail stays in the log.
-async function runTool(name: string, run: () => Promise<CallToolResult>): Promise<CallToolResult> {
+async function runTool(
+  name: string,
+  run: () => Promise<CallToolResult>,
+  handling: ToolErrorHandling = {},
+): Promise<CallToolResult> {
   try {
     return await run();
   } catch (error) {
+    const described = handling.describe?.(error);
+    if (described) return codedToolError(described.code, described.message);
     if (error instanceof DataPlaneToolError) return toolError(error.message);
     // A body the service rejects is the caller's mistake as well, and its
     // message names the field to fix.
     if (error instanceof ItemValidationError) return toolError(error.message);
-    log.error("Data-plane tool failed", { tool: name, error });
+    if (handling.logRawFailure === false) {
+      // The class of failure is safe to name and is often the whole diagnosis;
+      // its message is not, because it may be a provider library's and quote
+      // the request it failed on. Nothing here holds a redactor to clean it.
+      log.error("Data-plane tool failed", {
+        tool: name,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    } else {
+      log.error("Data-plane tool failed", { tool: name, error });
+    }
     return toolError("The context app could not complete the call");
   }
 }
@@ -86,6 +135,12 @@ export function createDataPlaneServer(
   const embedding = env.TREMA_CREDENTIAL_MASTER_KEY
     ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY }
     : {};
+  const connectorDependencies = {
+    ...embedding,
+    ...(dependencies.connectorFetch ? { fetch: dependencies.connectorFetch } : {}),
+    ...(dependencies.mcpClientFactory ? { clientFactory: dependencies.mcpClientFactory } : {}),
+    ...(dependencies.platformApps ? { platformApps: dependencies.platformApps } : {}),
+  };
   const server = new McpServer(
     {
       name: DATA_PLANE_SERVER_NAME,
@@ -370,6 +425,79 @@ export function createDataPlaneServer(
       }),
   );
 
+  server.registerTool(
+    "use_connector",
+    {
+      title: "Use connector",
+      description:
+        "Do something in a connected system — read from it, or change something in it. The call runs here, with this organization's credential; you never see the credential and never call the system directly. Read the `status` of the reply: `executed` carries the system's answer, `approval_required` means stop and let a person decide, `denied` means the call is not allowed at all.",
+      inputSchema: {
+        toolKey: z
+          .string()
+          .min(3)
+          .describe(
+            "The tool to run, written `connector:tool` — for example `github:create_issue`.",
+          ),
+        args: z
+          .record(z.string(), z.unknown())
+          .default({})
+          .describe("The tool's arguments, exactly as that tool defines them."),
+        // Never invented on the server: the person deciding is owed the run's
+        // own account of what it is about to do, in its own words.
+        reason: z
+          .string()
+          .min(1)
+          .describe(
+            "One line saying what this call does and why, written for the person who may have to approve it.",
+          ),
+        approvalId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "The id from an earlier `approval_required` reply, once a person has approved it. Send the same arguments — a changed call needs its own approval.",
+          ),
+      },
+      outputSchema: {
+        status: z
+          .enum(["executed", "approval_required", "denied"])
+          .describe(
+            "`executed`: the call ran. `approval_required`: a person must approve it first. `denied`: policy refuses this call.",
+          ),
+        toolKey: z.string().describe("The tool this reply is about."),
+        sensitivity: z
+          .enum(sensitivities)
+          .describe("How the call is classified: `read`, `write`, or `destructive`."),
+        result: z.unknown().optional().describe("What the connected system replied, when it ran."),
+        approvalId: z
+          .string()
+          .optional()
+          .describe("The approval waiting on a person. Pass it back once it is approved."),
+        expiresAt: z
+          .string()
+          .optional()
+          .describe("When the approval stops waiting. An ISO 8601 date-time."),
+        message: z.string().optional().describe("What to say when the call did not run."),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    },
+    async ({ toolKey, args, reason, approvalId }) =>
+      runTool(
+        "use_connector",
+        async () => {
+          const outcome = await useConnector(db, session, {
+            toolKey,
+            args,
+            reason,
+            ...(approvalId ? { approvalId } : {}),
+            ...connectorDependencies,
+          });
+          return { content: textResult(outcome), structuredContent: { ...outcome } };
+        },
+        { describe: describeConnectorFailure, logRawFailure: false },
+      ),
+  );
+
   return server;
 }
 
@@ -417,7 +545,18 @@ async function resolveSession(
       sessionId: session.id,
       actor: "session",
     });
-    return session;
+    // Projected rather than passed whole: the tools enforce against these
+    // fields, and a field they must not read is a field they cannot see.
+    return {
+      id: session.id,
+      orgId: session.orgId,
+      scopeId: session.scopeId,
+      scopeKind: session.scope.kind,
+      scopeChain: session.scopeChain,
+      actingPrincipalId: session.actingPrincipalId,
+      requesterPrincipalId: session.requesterPrincipalId,
+      requesterExternalRef: session.requesterExternalRef,
+    };
   } catch (error) {
     if (error instanceof SessionAuthenticationError) {
       log.warn("Data-plane session token rejected");

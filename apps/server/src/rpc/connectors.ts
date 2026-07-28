@@ -573,8 +573,13 @@ const syncInstallation = installationScoped
     }
   });
 
+// The admin's dry run of an installation, not a way past a policy: it carries
+// no approval authority, so a tool classified `write` or `destructive` comes
+// back `approval_required` here exactly as it would in a session. Sensitive
+// calls belong to the data plane's `use_connector`, where a session's pinned
+// policy and a recorded approval decide them.
 const executeTool = requireCapability("manage_connectors", {
-  scopeId: (input) => (input as { scopeIds?: string[] }).scopeIds?.[0],
+  scopeId: (input) => (input as { scopeChain?: string[] }).scopeChain?.[0],
 })
   .route({
     method: "POST",
@@ -586,7 +591,10 @@ const executeTool = requireCapability("manage_connectors", {
   })
   .input(
     z.object({
-      scopeIds: z.array(z.uuid()).min(1),
+      scopeChain: z
+        .array(z.uuid())
+        .min(1)
+        .describe("Scope IDs in resolution order, widest first. The narrowest match wins."),
       toolKey: z.string().trim().min(3),
       args: z.record(z.string(), z.json()),
     }),
@@ -594,7 +602,7 @@ const executeTool = requireCapability("manage_connectors", {
   .output(z.json())
   .handler(async ({ context, input }) => {
     try {
-      for (const scopeId of input.scopeIds.slice(1)) {
+      for (const scopeId of input.scopeChain.slice(1)) {
         if (!(await authorize(context.principal, "manage_connectors", scopeId, context.db))) {
           throw new ORPCError("FORBIDDEN", {
             message: "Capability required: manage_connectors",
@@ -603,7 +611,7 @@ const executeTool = requireCapability("manage_connectors", {
       }
       return (await executeConnectorTool(context.db, {
         orgId: context.org.id,
-        scopeIds: input.scopeIds,
+        scopeChain: input.scopeChain,
         principalId: context.principal.id,
         toolKey: input.toolKey,
         args: input.args,

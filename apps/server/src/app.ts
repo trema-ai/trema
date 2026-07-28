@@ -248,7 +248,15 @@ export function createApp({
   // mount: it carries no oRPC procedures and never appears in the OpenAPI
   // document. Registered before the OpenAPI handler so the path is ours.
   app.all(`${OPENAPI_PREFIX}/mcp`, async (context) => {
-    return handleDataPlaneRequest(context.req.raw, { db, env });
+    return handleDataPlaneRequest(context.req.raw, {
+      db,
+      env,
+      // The connector proxy executes inside this mount, so the same outbound
+      // seams the control plane uses reach it here.
+      ...(connectorFetch ? { connectorFetch } : {}),
+      ...(mcpClientFactory ? { mcpClientFactory } : {}),
+      ...(platformApps ? { platformApps } : {}),
+    });
   });
 
   app.use(`${OPENAPI_PREFIX}/*`, async (context, next) => {
