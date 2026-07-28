@@ -799,6 +799,40 @@ function ApprovalsSection() {
             disabledReason="Resolving from the web is not yet available."
           />
         </Variant>
+        <Variant label="Pending, decision in flight">
+          <ApprovalCard
+            className="w-105 max-w-full"
+            headline="Create an issue in Linear"
+            kind="approval"
+            action={{
+              toolTitle: "Create issue",
+              connector: "Linear",
+              mode: "ask",
+              argsSummary: '{"team":"SUP","title":"Widget fails to sync","priority":2}',
+            }}
+            requestedBy="Nightly digest #1041"
+            options={[
+              { id: "approve", label: "Approve", variant: "primary" },
+              { id: "deny", label: "Deny", variant: "destructive" },
+            ]}
+            pendingOptionId="approve"
+          />
+        </Variant>
+        <Variant label="Pending, submit failed">
+          <ApprovalCard
+            className="w-105 max-w-full"
+            headline="Confirm before sending"
+            kind="confirmation"
+            prompt="Send the weekly digest to 214 subscribers now?"
+            requestedBy="Weekly report #1046"
+            options={[
+              { id: "confirm", label: "Send now", variant: "primary" },
+              { id: "cancel", label: "Cancel", variant: "secondary" },
+            ]}
+            onResolve={(optionId) => toast(`Resolved: ${optionId}`)}
+            error="You are not an approver for this scope."
+          />
+        </Variant>
       </div>
     </Section>
   );

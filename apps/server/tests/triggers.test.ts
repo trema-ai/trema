@@ -11,8 +11,9 @@ import { serviceCredentialsRouter } from "#server/rpc/credentials.js";
 import { intentsRouter } from "#server/rpc/intents.js";
 import { orgRouter } from "#server/rpc/org.js";
 import { schedulesRouter } from "#server/rpc/schedules.js";
+import { scopesRouter } from "#server/rpc/scopes.js";
 import type { RunServices } from "#server/services/runs/index.js";
-import { createRunServices } from "#server/services/runs/index.js";
+import { createRunServices, startRun } from "#server/services/runs/index.js";
 import {
   createSchedule,
   setScheduleStatus,
@@ -78,7 +79,21 @@ integration("triggers", () => {
       headers: new Headers({ authorization: `Bearer ${credential.secret}` }),
       runEngineFor: () => engine,
     };
-    return { adminContext: context, serviceContext, engine, org: membership.org, orgScope };
+    // The same browser cookie the admin calls carry, plus the engine: what the
+    // web composer's requests resolve to.
+    const sessionContext = { ...context, runEngineFor: () => engine };
+    const owner = await db.principal.findFirstOrThrow({
+      where: { orgId: membership.org.id, kind: "human" },
+    });
+    return {
+      adminContext: context,
+      serviceContext,
+      sessionContext,
+      engine,
+      org: membership.org,
+      orgScope,
+      owner,
+    };
   }
 
   // No model is configured, so the services compose no driver: these tests
@@ -207,6 +222,316 @@ integration("triggers", () => {
           { context: serviceContext },
         ),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+  });
+
+  describe("POST /intents (session mode)", () => {
+    it("starts a run on the member's own web location, stamped server-side", async () => {
+      const { sessionContext, owner } = await setup();
+
+      const accepted = await call(
+        intentsRouter.submit,
+        {
+          intentId: "web-1",
+          threadRef: "chat-1",
+          intent: { type: "message", text: "Plan my week." },
+        },
+        { context: sessionContext },
+      );
+
+      expect(accepted).toMatchObject({ outcome: "started", threadRef: "chat-1" });
+      const run = await db.agentRun.findUniqueOrThrow({ where: { id: accepted.runId! } });
+      expect(run).toMatchObject({ trigger: "message", threadRef: "chat-1" });
+      // The surface, location, and requester came from the cookie, never the
+      // body: the session resolved to the member's own personal scope.
+      const session = await db.contextSession.findUniqueOrThrow({
+        where: { id: run.sessionId! },
+        include: { scope: true },
+      });
+      expect(session).toMatchObject({ surface: "web", locationRef: owner.id });
+      expect(session.scope).toMatchObject({ kind: "personal", ownerId: owner.id });
+    });
+
+    it("refuses a session body that names a surface or location", async () => {
+      const { sessionContext } = await setup();
+
+      for (const body of [{ locationRef: "ops" }, { surface: "api" }]) {
+        await expect(
+          call(
+            intentsRouter.submit,
+            {
+              intentId: "web-1",
+              intent: { type: "message", text: "Plan my week." },
+              ...body,
+            },
+            { context: sessionContext },
+          ),
+        ).rejects.toMatchObject({
+          code: "BAD_REQUEST",
+          data: { code: "session_names_location" },
+        });
+      }
+    });
+
+    it("surfaces disabled personal scopes as the structured error", async () => {
+      const { adminContext, sessionContext } = await setup();
+      await call(scopesRouter.setPersonalPolicy, { enabled: false }, { context: adminContext });
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          { intentId: "web-1", intent: { type: "message", text: "Anyone there?" } },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        data: { code: "personal_scopes_disabled" },
+      });
+    });
+
+    it("requires a service-mode message to name its location", async () => {
+      const { serviceContext } = await setup();
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          { intentId: "key-1", intent: { type: "message", text: "Where to?" } },
+          { context: serviceContext },
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST", data: { code: "location_required" } });
+    });
+  });
+
+  describe("POST /intents (resolve, stop, retry, feedback)", () => {
+    async function startedRun(
+      serviceContext: Awaited<ReturnType<typeof setup>>["serviceContext"],
+      intentId = "key-1",
+    ) {
+      const accepted = await call(
+        intentsRouter.submit,
+        { locationRef: "ops", intent: { type: "message", text: "Check the deploy." }, intentId },
+        { context: serviceContext },
+      );
+      return accepted.runId!;
+    }
+
+    it("stops an active run, recording the stop fact before answering", async () => {
+      const { serviceContext, sessionContext } = await setup();
+      const runId = await startedRun(serviceContext);
+
+      const stopped = await call(
+        intentsRouter.submit,
+        { intentId: "stop-1", target: { runId }, intent: { type: "stop", runId } },
+        { context: sessionContext },
+      );
+
+      expect(stopped).toEqual({ outcome: "stopped", runId, threadRef: "api:ops" });
+      await expect(db.runStop.findUniqueOrThrow({ where: { runId } })).resolves.toMatchObject({
+        intentId: "stop-1",
+      });
+
+      // A retried POST returns `duplicate` with the original routing.
+      const repeated = await call(
+        intentsRouter.submit,
+        { intentId: "stop-1", intent: { type: "stop", runId } },
+        { context: sessionContext },
+      );
+      expect(repeated).toEqual({ outcome: "duplicate", runId, threadRef: "api:ops" });
+    });
+
+    it("rejects a target that disagrees with the intent's own reference", async () => {
+      const { serviceContext, sessionContext } = await setup();
+      const runId = await startedRun(serviceContext);
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          {
+            intentId: "stop-1",
+            target: { runId: "someone-else" },
+            intent: { type: "stop", runId },
+          },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST", data: { code: "target_mismatch" } });
+    });
+
+    it("refuses to stop a terminal run and to retry an active one", async () => {
+      const { serviceContext, sessionContext } = await setup();
+      const runId = await startedRun(serviceContext);
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          { intentId: "retry-1", intent: { type: "retry", runId } },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT", data: { code: "run_not_retryable" } });
+
+      await db.agentRun.update({ where: { id: runId }, data: { state: "completed" } });
+      await expect(
+        call(
+          intentsRouter.submit,
+          { intentId: "stop-1", intent: { type: "stop", runId } },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT", data: { code: "run_not_active" } });
+    });
+
+    it("retries a failed run as a new run on the same thread", async () => {
+      const { serviceContext, sessionContext } = await setup();
+      const runId = await startedRun(serviceContext);
+      await db.agentRun.update({ where: { id: runId }, data: { state: "failed" } });
+
+      const retried = await call(
+        intentsRouter.submit,
+        { intentId: "retry-1", intent: { type: "retry", runId } },
+        { context: sessionContext },
+      );
+
+      expect(retried).toMatchObject({ outcome: "retried", threadRef: "api:ops" });
+      expect(retried.runId).not.toBe(runId);
+      const retry = await db.agentRun.findUniqueOrThrow({ where: { id: retried.runId! } });
+      expect(retry).toMatchObject({ trigger: "retry", retryOfRunId: runId, threadRef: "api:ops" });
+    });
+
+    it("resolves an elicitation with the decision derived from the option", async () => {
+      const { serviceContext, sessionContext, org } = await setup();
+      const runId = await startedRun(serviceContext);
+      await db.runElicitation.create({
+        data: {
+          id: "elic-1",
+          orgId: org.id,
+          runId,
+          event: {
+            type: "elicitation",
+            elicitationId: "elic-1",
+            kind: "choice",
+            prompt: "Which environment?",
+            reference: { callId: "call-1" },
+            options: [
+              { id: "staging", label: "Staging" },
+              { id: "production", label: "Production" },
+            ],
+            blocking: true,
+          },
+        },
+      });
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          {
+            intentId: "resolve-0",
+            intent: { type: "resolve", elicitationId: "elic-1", optionId: "blue" },
+          },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST", data: { code: "unknown_option" } });
+
+      const resolved = await call(
+        intentsRouter.submit,
+        {
+          intentId: "resolve-1",
+          target: { elicitationId: "elic-1" },
+          intent: { type: "resolve", elicitationId: "elic-1", optionId: "staging" },
+        },
+        { context: sessionContext },
+      );
+
+      expect(resolved).toEqual({ outcome: "resolved", runId, threadRef: "api:ops" });
+      const record = await db.runElicitation.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.id, id: "elic-1" } },
+      });
+      expect(record.resolution).toMatchObject({ optionId: "staging", decision: "answered" });
+      const events = await db.runEvent.findMany({ where: { runId }, orderBy: { seq: "asc" } });
+      expect(events.map((row) => (row.event as { type: string }).type)).toContain(
+        "elicitation-resolved",
+      );
+
+      // A second decision with a fresh intent id is a conflict, not a rewrite.
+      await expect(
+        call(
+          intentsRouter.submit,
+          {
+            intentId: "resolve-2",
+            intent: { type: "resolve", elicitationId: "elic-1", optionId: "production" },
+          },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT", data: { code: "elicitation_resolved" } });
+    });
+
+    it("records feedback as an audit fact without touching the run", async () => {
+      const { serviceContext, sessionContext, org, owner } = await setup();
+      const runId = await startedRun(serviceContext);
+
+      const recorded = await call(
+        intentsRouter.submit,
+        {
+          intentId: "feedback-1",
+          intent: { type: "feedback", runId, verdict: "down", comment: "Wrong deploy." },
+        },
+        { context: sessionContext },
+      );
+
+      expect(recorded).toEqual({ outcome: "recorded", runId, threadRef: "api:ops" });
+      const entry = await db.auditLog.findFirstOrThrow({
+        where: { orgId: org.id, action: "run.feedback" },
+      });
+      expect(entry).toMatchObject({
+        actorPrincipalId: owner.id,
+        subject: runId,
+        payload: { verdict: "down", comment: "Wrong deploy." },
+      });
+      // The run itself is untouched: same state, no new events.
+      const run = await db.agentRun.findUniqueOrThrow({ where: { id: runId } });
+      expect(run.state).toBe("queued");
+    });
+
+    it("answers a run outside the caller's view as if it did not exist", async () => {
+      const { sessionContext, engine, org } = await setup();
+      // A run in another member's personal scope: the org owner may audit its
+      // existence, never act on it.
+      const member = await db.principal.create({
+        data: { orgId: org.id, kind: "human", displayName: "Someone Else" },
+      });
+      const services = servicesFor(org.id, engine);
+      const started = await startRun({
+        services,
+        input: {
+          intentId: "member-1",
+          trigger: "message",
+          surface: "web",
+          locationRef: member.id,
+          requester: { principalId: member.id },
+          message: { role: "user", blocks: [{ type: "text", text: "Private errand." }] },
+          author: { principalId: member.id, displayName: member.displayName },
+          threadRef: "member-chat",
+        },
+      });
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          { intentId: "stop-1", intent: { type: "stop", runId: started.runId! } },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(db.runStop.count({ where: { runId: started.runId! } })).resolves.toBe(0);
+    });
+
+    it("serves the same target intents under a service credential", async () => {
+      const { serviceContext } = await setup();
+      const runId = await startedRun(serviceContext);
+
+      const stopped = await call(
+        intentsRouter.submit,
+        { intentId: "stop-1", intent: { type: "stop", runId } },
+        { context: serviceContext },
+      );
+
+      expect(stopped).toEqual({ outcome: "stopped", runId, threadRef: "api:ops" });
     });
   });
 

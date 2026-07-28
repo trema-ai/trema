@@ -34,6 +34,7 @@ import {
   steeringSeq,
   type TimelineMeta,
 } from "#web/lib/run-timeline.ts";
+import { StopControl, useResolveElicitation } from "#web/pages/runs/controls.tsx";
 
 /** One undrained steer or follow-up, as the run read reports it. */
 export interface QueuedInputItem {
@@ -50,13 +51,19 @@ export function RunTimeline({
   runCreatedAt,
   snapshot,
   queuedInput,
+  runSettled,
 }: {
   runId: string;
   runCreatedAt: string;
   snapshot: RunStreamSnapshot;
   queuedInput: QueuedInputItem[];
+  /** Whether the run read already reports a terminal state. */
+  runSettled: boolean;
 }) {
   const { projection, meta, phase } = snapshot;
+  // Either signal settles the run: the header read can be ahead of the tail
+  // (a stale run with no terminal event) and the tail ahead of the header.
+  const settled = runSettled || phase === "static";
 
   if (phase === "error") {
     return (
@@ -114,6 +121,7 @@ export function RunTimeline({
                       runCreatedAt={runCreatedAt}
                       part={part}
                       meta={meta}
+                      resolvable={!settled}
                     />
                   ))}
                 </div>
@@ -124,6 +132,7 @@ export function RunTimeline({
                   runCreatedAt={runCreatedAt}
                   part={chunk.part}
                   meta={meta}
+                  resolvable={!settled}
                 />
               ),
             )}
@@ -143,6 +152,12 @@ export function RunTimeline({
         <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
           <StatusDot tone="run" />
           Live
+          {/* Stop rides the live indication: the control exists exactly as
+              long as there is something to stop, and vanishes when the
+              cancelled terminal ends the tail. */}
+          <span className="ml-1">
+            <StopControl runId={runId} />
+          </span>
         </div>
       )}
       <UnknownEventsLine count={unknownCount} />
@@ -192,11 +207,13 @@ function TimelinePart({
   runCreatedAt,
   part,
   meta,
+  resolvable,
 }: {
   runId: string;
   runCreatedAt: string;
   part: Part;
   meta: TimelineMeta;
+  resolvable: boolean;
 }) {
   switch (part.kind) {
     case "text":
@@ -216,7 +233,7 @@ function TimelinePart({
     case "steering":
       return <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />;
     case "elicitation":
-      return <ElicitationView part={part} />;
+      return <ElicitationView part={part} resolvable={resolvable} />;
     case "error":
       return (
         <ErrorItem
@@ -323,32 +340,41 @@ function SteeringView({
   );
 }
 
+/** The card's option shapes from the part's recorded options. */
+function cardOptions(part: ElicitationPart) {
+  return part.options.map((option) => ({
+    id: option.id,
+    label: option.label,
+    variant:
+      option.style === "primary"
+        ? ("primary" as const)
+        : option.style === "danger"
+          ? ("destructive" as const)
+          : ("secondary" as const),
+  }));
+}
+
 /**
  * A live elicitation is the run's open question: it renders as a full card
- * until the resolution arrives on the tail (never optimistically), then
- * collapses into a one-line history row. Resolve controls arrive with web
- * intents (phase 4); until then the card states why its options cannot act.
+ * with live resolve options until the resolution arrives on the tail (never
+ * optimistically), then collapses into a one-line history row. On a settled
+ * run an unresolved elicitation can no longer act, so its options render
+ * disabled with the reason stated: the pending decision itself is content.
  */
-function ElicitationView({ part }: { part: ElicitationPart }) {
+function ElicitationView({ part, resolvable }: { part: ElicitationPart; resolvable: boolean }) {
   const resolved = part.resolution;
   if (resolved === undefined) {
-    return (
-      <ApprovalCard
-        headline={part.prompt}
-        kind={part.elicitationKind}
-        options={part.options.map((option) => ({
-          id: option.id,
-          label: option.label,
-          variant:
-            option.style === "primary"
-              ? ("primary" as const)
-              : option.style === "danger"
-                ? ("destructive" as const)
-                : ("secondary" as const),
-        }))}
-        disabledReason="Resolving from the web is not yet available."
-      />
-    );
+    if (!resolvable) {
+      return (
+        <ApprovalCard
+          headline={part.prompt}
+          kind={part.elicitationKind}
+          options={cardOptions(part)}
+          disabledReason="The run ended before this was decided."
+        />
+      );
+    }
+    return <LiveElicitation part={part} />;
   }
 
   const outcome =
@@ -378,6 +404,26 @@ function ElicitationView({ part }: { part: ElicitationPart }) {
         </div>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+/**
+ * A pending elicitation the viewer can act on. The pressed option shows a
+ * spinner and the group disables; the card flips to its resolved rendering
+ * only when `elicitation-resolved` arrives on the tail and sets the part's
+ * resolution in place.
+ */
+function LiveElicitation({ part }: { part: ElicitationPart }) {
+  const { resolve, pendingOptionId, error } = useResolveElicitation(part.elicitationId);
+  return (
+    <ApprovalCard
+      headline={part.prompt}
+      kind={part.elicitationKind}
+      options={cardOptions(part)}
+      onResolve={resolve}
+      {...(pendingOptionId === undefined ? {} : { pendingOptionId })}
+      {...(error === undefined ? {} : { error })}
+    />
   );
 }
 

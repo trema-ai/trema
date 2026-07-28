@@ -2,6 +2,7 @@ import { oo } from "@orpc/openapi";
 import { ORPCError, os } from "@orpc/server";
 import type { Engine } from "@trema/harness";
 
+import type { Org, Principal } from "#server/generated/prisma/client.js";
 import type { Auth } from "#server/lib/auth/index.js";
 import { resolveOrgPrincipal } from "#server/lib/auth/org-principal.js";
 import type { Database } from "#server/lib/db/index.js";
@@ -104,6 +105,69 @@ export const serviceAuthed = pub.use(
     { security: [{ serviceCredential: [] }] },
   ),
 );
+
+/** Who is calling a dual-mode route, and through which credential. */
+export type IntentCaller =
+  | { mode: "service"; org: Org; principal: Principal }
+  | { mode: "session"; org: Org; principal: Principal };
+
+/**
+ * The intent endpoint's two auth modes on one route (harness 06): a service
+ * credential in the Authorization header, or the browser's session cookie. A
+ * bearer token takes the `serviceAuthed` path; its absence takes the
+ * `authed`/`orgScoped` path — the same resolution steps, reused here because
+ * one route cannot chain two exclusive builders. `caller.mode` is what a
+ * handler branches on when the modes differ, such as who names the location.
+ */
+export const serviceOrSessionAuthed = pub.use(
+  oo.spec(
+    pub.middleware(async ({ context, next }) => {
+      return next({ context: { caller: await resolveIntentCaller(context) } });
+    }),
+    { security: [{ serviceCredential: [] }, { sessionCookie: [] }] },
+  ),
+);
+
+/** The shared resolution behind {@link serviceOrSessionAuthed}. */
+async function resolveIntentCaller(context: RpcContext): Promise<IntentCaller> {
+  const authorization = context.headers.get("authorization");
+  const match = authorization?.match(/^Bearer (\S+)$/);
+  if (match) {
+    try {
+      const credential = await resolveServiceCredential(context.db, match[1]!);
+      bindLogger({
+        orgId: credential.org.id,
+        principalId: credential.principal.id,
+        actor: "service",
+      });
+      return { mode: "service", org: credential.org, principal: credential.principal };
+    } catch (error) {
+      if (error instanceof ServiceCredentialAuthenticationError) {
+        log.warn("Service credential rejected");
+        throw new ORPCError("UNAUTHORIZED", {
+          message: "Invalid service credential",
+        });
+      }
+      throw error;
+    }
+  }
+
+  const session = await context.auth.api.getSession({ headers: context.headers });
+  if (!session) {
+    log.warn("Authentication required");
+    throw new ORPCError("UNAUTHORIZED", {
+      message: "Authentication required",
+    });
+  }
+  bindLogger({ userId: session.user.id });
+  const resolved = await resolveOrgPrincipal(context.db, session);
+  if (!resolved.ok) {
+    throw new ORPCError("FORBIDDEN", {
+      message: resolved.message,
+    });
+  }
+  return { mode: "session", org: resolved.org, principal: resolved.principal };
+}
 
 // Session-token authentication for the session protocol itself. The middleware
 // only proves possession of the token; each route decides what an expired or

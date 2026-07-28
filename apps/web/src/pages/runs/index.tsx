@@ -14,6 +14,7 @@ import { useRunStream } from "#web/hooks/use-run-stream.ts";
 import { orpc, type rpcClient } from "#web/lib/api.ts";
 import { isTerminalRunState, parseUsage } from "#web/lib/run-timeline.ts";
 import { cn } from "#web/lib/utils.ts";
+import { FeedbackControls, RetryControl } from "#web/pages/runs/controls.tsx";
 import { GrantSnapshotPanel, Panel, ThreadPanel, UsagePanel } from "#web/pages/runs/panels.tsx";
 import { RunTimeline } from "#web/pages/runs/timeline.tsx";
 
@@ -118,7 +119,14 @@ function FullRunView({ run }: { run: FullRun }) {
             </span>
           </span>
         }
-        actions={<RunStateBadge state={run.state} />}
+        actions={
+          <span className="flex items-center gap-4">
+            <RunStateBadge state={run.state} />
+            {/* Retry exists only where the server admits it; anywhere else
+                the control is hidden, never a disabled ghost. */}
+            {(run.state === "failed" || run.state === "stale") && <RetryControl runId={run.id} />}
+          </span>
+        }
       />
       {run.error !== null && <ErrorItem className="mb-4" title="Run failed" message={run.error} />}
       <Tabs
@@ -145,7 +153,13 @@ function FullRunView({ run }: { run: FullRun }) {
             runCreatedAt={run.createdAt}
             snapshot={stream}
             queuedInput={run.queuedInput}
+            runSettled={terminal}
           />
+          {terminal && (
+            <div className="mt-6">
+              <FeedbackControls runId={run.id} />
+            </div>
+          )}
         </div>
         {tab === "details" && (
           <div className="min-w-0 flex-1 space-y-6 min-[1200px]:hidden">{panels}</div>
