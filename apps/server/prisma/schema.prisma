@@ -918,7 +918,12 @@ model AgentRun {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   org           Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  session       ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: SetNull)
+  /// NoAction, not SetNull: SET NULL on a compound key would null `orgId` too,
+  /// and run visibility is pinned to the session's grant snapshot, so the
+  /// session row must outlive its runs. NO ACTION checks at end of statement,
+  /// which lets an org delete cascade both sides while refusing any delete
+  /// that would leave a surviving run without its session.
+  session       ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: NoAction)
   retryOf       AgentRun?        @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
   retries       AgentRun[]       @relation("AgentRunRetry")
   turns         Turn[]
