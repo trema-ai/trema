@@ -84,7 +84,7 @@ function FullRunView({ run }: { run: FullRun }) {
     <>
       <GrantSnapshotPanel grantSnapshot={run.grantSnapshot} />
       <UsagePanel usage={usage} turnCount={run.turnCount} settled={terminal} />
-      <ThreadPanel runId={run.id} threadRef={run.threadRef} />
+      <ThreadPanel runId={run.id} threadRef={run.threadRef} surface={run.surface} />
       {(run.retryOfRunId !== null || run.error !== null) && (
         <Panel title="Lineage">
           <div className="space-y-2 text-meta">

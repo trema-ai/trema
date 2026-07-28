@@ -5,7 +5,7 @@ import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { Button } from "#web/components/ui/button.tsx";
-import { rpcClient } from "#web/lib/api.ts";
+import { intentErrorCode, messageFrom, submitIntent } from "#web/lib/intents.ts";
 
 /**
  * The write side of the run view. Every control submits one intent and lets
@@ -16,26 +16,6 @@ import { rpcClient } from "#web/lib/api.ts";
  * lying-UI rule). Feedback is the one exception: it is an audit fact with no
  * log event, so `recorded` acknowledges from the response.
  */
-
-type SubmitIntentInput = Parameters<typeof rpcClient.intents.submit>[0];
-
-/** Submits one intent under a freshly minted id. */
-function submitIntent(intent: SubmitIntentInput["intent"]) {
-  return rpcClient.intents.submit({ intentId: crypto.randomUUID(), intent });
-}
-
-/** The structured code the intent endpoint attaches to a refusal, if any. */
-function intentErrorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const data = (error as { data?: unknown }).data;
-  if (typeof data !== "object" || data === null) return undefined;
-  const code = (data as { code?: unknown }).code;
-  return typeof code === "string" ? code : undefined;
-}
-
-function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * The resolve wiring for a live elicitation card. `pendingOptionId` holds the

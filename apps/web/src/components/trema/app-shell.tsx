@@ -2,7 +2,7 @@ import { Brain, MessageSquarePlus, Settings, Zap } from "lucide-react";
 import { type ComponentProps, type ReactNode, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AppSidebar, type SessionSummary } from "#web/components/trema/app-sidebar.tsx";
+import { AppSidebar, type ThreadSummary } from "#web/components/trema/app-sidebar.tsx";
 import { TopBar } from "#web/components/trema/top-bar.tsx";
 import {
   CommandDialog,
@@ -17,19 +17,19 @@ import { SidebarInset, SidebarProvider } from "#web/components/ui/sidebar.tsx";
 
 type AppShellProps = {
   children: ReactNode;
-  sidebar: Omit<ComponentProps<typeof AppSidebar>, "onSearch" | "sessions">;
+  sidebar: Omit<ComponentProps<typeof AppSidebar>, "onSearch" | "threads">;
   orgName: string;
-  sessions?: SessionSummary[];
+  threads?: ThreadSummary[];
 };
 
 const destinations = [
-  { label: "New session", href: "/", icon: MessageSquarePlus },
+  { label: "New chat", href: "/", icon: MessageSquarePlus },
   { label: "Automations", href: "/automations", icon: Zap },
   { label: "Context", href: "/context", icon: Brain },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-function AppShell({ children, sidebar, orgName, sessions = [] }: AppShellProps) {
+function AppShell({ children, sidebar, orgName, threads = [] }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -52,7 +52,7 @@ function AppShell({ children, sidebar, orgName, sessions = [] }: AppShellProps) 
 
   return (
     <SidebarProvider>
-      <AppSidebar {...sidebar} sessions={sessions} onSearch={() => setSearchOpen(true)} />
+      <AppSidebar {...sidebar} threads={threads} onSearch={() => setSearchOpen(true)} />
       <SidebarInset className="h-svh overflow-hidden">
         <TopBar orgName={orgName} />
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
@@ -79,19 +79,21 @@ function AppShell({ children, sidebar, orgName, sessions = [] }: AppShellProps) 
             ))}
           </CommandGroup>
           <CommandSeparator />
-          <CommandGroup heading="Recent sessions">
-            {sessions.length === 0 ? (
-              <CommandItem disabled value="No sessions yet">
-                No sessions yet
+          <CommandGroup heading="Recent chats">
+            {threads.length === 0 ? (
+              <CommandItem disabled value="No chats yet">
+                No chats yet
               </CommandItem>
             ) : (
-              sessions.map((session) => (
+              threads.map((thread) => (
                 <CommandItem
-                  key={session.id}
-                  value={session.title}
-                  onSelect={() => goTo(`/sessions/${session.id}`)}
+                  key={thread.threadRef}
+                  // The ref keeps values unique when two chats share a title;
+                  // matching still runs on the visible words.
+                  value={`${thread.title} ${thread.threadRef}`}
+                  onSelect={() => goTo(`/chat/${thread.threadRef}`)}
                 >
-                  <span className="truncate">{session.title}</span>
+                  <span className="truncate">{thread.title}</span>
                 </CommandItem>
               ))
             )}

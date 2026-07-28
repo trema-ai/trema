@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ThreadDemo } from "#web/components/assistant-ui/thread-demo.tsx";
 import { ActivityCard } from "#web/components/trema/activity-card.tsx";
 import { ApprovalCard } from "#web/components/trema/approval-card.tsx";
+import { ChatComposer } from "#web/components/trema/chat-composer.tsx";
 import { CopyButton } from "#web/components/trema/copy-button.tsx";
 import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
 import { DataTable, type DataTableColumn } from "#web/components/trema/data-table.tsx";
@@ -22,8 +23,10 @@ import { LogLine } from "#web/components/trema/log-line.tsx";
 import { ModeBadge } from "#web/components/trema/mode-badge.tsx";
 import { OutputViewer } from "#web/components/trema/output-viewer.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
+import { PersonalScopesNotice } from "#web/components/trema/personal-scopes-notice.tsx";
 import { ReasoningBlock } from "#web/components/trema/reasoning-block.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
+import { RunFooter } from "#web/components/trema/run-footer.tsx";
 import { type RunState, RunStateBadge } from "#web/components/trema/run-state-badge.tsx";
 import { SegmentDivider } from "#web/components/trema/segment-divider.tsx";
 import { SettingRow, SettingsSection } from "#web/components/trema/settings-section.tsx";
@@ -1105,15 +1108,106 @@ function AdminSection() {
   );
 }
 
+/* A stateful ChatComposer host so typing works in the gallery. */
+function ComposerDemo({
+  initialValue = "",
+  withStop = false,
+  stopping = false,
+  error,
+}: {
+  initialValue?: string;
+  withStop?: boolean;
+  stopping?: boolean;
+  error?: string;
+}) {
+  const [value, setValue] = useState(initialValue);
+  return (
+    <div className="w-[420px]">
+      <ChatComposer
+        value={value}
+        onValueChange={setValue}
+        onSend={() => setValue("")}
+        onStop={withStop ? () => undefined : undefined}
+        stopping={stopping}
+        {...(error === undefined ? {} : { error })}
+      />
+    </div>
+  );
+}
+
 function ChatSection() {
   return (
     <Section title="Chat" bare>
-      <div className="space-y-1.5">
-        <ThreadDemo />
-        <p className="text-meta text-muted-foreground">
-          ThreadDemo: self-contained thread with canned streaming. ThreadList needs the app runtime
-          and renders inside the app sidebar, so it is not mounted here.
-        </p>
+      <div className="space-y-6">
+        <div className="rounded-md border bg-card p-6">
+          <Row>
+            <Variant label="Composer: idle, Enter sends">
+              <ComposerDemo />
+            </Variant>
+            <Variant label="Composer: run active + empty input, send morphs to stop">
+              <ComposerDemo withStop />
+            </Variant>
+            <Variant label="Composer: typing during a run restores send (a steer)">
+              <ComposerDemo withStop initialValue="Also check the staging environment" />
+            </Variant>
+            <Variant label="Composer: stop pressed, waiting for the cancelled terminal">
+              <ComposerDemo withStop stopping />
+            </Variant>
+            <Variant label="Composer: failed send, draft restored">
+              <ComposerDemo
+                initialValue="Summarize this week's incidents"
+                error="The send failed: network unreachable. The message was not delivered."
+              />
+            </Variant>
+          </Row>
+        </div>
+        <div className="rounded-md border bg-card p-6">
+          <Row>
+            <Variant label="Run footer: settled, the duration is the run-view deep link">
+              <RunFooter
+                runId="run_demo"
+                startedAt="2026-07-28T10:00:00Z"
+                endedAt="2026-07-28T10:02:13Z"
+              />
+            </Variant>
+            <Variant label="Run footer: live, working indicator with elapsed time and stop">
+              <RunFooter
+                runId="run_demo"
+                startedAt={new Date(Date.now() - 34_000).toISOString()}
+                live
+                stop={
+                  <Button type="button" variant="ghost" size="xs">
+                    Stop
+                  </Button>
+                }
+              />
+            </Variant>
+            <Variant label="Run footer: settled without a recorded end">
+              <RunFooter runId="run_demo" startedAt="2026-07-28T10:00:00Z" />
+            </Variant>
+          </Row>
+        </div>
+        <div className="rounded-md border bg-card p-6">
+          <Row>
+            <Variant label="Personal scopes off: replaces the composer, admin viewer">
+              <div className="w-[420px]">
+                <PersonalScopesNotice canManage />
+              </div>
+            </Variant>
+            <Variant label="Personal scopes off: member viewer">
+              <div className="w-[420px]">
+                <PersonalScopesNotice />
+              </div>
+            </Variant>
+          </Row>
+        </div>
+        <div className="space-y-1.5">
+          <ThreadDemo />
+          <p className="text-meta text-muted-foreground">
+            ThreadDemo: self-contained thread with canned streaming. ThreadList needs the app
+            runtime and renders inside the app sidebar, so it is not mounted here.
+          </p>
+        </div>
       </div>
     </Section>
   );

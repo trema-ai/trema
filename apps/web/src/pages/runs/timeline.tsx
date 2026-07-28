@@ -4,6 +4,7 @@ import type {
   DataPart,
   ElicitationPart,
   Part,
+  Projection,
   SteeringPart,
 } from "@trema/projection";
 import { ChevronRight, ScrollText } from "lucide-react";
@@ -83,19 +84,6 @@ export function RunTimeline({
     );
   }
 
-  // Boundary times live beside the fold, one record per closed segment in
-  // order; pairing them up front keeps the render pass free of counters.
-  const dividerDetail = new Map<number, string>();
-  let closed = 0;
-  for (const segment of projection.segments) {
-    if (segment.end === undefined) continue;
-    if (segment.end.reason === "paused") {
-      const detail = parkDetail(meta.boundaries[closed]);
-      if (detail !== undefined) dividerDetail.set(segment.index, detail);
-    }
-    closed += 1;
-  }
-
   const unknownCount = projection.unknownEvents + snapshot.serverMalformed;
 
   return (
@@ -107,44 +95,13 @@ export function RunTimeline({
           description="The run has not recorded anything so far."
         />
       )}
-      {projection.segments.map((segment) => {
-        const detail = dividerDetail.get(segment.index);
-        return (
-          <Fragment key={segment.index}>
-            {chunkParts(segment.parts).map((chunk) =>
-              chunk.kind === "machinery" ? (
-                <div key={chunk.key} className="space-y-0.5">
-                  {chunk.parts.map((part) => (
-                    <TimelinePart
-                      key={`${part.kind}:${part.id}`}
-                      runId={runId}
-                      runCreatedAt={runCreatedAt}
-                      part={part}
-                      meta={meta}
-                      resolvable={!settled}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <TimelinePart
-                  key={`${chunk.part.kind}:${chunk.part.id}`}
-                  runId={runId}
-                  runCreatedAt={runCreatedAt}
-                  part={chunk.part}
-                  meta={meta}
-                  resolvable={!settled}
-                />
-              ),
-            )}
-            {segment.end !== undefined && (
-              <SegmentDivider
-                reason={segment.end.reason}
-                {...(detail === undefined ? {} : { detail })}
-              />
-            )}
-          </Fragment>
-        );
-      })}
+      <ProjectionSegments
+        runId={runId}
+        runCreatedAt={runCreatedAt}
+        projection={projection}
+        meta={meta}
+        resolvable={!settled}
+      />
       {queuedInput.map((item) => (
         <QueuedInputNote key={item.id} item={item} />
       ))}
@@ -162,6 +119,87 @@ export function RunTimeline({
       )}
       <UnknownEventsLine count={unknownCount} />
     </div>
+  );
+}
+
+/**
+ * The folded segments with their boundary dividers — the rendering the run
+ * view and the chat thread share, so a run can never read differently on the
+ * two screens. `expandOutputs` is the one divergence the specs draw: output
+ * expansion stays on the run view (web 06), so the chat renders activity
+ * without the lazy output fetch and links to the run view for the rest.
+ */
+export function ProjectionSegments({
+  runId,
+  runCreatedAt,
+  projection,
+  meta,
+  resolvable,
+  expandOutputs = true,
+}: {
+  runId: string;
+  runCreatedAt: string;
+  projection: Projection;
+  meta: TimelineMeta;
+  resolvable: boolean;
+  expandOutputs?: boolean;
+}) {
+  // Boundary times live beside the fold, one record per closed segment in
+  // order; pairing them up front keeps the render pass free of counters.
+  const dividerDetail = new Map<number, string>();
+  let closed = 0;
+  for (const segment of projection.segments) {
+    if (segment.end === undefined) continue;
+    if (segment.end.reason === "paused") {
+      const detail = parkDetail(meta.boundaries[closed]);
+      if (detail !== undefined) dividerDetail.set(segment.index, detail);
+    }
+    closed += 1;
+  }
+
+  return (
+    <>
+      {projection.segments.map((segment) => {
+        const detail = dividerDetail.get(segment.index);
+        return (
+          <Fragment key={segment.index}>
+            {chunkParts(segment.parts).map((chunk) =>
+              chunk.kind === "machinery" ? (
+                <div key={chunk.key} className="space-y-0.5">
+                  {chunk.parts.map((part) => (
+                    <TimelinePart
+                      key={`${part.kind}:${part.id}`}
+                      runId={runId}
+                      runCreatedAt={runCreatedAt}
+                      part={part}
+                      meta={meta}
+                      resolvable={resolvable}
+                      expandOutputs={expandOutputs}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <TimelinePart
+                  key={`${chunk.part.kind}:${chunk.part.id}`}
+                  runId={runId}
+                  runCreatedAt={runCreatedAt}
+                  part={chunk.part}
+                  meta={meta}
+                  resolvable={resolvable}
+                  expandOutputs={expandOutputs}
+                />
+              ),
+            )}
+            {segment.end !== undefined && (
+              <SegmentDivider
+                reason={segment.end.reason}
+                {...(detail === undefined ? {} : { detail })}
+              />
+            )}
+          </Fragment>
+        );
+      })}
+    </>
   );
 }
 
@@ -208,12 +246,14 @@ function TimelinePart({
   part,
   meta,
   resolvable,
+  expandOutputs,
 }: {
   runId: string;
   runCreatedAt: string;
   part: Part;
   meta: TimelineMeta;
   resolvable: boolean;
+  expandOutputs: boolean;
 }) {
   switch (part.kind) {
     case "text":
@@ -229,7 +269,7 @@ function TimelinePart({
         </ReasoningBlock>
       );
     case "activity":
-      return <ActivityView runId={runId} part={part} />;
+      return <ActivityView runId={runId} part={part} expandOutputs={expandOutputs} />;
     case "steering":
       return <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />;
     case "elicitation":
@@ -246,7 +286,15 @@ function TimelinePart({
   }
 }
 
-function ActivityView({ runId, part }: { runId: string; part: ActivityPart }) {
+function ActivityView({
+  runId,
+  part,
+  expandOutputs,
+}: {
+  runId: string;
+  part: ActivityPart;
+  expandOutputs: boolean;
+}) {
   const state: ActivityState | undefined =
     part.result !== undefined
       ? part.result.status === "ok"
@@ -255,7 +303,7 @@ function ActivityView({ runId, part }: { runId: string; part: ActivityPart }) {
       : part.status === "streaming"
         ? "running"
         : undefined;
-  const outputRef = part.result?.outputRef;
+  const outputRef = expandOutputs ? part.result?.outputRef : undefined;
   return (
     <ActivityCard
       title={part.title}
@@ -449,7 +497,7 @@ function DataPartView({ part }: { part: DataPart }) {
 }
 
 /** A message waiting for a turn boundary, rendered where it will land. */
-function QueuedInputNote({ item }: { item: QueuedInputItem }) {
+export function QueuedInputNote({ item }: { item: QueuedInputItem }) {
   return (
     <div className="rounded-md border border-dashed px-3 py-2">
       <div className="flex items-center gap-2 text-meta text-muted-foreground">

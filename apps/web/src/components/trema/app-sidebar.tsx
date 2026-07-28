@@ -33,10 +33,10 @@ import {
 } from "#web/components/ui/sidebar.tsx";
 
 type Organization = { id: string; name: string };
-type SessionSummary = { id: string; title: string };
+type ThreadSummary = { threadRef: string; title: string };
 
 const navItems = [
-  { label: "New session", icon: MessageSquarePlus, href: "/" },
+  { label: "New chat", icon: MessageSquarePlus, href: "/" },
   { label: "Search", icon: Search },
   { label: "Automations", icon: Zap, href: "/automations" },
   { label: "Customize", icon: SlidersHorizontal, href: "/customize" },
@@ -48,13 +48,13 @@ export type AppSidebarProps = {
   name: string;
   email: string;
   role: string;
-  sessions?: SessionSummary[];
+  threads?: ThreadSummary[];
   onSearch: () => void;
   onSwitch: (id: string) => void;
   onSignOut: () => void;
 };
 
-export function AppSidebar({ sessions = [], ...props }: AppSidebarProps) {
+export function AppSidebar({ threads = [], ...props }: AppSidebarProps) {
   const location = useLocation();
   const active =
     props.organizations.find((org) => org.id === props.activeOrgId) ?? props.organizations[0];
@@ -116,21 +116,24 @@ export function AppSidebar({ sessions = [], ...props }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
-          <SidebarGroupLabel>Recents</SidebarGroupLabel>
+          <SidebarGroupLabel>Chats</SidebarGroupLabel>
           <SidebarGroupContent>
-            {sessions.length === 0 ? (
-              <p className="px-2 py-1.5 text-meta text-muted-foreground">No sessions yet</p>
+            {threads.length === 0 ? (
+              <p className="px-2 py-1.5 text-meta text-muted-foreground">No chats yet</p>
             ) : (
               <SidebarMenu>
-                {sessions.map((session) => (
-                  <SidebarMenuItem key={session.id}>
-                    <SidebarMenuButton asChild>
+                {threads.map((thread) => (
+                  <SidebarMenuItem key={thread.threadRef}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === `/chat/${thread.threadRef}`}
+                    >
                       <Link
-                        to={`/sessions/${session.id}`}
+                        to={`/chat/${thread.threadRef}`}
                         className="text-(length:--text-chrome)"
-                        title={session.title}
+                        title={thread.title}
                       >
-                        <span className="truncate">{session.title}</span>
+                        <span className="truncate">{thread.title}</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -196,4 +199,4 @@ export function AppSidebar({ sessions = [], ...props }: AppSidebarProps) {
   );
 }
 
-export type { SessionSummary };
+export type { ThreadSummary };

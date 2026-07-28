@@ -74,6 +74,8 @@ export interface PauseBoundary {
 export interface TimelineMeta {
   /** Highest seq folded into this meta, mirroring the projection's cursor. */
   lastSeq: number;
+  /** `at` of the last event folded — the run's worked-until time. */
+  lastAt?: string;
   /** Whether the next event is the one that ends the last boundary's park. */
   awaitingResume: boolean;
   /** One entry per closed segment, in order. */
@@ -122,6 +124,7 @@ export function advanceTimeline(
     if (input.seq <= (draft ?? meta).lastSeq) continue;
     draft ??= { ...meta, boundaries: [...meta.boundaries], steeringAt: { ...meta.steeringAt } };
     draft.lastSeq = input.seq;
+    draft.lastAt = input.at;
     if (draft.awaitingResume) {
       const position = draft.boundaries.length - 1;
       const last = draft.boundaries[position];
