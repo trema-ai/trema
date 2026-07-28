@@ -62,6 +62,7 @@ echo "ok  web assets"
 # `migrate` and `doctor` shell out to the Prisma CLI, which must survive the
 # pruned production install as a runtime dependency. Run both against a
 # throwaway postgres to prove the image applies the checked-in migrations.
+# Both run through the `trema` wrapper, which also proves the CLI is on PATH.
 network="verify-image-net-$$"
 postgres="verify-image-pg-$$"
 cleanup() {
@@ -101,6 +102,6 @@ for command in migrate doctor; do
     --env DATABASE_URL="postgresql://postgres:postgres@${postgres}:5432/verify" \
     --env TREMA_AUTH_SECRET="verify-secret-0123456789abcdef0123" \
     --env TREMA_MODE="hosted" \
-    "$image" node dist/cli.js "$command"
+    "$image" trema "$command"
   echo "ok  trema $command"
 done
