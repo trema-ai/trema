@@ -10,14 +10,20 @@ import type { McpClientFactory } from "#server/services/connectors/sync.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
 import { indexItemSafely } from "#server/services/search/index.js";
 
-export const sensitivities = ["read", "write", "destructive"] as const;
-export const sensitivitySchema = z.enum(sensitivities);
+/// The provider's own MCP annotations, kept verbatim as classifier signal —
+/// they gate nothing (wiki specs/context/06-connectors.md).
+export const toolAnnotationsSchema = z
+  .object({
+    readOnlyHint: z.boolean().optional(),
+    destructiveHint: z.boolean().optional(),
+  })
+  .strict();
 
 export const syncedToolSchema = z
   .object({
     name: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
-    sensitivity: sensitivitySchema,
+    annotations: toolAnnotationsSchema.optional(),
   })
   .strict();
 
@@ -31,7 +37,6 @@ const installationBodyShape = z
         message: "enabledTools cannot contain duplicate tool names",
       }),
     ]),
-    sensitivityOverrides: z.record(z.string().trim().min(1), sensitivitySchema).optional(),
     syncedTools: z
       .array(syncedToolSchema)
       .refine((tools) => new Set(tools.map(({ name }) => name)).size === tools.length, {
@@ -84,7 +89,7 @@ export function createConnectorInstallationBodySchema(catalog: ProviderCatalog =
 
 export const connectorInstallationBodySchema = createConnectorInstallationBodySchema();
 
-export type Sensitivity = z.infer<typeof sensitivitySchema>;
+export type ToolAnnotations = z.infer<typeof toolAnnotationsSchema>;
 export type SyncedTool = z.infer<typeof syncedToolSchema>;
 export type ConnectorInstallationBody = z.infer<typeof installationBodyShape>;
 
@@ -96,23 +101,11 @@ export function resolveInstallationTools(
 ): ResolvedInstallationTool[] {
   const available: SyncedTool[] =
     provider.transport.type === "rest"
-      ? provider.toolManifest.map(({ name, description, sensitivity }) => ({
-          name,
-          description,
-          sensitivity,
-        }))
+      ? provider.toolManifest.map(({ name, description }) => ({ name, description }))
       : (body.syncedTools ?? []);
   const enabled = body.enabledTools === "all" ? undefined : new Set(body.enabledTools);
 
-  return available.flatMap((tool) => {
-    if (enabled && !enabled.has(tool.name)) return [];
-    return [
-      {
-        ...tool,
-        sensitivity: body.sensitivityOverrides?.[tool.name] ?? tool.sensitivity ?? "destructive",
-      },
-    ];
-  });
+  return available.filter((tool) => !enabled || enabled.has(tool.name));
 }
 
 export class ConnectorInstallationValidationError extends Error {
@@ -208,7 +201,6 @@ export async function listConnectorInstallations(
       catalogKey: body.catalogKey,
       connectionId: body.connectionId,
       enabledTools: body.enabledTools,
-      sensitivityOverrides: body.sensitivityOverrides ?? {},
       syncedTools: body.syncedTools ?? [],
       status: installation.status,
       updatedAt: installation.updatedAt,
@@ -278,7 +270,6 @@ export interface CreateConnectorInstallationInput extends EmbeddingOptions {
   catalogKey: string;
   connectionId: string;
   enabledTools?: "all" | string[];
-  sensitivityOverrides?: Record<string, Sensitivity>;
   clientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
   fetch?: ConnectorFetch;
@@ -359,7 +350,6 @@ export async function createConnectorInstallation(
       catalogKey: input.catalogKey,
       connectionId: input.connectionId,
       enabledTools: input.enabledTools ?? "all",
-      ...(input.sensitivityOverrides ? { sensitivityOverrides: input.sensitivityOverrides } : {}),
     },
     catalog,
   );
@@ -451,7 +441,6 @@ export interface UpdateConnectorInstallationInput extends EmbeddingOptions {
   installationItemId: string;
   connectionId?: string;
   enabledTools?: "all" | string[];
-  sensitivityOverrides?: Record<string, Sensitivity>;
   catalog?: ProviderCatalog;
 }
 
@@ -480,9 +469,6 @@ export async function updateConnectorInstallation(
         ...current,
         ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
         ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
-        ...(input.sensitivityOverrides !== undefined
-          ? { sensitivityOverrides: input.sensitivityOverrides }
-          : {}),
       },
       catalog,
     );
@@ -534,7 +520,6 @@ export async function updateConnectorInstallation(
           changed,
           enabledTools: body.enabledTools,
           connectionId: body.connectionId,
-          sensitivityOverrides: body.sensitivityOverrides ?? {},
           version: installation.version,
         },
       },

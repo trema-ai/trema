@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const hubspotProvider = {
   key: "hubspot",
+  trusted: true,
   displayName: "HubSpot",
   description:
     "A curated set of tools to search and manage contacts, companies, and deals over the HubSpot CRM REST API.",
@@ -224,7 +225,6 @@ export const hubspotProvider = {
           after: { type: "string", description: "Paging cursor from a previous search." },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_contact",
@@ -239,7 +239,6 @@ export const hubspotProvider = {
         },
         required: ["contactId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_contact",
@@ -256,7 +255,6 @@ export const hubspotProvider = {
         },
         required: ["properties"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_contact",
@@ -271,7 +269,6 @@ export const hubspotProvider = {
         },
         required: ["contactId", "properties"],
       },
-      sensitivity: "write",
     },
     {
       name: "search_deals",
@@ -288,7 +285,6 @@ export const hubspotProvider = {
           after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "search_companies",
@@ -309,7 +305,6 @@ export const hubspotProvider = {
           after: { type: "string", description: "Paging cursor from a previous search." },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_company",
@@ -324,7 +319,6 @@ export const hubspotProvider = {
         },
         required: ["companyId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_company",
@@ -341,7 +335,6 @@ export const hubspotProvider = {
         },
         required: ["properties"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_deal",
@@ -356,7 +349,6 @@ export const hubspotProvider = {
         },
         required: ["dealId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_deal",
@@ -373,7 +365,6 @@ export const hubspotProvider = {
         },
         required: ["properties"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_deal",
@@ -388,7 +379,6 @@ export const hubspotProvider = {
         },
         required: ["dealId", "properties"],
       },
-      sensitivity: "write",
     },
     {
       name: "create_note",
@@ -409,7 +399,6 @@ export const hubspotProvider = {
         },
         required: ["properties"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_owners",
@@ -424,7 +413,6 @@ export const hubspotProvider = {
           after: { type: "string", description: "Paging cursor from a previous page." },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_associations",
@@ -442,7 +430,6 @@ export const hubspotProvider = {
         },
         required: ["objectType", "objectId", "toObjectType"],
       },
-      sensitivity: "read",
     },
   ],
   memberConnectable: false,

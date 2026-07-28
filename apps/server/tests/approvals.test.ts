@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { Prisma, type Role } from "#server/generated/prisma/client.js";
+import { type ApprovalMode, Prisma, type Role } from "#server/generated/prisma/client.js";
 import { createAuth } from "#server/lib/auth/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
@@ -19,7 +19,9 @@ import {
   ACTIVATE_ITEM_TOOL_KEY,
   ApprovalArgsMismatchError,
   ApprovalStateError,
+  approveApproval,
   claimApprovalExecution,
+  findToolGrant,
   requestApproval,
   requestItemActivation,
   sweepApprovals,
@@ -112,9 +114,25 @@ integration("approvals", () => {
   /** A shared scope bound to a location, with an open session against it. */
   async function openSharedSession(
     org: Awaited<ReturnType<typeof createOrg>>,
-    options: { name: string; requesterPrincipalId?: string },
+    options: {
+      name: string;
+      requesterPrincipalId?: string;
+      /** A policy row written on the scope before the session opens, so it pins. */
+      policy?: {
+        maxMode: ApprovalMode;
+        approverRoles?: Role[];
+        allowRequesterApproval?: boolean;
+      };
+    },
   ) {
     const scope = await call(scopesRouter.create, { name: options.name }, { context: org.context });
+    const policy = options.policy
+      ? await call(
+          policiesRouter.set,
+          { scopeId: scope.id, ...options.policy },
+          { context: org.context },
+        )
+      : undefined;
     const locationRef = `T1:${randomUUID()}`;
     await call(
       bindingsRouter.create,
@@ -132,7 +150,34 @@ integration("approvals", () => {
       },
       { context: serviceContext(org.credential.secret) },
     );
-    return { scope, session };
+    return { scope, policy, locationRef, session };
+  }
+
+  /**
+   * The same database with one write broken: inside a transaction, minting a
+   * tool grant throws. What survives the failure is the question.
+   */
+  function withFailingGrantMint(client: typeof db): typeof db {
+    const broken = (transaction: Prisma.TransactionClient) =>
+      new Proxy(transaction, {
+        get(target, property) {
+          if (property === "toolGrant") {
+            return { create: () => Promise.reject(new Error("Grant mint failed")) };
+          }
+          const value = Reflect.get(target, property) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    return new Proxy(client, {
+      get(target, property) {
+        if (property === "$transaction") {
+          return (run: (transaction: Prisma.TransactionClient) => Promise<unknown>) =>
+            target.$transaction((transaction) => run(broken(transaction)));
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
   }
 
   it("covers the recorded arguments alone, and refuses a changed call", async () => {
@@ -148,14 +193,14 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args,
       reason: "Removing the merged release branch",
     });
-    expect(requested.outcome).toBe("approval_required");
-    if (requested.outcome !== "approval_required") throw new Error("unreachable");
-    // The arguments are stored verbatim, not just fingerprinted.
+    // The arguments are stored verbatim, not just fingerprinted, and routing
+    // came from the built-in defaults because nothing wrote a row.
     expect(requested.approval.argsJson).toEqual(args);
+    expect(requested.routing.source).toEqual({ kind: "default", scopeKind: "shared" });
 
     await call(approvalsRouter.approve, { id: requested.approval.id }, { context: org.context });
 
@@ -199,11 +244,10 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema" },
       reason: "Cleaning up",
     });
-    if (requested.outcome !== "approval_required") throw new Error("unreachable");
     await call(approvalsRouter.approve, { id: requested.approval.id }, { context: org.context });
 
     const attempts = await Promise.allSettled(
@@ -232,11 +276,10 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema" },
       reason: "Cleaning up",
     });
-    if (requested.outcome !== "approval_required") throw new Error("unreachable");
 
     const attempts = await Promise.allSettled([
       call(approvalsRouter.approve, { id: requested.approval.id }, { context: first.context }),
@@ -253,35 +296,41 @@ integration("approvals", () => {
     const opened = await openSharedSession(org, {
       name: "Pinned",
       requesterPrincipalId: member.principal.id,
+      policy: { maxMode: "ask", approverRoles: ["admin", "owner"], allowRequesterApproval: false },
     });
+    // The row is rewritten after the session opened: today's rule would let the
+    // member resolve their own ask. The edit reaches the next session, never
+    // this one.
     await call(
       policiesRouter.set,
       {
         scopeId: opened.scope.id,
-        sensitivity: "destructive",
-        action: "require_approval",
-        approverRoles: ["owner"],
+        maxMode: "ask",
+        approverRoles: ["member"],
+        allowRequesterApproval: true,
       },
       { context: org.context },
     );
 
-    // The session pinned the defaults, which name owner and admin. The row
-    // written after it opened reaches the next session, never this one.
     const requested = await requestApproval(db, {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema" },
       reason: "Cleaning up",
     });
-    if (requested.outcome !== "approval_required") throw new Error("unreachable");
-    expect(requested.approval.approverRoles).toEqual(["owner", "admin"]);
+    expect(requested.approval).toMatchObject({
+      approverRoles: ["admin", "owner"],
+      allowRequesterApproval: false,
+    });
+    expect(requested.routing.source).toEqual({ kind: "policy", policyId: opened.policy?.id });
 
     const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Admin");
     const listedForAdmin = await call(approvalsRouter.list, {}, { context: admin.context });
     expect(listedForAdmin.approvals.map(({ id }) => id)).toEqual([requested.approval.id]);
-    // A member holds no approver role, so the approval is not theirs to resolve.
+    // Under the pinned rule the asker may not resolve their own call, whatever
+    // the scope's policy says now.
     const listedForMember = await call(approvalsRouter.list, {}, { context: member.context });
     expect(listedForMember.approvals).toHaveLength(0);
     await expect(
@@ -299,45 +348,49 @@ integration("approvals", () => {
     });
   });
 
-  it("keeps the requester out of a destructive decision and lets them into a write", async () => {
+  it("separates duties only where a policy row says so, and not by default", async () => {
     const org = await createOrg();
     const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Asking Admin");
-    const opened = await openSharedSession(org, {
+
+    // A row refusing requester approval keeps the person who asked out of the
+    // decision, however senior they are.
+    const gated = await openSharedSession(org, {
       name: "Separation",
       requesterPrincipalId: admin.principal.id,
+      policy: { maxMode: "ask", approverRoles: ["admin", "owner"], allowRequesterApproval: false },
     });
-
-    // The destructive default keeps the person who asked out of it, however
-    // senior they are.
-    const destructive = await requestApproval(db, {
+    const guarded = await requestApproval(db, {
       orgId: org.org.id,
-      sessionId: opened.session.sessionId,
+      sessionId: gated.session.sessionId,
       toolKey: "github:delete_repo",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema" },
       reason: "Retiring the repository",
     });
-    if (destructive.outcome !== "approval_required") throw new Error("unreachable");
-    expect(destructive.approval.allowRequesterApproval).toBe(false);
+    expect(guarded.approval.allowRequesterApproval).toBe(false);
     await expect(
-      call(approvalsRouter.approve, { id: destructive.approval.id }, { context: admin.context }),
+      call(approvalsRouter.approve, { id: guarded.approval.id }, { context: admin.context }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await call(approvalsRouter.approve, { id: destructive.approval.id }, { context: org.context });
+    await call(approvalsRouter.approve, { id: guarded.approval.id }, { context: org.context });
 
-    // The write default treats the ask as the approval, so the same person may
-    // wave their own write through.
-    const write = await requestApproval(db, {
+    // The default routing treats the ask as the person confirming their own
+    // agent's call, so with no row the same person waves it through.
+    const open = await openSharedSession(org, {
+      name: "Own Confirm",
+      requesterPrincipalId: admin.principal.id,
+    });
+    const asked = await requestApproval(db, {
       orgId: org.org.id,
-      sessionId: opened.session.sessionId,
+      sessionId: open.session.sessionId,
       toolKey: "github:open_issue",
-      sensitivity: "write",
+      mode: "ask",
       args: { title: "Retire the repository" },
       reason: "Filing the follow-up",
     });
-    if (write.outcome !== "approval_required") throw new Error("unreachable");
+    expect(asked.approval.allowRequesterApproval).toBe(true);
     const approved = await call(
       approvalsRouter.approve,
-      { id: write.approval.id },
+      { id: asked.approval.id },
       { context: admin.context },
     );
     expect(approved.approval.status).toBe("approved");
@@ -377,9 +430,10 @@ integration("approvals", () => {
       itemId: proposed.id,
       reason: "This is how the mornings have gone all month",
     });
-    // The personal defaults make the confirm step the owner's own: no role
-    // list, and the person who asked is the one who says yes.
-    expect(approval).toMatchObject({ approverRoles: [], allowRequesterApproval: true });
+    // The personal defaults make the confirm step the owner's own: the owner
+    // approver role means the person whose scope it is, and the person who
+    // asked is the one who says yes.
+    expect(approval).toMatchObject({ approverRoles: ["owner"], allowRequesterApproval: true });
 
     // The organization's owner does not reach into someone's personal scope.
     await expect(
@@ -405,7 +459,7 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema", branch: "old" },
       reason: "Cleaning up",
     });
@@ -413,13 +467,11 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema", branch: "older" },
       reason: "Cleaning up",
       ttlMs: HOUR_MS,
     });
-    if (waiting.outcome !== "approval_required") throw new Error("unreachable");
-    if (shortLived.outcome !== "approval_required") throw new Error("unreachable");
 
     const twoHoursOn = new Date(Date.now() + 2 * HOUR_MS);
     const first = await sweepApprovals(db, { orgId: org.org.id, now: twoHoursOn });
@@ -495,7 +547,7 @@ integration("approvals", () => {
     });
     expect(approval).toMatchObject({
       toolKey: ACTIVATE_ITEM_TOOL_KEY,
-      sensitivity: "write",
+      mode: "ask",
       status: "pending",
     });
     expect(approval.argsJson).toEqual({ itemId: proposed.id });
@@ -535,7 +587,7 @@ integration("approvals", () => {
         orgId: org.org.id,
         sessionId: opened.session.sessionId,
         toolKey: "github:delete_branch",
-        sensitivity: "destructive",
+        mode: "ask",
         args: { repo: "trema", branch: "main" },
         reason: "Cleaning up",
       });
@@ -543,11 +595,7 @@ integration("approvals", () => {
     // A resumed run repeating its tool call is one decision for a person, and
     // two runs racing to ask must not become two.
     const asked = await Promise.all(Array.from({ length: 5 }, ask));
-    const ids = new Set(
-      asked.map((outcome) =>
-        outcome.outcome === "approval_required" ? outcome.approval.id : "not-required",
-      ),
-    );
+    const ids = new Set(asked.map(({ approval }) => approval.id));
     expect(ids.size).toBe(1);
     expect(await db.approval.count({ where: { orgId: org.org.id } })).toBe(1);
   });
@@ -559,13 +607,12 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive" as const,
+      mode: "ask" as const,
       args: { repo: "trema", branch: "main" },
       reason: "Cleaning up",
     };
 
     const first = await requestApproval(db, { ...sameCall, ttlMs: HOUR_MS });
-    if (first.outcome !== "approval_required") throw new Error("unreachable");
 
     // Nothing has swept the expired ask yet. The new ask is a new decision, and
     // the stale one is recorded as expired rather than quietly reused.
@@ -573,7 +620,6 @@ integration("approvals", () => {
       ...sameCall,
       now: new Date(Date.now() + 2 * HOUR_MS),
     });
-    if (second.outcome !== "approval_required") throw new Error("unreachable");
     expect(second.approval.id).not.toBe(first.approval.id);
     await expect(
       db.approval.findUniqueOrThrow({
@@ -586,18 +632,19 @@ integration("approvals", () => {
   it("fills the listing limit from behind approvals that are not the caller's", async () => {
     const org = await createOrg();
     const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Queue Admin");
-    // The admin asked for these, and a destructive call keeps the asker out of
-    // its own decision — so none of them belong in the admin's queue.
+    // The admin asked for these, and the scope's row keeps the asker out of
+    // their own decision — so none of them belong in the admin's queue.
     const theirs = await openSharedSession(org, {
       name: "Own Asks",
       requesterPrincipalId: admin.principal.id,
+      policy: { maxMode: "ask", approverRoles: ["admin", "owner"], allowRequesterApproval: false },
     });
     for (let index = 0; index < 6; index += 1) {
       await requestApproval(db, {
         orgId: org.org.id,
         sessionId: theirs.session.sessionId,
         toolKey: "github:delete_branch",
-        sensitivity: "destructive",
+        mode: "ask",
         args: { repo: "trema", branch: `own-${index}` },
         reason: "Cleaning up",
       });
@@ -614,11 +661,10 @@ integration("approvals", () => {
         orgId: org.org.id,
         sessionId: others.session.sessionId,
         toolKey: "github:delete_branch",
-        sensitivity: "destructive",
+        mode: "ask",
         args: { repo: "trema", branch: `other-${index}` },
         reason: "Cleaning up",
       });
-      if (requested.outcome !== "approval_required") throw new Error("unreachable");
       resolvable.push(requested.approval.id);
     }
 
@@ -644,7 +690,7 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema", branch: "stale" },
       reason: "Cleaning up",
       ttlMs: 60_000,
@@ -654,13 +700,10 @@ integration("approvals", () => {
       orgId: org.org.id,
       sessionId: opened.session.sessionId,
       toolKey: "github:delete_branch",
-      sensitivity: "destructive",
+      mode: "ask",
       args: { repo: "trema", branch: "fresh" },
       reason: "Cleaning up",
     });
-    if (overdue.outcome !== "approval_required" || live.outcome !== "approval_required") {
-      throw new Error("unreachable");
-    }
 
     // The queue promises what the approve call would accept, and approve would
     // refuse the overdue ask as expired — so the listing never surfaces it.
@@ -673,6 +716,301 @@ integration("approvals", () => {
         select: { status: true },
       }),
     ).resolves.toEqual({ status: "pending" });
+  });
+
+  it("widens a run-scoped yes to the thread, and no further", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
+    const opened = await openSharedSession(org, {
+      name: "Thread Grant",
+      requesterPrincipalId: member.principal.id,
+    });
+    const requested = await requestApproval(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      toolKey: "github:open_issue",
+      mode: "delegated",
+      escalationReason: "Touches a public repository",
+      args: { title: "First" },
+      reason: "Filing the follow-up",
+    });
+    // The approval records the mode it paused under and the classifier's reason.
+    expect(requested.approval).toMatchObject({
+      mode: "delegated",
+      escalationReason: "Touches a public repository",
+    });
+
+    await call(
+      approvalsRouter.approve,
+      { id: requested.approval.id, grantScope: "run" },
+      { context: org.context },
+    );
+
+    const scopeChain = opened.session.scopeChain.map(({ id }) => id);
+    const grant = await findToolGrant(db, {
+      orgId: org.org.id,
+      toolKey: "github:open_issue",
+      sessionId: opened.session.sessionId,
+      scopeChain,
+      requesterPrincipalId: member.principal.id,
+    });
+    expect(grant).toMatchObject({
+      sessionId: opened.session.sessionId,
+      sourceApprovalId: requested.approval.id,
+    });
+
+    // It covers the tool it names, not the toolset.
+    await expect(
+      findToolGrant(db, {
+        orgId: org.org.id,
+        toolKey: "github:delete_branch",
+        sessionId: opened.session.sessionId,
+        scopeChain,
+        requesterPrincipalId: member.principal.id,
+      }),
+    ).resolves.toBeNull();
+
+    // Another thread on the very same scope gets no cover from it, even for
+    // the same requester: a run grant dies with its session.
+    const other = await call(
+      sessionsRouter.open,
+      {
+        surface: "slack",
+        locationRef: opened.locationRef,
+        requester: { principalId: member.principal.id },
+      },
+      { context: serviceContext(org.credential.secret) },
+    );
+    await expect(
+      findToolGrant(db, {
+        orgId: org.org.id,
+        toolKey: "github:open_issue",
+        sessionId: other.sessionId,
+        scopeChain: other.scopeChain.map(({ id }) => id),
+        requesterPrincipalId: member.principal.id,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("records the yes and the grant it promised as one fact", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
+    const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Approver");
+    const opened = await openSharedSession(org, {
+      name: "Atomic Grant",
+      requesterPrincipalId: member.principal.id,
+    });
+    const requested = await requestApproval(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      toolKey: "github:open_issue",
+      mode: "ask",
+      args: { title: "First" },
+      reason: "Filing the follow-up",
+    });
+
+    // A mint that fails takes the yes down with it. Otherwise the approval
+    // would sit `approved` with no grant behind it, and nobody could ever
+    // approve it again to mint the one the approver asked for.
+    await expect(
+      approveApproval(withFailingGrantMint(db), {
+        orgId: org.org.id,
+        approvalId: requested.approval.id,
+        approverPrincipalId: admin.principal.id,
+        grantScope: "run",
+      }),
+    ).rejects.toThrow("Grant mint failed");
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: requested.approval.id } },
+        select: { status: true, resolvedAt: true },
+      }),
+    ).resolves.toEqual({ status: "pending", resolvedAt: null });
+    expect(await db.toolGrant.count({ where: { orgId: org.org.id } })).toBe(0);
+
+    // The decision is still there to make, and made cleanly it leaves both.
+    const resolved = await approveApproval(db, {
+      orgId: org.org.id,
+      approvalId: requested.approval.id,
+      approverPrincipalId: admin.principal.id,
+      grantScope: "run",
+    });
+    expect(resolved.approval.status).toBe("approved");
+    await expect(
+      findToolGrant(db, {
+        orgId: org.org.id,
+        toolKey: "github:open_issue",
+        sessionId: opened.session.sessionId,
+        scopeChain: opened.session.scopeChain.map(({ id }) => id),
+        requesterPrincipalId: member.principal.id,
+      }),
+    ).resolves.toMatchObject({
+      sessionId: opened.session.sessionId,
+      sourceApprovalId: requested.approval.id,
+    });
+  });
+
+  it("stands an always grant for the requester at the scope, and requires one", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
+    const stranger = await addMember(org.org.id, org.orgScope.id, "member", "Stranger");
+    const opened = await openSharedSession(org, {
+      name: "Standing Grant",
+      requesterPrincipalId: member.principal.id,
+    });
+    const requested = await requestApproval(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      toolKey: "github:open_issue",
+      mode: "ask",
+      args: { title: "First" },
+      reason: "Filing the follow-up",
+    });
+    await call(
+      approvalsRouter.approve,
+      { id: requested.approval.id, grantScope: "always" },
+      { context: org.context },
+    );
+
+    // A later thread by the same requester at the same scope is covered.
+    const later = await call(
+      sessionsRouter.open,
+      {
+        surface: "slack",
+        locationRef: opened.locationRef,
+        requester: { principalId: member.principal.id },
+      },
+      { context: serviceContext(org.credential.secret) },
+    );
+    const laterChain = later.scopeChain.map(({ id }) => id);
+    const grant = await findToolGrant(db, {
+      orgId: org.org.id,
+      toolKey: "github:open_issue",
+      sessionId: later.sessionId,
+      scopeChain: laterChain,
+      requesterPrincipalId: member.principal.id,
+    });
+    expect(grant).toMatchObject({
+      sessionId: null,
+      requesterPrincipalId: member.principal.id,
+      sourceApprovalId: requested.approval.id,
+    });
+
+    // A standing grant always names the person it covers: a session with no
+    // linked requester matches thread grants only, and another person's
+    // session is not covered either.
+    await expect(
+      findToolGrant(db, {
+        orgId: org.org.id,
+        toolKey: "github:open_issue",
+        sessionId: later.sessionId,
+        scopeChain: laterChain,
+        requesterPrincipalId: null,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      findToolGrant(db, {
+        orgId: org.org.id,
+        toolKey: "github:open_issue",
+        sessionId: later.sessionId,
+        scopeChain: laterChain,
+        requesterPrincipalId: stranger.principal.id,
+      }),
+    ).resolves.toBeNull();
+
+    // Revocation ends it: a revoked grant never matches.
+    await db.toolGrant.update({
+      where: { orgId_id: { orgId: org.org.id, id: grant?.id ?? "" } },
+      data: { revokedAt: new Date() },
+    });
+    await expect(
+      findToolGrant(db, {
+        orgId: org.org.id,
+        toolKey: "github:open_issue",
+        sessionId: later.sessionId,
+        scopeChain: laterChain,
+        requesterPrincipalId: member.principal.id,
+      }),
+    ).resolves.toBeNull();
+
+    // An approval with no linked requester has nobody to stand the grant for,
+    // and the refusal leaves it pending for a plain yes.
+    const anonymous = await openSharedSession(org, { name: "Anonymous" });
+    const unlinked = await requestApproval(db, {
+      orgId: org.org.id,
+      sessionId: anonymous.session.sessionId,
+      toolKey: "github:open_issue",
+      mode: "ask",
+      args: { title: "Second" },
+      reason: "Filing the follow-up",
+    });
+    await expect(
+      call(
+        approvalsRouter.approve,
+        { id: unlinked.approval.id, grantScope: "always" },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: unlinked.approval.id } },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: "pending" });
+    const approved = await call(
+      approvalsRouter.approve,
+      { id: unlinked.approval.id },
+      { context: org.context },
+    );
+    expect(approved.approval.status).toBe("approved");
+  });
+
+  it("refuses to widen an item activation past a single yes", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
+    const opened = await openSharedSession(org, {
+      name: "Activation Width",
+      requesterPrincipalId: member.principal.id,
+    });
+    const proposed = await createItem(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.agent.id,
+      scopeId: opened.scope.id,
+      kind: "memory",
+      title: "Escalate refunds over $500",
+      body: { type: "rule", content: "Escalate any refund over $500 to finance." },
+      writerKind: "agent",
+      sourceSessionId: opened.session.sessionId,
+    });
+    const approval = await requestItemActivation(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      itemId: proposed.id,
+      reason: "This rule came up twice this week",
+    });
+
+    // Activating an item is one decision about one item; there is no thread- or
+    // standing-wide version of that yes.
+    for (const grantScope of ["run", "always"] as const) {
+      await expect(
+        call(approvalsRouter.approve, { id: approval.id, grantScope }, { context: org.context }),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    expect(await db.toolGrant.count({ where: { orgId: org.org.id } })).toBe(0);
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: approval.id } },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: "pending" });
+
+    // The plain yes still works, and still activates.
+    const resolved = await call(
+      approvalsRouter.approve,
+      { id: approval.id },
+      { context: org.context },
+    );
+    expect(resolved.activatedItemId).toBe(proposed.id);
   });
 
   it("treats activating from the control plane as the approval itself", async () => {
@@ -879,7 +1217,7 @@ integration("approvals", () => {
         argsJson: Prisma.JsonNull,
         argsHash: "0".repeat(64),
         reason: "Recorded without an item",
-        sensitivity: "write",
+        mode: "ask",
         approverRoles: ["owner", "admin"],
         allowRequesterApproval: false,
         expiresAt: new Date(Date.now() + HOUR_MS),
@@ -903,38 +1241,5 @@ integration("approvals", () => {
     // like anything else nobody answers.
     const denied = await call(approvalsRouter.deny, { id: approval.id }, { context: org.context });
     expect(denied.status).toBe("denied");
-  });
-
-  it("skips the approval entirely where the policy allows the class", async () => {
-    const org = await createOrg();
-    const opened = await openSharedSession(org, { name: "Open Season" });
-    await call(
-      policiesRouter.set,
-      { scopeId: opened.scope.id, sensitivity: "write", action: "deny" },
-      { context: org.context },
-    );
-
-    const allowed = await requestApproval(db, {
-      orgId: org.org.id,
-      sessionId: opened.session.sessionId,
-      toolKey: "github:read_file",
-      sensitivity: "read",
-      args: { path: "README.md" },
-      reason: "Reading the readme",
-    });
-    expect(allowed.outcome).toBe("allow");
-
-    // The deny row landed after the session opened, so this session still
-    // writes; the next one will not.
-    const write = await requestApproval(db, {
-      orgId: org.org.id,
-      sessionId: opened.session.sessionId,
-      toolKey: "github:open_issue",
-      sensitivity: "write",
-      args: { title: "Later" },
-      reason: "Filing a follow-up",
-    });
-    expect(write.outcome).toBe("approval_required");
-    expect(await db.approval.count({ where: { orgId: org.org.id } })).toBe(1);
   });
 });

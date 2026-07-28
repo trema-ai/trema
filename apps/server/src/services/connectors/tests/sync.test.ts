@@ -1,43 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import type { ConnectorInstallationBody } from "#server/services/connectors/installations.js";
-import {
-  mapMcpTool,
-  mergeSyncedTools,
-  sensitivityFromMcpAnnotations,
-} from "#server/services/connectors/sync.js";
+import { mapMcpTool, mergeSyncedTools } from "#server/services/connectors/sync.js";
 
 const connectionId = "00000000-0000-4000-8000-000000000001";
 
-describe("MCP sensitivity classification", () => {
-  it.each([
-    [{ readOnlyHint: true, destructiveHint: true }, "read"],
-    [{ readOnlyHint: false, destructiveHint: false }, "write"],
-    [{ readOnlyHint: false, destructiveHint: true }, "destructive"],
-    [undefined, "destructive"],
-  ] as const)("classifies %j as %s", (annotations, expected) => {
-    expect(sensitivityFromMcpAnnotations(annotations)).toBe(expected);
-  });
-
-  it("maps name, description, and annotations to the stored shape", () => {
+describe("MCP tool mapping", () => {
+  it("maps name, description, and annotations to the stored shape verbatim", () => {
     expect(
       mapMcpTool({
         name: "read_page",
         description: "Read a page",
         annotations: { readOnlyHint: true },
       }),
-    ).toEqual({ name: "read_page", description: "Read a page", sensitivity: "read" });
+    ).toEqual({
+      name: "read_page",
+      description: "Read a page",
+      annotations: { readOnlyHint: true },
+    });
+  });
+
+  it("drops absent descriptions and empty annotations instead of storing them", () => {
+    expect(mapMcpTool({ name: "bare" })).toEqual({ name: "bare" });
+    expect(mapMcpTool({ name: "bare", annotations: {} })).toEqual({ name: "bare" });
   });
 });
 
-const initialTools = [
-  { name: "kept", description: "old", sensitivity: "read" as const },
-  { name: "removed", sensitivity: "write" as const },
-];
-const freshTools = [
-  { name: "kept", description: "new", sensitivity: "write" as const },
-  { name: "added", sensitivity: "destructive" as const },
-];
+const initialTools = [{ name: "kept", description: "old" }, { name: "removed" }];
+const freshTools = [{ name: "kept", description: "new" }, { name: "added" }];
 
 describe("MCP tool drift merge", () => {
   it("keeps all-tools intent so new tools become enabled", () => {
@@ -68,21 +57,19 @@ describe("MCP tool drift merge", () => {
     expect(merged.body.syncedTools?.map(({ name }) => name)).toEqual(["kept", "added"]);
   });
 
-  it("preserves overrides for removed tools and re-applies them if the tool returns", () => {
-    const original: ConnectorInstallationBody = {
-      catalogKey: "notion",
-      connectionId,
-      enabledTools: "all",
-      syncedTools: initialTools,
-      sensitivityOverrides: { removed: "read" },
-    };
-    const withoutTool = mergeSyncedTools(original, freshTools).body;
-    expect(withoutTool.sensitivityOverrides).toEqual({ removed: "read" });
-
-    const returned = mergeSyncedTools(withoutTool, [
-      ...freshTools,
-      { name: "removed", sensitivity: "destructive" },
-    ]).body;
-    expect(returned.sensitivityOverrides).toEqual({ removed: "read" });
+  it("counts an annotations change as drift and stores the fresh annotations verbatim", () => {
+    const merged = mergeSyncedTools(
+      {
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: "all",
+        syncedTools: [{ name: "kept", annotations: { readOnlyHint: true } }],
+      },
+      [{ name: "kept", annotations: { readOnlyHint: false, destructiveHint: true } }],
+    );
+    expect(merged.report).toEqual({ added: [], removed: [], changed: ["kept"] });
+    expect(merged.body.syncedTools).toEqual([
+      { name: "kept", annotations: { readOnlyHint: false, destructiveHint: true } },
+    ]);
   });
 });

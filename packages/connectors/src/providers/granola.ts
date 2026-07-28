@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const granolaProvider = {
   key: "granola",
+  trusted: true,
   displayName: "Granola",
   description:
     "Search meeting notes, folders, summaries, and transcripts. Tools come from Granola's official MCP server.",

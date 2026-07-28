@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const slackProvider = {
   key: "slack",
+  trusted: true,
   displayName: "Slack",
   description:
     "A curated set of tools to read channels and conversation history and post messages over the Slack Web API.",
@@ -187,7 +188,6 @@ export const slackProvider = {
           limit: { type: "integer" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_channel_history",
@@ -204,7 +204,6 @@ export const slackProvider = {
         },
         required: ["channel"],
       },
-      sensitivity: "read",
     },
     {
       name: "post_message",
@@ -223,7 +222,6 @@ export const slackProvider = {
         },
         required: ["channel", "text"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_user",
@@ -235,7 +233,6 @@ export const slackProvider = {
         properties: { user: { type: "string", description: "User id, e.g. U0123456789." } },
         required: ["user"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_thread_replies",
@@ -252,7 +249,6 @@ export const slackProvider = {
         },
         required: ["channel", "ts"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_users",
@@ -266,7 +262,6 @@ export const slackProvider = {
           limit: { type: "integer" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_channel_info",
@@ -278,7 +273,6 @@ export const slackProvider = {
         properties: { channel: { type: "string", description: "Channel id, e.g. C0123456789." } },
         required: ["channel"],
       },
-      sensitivity: "read",
     },
     {
       name: "update_message",
@@ -294,7 +288,6 @@ export const slackProvider = {
         },
         required: ["channel", "ts", "text"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_message",
@@ -309,7 +302,6 @@ export const slackProvider = {
         },
         required: ["channel", "ts"],
       },
-      sensitivity: "destructive",
     },
     {
       name: "add_reaction",
@@ -325,7 +317,6 @@ export const slackProvider = {
         },
         required: ["channel", "timestamp", "name"],
       },
-      sensitivity: "write",
     },
     {
       name: "join_channel",
@@ -337,7 +328,6 @@ export const slackProvider = {
         properties: { channel: { type: "string", description: "Channel id to join." } },
         required: ["channel"],
       },
-      sensitivity: "write",
     },
   ],
   memberConnectable: false,

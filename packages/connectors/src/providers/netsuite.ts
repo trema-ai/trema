@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // service endpoint; this portable OAuth connector uses SuiteTalk REST instead.
 export const netsuiteProvider = {
   key: "netsuite",
+  trusted: true,
   displayName: "NetSuite",
   description:
     "Manage NetSuite customers, sales orders, invoices, and other records through SuiteTalk REST.",
@@ -50,7 +51,6 @@ export const netsuiteProvider = {
           q: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_customer",
@@ -58,7 +58,6 @@ export const netsuiteProvider = {
       method: "GET",
       path: "/customer/{id}",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "read",
     },
     {
       name: "create_customer",
@@ -76,7 +75,6 @@ export const netsuiteProvider = {
         },
         required: ["companyName"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_customer",
@@ -93,7 +91,6 @@ export const netsuiteProvider = {
         },
         required: ["id"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_sales_orders",
@@ -108,7 +105,6 @@ export const netsuiteProvider = {
           q: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_sales_order",
@@ -116,7 +112,6 @@ export const netsuiteProvider = {
       method: "GET",
       path: "/salesOrder/{id}",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "read",
     },
     {
       name: "create_sales_order",
@@ -133,7 +128,6 @@ export const netsuiteProvider = {
         },
         required: ["entity", "item"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_sales_order",
@@ -145,7 +139,6 @@ export const netsuiteProvider = {
         properties: { id: { type: "string" }, memo: { type: "string" }, item: { type: "object" } },
         required: ["id"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_record",
@@ -157,7 +150,6 @@ export const netsuiteProvider = {
         properties: { recordType: { type: "string" }, id: { type: "string" } },
         required: ["recordType", "id"],
       },
-      sensitivity: "destructive",
     },
   ],
   memberConnectable: true,

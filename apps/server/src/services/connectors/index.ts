@@ -88,11 +88,10 @@ export {
   type ResolvedInstallationTool,
   requireMemberConnectorAccess,
   resolveInstallationTools,
-  type Sensitivity,
   type SyncedTool,
-  sensitivities,
-  sensitivitySchema,
   syncedToolSchema,
+  type ToolAnnotations,
+  toolAnnotationsSchema,
   type UpdateConnectorInstallationInput,
   updateConnectorInstallation,
 } from "#server/services/connectors/installations.js";
@@ -152,6 +151,5 @@ export {
   mergeSyncedTools,
   type SyncConnectorInstallationInput,
   type SyncReport,
-  sensitivityFromMcpAnnotations,
   syncConnectorInstallation,
 } from "#server/services/connectors/sync.js";

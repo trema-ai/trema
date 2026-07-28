@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const sentryProvider = {
   key: "sentry",
+  trusted: true,
   displayName: "Sentry",
   description:
     "Investigate issues, errors, and releases in Sentry. Tools come from Sentry's official MCP server.",

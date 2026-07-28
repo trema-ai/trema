@@ -1,23 +1,35 @@
 import { describe, expect, it } from "vitest";
 
-import type { Approval, Role, Sensitivity } from "#server/generated/prisma/client.js";
+import type { Approval, Role, ScopeKind } from "#server/generated/prisma/client.js";
 import {
-  ACTIVATE_ITEM_TOOL_KEY,
+  ApprovalValidationError,
   canResolveApproval,
   hashApprovalArgs,
-  resolveApprovalRequirement,
+  routingForSession,
 } from "#server/services/approvals/index.js";
-import { defaultDecisions, type PolicyDecision } from "#server/services/policies/index.js";
+import type { PolicyRow } from "#server/services/policies/index.js";
 
-function decisions(
-  overrides: Partial<Record<Sensitivity, Partial<PolicyDecision>>> = {},
-  scopeKind: "org" | "shared" | "personal" = "shared",
-): Record<Sensitivity, PolicyDecision> {
-  const base = defaultDecisions(scopeKind);
+const ORG = "scope-org";
+const SHARED = "scope-shared";
+
+type SessionInput = Parameters<typeof routingForSession>[0];
+
+function pinnedSession(rows: PolicyRow[] | null, scopeKind: ScopeKind = "shared"): SessionInput {
   return {
-    read: { ...base.read, ...overrides.read },
-    write: { ...base.write, ...overrides.write },
-    destructive: { ...base.destructive, ...overrides.destructive },
+    scopeChain: [ORG, SHARED],
+    policySnapshot:
+      rows === null ? null : { version: 2, scopeId: SHARED, scopeChain: [ORG, SHARED], rows },
+    scope: { id: SHARED, kind: scopeKind },
+  } as unknown as SessionInput;
+}
+
+function row(overrides: Partial<PolicyRow> & Pick<PolicyRow, "id" | "scopeId">): PolicyRow {
+  return {
+    connectorKey: null,
+    maxMode: "ask",
+    approverRoles: ["admin"],
+    allowRequesterApproval: false,
+    ...overrides,
   };
 }
 
@@ -30,84 +42,59 @@ function approval(overrides: Partial<Approval> = {}) {
   } as Pick<Approval, "approverRoles" | "allowRequesterApproval" | "requesterPrincipalId">;
 }
 
-describe("approval requirement resolution", () => {
-  it("passes the pinned decision through for an ordinary tool call", () => {
-    const requirement = resolveApprovalRequirement({
-      decisions: decisions({
-        destructive: { action: "require_approval", approverRoles: ["owner"] },
-      }),
-      scopeKind: "shared",
-      toolKey: "github:delete_repo",
-      sensitivity: "destructive",
-    });
+describe("routing from the pinned snapshot", () => {
+  it("routes through the most specific pinned row, never live policy", () => {
+    const routing = routingForSession(
+      pinnedSession([
+        row({ id: "p-org", scopeId: ORG, approverRoles: ["owner"] }),
+        row({ id: "p-shared", scopeId: SHARED, approverRoles: ["admin"] }),
+      ]),
+    );
 
-    expect(requirement).toMatchObject({
-      action: "require_approval",
-      approverRoles: ["owner"],
+    expect(routing).toMatchObject({
+      approverRoles: ["admin"],
       allowRequesterApproval: false,
+      source: { kind: "policy", policyId: "p-shared" },
     });
   });
 
-  it("reads an allowed class as no approval at all", () => {
-    const requirement = resolveApprovalRequirement({
-      decisions: decisions({ write: { action: "allow" } }),
-      scopeKind: "shared",
-      toolKey: "github:open_issue",
-      sensitivity: "write",
-    });
-
-    expect(requirement.action).toBe("allow");
-  });
-
-  it("gates item activation even where the policy allows writes outright", () => {
-    const requirement = resolveApprovalRequirement({
-      decisions: decisions({ write: { action: "allow", approverRoles: [] } }),
-      scopeKind: "shared",
-      toolKey: ACTIVATE_ITEM_TOOL_KEY,
-      sensitivity: "write",
-    });
-
-    // The policy said nothing about who confirms, so the scope kind's default
-    // approvers stand in.
-    expect(requirement).toMatchObject({
-      action: "require_approval",
-      approverRoles: ["owner", "admin"],
-    });
-  });
-
-  it("keeps a personal scope's activation with its owner", () => {
-    const requirement = resolveApprovalRequirement({
-      decisions: decisions({}, "personal"),
-      scopeKind: "personal",
-      toolKey: ACTIVATE_ITEM_TOOL_KEY,
-      sensitivity: "write",
-    });
-
-    expect(requirement).toMatchObject({
-      action: "require_approval",
-      approverRoles: [],
-      allowRequesterApproval: true,
-    });
-  });
-
-  it("takes the policy's approvers for activation when the scope gates writes", () => {
-    const requirement = resolveApprovalRequirement({
-      decisions: decisions({
-        write: {
-          action: "require_approval",
+  it("routes a connector call through the connector's own row", () => {
+    const routing = routingForSession(
+      pinnedSession([
+        row({ id: "p-shared", scopeId: SHARED, approverRoles: ["admin"] }),
+        row({
+          id: "p-org-github",
+          scopeId: ORG,
+          connectorKey: "github",
           approverRoles: ["owner"],
-          allowRequesterApproval: false,
-        },
-      }),
-      scopeKind: "shared",
-      toolKey: ACTIVATE_ITEM_TOOL_KEY,
-      sensitivity: "write",
-    });
+          allowRequesterApproval: true,
+        }),
+      ]),
+      "github",
+    );
 
-    expect(requirement).toMatchObject({
+    expect(routing).toMatchObject({
       approverRoles: ["owner"],
-      allowRequesterApproval: false,
+      allowRequesterApproval: true,
+      source: { kind: "policy", policyId: "p-org-github" },
     });
+  });
+
+  it("falls back to the scope kind's defaults when the snapshot holds no rows", () => {
+    expect(routingForSession(pinnedSession([]))).toEqual({
+      approverRoles: ["admin", "owner"],
+      allowRequesterApproval: true,
+      source: { kind: "default", scopeKind: "shared" },
+    });
+    expect(routingForSession(pinnedSession([], "personal"))).toEqual({
+      approverRoles: ["owner"],
+      allowRequesterApproval: true,
+      source: { kind: "default", scopeKind: "personal" },
+    });
+  });
+
+  it("refuses a session that carries no snapshot at all", () => {
+    expect(() => routingForSession(pinnedSession(null))).toThrow(ApprovalValidationError);
   });
 });
 

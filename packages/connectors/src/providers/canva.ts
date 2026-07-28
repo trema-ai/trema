@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // broadly available Connect REST API is the transport for this catalog entry.
 export const canvaProvider = {
   key: "canva",
+  trusted: true,
   displayName: "Canva",
   description:
     "Create, find, import, export, and upload assets for Canva designs over the Connect REST API.",
@@ -67,7 +68,6 @@ export const canvaProvider = {
           query: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_design",
@@ -79,7 +79,6 @@ export const canvaProvider = {
         properties: { designId: { type: "string" } },
         required: ["designId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_design",
@@ -94,7 +93,6 @@ export const canvaProvider = {
           asset_id: { type: "string" },
         },
       },
-      sensitivity: "write",
     },
     {
       name: "create_design_export",
@@ -106,7 +104,6 @@ export const canvaProvider = {
         properties: { design_id: { type: "string" }, format: { type: "object" } },
         required: ["design_id", "format"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_design_export",
@@ -118,7 +115,6 @@ export const canvaProvider = {
         properties: { exportId: { type: "string" } },
         required: ["exportId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_asset_upload_from_url",
@@ -130,7 +126,6 @@ export const canvaProvider = {
         properties: { name: { type: "string" }, url: { type: "string" } },
         required: ["name", "url"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_asset_upload_from_url",
@@ -142,7 +137,6 @@ export const canvaProvider = {
         properties: { jobId: { type: "string" } },
         required: ["jobId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_design_import",
@@ -154,7 +148,6 @@ export const canvaProvider = {
         properties: { title: { type: "string" }, url: { type: "string" } },
         required: ["title", "url"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_design_import",
@@ -166,7 +159,6 @@ export const canvaProvider = {
         properties: { importId: { type: "string" } },
         required: ["importId"],
       },
-      sensitivity: "read",
     },
   ],
   memberConnectable: true,

@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const supabaseProvider = {
   key: "supabase",
+  trusted: true,
   displayName: "Supabase",
   description:
     "Manage Supabase projects, databases, migrations, functions, and logs through its MCP server.",

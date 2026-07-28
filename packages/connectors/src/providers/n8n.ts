@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // workflows or executions, so this provider uses the instance REST API.
 export const n8nProvider = {
   key: "n8n",
+  trusted: true,
   displayName: "n8n",
   description:
     "Manage n8n workflows, executions, tags, variables, and projects through its REST API.",
@@ -52,7 +53,6 @@ export const n8nProvider = {
           cursor: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_workflow",
@@ -60,7 +60,6 @@ export const n8nProvider = {
       method: "GET",
       path: "/workflows/{id}",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "read",
     },
     {
       name: "create_workflow",
@@ -77,7 +76,6 @@ export const n8nProvider = {
         },
         required: ["name", "nodes", "connections"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_workflow",
@@ -95,7 +93,6 @@ export const n8nProvider = {
         },
         required: ["id", "name", "nodes", "connections"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_workflow",
@@ -103,7 +100,6 @@ export const n8nProvider = {
       method: "DELETE",
       path: "/workflows/{id}",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "destructive",
     },
     {
       name: "list_executions",
@@ -120,7 +116,6 @@ export const n8nProvider = {
           cursor: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_execution",
@@ -132,7 +127,6 @@ export const n8nProvider = {
         properties: { id: { type: "string" }, includeData: { type: "boolean" } },
         required: ["id"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_tags",
@@ -143,7 +137,6 @@ export const n8nProvider = {
         type: "object",
         properties: { limit: { type: "integer" }, cursor: { type: "string" } },
       },
-      sensitivity: "read",
     },
     {
       name: "create_tag",
@@ -155,7 +148,6 @@ export const n8nProvider = {
         properties: { name: { type: "string" } },
         required: ["name"],
       },
-      sensitivity: "write",
     },
   ],
   memberConnectable: false,

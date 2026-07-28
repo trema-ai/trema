@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const dropboxProvider = {
   key: "dropbox",
+  trusted: true,
   displayName: "Dropbox",
   description: "Search, organize, move, and share Dropbox files and folders over the REST API.",
   logoUrl: "/connector-logos/dropbox.svg",
@@ -29,7 +30,6 @@ export const dropboxProvider = {
       method: "POST",
       path: "/2/users/get_current_account",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "search_files",
@@ -41,7 +41,6 @@ export const dropboxProvider = {
         properties: { query: { type: "string" }, options: { type: "object" } },
         required: ["query"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_metadata",
@@ -53,7 +52,6 @@ export const dropboxProvider = {
         properties: { path: { type: "string" }, include_deleted: { type: "boolean" } },
         required: ["path"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_folder",
@@ -69,7 +67,6 @@ export const dropboxProvider = {
           include_deleted: { type: "boolean" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "create_folder",
@@ -81,7 +78,6 @@ export const dropboxProvider = {
         properties: { path: { type: "string" }, autorename: { type: "boolean" } },
         required: ["path"],
       },
-      sensitivity: "write",
     },
     {
       name: "move_file_or_folder",
@@ -97,7 +93,6 @@ export const dropboxProvider = {
         },
         required: ["from_path", "to_path"],
       },
-      sensitivity: "write",
     },
     {
       name: "copy_file_or_folder",
@@ -113,7 +108,6 @@ export const dropboxProvider = {
         },
         required: ["from_path", "to_path"],
       },
-      sensitivity: "write",
     },
     {
       name: "create_shared_link",
@@ -125,7 +119,6 @@ export const dropboxProvider = {
         properties: { path: { type: "string" }, settings: { type: "object" } },
         required: ["path"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_file_or_folder",
@@ -137,7 +130,6 @@ export const dropboxProvider = {
         properties: { path: { type: "string" } },
         required: ["path"],
       },
-      sensitivity: "destructive",
     },
   ],
   memberConnectable: true,

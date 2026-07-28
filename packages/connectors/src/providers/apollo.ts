@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const apolloProvider = {
   key: "apollo",
+  trusted: true,
   displayName: "Apollo",
   description:
     "Search and engage prospects, accounts, contacts, and sequences through Apollo's MCP server.",

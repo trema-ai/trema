@@ -143,8 +143,8 @@ integration("context sessions", () => {
     expect(opened.requesterExternalRef).toBe("U-ASKS");
     expect(opened.scopeChain.map(({ id }) => id)).toEqual([org.orgScope.id, shared.id]);
     expect(opened.sessionToken).toMatch(/^trema_ses_/);
-    expect(opened.policySnapshot.decisions.read.action).toBe("allow");
-    expect(opened.policySnapshot.decisions.write.action).toBe("require_approval");
+    expect(opened.policySnapshot.version).toBe(2);
+    expect(opened.policySnapshot.rows).toEqual([]);
     expect(opened.tools).toEqual([]);
 
     const persisted = await db.contextSession.findUniqueOrThrow({
@@ -176,10 +176,8 @@ integration("context sessions", () => {
     expect(personal.actingPrincipalId).toBe(member.principal.id);
     expect(personal.requesterPrincipalId).toBe(member.principal.id);
     expect(personal.scopeChain.map(({ kind }) => kind)).toEqual(["org", "personal"]);
-    // A personal scope approves its own writes and keeps a confirm step for
-    // destructive calls.
-    expect(personal.policySnapshot.decisions.write.action).toBe("allow");
-    expect(personal.policySnapshot.decisions.destructive.allowRequesterApproval).toBe(true);
+    // No stored rows: the gate resolves the built-in defaults per call.
+    expect(personal.policySnapshot.rows).toEqual([]);
 
     await call(
       bindingsRouter.create,

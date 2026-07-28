@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { Role } from "#server/generated/prisma/client.js";
@@ -15,6 +17,21 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const masterKey = Buffer.alloc(32, 42).toString("base64");
+
+// Read the shipped migration rather than restating it, so the backfill the test
+// proves cannot drift from the one deployments run.
+function migrationStatements(name: string): string[] {
+  const path = fileURLToPath(
+    new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url),
+  );
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("--"))
+    .join("\n")
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+}
 
 integration("connector connections and installations", () => {
   const db = createPrismaClient(databaseUrl);
@@ -523,7 +540,7 @@ integration("connector connections and installations", () => {
     expect(listed[0]).toMatchObject({
       id: installation.id,
       connectionId: bound.id,
-      syncedTools: [{ name: "read_page", sensitivity: "read" }],
+      syncedTools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
     });
 
     await db.connectorConnection.update({
@@ -547,5 +564,72 @@ integration("connector connections and installations", () => {
       },
     });
     expect(calls).toEqual(["Bearer bound-token"]);
+  });
+
+  it("reads installations written before approval modes dropped sensitivity", async () => {
+    const org = await createOrg();
+    const bound = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    const legacy = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: org.orgScope.id,
+        kind: "connector",
+        title: "Notion",
+        body: {
+          catalogKey: "notion",
+          connectionId: bound.id,
+          enabledTools: ["read_page"],
+          sensitivityOverrides: { read_page: "low" },
+          syncedTools: [
+            {
+              name: "read_page",
+              description: "Read a page",
+              annotations: { readOnlyHint: true },
+              sensitivity: "low",
+              declaredSensitivity: "medium",
+            },
+            { name: "write_page", sensitivity: "high" },
+          ],
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: org.agent.id,
+        updatedById: org.agent.id,
+      },
+    });
+    // The strict body schema rejects the legacy shape until the backfill runs.
+    await expect(
+      call(connectorsRouter.installations.list, {}, { context: org.context }),
+    ).rejects.toThrow();
+
+    for (const statement of migrationStatements("20260728190000_connector_body_cleanup")) {
+      await db.$executeRawUnsafe(statement);
+    }
+
+    await expect(
+      call(connectorsRouter.installations.list, {}, { context: org.context }),
+    ).resolves.toEqual([
+      {
+        id: legacy.id,
+        scopeId: org.orgScope.id,
+        catalogKey: "notion",
+        connectionId: bound.id,
+        enabledTools: ["read_page"],
+        syncedTools: [
+          {
+            name: "read_page",
+            description: "Read a page",
+            annotations: { readOnlyHint: true },
+          },
+          { name: "write_page" },
+        ],
+        status: "active",
+        updatedAt: expect.anything(),
+      },
+    ]);
   });
 });

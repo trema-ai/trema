@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // before it can connect; the OAuth REST API is available to regular users.
 export const boxProvider = {
   key: "box",
+  trusted: true,
   displayName: "Box",
   description: "Search, organize, share, and manage Box files and folders over the REST API.",
   logoUrl: "/connector-logos/box.svg",
@@ -58,7 +59,6 @@ export const boxProvider = {
         },
         required: ["query"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_file",
@@ -70,7 +70,6 @@ export const boxProvider = {
         properties: { fileId: { type: "string" }, fields: { type: "string" } },
         required: ["fileId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_folder_items",
@@ -87,7 +86,6 @@ export const boxProvider = {
         },
         required: ["folderId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_folder",
@@ -99,7 +97,6 @@ export const boxProvider = {
         properties: { folderId: { type: "string" }, fields: { type: "string" } },
         required: ["folderId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_folder",
@@ -111,7 +108,6 @@ export const boxProvider = {
         properties: { name: { type: "string" }, parent: { type: "object" } },
         required: ["name", "parent"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_file",
@@ -128,7 +124,6 @@ export const boxProvider = {
         },
         required: ["fileId"],
       },
-      sensitivity: "write",
     },
     {
       name: "copy_file",
@@ -144,7 +139,6 @@ export const boxProvider = {
         },
         required: ["fileId", "parent"],
       },
-      sensitivity: "write",
     },
     {
       name: "create_shared_link",
@@ -156,7 +150,6 @@ export const boxProvider = {
         properties: { fileId: { type: "string" }, shared_link: { type: "object" } },
         required: ["fileId", "shared_link"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_file",
@@ -168,7 +161,6 @@ export const boxProvider = {
         properties: { fileId: { type: "string" } },
         required: ["fileId"],
       },
-      sensitivity: "destructive",
     },
   ],
   memberConnectable: true,
