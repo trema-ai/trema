@@ -1,7 +1,7 @@
 import { defineMeta } from "blume";
 
 export default defineMeta({
-  title: "Administer",
+  title: "Admin",
   pages: [
     "members-and-invites",
     "scopes-and-teams",
