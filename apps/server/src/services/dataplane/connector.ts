@@ -110,8 +110,26 @@ interface AuditInput {
  * that made the call and the person the run was acting for. The second is what
  * turns "an agent read this inbox" into "an agent read this inbox for Dana",
  * and a surface identity with no principal behind it is recorded as itself.
+ *
+ * A failed write never throws: the audit records the call's outcome and must
+ * not change it — not a completed side effect into a reported failure, not a
+ * policy answer or a coded refusal into an unclassified error. The class of
+ * the write's own failure is all that may be logged; its message is text
+ * nobody redacted.
  */
 async function recordCall(db: Database, input: AuditInput): Promise<void> {
+  try {
+    await writeCallRecord(db, input);
+  } catch (error) {
+    log.error("Connector audit write failed", {
+      sessionId: input.session.id,
+      toolKey: input.toolKey,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+async function writeCallRecord(db: Database, input: AuditInput): Promise<void> {
   await db.auditLog.create({
     data: {
       orgId: input.session.orgId,
@@ -321,6 +339,9 @@ export async function useConnector(
       // And these two stop the call from changing underneath a decision that
       // has already been made. Both run before the claim: an approval refused
       // here was never spent, so a person can grant the changed call afresh.
+      // The resolution compared here is the resolution the execution below is
+      // pinned to, so a repoint landing between the two runs the call against
+      // the pair the approver saw — never the repointed one.
       if (approval.sensitivity !== resolved.sensitivity || !bindingHolds(approval, binding)) {
         log.warn("Approval no longer matches its call", {
           approvalId,
@@ -392,28 +413,15 @@ export async function useConnector(
     }
 
     const result = await executeConnectorTool(db, { ...engineInput, resolved, authority });
-    try {
-      await recordCall(db, {
-        session,
-        toolKey,
-        argsHash,
-        outcome: "executed",
-        resolved,
-        ...(approvalId ? { approvalId } : {}),
-        durationMs: elapsed(),
-      });
-    } catch (error) {
-      // The call has already happened and the approval is already spent. A
-      // failed audit write is an operator's incident, not a reason to tell the
-      // run that a completed side effect failed — that answer invites a retry
-      // of something at-most-once has no claim left to refuse. Class only: an
-      // unclassified error's message is text nobody redacted.
-      log.error("Connector audit write failed", {
-        sessionId: session.id,
-        toolKey,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    }
+    await recordCall(db, {
+      session,
+      toolKey,
+      argsHash,
+      outcome: "executed",
+      resolved,
+      ...(approvalId ? { approvalId } : {}),
+      durationMs: elapsed(),
+    });
     return {
       status: "executed",
       toolKey,
@@ -426,27 +434,16 @@ export async function useConnector(
     // recorded once. A claimed approval is deliberately not released: the
     // request left this process, so nothing here can prove the provider did
     // not act on it.
-    try {
-      await recordCall(db, {
-        session,
-        toolKey,
-        argsHash,
-        outcome: "failed",
-        ...(resolved ? { resolved } : {}),
-        ...(approvalId ? { approvalId } : {}),
-        errorCode: failureCode(error),
-        durationMs: elapsed(),
-      });
-    } catch (auditError) {
-      // The refusal's code is the answer the harness acts on; a failed audit
-      // write must not replace it with an unclassified error. Class only, as
-      // above.
-      log.error("Connector audit write failed", {
-        sessionId: session.id,
-        toolKey,
-        errorName: auditError instanceof Error ? auditError.name : typeof auditError,
-      });
-    }
+    await recordCall(db, {
+      session,
+      toolKey,
+      argsHash,
+      outcome: "failed",
+      ...(resolved ? { resolved } : {}),
+      ...(approvalId ? { approvalId } : {}),
+      errorCode: failureCode(error),
+      durationMs: elapsed(),
+    });
     log.warn("Connector proxy call failed", {
       sessionId: session.id,
       toolKey,

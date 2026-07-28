@@ -853,6 +853,22 @@ integration("data plane connector proxy", () => {
     expect(await db.approval.count({ where: { orgId: owner.org.id } })).toBe(0);
     const [entry] = await auditEntries(owner.org.id);
     expect(entry?.payload).toMatchObject({ outcome: "denied" });
+
+    // The policy's answer survives an audit outage: a refusal to record the
+    // denial is the operator's incident, never a different answer to the run.
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", write: (line) => lines.push(line) });
+    const deniedUnrecorded = await withLogger(logger, () =>
+      useConnector(withFailingAuditWrite(db), opened.session, {
+        toolKey: WRITE_TOOL,
+        args: { message: { raw: "body" } },
+        reason: "Draft the reply",
+        masterKey,
+        fetch,
+      }),
+    );
+    expect(deniedUnrecorded).toMatchObject({ status: "denied" });
+    expect(lines.join("\n")).toContain("Connector audit write failed");
   });
 
   it("refuses the reserved context namespace and an approval that does not exist, and records both", async () => {
