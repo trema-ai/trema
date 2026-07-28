@@ -77,7 +77,7 @@ Members connect from the Connections tab of their personal scope, and the connec
 
 ## Watch credential health
 
-OAuth connections refresh ahead of expiry on their own. Connection listings show whether each connection is valid, expired, revoked, or needs reconnection. They also carry refresh bookkeeping—last success, last failure, and attempt count—but no secret material. After four days of failed refreshes, a connection is marked as needing reconnection.
+An OAuth connection refreshes on use: a call that needs a credential near expiry refreshes it first. An idle connection is not refreshed in the background. Connection listings show whether each connection is valid, expired, revoked, or needs reconnection. They also carry refresh bookkeeping—last success, last failure, and attempt count—but no secret material. After four days of failed refreshes, a connection is marked as needing reconnection.
 
 Use **Reconnect** on a connection to run the connect flow again in place: the refreshed credential keeps the connection's identity and every scope binding.
 
