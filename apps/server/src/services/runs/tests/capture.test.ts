@@ -6,6 +6,7 @@ import {
   messageBatches,
   openingMessages,
   type QueuedMessage,
+  reportBatches,
 } from "#server/services/runs/capture.js";
 
 const queuedAt = new Date("2026-07-19T12:00:00.000Z");
@@ -88,6 +89,27 @@ describe("opening messages", () => {
       captured.slice(0, MESSAGE_BATCH_LIMIT),
     ]);
     expect(messageBatches([])).toEqual([]);
+  });
+
+  it("lands the batches after a failed one, and still reports the failure", async () => {
+    const batches = messageBatches(
+      openingMessages(
+        Array.from({ length: MESSAGE_BATCH_LIMIT * 2 + 1 }, (_, index) =>
+          queued(`intent-${index}`, "principal-1", text(`Message ${index}.`)),
+        ),
+        humans,
+      ),
+    );
+    const landed: number[] = [];
+
+    await expect(
+      reportBatches(batches, async (batch) => {
+        if (batch === batches[1]) throw new Error("connection reset");
+        landed.push(batch.length);
+      }),
+    ).rejects.toThrow("capture failed for 1 of 3 batches");
+    // The failed batch loses only itself; the queue is drained either way.
+    expect(landed).toEqual([MESSAGE_BATCH_LIMIT, 1]);
   });
 
   it("joins a message's text blocks and keeps queue order", () => {

@@ -85,6 +85,35 @@ export function messageBatches(
 }
 
 /**
+ * Lands every batch, even past a failure.
+ *
+ * The loop drains the queue whether the capture succeeded or not, so a batch
+ * skipped because an earlier one failed would be lost for good. Attempting
+ * each batch bounds a failure to its own messages — the same loss the
+ * single-batch report always had — and the error still reaches the driver's
+ * warning after the rest have landed.
+ */
+export async function reportBatches(
+  batches: readonly (readonly CapturedMessageInput[])[],
+  report: (batch: readonly CapturedMessageInput[]) => Promise<void>,
+): Promise<void> {
+  const failures: unknown[] = [];
+  for (const batch of batches) {
+    try {
+      await report(batch);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `capture failed for ${failures.length} of ${batches.length} batches`,
+    );
+  }
+}
+
+/**
  * Reports a run's opening message to the conversation its session names.
  *
  * The message is read from the steering queue, where dispatch left it: the
@@ -143,8 +172,10 @@ export function createRunCapture(options: RunCaptureOptions): CaptureOpeningMess
     // message when it is gone. Refusing here would only say it worse.
     if (session === null) return;
 
-    for (const batch of messageBatches(messages)) {
-      await captureMessages(options.db, session satisfies CaptureSession, { messages: batch });
-    }
+    await reportBatches(messageBatches(messages), async (batch) => {
+      await captureMessages(options.db, session satisfies CaptureSession, {
+        messages: [...batch],
+      });
+    });
   };
 }
