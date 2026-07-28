@@ -1970,6 +1970,43 @@ integration("model provider registry", () => {
       });
     });
 
+    it("holds the token exchange to the listing's deadline", async () => {
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "stuck-vertex",
+          protocol: "vertex",
+          baseUrl: "https://us-central1-aiplatform.example.test/v1beta1",
+          credentialMode: "gcp_adc",
+          settings: { project: "trema-test", location: "us-central1" },
+          credential: JSON.stringify({
+            type: "service_account",
+            client_email: "svc@trema-test.iam.gserviceaccount.example",
+            private_key: serviceAccountKey,
+          }),
+        },
+        { context: org.context },
+      );
+
+      // A token endpoint that never answers, until the deadline the builder
+      // was handed aborts it. Without that shared deadline this promise never
+      // settles and the probe hangs with it. An already-aborted signal rejects
+      // straight away, the way a real fetch does — the auth library retries a
+      // failed exchange, and the retry arrives after the deadline has passed.
+      const fetch: typeof globalThis.fetch = (_url, init) =>
+        new Promise((_resolve, reject) => {
+          if (init?.signal?.aborted) return reject(init.signal.reason);
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        });
+      const result = await probeProvider(db, org.org.id, "stuck-vertex", {
+        masterKey,
+        fetch,
+        timeoutMs: 50,
+      });
+      expect(result).toEqual({ ok: false, reason: "The provider did not answer within 50 ms." });
+    });
+
     it("says the model list needs a service account of its own when the row has none", async () => {
       const org = await createOrg();
       await call(

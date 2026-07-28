@@ -104,7 +104,10 @@ type ListingRequest =
  *
  * A builder is handed the same fetch the listing itself will use, because one
  * protocol authenticates by asking somebody else first: a token exchange is
- * another call, and it belongs on the same wire as the one it authorizes.
+ * another call, and it belongs on the same wire as the one it authorizes. It is
+ * handed the listing's deadline with it, for the same reason: the exchange
+ * spends the same time budget as the call it authorizes, so a token endpoint
+ * that hangs cannot leave the probe pending past the limit the listing honors.
  *
  * What a builder returns is the whole header set the request goes out with,
  * the row's stored headers included. The call site adds nothing of its own: a
@@ -117,6 +120,7 @@ type ListingRequestBuilders = {
     endpoint: Extract<ModelEndpoint, { protocol: Protocol }>,
     query: string,
     call: typeof globalThis.fetch,
+    signal: AbortSignal,
   ) => ListingRequest | Promise<ListingRequest>;
 };
 
@@ -217,7 +221,7 @@ const listingRequests: ListingRequestBuilders = {
     const signed = await signer.sign();
     return { ok: true, url, headers: Object.fromEntries(signed.headers) };
   },
-  vertex: async (endpoint, query, call) => {
+  vertex: async (endpoint, query, call, signal) => {
     // Only this row's own credential is ever spent, for the reason the Bedrock
     // builder above gives: the run path may let the provider fall back to the
     // worker's own application-default credential, but a listing speaks for one
@@ -231,22 +235,35 @@ const listingRequests: ListingRequestBuilders = {
       };
     }
     // The exchange rides the same fetch the listing will, so a deployment that
-    // routes this module's egress routes all of it.
+    // routes this module's egress routes all of it — and it carries the
+    // listing's own deadline, because the auth library would otherwise wait on
+    // its own terms and a stuck token endpoint would hang the probe past the
+    // limit every other call here honors.
+    const timed: typeof globalThis.fetch = (input, init) =>
+      call(input, {
+        ...init,
+        signal: init?.signal == null ? signal : AbortSignal.any([signal, init.signal]),
+      });
     const auth = new GoogleAuth({
       scopes: ["https://www.googleapis.com/auth/cloud-platform"],
       credentials: {
         client_email: endpoint.serviceAccount.clientEmail,
         private_key: endpoint.serviceAccount.privateKey,
       },
-      clientOptions: { transporterOptions: { fetchImplementation: call } },
+      clientOptions: { transporterOptions: { fetchImplementation: timed } },
     });
     let token: string | null | undefined;
     try {
       token = await auth.getAccessToken();
-    } catch {
-      // The exchange failing is this provider's answer, not a crash: a key that
-      // has been revoked, or a clock too far off to sign with, reads the same
-      // way to an admin as a listing that came back empty-handed.
+    } catch (error) {
+      // Hitting the deadline is reported as the timeout it is, through the
+      // same sentence the listing call would produce; the signal's reason is
+      // thrown rather than the library's wrapper so the name survives.
+      if (signal.aborted) throw signal.reason ?? error;
+      // Any other failure of the exchange is this provider's answer, not a
+      // crash: a key that has been revoked, or a clock too far off to sign
+      // with, reads the same way to an admin as a listing that came back
+      // empty-handed.
       return { ok: false, reason: "The stored service account could not be exchanged for a token" };
     }
     if (!token) {
@@ -274,13 +291,15 @@ function listingRequest(
   endpoint: ModelEndpoint,
   query: string,
   call: typeof globalThis.fetch,
+  signal: AbortSignal,
 ): ListingRequest | Promise<ListingRequest> {
   const build = listingRequests[endpoint.protocol] as (
     endpoint: ModelEndpoint,
     query: string,
     call: typeof globalThis.fetch,
+    signal: AbortSignal,
   ) => ListingRequest | Promise<ListingRequest>;
-  return build(endpoint, query, call);
+  return build(endpoint, query, call, signal);
 }
 
 /** A model list that came back, or the sentence explaining why it did not. */
@@ -341,7 +360,21 @@ async function listModels(
   // refused a query string at write time — which is what makes appending safe.
   const query = new URLSearchParams(listQuery).toString();
   const call = options.fetch ?? globalThis.fetch;
-  const request = await listingRequest(endpoint, query, call);
+  // One deadline covers the builder and the listing together: a protocol that
+  // authenticates by making its own call first spends the same budget as the
+  // call it authorizes, so nothing here can outwait the limit.
+  const signal = AbortSignal.timeout(timeoutMs);
+  let request: ListingRequest;
+  try {
+    request = await listingRequest(endpoint, query, call, signal);
+  } catch (error) {
+    log.warn("Model provider call failed", {
+      providerName: name,
+      errorName: error instanceof Error ? error.name : "unknown",
+      ...(causeCode(error) === undefined ? {} : { code: causeCode(error) }),
+    });
+    return { ok: false, reason: unreachableReason(error, timeoutMs) };
+  }
   if (!request.ok) return request;
 
   const started = performance.now();
@@ -355,7 +388,7 @@ async function listModels(
       // headers there, and the admin should point the base URL at whatever
       // answers instead.
       redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     });
   } catch (error) {
     log.warn("Model provider call failed", {
