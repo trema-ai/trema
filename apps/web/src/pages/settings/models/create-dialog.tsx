@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "#web/components/ui/select.tsx";
+import { Textarea } from "#web/components/ui/textarea.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
@@ -69,11 +70,30 @@ export function CreateProviderDialog({
   const [baseUrl, setBaseUrl] = useState("");
   const [credentialMode, setCredentialMode] = useState<ModelCredentialMode>("api_key");
   const [credential, setCredential] = useState("");
+  const [region, setRegion] = useState("");
+  const [project, setProject] = useState("");
+  const [location, setLocation] = useState("");
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const [sessionToken, setSessionToken] = useState("");
+  const [keyFile, setKeyFile] = useState("");
+
+  function clearSecrets() {
+    setCredential("");
+    setAccessKeyId("");
+    setSecretAccessKey("");
+    setSessionToken("");
+    setKeyFile("");
+  }
 
   useEffect(() => {
     if (open) return;
     setChosen(undefined);
     setCredential("");
+    setAccessKeyId("");
+    setSecretAccessKey("");
+    setSessionToken("");
+    setKeyFile("");
   }, [open]);
 
   function choose(preset: ModelProviderPreset) {
@@ -83,8 +103,22 @@ export function CreateProviderDialog({
     setProtocol(preset.protocol);
     setBaseUrl(preset.baseUrl);
     setCredentialMode(preset.credentialMode);
-    setCredential("");
+    // Seeded like the base URL, and edited in the same form: the protocols that
+    // take no settings leave these empty and never show the fields.
+    setRegion(preset.settings?.region ?? "");
+    setProject(preset.settings?.project ?? "");
+    setLocation(preset.settings?.location ?? "");
+    clearSecrets();
   }
+
+  // Two protocols take settings, and each needs its own; two credential modes
+  // ask for something other than one key. All of it is read off the form rather
+  // than the preset, because the admin can change any of it before saving.
+  const needsRegion = protocol === "bedrock";
+  const needsProject = protocol === "vertex";
+  const signing = credentialMode === "aws_sigv4";
+  const signingKeys = accessKeyId.trim() !== "" && secretAccessKey.trim() !== "";
+  const serviceAccount = credentialMode === "gcp_adc";
 
   // The server refuses a name already in the registry; this only says so before
   // the round trip, and cannot be the guarantee — two admins can race it.
@@ -98,7 +132,36 @@ export function CreateProviderDialog({
         protocol,
         baseUrl: baseUrl.trim(),
         credentialMode,
-        credential: credentialMode === "api_key" ? credential : null,
+        credential: signing
+          ? // A signing provider with no stored keys signs with the role the
+            // server itself runs under, so leaving these blank is a choice and
+            // not an omission.
+            signingKeys
+            ? JSON.stringify({
+                accessKeyId: accessKeyId.trim(),
+                secretAccessKey: secretAccessKey.trim(),
+                ...(sessionToken.trim() === "" ? {} : { sessionToken: sessionToken.trim() }),
+              })
+            : null
+          : serviceAccount
+            ? // A provider with no stored service account mints its tokens from
+              // the credential the server itself can reach, so leaving this
+              // blank is a choice and not an omission. What goes over is the
+              // key file as downloaded; the registry keeps the two fields of it
+              // that a token exchange spends.
+              keyFile.trim() === ""
+              ? null
+              : keyFile.trim()
+            : credentialMode === "api_key"
+              ? credential
+              : null,
+        // Sent only where the protocol takes it: every other protocol refuses
+        // a value outright.
+        settings: needsRegion
+          ? { region: region.trim() }
+          : needsProject
+            ? { project: project.trim(), location: location.trim() }
+            : null,
         // Carried from the preset, never typed: it is how a provider whose
         // model list filters itself answers in full.
         listQuery: chosen?.listQuery ?? null,
@@ -238,6 +301,13 @@ export function CreateProviderDialog({
                       <SelectItem value="openai_compatible">
                         {protocolLabel("openai_compatible")}
                       </SelectItem>
+                      <SelectItem value="openai_responses">
+                        {protocolLabel("openai_responses")}
+                      </SelectItem>
+                      <SelectItem value="anthropic">{protocolLabel("anthropic")}</SelectItem>
+                      <SelectItem value="google">{protocolLabel("google")}</SelectItem>
+                      <SelectItem value="bedrock">{protocolLabel("bedrock")}</SelectItem>
+                      <SelectItem value="vertex">{protocolLabel("vertex")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -253,10 +323,108 @@ export function CreateProviderDialog({
                     <SelectContent>
                       <SelectItem value="api_key">{credentialModeLabel("api_key")}</SelectItem>
                       <SelectItem value="none">{credentialModeLabel("none")}</SelectItem>
+                      <SelectItem value="aws_sigv4">{credentialModeLabel("aws_sigv4")}</SelectItem>
+                      <SelectItem value="gcp_adc">{credentialModeLabel("gcp_adc")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+              {needsRegion ? (
+                <div className="space-y-2">
+                  <Label htmlFor="provider-region">Region</Label>
+                  <Input
+                    id="provider-region"
+                    value={region}
+                    required
+                    placeholder="us-east-1"
+                    onChange={(event) => setRegion(event.target.value)}
+                  />
+                  <p className="text-meta text-muted-foreground">
+                    Every request is signed for this region, whichever host answers it.
+                  </p>
+                </div>
+              ) : null}
+              {needsProject ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="provider-project">Project</Label>
+                    <Input
+                      id="provider-project"
+                      value={project}
+                      required
+                      placeholder="my-project-id"
+                      onChange={(event) => setProject(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="provider-location">Location</Label>
+                    <Input
+                      id="provider-location"
+                      value={location}
+                      required
+                      placeholder="us-central1"
+                      onChange={(event) => setLocation(event.target.value)}
+                    />
+                  </div>
+                  <p className="text-meta text-muted-foreground sm:col-span-2">
+                    Vertex addresses a model under both, and the address above carries neither.
+                  </p>
+                </div>
+              ) : null}
+              {signing ? (
+                <div className="space-y-2">
+                  <Label htmlFor="provider-access-key-id">Access key ID</Label>
+                  <Input
+                    id="provider-access-key-id"
+                    autoComplete="off"
+                    placeholder="AKIA…"
+                    value={accessKeyId}
+                    onChange={(event) => setAccessKeyId(event.target.value)}
+                  />
+                  <Label htmlFor="provider-secret-access-key">Secret access key</Label>
+                  <Input
+                    id="provider-secret-access-key"
+                    type="password"
+                    autoComplete="new-password"
+                    value={secretAccessKey}
+                    onChange={(event) => setSecretAccessKey(event.target.value)}
+                  />
+                  <Label htmlFor="provider-session-token">Session token</Label>
+                  <Input
+                    id="provider-session-token"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="Only for temporary credentials"
+                    value={sessionToken}
+                    onChange={(event) => setSessionToken(event.target.value)}
+                  />
+                  <p className="text-meta text-muted-foreground">
+                    Stored encrypted and write-only. Left blank, requests are signed with the
+                    credentials the server itself runs with, and the model list stays empty until
+                    keys are entered here.
+                  </p>
+                </div>
+              ) : null}
+              {serviceAccount ? (
+                <div className="space-y-2">
+                  <Label htmlFor="provider-key-file">Service-account key file</Label>
+                  <Textarea
+                    id="provider-key-file"
+                    rows={4}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={'{ "type": "service_account", "client_email": … }'}
+                    value={keyFile}
+                    onChange={(event) => setKeyFile(event.target.value)}
+                  />
+                  <p className="text-meta text-muted-foreground">
+                    Paste the JSON key file as downloaded. Stored encrypted and write-only, down to
+                    the two fields a token is minted from. Left blank, tokens are minted from the
+                    credentials the server itself runs with, and the model list stays empty until a
+                    key file is entered here.
+                  </p>
+                </div>
+              ) : null}
               {credentialMode === "api_key" ? (
                 <div className="space-y-2">
                   <Label htmlFor="provider-credential">API key</Label>

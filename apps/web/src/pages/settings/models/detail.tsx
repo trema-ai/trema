@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "#web/components/ui/select.tsx";
+import { Textarea } from "#web/components/ui/textarea.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
@@ -120,7 +121,13 @@ export function SettingsModelProviderPage() {
       />
       <div className="space-y-7">
         <EndpointSection provider={provider} onChanged={invalidate} />
-        <CredentialSection provider={provider} onChanged={invalidate} />
+        {provider.credentialMode === "aws_sigv4" ? (
+          <SigningCredentialSection provider={provider} onChanged={invalidate} />
+        ) : provider.credentialMode === "gcp_adc" ? (
+          <ServiceAccountCredentialSection provider={provider} onChanged={invalidate} />
+        ) : (
+          <CredentialSection provider={provider} onChanged={invalidate} />
+        )}
         <HeadersSection provider={provider} onChanged={invalidate} />
         <ModelsSection provider={provider} onChanged={invalidate} />
         <DangerZone
@@ -145,13 +152,40 @@ function EndpointSection({
   const [label, setLabel] = useState(provider.label);
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl);
   const [protocol, setProtocol] = useState<ModelProtocol>(provider.protocol);
+  const storedRegion = provider.settings?.region ?? "";
+  const storedProject = provider.settings?.project ?? "";
+  const storedLocation = provider.settings?.location ?? "";
+  const [region, setRegion] = useState(storedRegion);
+  const [project, setProject] = useState(storedProject);
+  const [location, setLocation] = useState(storedLocation);
   useEffect(() => {
     setLabel(provider.label);
     setBaseUrl(provider.baseUrl);
     setProtocol(provider.protocol);
-  }, [provider.label, provider.baseUrl, provider.protocol]);
+    setRegion(storedRegion);
+    setProject(storedProject);
+    setLocation(storedLocation);
+  }, [
+    provider.label,
+    provider.baseUrl,
+    provider.protocol,
+    storedRegion,
+    storedProject,
+    storedLocation,
+  ]);
+  // Two protocols take settings, and each needs its own: a row that switches to
+  // one cannot be saved until its fields are filled in.
+  const needsRegion = protocol === "bedrock";
+  const needsProject = protocol === "vertex";
+  const settingsIncomplete =
+    (needsRegion && region.trim() === "") ||
+    (needsProject && (project.trim() === "" || location.trim() === ""));
   const dirty =
-    label !== provider.label || baseUrl !== provider.baseUrl || protocol !== provider.protocol;
+    label !== provider.label ||
+    baseUrl !== provider.baseUrl ||
+    protocol !== provider.protocol ||
+    (needsRegion && region.trim() !== storedRegion) ||
+    (needsProject && (project.trim() !== storedProject || location.trim() !== storedLocation));
   const save = useMutation({
     mutationFn: () =>
       rpcClient.modelProviders.providers.put({
@@ -159,6 +193,13 @@ function EndpointSection({
         label: label.trim() || provider.name,
         baseUrl: baseUrl.trim(),
         protocol,
+        // Sent only where the protocol takes it, and cleared where it does not:
+        // every other protocol refuses a value outright.
+        settings: needsRegion
+          ? { region: region.trim() }
+          : needsProject
+            ? { project: project.trim(), location: location.trim() }
+            : null,
       }),
     onSuccess: async () => {
       await onChanged();
@@ -209,20 +250,383 @@ function EndpointSection({
                 <SelectItem value="openai_compatible">
                   {protocolLabel("openai_compatible")}
                 </SelectItem>
+                <SelectItem value="openai_responses">
+                  {protocolLabel("openai_responses")}
+                </SelectItem>
+                <SelectItem value="anthropic">{protocolLabel("anthropic")}</SelectItem>
+                <SelectItem value="google">{protocolLabel("google")}</SelectItem>
+                <SelectItem value="bedrock">{protocolLabel("bedrock")}</SelectItem>
+                <SelectItem value="vertex">{protocolLabel("vertex")}</SelectItem>
               </SelectContent>
             </Select>
           }
         />
+        {needsRegion ? (
+          <SettingRow
+            label="Region"
+            description="Every request is signed for this region, whichever host answers it. A VPC endpoint or a gateway does not carry one to read."
+            orientation="stack"
+            control={
+              <Input
+                aria-label="Region"
+                className="max-w-sm"
+                placeholder="us-east-1"
+                value={region}
+                onChange={(event) => setRegion(event.target.value)}
+              />
+            }
+          />
+        ) : null}
+        {needsProject ? (
+          <>
+            <SettingRow
+              label="Project"
+              description="The Google Cloud project the models are addressed under, and whose quota they spend."
+              orientation="stack"
+              control={
+                <Input
+                  aria-label="Project"
+                  className="max-w-sm"
+                  placeholder="my-project-id"
+                  value={project}
+                  onChange={(event) => setProject(event.target.value)}
+                />
+              }
+            />
+            <SettingRow
+              label="Location"
+              description="The Vertex location the models are addressed in. The address above names the API surface, not the resource path under it."
+              orientation="stack"
+              control={
+                <Input
+                  aria-label="Location"
+                  className="max-w-sm"
+                  placeholder="us-central1"
+                  value={location}
+                  onChange={(event) => setLocation(event.target.value)}
+                />
+              }
+            />
+          </>
+        ) : null}
         <SettingRow
           label=""
           control={
-            <Button disabled={!dirty || save.isPending}>
+            <Button disabled={!dirty || save.isPending || settingsIncomplete}>
               {save.isPending ? "Saving…" : "Save"}
             </Button>
           }
         />
       </SettingsSection>
     </form>
+  );
+}
+
+/**
+ * The one cheap authenticated call, on demand. Shared by every credential
+ * section because the question it answers is the same whatever the mode: does
+ * this provider answer, and does it accept what is stored.
+ */
+function HealthCheckRow({ provider }: { provider: ModelProvider }) {
+  const [result, setResult] = useState<ProbeResult>();
+  const probe = useMutation({
+    mutationFn: () => rpcClient.modelProviders.providers.probe({ name: provider.name }),
+    onSuccess: (probed) => setResult(probed),
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  return (
+    <SettingRow
+      label="Health check"
+      description={
+        result
+          ? result.ok
+            ? `Answered in ${result.latencyMs} ms${
+                result.modelCount === undefined ? "" : `, listing ${result.modelCount} models`
+              }.`
+            : result.reason
+          : ""
+      }
+      control={
+        <Button variant="outline" disabled={probe.isPending} onClick={() => probe.mutate()}>
+          {probe.isPending ? "Checking…" : "Check now"}
+        </Button>
+      }
+    />
+  );
+}
+
+/**
+ * Credential entry for the signing mode, where the credential is three fields
+ * rather than one. They compose the JSON object the registry stores, so the
+ * screen never asks an admin to type JSON, and no field is ever read back.
+ *
+ * Removing the keys is not the same as removing authentication: a row with no
+ * stored keys signs with the role the server itself runs under, which is a
+ * supported configuration and the reason this section says so out loud.
+ */
+function SigningCredentialSection({
+  provider,
+  onChanged,
+}: {
+  provider: ModelProvider;
+  onChanged: () => Promise<void>;
+}) {
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const [sessionToken, setSessionToken] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  function clear() {
+    setAccessKeyId("");
+    setSecretAccessKey("");
+    setSessionToken("");
+  }
+
+  const store = useMutation({
+    mutationFn: () =>
+      rpcClient.modelProviders.providers.put({
+        ...descriptorOf(provider),
+        credentialMode: "aws_sigv4",
+        credential: JSON.stringify({
+          accessKeyId: accessKeyId.trim(),
+          secretAccessKey: secretAccessKey.trim(),
+          ...(sessionToken.trim() === "" ? {} : { sessionToken: sessionToken.trim() }),
+        }),
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      clear();
+      toast.success("Keys saved");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  const drop = useMutation({
+    mutationFn: () =>
+      rpcClient.modelProviders.providers.put({
+        ...descriptorOf(provider),
+        credentialMode: "aws_sigv4",
+        credential: null,
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      setConfirmRemove(false);
+      toast.success("Keys removed");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+
+  const incomplete = accessKeyId.trim() === "" || secretAccessKey.trim() === "";
+  return (
+    <SettingsSection title="Credential">
+      <SettingRow
+        label="Authentication"
+        description="Requests are signed, so no key travels with them."
+        control={
+          <div className="flex items-center gap-3">
+            <CredentialStatusBadge
+              status={provider.hasCredential ? "connected" : "missing"}
+              label={provider.hasCredential ? "Keys stored" : "Using the server's own role"}
+            />
+            {provider.hasCredential ? (
+              <Button variant="outline" onClick={() => setConfirmRemove(true)}>
+                Remove keys
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+      <SettingRow
+        label={provider.hasCredential ? "Replace the keys" : "Store keys"}
+        description={
+          provider.hasCredential
+            ? "Stored keys are never read back, only replaced. Enter every field again."
+            : "Without stored keys, requests are signed with the credentials the server itself runs with. Reading the model list needs keys of its own."
+        }
+        orientation="stack"
+        control={
+          <div className="max-w-sm space-y-2">
+            <Input
+              aria-label="Access key ID"
+              autoComplete="off"
+              placeholder="AKIA…"
+              value={accessKeyId}
+              onChange={(event) => setAccessKeyId(event.target.value)}
+            />
+            <Input
+              type="password"
+              aria-label="Secret access key"
+              autoComplete="new-password"
+              value={secretAccessKey}
+              onChange={(event) => setSecretAccessKey(event.target.value)}
+            />
+            <Input
+              type="password"
+              aria-label="Session token"
+              autoComplete="new-password"
+              placeholder="Session token, for temporary credentials"
+              value={sessionToken}
+              onChange={(event) => setSessionToken(event.target.value)}
+            />
+            <Button disabled={incomplete || store.isPending} onClick={() => store.mutate()}>
+              {store.isPending ? "Saving…" : "Save keys"}
+            </Button>
+          </div>
+        }
+      />
+      <HealthCheckRow provider={provider} />
+      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove the stored keys?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The keys are discarded and requests are signed with whatever credentials the server
+              itself runs with. Where there are none, every call to this provider fails. The model
+              list stops loading either way, because reading it spends this provider's own keys.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={drop.isPending}
+              onClick={() => drop.mutate()}
+            >
+              {drop.isPending ? "Removing…" : "Remove keys"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </SettingsSection>
+  );
+}
+
+/**
+ * Credential entry for the Google mode, where the credential is a file rather
+ * than a field. What an admin has is the key file the console downloaded, so
+ * that is what this asks for: the registry keeps the two fields of it a token
+ * exchange spends and discards the rest, which beats making anybody edit JSON
+ * down to a pair by hand. Nothing is ever read back.
+ *
+ * Removing it is not the same as removing authentication: a row with no stored
+ * key file mints its tokens from whatever credential the server itself can
+ * reach, which is a supported configuration and the reason this section says so
+ * out loud.
+ */
+function ServiceAccountCredentialSection({
+  provider,
+  onChanged,
+}: {
+  provider: ModelProvider;
+  onChanged: () => Promise<void>;
+}) {
+  const [keyFile, setKeyFile] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  const store = useMutation({
+    mutationFn: () =>
+      rpcClient.modelProviders.providers.put({
+        ...descriptorOf(provider),
+        credentialMode: "gcp_adc",
+        credential: keyFile.trim(),
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      setKeyFile("");
+      toast.success("Service account saved");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+  const drop = useMutation({
+    mutationFn: () =>
+      rpcClient.modelProviders.providers.put({
+        ...descriptorOf(provider),
+        credentialMode: "gcp_adc",
+        credential: null,
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      setConfirmRemove(false);
+      toast.success("Service account removed");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
+
+  return (
+    <SettingsSection title="Credential">
+      <SettingRow
+        label="Authentication"
+        description="Each request carries a token minted for it, so no key travels with one."
+        control={
+          <div className="flex items-center gap-3">
+            <CredentialStatusBadge
+              status={provider.hasCredential ? "connected" : "missing"}
+              label={
+                provider.hasCredential
+                  ? "Service account stored"
+                  : "Using the server's own credentials"
+              }
+            />
+            {provider.hasCredential ? (
+              <Button variant="outline" onClick={() => setConfirmRemove(true)}>
+                Remove service account
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+      <SettingRow
+        label={provider.hasCredential ? "Replace the service account" : "Store a service account"}
+        description={
+          provider.hasCredential
+            ? "A stored service account is never read back, only replaced. Paste the JSON key file as downloaded."
+            : "Without one, tokens are minted from the credentials the server itself runs with. Reading the model list needs a service account of its own."
+        }
+        orientation="stack"
+        control={
+          <div className="max-w-sm space-y-2">
+            <Textarea
+              aria-label="Service-account key file"
+              rows={4}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={'{ "type": "service_account", "client_email": … }'}
+              value={keyFile}
+              onChange={(event) => setKeyFile(event.target.value)}
+            />
+            <Button
+              disabled={keyFile.trim() === "" || store.isPending}
+              onClick={() => store.mutate()}
+            >
+              {store.isPending ? "Saving…" : "Save service account"}
+            </Button>
+          </div>
+        }
+      />
+      <HealthCheckRow provider={provider} />
+      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove the stored service account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The key file is discarded and tokens are minted from whatever credentials the server
+              itself can reach. Where there are none, every call to this provider fails. The model
+              list stops loading either way, because reading it spends this provider's own service
+              account.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={drop.isPending}
+              onClick={() => drop.mutate()}
+            >
+              {drop.isPending ? "Removing…" : "Remove service account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </SettingsSection>
   );
 }
 
@@ -235,7 +639,6 @@ function CredentialSection({
 }) {
   const [credential, setCredential] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [result, setResult] = useState<ProbeResult>();
 
   // Both writes carry the mode with the value: a provider in key mode with no
   // key is a state the registry refuses, so the screen never proposes it.
@@ -265,11 +668,6 @@ function CredentialSection({
       setConfirmRemove(false);
       toast.success("Credential removed");
     },
-    onError: (error) => toast.error(messageFrom(error)),
-  });
-  const probe = useMutation({
-    mutationFn: () => rpcClient.modelProviders.providers.probe({ name: provider.name }),
-    onSuccess: (probed) => setResult(probed),
     onError: (error) => toast.error(messageFrom(error)),
   });
 
@@ -325,23 +723,7 @@ function CredentialSection({
           </div>
         }
       />
-      <SettingRow
-        label="Health check"
-        description={
-          result
-            ? result.ok
-              ? `Answered in ${result.latencyMs} ms${
-                  result.modelCount === undefined ? "" : `, listing ${result.modelCount} models`
-                }.`
-              : result.reason
-            : ""
-        }
-        control={
-          <Button variant="outline" disabled={probe.isPending} onClick={() => probe.mutate()}>
-            {probe.isPending ? "Checking…" : "Check now"}
-          </Button>
-        }
-      />
+      <HealthCheckRow provider={provider} />
       <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
         <AlertDialogContent>
           <AlertDialogHeader>

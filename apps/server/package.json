@@ -46,8 +46,10 @@
     "@trema/connectors": "workspace:*",
     "@trema/harness": "workspace:*",
     "@trema/models": "workspace:*",
+    "aws4fetch": "^1.0.20",
     "better-auth": "^1.6.23",
     "dotenv": "^17.2.3",
+    "google-auth-library": "^10.9.1",
     "hono": "^4.12.31",
     "zod": "^4.4.3"
   },

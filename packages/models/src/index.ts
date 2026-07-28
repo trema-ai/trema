@@ -7,9 +7,14 @@ export type {
 } from "./embedding-port.js";
 export { EmbeddingCallError } from "./embedding-port.js";
 export type {
+  AnthropicEndpoint,
+  BedrockEndpoint,
+  GoogleEndpoint,
   ModelEndpoint,
   ModelEndpoints,
   OpenAICompatibleEndpoint,
+  OpenAIResponsesEndpoint,
+  VertexEndpoint,
 } from "./endpoints.js";
 export type { SdkEmbeddingPortOptions } from "./sdk-embedding-port.js";
 export { createSdkEmbeddingPort } from "./sdk-embedding-port.js";

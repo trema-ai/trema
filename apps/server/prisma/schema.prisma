@@ -161,13 +161,23 @@ enum SessionMode {
 /// hyphenated descriptor literal in `services/model-providers`.
 enum ModelProtocol {
   openai_compatible
+  anthropic
+  google
+  openai_responses
+  bedrock
+  vertex
 }
 
-/// How a provider authenticates. `oauth` and `aws_sigv4` land with the flows
-/// that implement them; an unimplemented mode is not a value.
+/// How a provider authenticates. `oauth` lands with the flow that implements
+/// it; an unimplemented mode is not a value. `aws_sigv4` signs each request
+/// with a stored key pair, or with whatever the worker's own role supplies
+/// when the row stores none. `gcp_adc` mints a token from a stored service
+/// account, or from whatever credential the worker itself can already reach.
 enum ModelCredentialMode {
   api_key
   none
+  aws_sigv4
+  gcp_adc
 }
 
 /// What a model is asked to do. Each role resolves to its own provider and
@@ -582,6 +592,13 @@ model ModelProvider {
   /// for none. Preset data: a listing that hides part of its catalog behind a
   /// filter is a vendor fact, and a vendor is a preset over a protocol.
   listQueryJson        Json?
+  /// Protocol configuration that is neither address nor secret, or null where
+  /// the protocol takes none. Each protocol declares the shape it accepts, and
+  /// the ones that declare nothing refuse a value outright. `bedrock` needs a
+  /// region: a signature names one whatever host answers the call, and it is
+  /// read back, so it cannot ride the write-only credential. `vertex` needs a
+  /// project and a location, which is where it addresses models.
+  settingsJson         Json?
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
   org                  Org                 @relation(fields: [orgId], references: [id], onDelete: Cascade)

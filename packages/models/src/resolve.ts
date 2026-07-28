@@ -2,7 +2,12 @@ import type { ModelRef } from "@trema/harness";
 import type { LanguageModel } from "ai";
 
 import type { ModelEndpoint, ModelEndpoints } from "./endpoints.js";
+import { resolveAnthropic } from "./resolvers/anthropic.js";
+import { resolveBedrock } from "./resolvers/bedrock.js";
+import { resolveGoogle } from "./resolvers/google.js";
 import { resolveOpenAICompatible } from "./resolvers/openai-compatible.js";
+import { resolveOpenAIResponses } from "./resolvers/openai-responses.js";
+import { resolveVertex } from "./resolvers/vertex.js";
 
 export interface ResolvedModel {
   endpointName: string;
@@ -42,6 +47,56 @@ export function resolveModel(
         endpoint,
         model: resolveOpenAICompatible({
           endpointName,
+          endpoint,
+          modelId: ref.id,
+          ...(fetch === undefined ? {} : { fetch }),
+        }),
+      };
+    case "anthropic":
+      return {
+        endpointName,
+        endpoint,
+        model: resolveAnthropic({
+          endpoint,
+          modelId: ref.id,
+          ...(fetch === undefined ? {} : { fetch }),
+        }),
+      };
+    case "google":
+      return {
+        endpointName,
+        endpoint,
+        model: resolveGoogle({
+          endpoint,
+          modelId: ref.id,
+          ...(fetch === undefined ? {} : { fetch }),
+        }),
+      };
+    case "openai-responses":
+      return {
+        endpointName,
+        endpoint,
+        model: resolveOpenAIResponses({
+          endpoint,
+          modelId: ref.id,
+          ...(fetch === undefined ? {} : { fetch }),
+        }),
+      };
+    case "bedrock":
+      return {
+        endpointName,
+        endpoint,
+        model: resolveBedrock({
+          endpoint,
+          modelId: ref.id,
+          ...(fetch === undefined ? {} : { fetch }),
+        }),
+      };
+    case "vertex":
+      return {
+        endpointName,
+        endpoint,
+        model: resolveVertex({
           endpoint,
           modelId: ref.id,
           ...(fetch === undefined ? {} : { fetch }),
