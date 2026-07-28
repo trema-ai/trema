@@ -285,6 +285,20 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
 
     const followUps = await input.store.drainFollowUps(input.threadRef);
     if (followUps.length > 0) {
+      // The answer that just ended is a finished segment: what a follow-up
+      // draws is the next surface message, not more of the last one. The
+      // follow-ups themselves land as `steering` events — the log's record of a
+      // user message this run absorbed, without which the thread would show an
+      // answer to a question nobody asked.
+      const followUpEvents: RunEventData[] = [
+        { type: "segment-end", reason: "completed" },
+        ...followUps.map(({ author, message }) => ({
+          type: "steering" as const,
+          author,
+          text: messageText(message),
+        })),
+      ];
+      await appendEvents(input, followUpEvents);
       turnInput.push(...followUps.map(({ message }) => message));
       messages.push(...followUps.map(({ message }) => message));
       continue;

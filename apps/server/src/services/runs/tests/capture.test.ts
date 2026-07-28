@@ -1,7 +1,12 @@
 import type { TranscriptMessage } from "@trema/harness";
 import { describe, expect, it } from "vitest";
 
-import { openingMessages, type QueuedMessage } from "#server/services/runs/capture.js";
+import { MESSAGE_BATCH_LIMIT } from "#server/services/conversations/index.js";
+import {
+  messageBatches,
+  openingMessages,
+  type QueuedMessage,
+} from "#server/services/runs/capture.js";
 
 const queuedAt = new Date("2026-07-19T12:00:00.000Z");
 
@@ -64,6 +69,25 @@ describe("opening messages", () => {
         humans,
       ),
     ).toEqual([]);
+  });
+
+  it("splits a queue too long to report in one call", () => {
+    const captured = openingMessages(
+      Array.from({ length: MESSAGE_BATCH_LIMIT + 1 }, (_, index) =>
+        queued(`intent-${index}`, "principal-1", text(`Message ${index}.`)),
+      ),
+      humans,
+    );
+    const batches = messageBatches(captured);
+
+    // The loop drains the queue whatever happens, so a batch the conversation
+    // service would refuse is a message lost for good.
+    expect(batches.map(({ length }) => length)).toEqual([MESSAGE_BATCH_LIMIT, 1]);
+    expect(batches.flat()).toEqual(captured);
+    expect(messageBatches(captured.slice(0, MESSAGE_BATCH_LIMIT))).toEqual([
+      captured.slice(0, MESSAGE_BATCH_LIMIT),
+    ]);
+    expect(messageBatches([])).toEqual([]);
   });
 
   it("joins a message's text blocks and keeps queue order", () => {

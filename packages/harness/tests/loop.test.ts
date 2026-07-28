@@ -471,6 +471,14 @@ describe("runLoop", () => {
       message("assistant", "first answer"),
       message("user", "one more thing"),
     ]);
+    // The answer is a finished segment and the follow-up is a message the run
+    // absorbed: both are facts of the log, so the thread can be read back from
+    // it without knowing what was queued.
+    const events = (await fixture.store.listEvents("run-1")).map(({ event }) => event);
+    expect(events).toEqual([
+      { type: "segment-end", reason: "completed" },
+      { type: "steering", author, text: "one more thing" },
+    ]);
   });
 
   it("stops at the maxTurns cap without a shouldStop hook", async () => {

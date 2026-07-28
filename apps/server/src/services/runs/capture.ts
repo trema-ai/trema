@@ -5,6 +5,7 @@ import {
   type CapturedMessageInput,
   type CaptureSession,
   captureMessages,
+  MESSAGE_BATCH_LIMIT,
 } from "#server/services/conversations/index.js";
 
 /** A queued input and the moment it was queued, which is when it was said. */
@@ -61,6 +62,26 @@ export function openingMessages(
       },
     ];
   });
+}
+
+/**
+ * Splits a capture into batches the conversation service accepts.
+ *
+ * A report is capped at {@link MESSAGE_BATCH_LIMIT} messages, and what a run
+ * opened with is however much was said before it started — a queue longer than
+ * the cap must still be reported, because the loop drains it either way and a
+ * refused batch would lose it for good. Batches keep queue order and are landed
+ * one after another, so the thread's sequence reads as it was said.
+ */
+export function messageBatches(
+  messages: readonly CapturedMessageInput[],
+  limit: number = MESSAGE_BATCH_LIMIT,
+): CapturedMessageInput[][] {
+  const batches: CapturedMessageInput[][] = [];
+  for (let start = 0; start < messages.length; start += limit) {
+    batches.push(messages.slice(start, start + limit));
+  }
+  return batches;
 }
 
 /**
@@ -122,6 +143,8 @@ export function createRunCapture(options: RunCaptureOptions): CaptureOpeningMess
     // message when it is gone. Refusing here would only say it worse.
     if (session === null) return;
 
-    await captureMessages(options.db, session satisfies CaptureSession, { messages });
+    for (const batch of messageBatches(messages)) {
+      await captureMessages(options.db, session satisfies CaptureSession, { messages: batch });
+    }
   };
 }

@@ -190,6 +190,55 @@ describe("deriveRunMessages", () => {
     ]);
   });
 
+  it("keeps a follow-up the run absorbed, and the answer before it", async () => {
+    const store = new InMemoryRunStore({ now: () => now });
+    // The follow-up is queued while the first turn streams, so the loop finds
+    // it where it drains one: after the run would otherwise have ended.
+    async function* answerAndQueueFollowUp(): AsyncIterable<RunEventData> {
+      await store.enqueueFollowUp("thread-1", {
+        id: "intent-follow-1",
+        author,
+        message: user("And the migration?"),
+      });
+      yield* textEvents("text-1", "The deploy timed out.");
+    }
+    const recorded = await recordRun({
+      store,
+      threadRef: "thread-1",
+      opening: "What broke the deploy?",
+      turns: [
+        { events: answerAndQueueFollowUp(), result: turn("done") },
+        { events: textEvents("text-2", "It ran twice."), result: turn("done") },
+      ],
+    });
+
+    // The absorbed message is in the log exactly once, as the steering event
+    // that says where the run took it in.
+    expect(recorded.events.filter(({ type }) => type === "steering")).toEqual([
+      { type: "steering", author, text: "What broke the deploy?" },
+      { type: "steering", author, text: "And the migration?" },
+    ]);
+    expect(recorded.events.map(({ type }) => type)).toEqual([
+      "run-started",
+      "steering",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "segment-end",
+      "steering",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "run-finished",
+    ]);
+    expect(deriveRunMessages(recorded.events)).toEqual([
+      user("What broke the deploy?"),
+      assistant("The deploy timed out."),
+      user("And the migration?"),
+      assistant("It ran twice."),
+    ]);
+  });
+
   it("counts only pre-turn-one steering as the opening message", () => {
     const events: RunEventData[] = [
       { type: "run-started", trigger: "message" },
@@ -274,6 +323,44 @@ describe("deriveThreadMessages", () => {
       assistant("The migration timed out."),
       user("How long did it hang?"),
       assistant("Eleven minutes."),
+    ]);
+  });
+
+  it("gives the next run a follow-up the prior run absorbed, once and in order", async () => {
+    const store = new InMemoryRunStore({ now: () => now });
+    async function* answerAndQueueFollowUp(): AsyncIterable<RunEventData> {
+      await store.enqueueFollowUp("thread-1", {
+        id: "intent-follow-1",
+        author,
+        message: user("And the migration?"),
+      });
+      yield* textEvents("text-1", "The deploy timed out.");
+    }
+    const first = await recordRun({
+      store,
+      threadRef: "thread-1",
+      opening: "What broke the deploy?",
+      turns: [
+        { events: answerAndQueueFollowUp(), result: turn("done") },
+        { events: textEvents("text-2", "It ran twice."), result: turn("done") },
+      ],
+    });
+
+    const threadMessages = deriveThreadMessages([first]);
+    const second = await recordRun({
+      store,
+      threadRef: "thread-1",
+      opening: "Why twice?",
+      threadMessages,
+      turns: [{ events: textEvents("text-3", "A retry."), result: turn("done") }],
+    });
+
+    expect(second.modelPort.turnRequests[0]?.messages).toEqual([
+      user("What broke the deploy?"),
+      assistant("The deploy timed out."),
+      user("And the migration?"),
+      assistant("It ran twice."),
+      user("Why twice?"),
     ]);
   });
 

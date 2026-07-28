@@ -175,6 +175,25 @@ integration("thread history", () => {
     ]);
   });
 
+  it("orders runs created in the same millisecond by id", async () => {
+    // Postgres timestamps are millisecond-grained, so a busy thread can put two
+    // runs on the same instant; the listing breaks that tie on id and the
+    // history boundary has to break it the same way.
+    await recordRun({ id: "run-1", opening: "First.", answer: "One." });
+    await recordRun({ id: "run-3", opening: "Later.", answer: "Three." });
+    const second = await queueRun("run-2");
+    const createdAt = new Date("2026-07-19T12:00:00.000Z");
+    await db.agentRun.updateMany({ where: { orgId }, data: { createdAt } });
+
+    const plan = await createSessionRunPlan({
+      db,
+      orgId,
+      resolveModel: async () => ({ model: { id: "test/model" }, modelPort }),
+    })(second);
+
+    expect(plan.threadMessages).toEqual([user("First."), assistant("One.")]);
+  });
+
   it("reads only prior terminal runs of the same thread", async () => {
     await recordRun({ id: "run-1", opening: "Same thread.", answer: "Answered." });
     await recordRun({ id: "run-2", opening: "Other thread.", threadRef: "web:member-2" });

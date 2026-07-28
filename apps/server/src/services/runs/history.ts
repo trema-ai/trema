@@ -26,7 +26,9 @@ export const DEFAULT_THREAD_HISTORY_RUNS = 10;
  *
  * Anything that follows one of these belongs to a later turn, so the text
  * before it was narration rather than the run's answer. Tool input, note, and
- * result events need no entry: `tool-start` always precedes them.
+ * result events need no entry: `tool-start` always precedes them. `segment-end`
+ * is handled on its own, because a *completed* segment ends an answer rather
+ * than discarding a half-written one.
  */
 const CLEARS_TRAILING_TEXT = new Set<RunEventData["type"]>([
   "run-started",
@@ -34,7 +36,6 @@ const CLEARS_TRAILING_TEXT = new Set<RunEventData["type"]>([
   "tool-start",
   "tool-result",
   "elicitation",
-  "segment-end",
   "error",
 ]);
 
@@ -44,6 +45,19 @@ export interface ThreadRunLog {
   events: readonly RunEventData[];
 }
 
+/**
+ * Where a thread's prior runs end.
+ *
+ * `createdAt` alone would not say: Postgres timestamps are millisecond-grained,
+ * so two runs can share one, and the listing breaks that tie on `id`. The
+ * cursor is the same pair the ordering is, which is what makes "before this
+ * run" mean exactly "earlier in the listing".
+ */
+export interface ThreadHistoryCursor {
+  createdAt: Date;
+  id: string;
+}
+
 /** Persistence, tenancy, and bounds for reading a thread's derived history. */
 export interface ThreadHistoryOptions {
   db: Database;
@@ -51,8 +65,8 @@ export interface ThreadHistoryOptions {
   threadRef: string;
   /** The run being planned. It is excluded along with anything created after it. */
   runId: string;
-  /** Creation time of the run being planned, when it is known. */
-  before?: Date;
+  /** Where the run being planned sits in the thread's order, when it is known. */
+  before?: ThreadHistoryCursor;
   /**
    * Cap on prior runs.
    * @defaultValue {@link DEFAULT_THREAD_HISTORY_RUNS}
@@ -67,24 +81,37 @@ function textMessage(role: TranscriptMessage["role"], blocks: TextBlock[]): Tran
 /**
  * Derives one run's conversational contribution from its log.
  *
- * Per [interface 02](../specs/interface/02-messages.md) a run contributes its
- * opening message and its final text parts, and nothing else: activity,
- * reasoning, and elicitation parts are run detail, reachable through the
- * canonical run view. The opening message is the leading `steering` run — the
- * input drained at the first turn boundary. Steering that lands mid-run shaped
- * the answer this run already gave, so the lean record keeps the answer and
- * not the correction. Unknown event types are skipped, as everywhere else.
+ * Per [interface 02](../specs/interface/02-messages.md) a run contributes the
+ * messages it was given and the text parts that answered them, and nothing
+ * else: activity, reasoning, and elicitation parts are run detail, reachable
+ * through the canonical run view.
+ *
+ * A run holds one exchange, or several when it absorbs a follow-up. An exchange
+ * opens at run start and again after `segment-end(completed)` — the boundary
+ * the loop writes when the answer is finished and a drained follow-up starts
+ * the next one. The `steering` events at an exchange's start are what was
+ * asked; steering that lands mid-answer shaped the answer this run already
+ * gave, so the lean record keeps the answer and not the correction. Unknown
+ * event types are skipped, as everywhere else.
  */
 export function deriveRunMessages(events: readonly RunEventData[]): TranscriptMessage[] {
-  const opening: TranscriptMessage[] = [];
+  const messages: TranscriptMessage[] = [];
   const trailing = new Map<string, string>();
-  let beforeFirstTurn = true;
+  let openingExchange = true;
+
+  const flushAnswer = () => {
+    const blocks: TextBlock[] = [...trailing.values()]
+      .filter((text) => text.length > 0)
+      .map((text) => ({ type: "text", text }));
+    trailing.clear();
+    if (blocks.length > 0) messages.push(textMessage("assistant", blocks));
+  };
 
   for (const event of events) {
-    if (beforeFirstTurn && event.type === "steering") {
-      opening.push(textMessage("user", [{ type: "text", text: event.text }]));
+    if (openingExchange && event.type === "steering") {
+      messages.push(textMessage("user", [{ type: "text", text: event.text }]));
     } else if (event.type !== "run-started") {
-      beforeFirstTurn = false;
+      openingExchange = false;
     }
 
     switch (event.type) {
@@ -94,17 +121,24 @@ export function deriveRunMessages(events: readonly RunEventData[]): TranscriptMe
       case "text-delta":
         trailing.set(event.blockId, (trailing.get(event.blockId) ?? "") + event.delta);
         break;
+      case "segment-end":
+        // A completed segment is an answer; any other reason — a pause above
+        // all — leaves half-written text that must not be replayed as one.
+        if (event.reason === "completed") {
+          flushAnswer();
+          openingExchange = true;
+        } else {
+          trailing.clear();
+        }
+        break;
       default:
         if (CLEARS_TRAILING_TEXT.has(event.type)) trailing.clear();
         break;
     }
   }
 
-  const blocks: TextBlock[] = [...trailing.values()]
-    .filter((text) => text.length > 0)
-    .map((text) => ({ type: "text", text }));
-
-  return blocks.length === 0 ? opening : [...opening, textMessage("assistant", blocks)];
+  flushAnswer();
+  return messages;
 }
 
 /** Derives a thread's conversational record from its prior runs' logs, in run order. */
@@ -128,7 +162,17 @@ export async function readThreadMessages(
       threadRef: options.threadRef,
       state: { in: PRIOR_RUN_STATES },
       id: { not: options.runId },
-      ...(options.before === undefined ? {} : { createdAt: { lt: options.before } }),
+      // Ordered before the run being planned, by the same (createdAt, id) the
+      // read orders on: a run created in the same millisecond is prior when its
+      // id sorts first.
+      ...(options.before === undefined
+        ? {}
+        : {
+            OR: [
+              { createdAt: { lt: options.before.createdAt } },
+              { createdAt: options.before.createdAt, id: { lt: options.before.id } },
+            ],
+          }),
     },
     // The cap keeps the newest runs, so the read orders descending and the
     // derivation flips back to run order.

@@ -91,7 +91,7 @@ export function createSessionRunPlan(
       orgId: options.orgId,
       threadRef: run.threadRef,
       runId: run.id,
-      ...(row === null ? {} : { before: row.createdAt }),
+      ...(row === null ? {} : { before: { createdAt: row.createdAt, id: run.id } }),
       ...(options.threadHistoryRuns === undefined ? {} : { limit: options.threadHistoryRuns }),
     });
 
