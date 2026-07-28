@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const githubProvider = {
   key: "github",
+  trusted: true,
   displayName: "GitHub",
   description:
     "A curated set of tools for repositories, issues, pull requests, and their comments over the GitHub REST API.",
@@ -74,7 +75,6 @@ export const githubProvider = {
         properties: { q: { type: "string" } },
         required: ["q"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_issue",
@@ -90,7 +90,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "issueNumber"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_issue_comment",
@@ -107,7 +106,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "issueNumber", "body"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_pull_request",
@@ -123,7 +121,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "pullNumber"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_pull_requests",
@@ -148,7 +145,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_issue",
@@ -175,7 +171,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "title"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_issue",
@@ -208,7 +203,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "issueNumber"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_issue_comments",
@@ -226,7 +220,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "issueNumber"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_repository",
@@ -241,7 +234,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_repositories",
@@ -260,7 +252,6 @@ export const githubProvider = {
           per_page: { type: "integer" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_file_contents",
@@ -280,7 +271,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "path"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_commits",
@@ -301,7 +291,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo"],
       },
-      sensitivity: "read",
     },
     {
       name: "search_repositories",
@@ -318,7 +307,6 @@ export const githubProvider = {
         },
         required: ["q"],
       },
-      sensitivity: "read",
     },
     {
       name: "search_code",
@@ -333,7 +321,6 @@ export const githubProvider = {
         },
         required: ["q"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_pull_request_files",
@@ -350,7 +337,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "pullNumber"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_pull_request_comment",
@@ -379,7 +365,6 @@ export const githubProvider = {
         },
         required: ["owner", "repo", "pullNumber", "body", "commit_id", "path"],
       },
-      sensitivity: "write",
     },
   ],
   memberConnectable: true,

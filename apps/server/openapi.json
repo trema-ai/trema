@@ -395,14 +395,25 @@
                             "type": "string",
                             "description": "The model's one-line justification for the call."
                           },
-                          "sensitivity": {
+                          "mode": {
                             "enum": [
-                              "read",
-                              "write",
-                              "destructive"
+                              "ask",
+                              "delegated",
+                              "full"
                             ],
                             "type": "string",
-                            "description": "The tool sensitivity class the policy gated."
+                            "description": "The approval mode the call paused under."
+                          },
+                          "escalationReason": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The classifier's one-line reason for pausing a delegated-mode call."
                           },
                           "approverRoles": {
                             "type": "array",
@@ -498,7 +509,8 @@
                           "args",
                           "argsHash",
                           "reason",
-                          "sensitivity",
+                          "mode",
+                          "escalationReason",
                           "approverRoles",
                           "allowRequesterApproval",
                           "requesterPrincipalId",
@@ -676,14 +688,25 @@
                       "type": "string",
                       "description": "The model's one-line justification for the call."
                     },
-                    "sensitivity": {
+                    "mode": {
                       "enum": [
-                        "read",
-                        "write",
-                        "destructive"
+                        "ask",
+                        "delegated",
+                        "full"
                       ],
                       "type": "string",
-                      "description": "The tool sensitivity class the policy gated."
+                      "description": "The approval mode the call paused under."
+                    },
+                    "escalationReason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The classifier's one-line reason for pausing a delegated-mode call."
                     },
                     "approverRoles": {
                       "type": "array",
@@ -779,7 +802,8 @@
                     "args",
                     "argsHash",
                     "reason",
-                    "sensitivity",
+                    "mode",
+                    "escalationReason",
                     "approverRoles",
                     "allowRequesterApproval",
                     "requesterPrincipalId",
@@ -808,7 +832,7 @@
       "post": {
         "operationId": "approvals.approve",
         "summary": "Approve a gated call",
-        "description": "Approve the recorded call. The approver must satisfy the rule pinned on the approval when it was asked, not the scope's current policy. Approving a `context:activate_item` approval also activates the item.",
+        "description": "Approve the recorded call. The approver must satisfy the rule pinned on the approval when it was asked, not the scope's current policy. `grantScope` widens the yes: `run` covers the tool for the rest of the thread, `always` is a standing exemption for the requester at this scope. Approving a `context:activate_item` approval also activates the item.",
         "tags": [
           "Approvals"
         ],
@@ -824,6 +848,27 @@
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "grantScope": {
+                    "enum": [
+                      "once",
+                      "run",
+                      "always"
+                    ],
+                    "type": "string",
+                    "description": "How wide the yes is. `once` (the default) covers the recorded arguments alone; `run` covers the tool for the rest of the thread; `always` stands until revoked."
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -953,14 +998,25 @@
                           "type": "string",
                           "description": "The model's one-line justification for the call."
                         },
-                        "sensitivity": {
+                        "mode": {
                           "enum": [
-                            "read",
-                            "write",
-                            "destructive"
+                            "ask",
+                            "delegated",
+                            "full"
                           ],
                           "type": "string",
-                          "description": "The tool sensitivity class the policy gated."
+                          "description": "The approval mode the call paused under."
+                        },
+                        "escalationReason": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The classifier's one-line reason for pausing a delegated-mode call."
                         },
                         "approverRoles": {
                           "type": "array",
@@ -1056,7 +1112,8 @@
                         "args",
                         "argsHash",
                         "reason",
-                        "sensitivity",
+                        "mode",
+                        "escalationReason",
                         "approverRoles",
                         "allowRequesterApproval",
                         "requesterPrincipalId",
@@ -1237,14 +1294,25 @@
                       "type": "string",
                       "description": "The model's one-line justification for the call."
                     },
-                    "sensitivity": {
+                    "mode": {
                       "enum": [
-                        "read",
-                        "write",
-                        "destructive"
+                        "ask",
+                        "delegated",
+                        "full"
                       ],
                       "type": "string",
-                      "description": "The tool sensitivity class the policy gated."
+                      "description": "The approval mode the call paused under."
+                    },
+                    "escalationReason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The classifier's one-line reason for pausing a delegated-mode call."
                     },
                     "approverRoles": {
                       "type": "array",
@@ -1340,7 +1408,8 @@
                     "args",
                     "argsHash",
                     "reason",
-                    "sensitivity",
+                    "mode",
+                    "escalationReason",
                     "approverRoles",
                     "allowRequesterApproval",
                     "requesterPrincipalId",
@@ -2307,20 +2376,11 @@
                             },
                             "description": {
                               "type": "string"
-                            },
-                            "sensitivity": {
-                              "enum": [
-                                "read",
-                                "write",
-                                "destructive"
-                              ],
-                              "type": "string"
                             }
                           },
                           "required": [
                             "name",
-                            "description",
-                            "sensitivity"
+                            "description"
                           ]
                         }
                       }
@@ -2423,237 +2483,6 @@
         ]
       }
     },
-    "/connector-tools/execute": {
-      "post": {
-        "operationId": "connectors.tools.execute",
-        "summary": "Execute a connector tool",
-        "description": "Resolve the narrowest enabled connector installation and execute one curated REST or synced MCP tool.",
-        "tags": [
-          "Connectors"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "scopeIds": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "toolKey": {
-                    "type": "string",
-                    "minLength": 3
-                  },
-                  "args": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "type": "array",
-                          "items": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "type": "array",
-                                "items": {}
-                              },
-                              {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string"
-                                },
-                                "additionalProperties": {}
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "type": "array",
-                                "items": {}
-                              },
-                              {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string"
-                                },
-                                "additionalProperties": {}
-                              }
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "scopeIds",
-                  "toolKey",
-                  "args"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "number"
-                          },
-                          {
-                            "type": "boolean"
-                          },
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "anyOf": [
-                                {},
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "type": "object",
-                            "propertyNames": {
-                              "type": "string"
-                            },
-                            "additionalProperties": {}
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "number"
-                          },
-                          {
-                            "type": "boolean"
-                          },
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "anyOf": [
-                                {},
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "type": "object",
-                            "propertyNames": {
-                              "type": "string"
-                            },
-                            "additionalProperties": {}
-                          }
-                        ]
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ]
-      }
-    },
     "/connector-installations": {
       "post": {
         "operationId": "connectors.installations.create",
@@ -2694,21 +2523,6 @@
                         }
                       }
                     ]
-                  },
-                  "sensitivityOverrides": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "additionalProperties": {
-                      "enum": [
-                        "read",
-                        "write",
-                        "destructive"
-                      ],
-                      "type": "string"
-                    }
                   }
                 },
                 "required": [
@@ -2958,21 +2772,6 @@
                           }
                         ]
                       },
-                      "sensitivityOverrides": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "additionalProperties": {
-                          "enum": [
-                            "read",
-                            "write",
-                            "destructive"
-                          ],
-                          "type": "string"
-                        }
-                      },
                       "syncedTools": {
                         "type": "array",
                         "items": {
@@ -2984,18 +2783,20 @@
                             "description": {
                               "type": "string"
                             },
-                            "sensitivity": {
-                              "enum": [
-                                "read",
-                                "write",
-                                "destructive"
-                              ],
-                              "type": "string"
+                            "annotations": {
+                              "type": "object",
+                              "properties": {
+                                "readOnlyHint": {
+                                  "type": "boolean"
+                                },
+                                "destructiveHint": {
+                                  "type": "boolean"
+                                }
+                              }
                             }
                           },
                           "required": [
-                            "name",
-                            "sensitivity"
+                            "name"
                           ]
                         }
                       },
@@ -3017,7 +2818,6 @@
                       "catalogKey",
                       "connectionId",
                       "enabledTools",
-                      "sensitivityOverrides",
                       "syncedTools",
                       "status",
                       "updatedAt"
@@ -3039,7 +2839,7 @@
       "patch": {
         "operationId": "connectors.installations.update",
         "summary": "Update a connector installation",
-        "description": "Update its connection, tool intent, or sensitivity overrides.",
+        "description": "Update its connection or tool intent.",
         "tags": [
           "Connectors"
         ],
@@ -3078,21 +2878,6 @@
                         }
                       }
                     ]
-                  },
-                  "sensitivityOverrides": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "additionalProperties": {
-                      "enum": [
-                        "read",
-                        "write",
-                        "destructive"
-                      ],
-                      "type": "string"
-                    }
                   }
                 }
               }
@@ -10558,7 +10343,7 @@
       "get": {
         "operationId": "policies.list",
         "summary": "List approval policies",
-        "description": "List the stored approval policies in the active organization, optionally filtered to one scope. Scopes with no row for a class fall back to a wider scope or the built-in defaults; read the resolved view to see what a session would get.",
+        "description": "List the stored approval-mode ceilings in the active organization, optionally filtered to one scope. A scope with no row resolves through the wider scope's rows and the built-in default; read the resolved view to see what a session would get.",
         "tags": [
           "Policies"
         ],
@@ -10596,23 +10381,25 @@
                             "type": "string",
                             "description": "The scope the policy applies to."
                           },
-                          "sensitivity": {
-                            "enum": [
-                              "read",
-                              "write",
-                              "destructive"
+                          "connectorKey": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
                             ],
-                            "type": "string",
-                            "description": "The tool sensitivity class the policy governs."
+                            "description": "The connector the row governs; null bounds every connector in the scope."
                           },
-                          "action": {
+                          "maxMode": {
                             "enum": [
-                              "allow",
-                              "require_approval",
-                              "deny"
+                              "ask",
+                              "delegated",
+                              "full"
                             ],
                             "type": "string",
-                            "description": "What happens when the agent calls a tool of this class."
+                            "description": "The loosest approval mode a human may choose where this row applies. The most restrictive applicable row wins."
                           },
                           "approverRoles": {
                             "type": "array",
@@ -10626,11 +10413,11 @@
                               "type": "string",
                               "description": "An organization role."
                             },
-                            "description": "The roles that may resolve an approval. Empty unless the action requires one."
+                            "description": "The roles that may resolve an interrupt routed by this row."
                           },
                           "allowRequesterApproval": {
                             "type": "boolean",
-                            "description": "Whether the person who asked may approve their own request."
+                            "description": "Whether the person who asked may approve their own action."
                           },
                           "createdAt": {
                             "type": "string",
@@ -10644,14 +10431,14 @@
                         "required": [
                           "id",
                           "scopeId",
-                          "sensitivity",
-                          "action",
+                          "connectorKey",
+                          "maxMode",
                           "approverRoles",
                           "allowRequesterApproval",
                           "createdAt",
                           "updatedAt"
                         ],
-                        "description": "One scope's approval policy for one sensitivity class."
+                        "description": "One scope's approval-mode ceiling for one connector, or scope-wide."
                       }
                     }
                   },
@@ -10675,7 +10462,7 @@
       "get": {
         "operationId": "policies.resolved",
         "summary": "Resolve a scope's approval policy",
-        "description": "The decision each sensitivity class resolves to for this scope right now: the narrowest scope in the chain holding a row wins, and a class with no row anywhere falls back to the built-in default. A session pins this same result for its whole life.",
+        "description": "The mode ceiling and interrupt routing this scope resolves to right now: the most restrictive applicable row wins, and a scope with no rows anywhere gets the built-in default. Pass a connector key to see one connector's ceiling. A session pins the same rows for its whole life.",
         "tags": [
           "Policies"
         ],
@@ -10688,6 +10475,18 @@
               "type": "string",
               "format": "uuid",
               "description": "The scope to resolve the policy for. A UUID."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "connectorKey",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Resolve the ceiling this connector would get."
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -10712,451 +10511,207 @@
                       },
                       "description": "The scope IDs the policy resolved over, widest first."
                     },
-                    "decisions": {
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The policy's unique ID. A UUID (version 7)."
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "description": "The scope the policy applies to."
+                          },
+                          "connectorKey": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The connector the row governs; null bounds every connector in the scope."
+                          },
+                          "maxMode": {
+                            "enum": [
+                              "ask",
+                              "delegated",
+                              "full"
+                            ],
+                            "type": "string",
+                            "description": "The loosest approval mode a human may choose where this row applies. The most restrictive applicable row wins."
+                          },
+                          "approverRoles": {
+                            "type": "array",
+                            "items": {
+                              "enum": [
+                                "owner",
+                                "admin",
+                                "member",
+                                "viewer"
+                              ],
+                              "type": "string",
+                              "description": "An organization role."
+                            },
+                            "description": "The roles that may resolve an interrupt routed by this row."
+                          },
+                          "allowRequesterApproval": {
+                            "type": "boolean",
+                            "description": "Whether the person who asked may approve their own action."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "scopeId",
+                          "connectorKey",
+                          "maxMode",
+                          "approverRoles",
+                          "allowRequesterApproval"
+                        ]
+                      }
+                    },
+                    "ceiling": {
+                      "enum": [
+                        "ask",
+                        "delegated",
+                        "full"
+                      ],
+                      "type": "string",
+                      "description": "The loosest mode a human may choose here, before classifier availability."
+                    },
+                    "routing": {
                       "type": "object",
                       "properties": {
-                        "read": {
-                          "type": "object",
-                          "properties": {
-                            "sensitivity": {
-                              "enum": [
-                                "read",
-                                "write",
-                                "destructive"
-                              ],
-                              "type": "string",
-                              "description": "The tool sensitivity class the policy governs."
-                            },
-                            "action": {
-                              "enum": [
-                                "allow",
-                                "require_approval",
-                                "deny"
-                              ],
-                              "type": "string",
-                              "description": "What happens when the agent calls a tool of this class."
-                            },
-                            "approverRoles": {
-                              "type": "array",
-                              "items": {
-                                "enum": [
-                                  "owner",
-                                  "admin",
-                                  "member",
-                                  "viewer"
-                                ],
-                                "type": "string",
-                                "description": "An organization role."
-                              },
-                              "description": "The roles that may resolve an approval."
-                            },
-                            "allowRequesterApproval": {
-                              "type": "boolean",
-                              "description": "Whether the person who asked may approve their own request."
-                            },
-                            "source": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "type": "array",
-                                  "items": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      },
-                                      {
-                                        "type": "boolean"
-                                      },
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "type": "array",
-                                        "items": {
-                                          "anyOf": [
-                                            {},
-                                            {
-                                              "type": "null"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      }
-                                    ]
-                                  }
-                                },
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string"
-                                  },
-                                  "additionalProperties": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      },
-                                      {
-                                        "type": "boolean"
-                                      },
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "type": "array",
-                                        "items": {
-                                          "anyOf": [
-                                            {},
-                                            {
-                                              "type": "null"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      }
-                                    ]
-                                  }
-                                }
-                              ],
-                              "description": "Where the decision came from: a stored policy or the default."
-                            }
+                        "approverRoles": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "owner",
+                              "admin",
+                              "member",
+                              "viewer"
+                            ],
+                            "type": "string",
+                            "description": "An organization role."
                           },
-                          "required": [
-                            "sensitivity",
-                            "action",
-                            "approverRoles",
-                            "allowRequesterApproval",
-                            "source"
-                          ],
-                          "description": "The resolved approval policy for one sensitivity class."
+                          "description": "The roles that may resolve an interrupt."
                         },
-                        "write": {
-                          "type": "object",
-                          "properties": {
-                            "sensitivity": {
-                              "enum": [
-                                "read",
-                                "write",
-                                "destructive"
-                              ],
-                              "type": "string",
-                              "description": "The tool sensitivity class the policy governs."
-                            },
-                            "action": {
-                              "enum": [
-                                "allow",
-                                "require_approval",
-                                "deny"
-                              ],
-                              "type": "string",
-                              "description": "What happens when the agent calls a tool of this class."
-                            },
-                            "approverRoles": {
-                              "type": "array",
-                              "items": {
-                                "enum": [
-                                  "owner",
-                                  "admin",
-                                  "member",
-                                  "viewer"
-                                ],
-                                "type": "string",
-                                "description": "An organization role."
-                              },
-                              "description": "The roles that may resolve an approval."
-                            },
-                            "allowRequesterApproval": {
-                              "type": "boolean",
-                              "description": "Whether the person who asked may approve their own request."
-                            },
-                            "source": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "type": "array",
-                                  "items": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      },
-                                      {
-                                        "type": "boolean"
-                                      },
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "type": "array",
-                                        "items": {
-                                          "anyOf": [
-                                            {},
-                                            {
-                                              "type": "null"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      }
-                                    ]
-                                  }
-                                },
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string"
-                                  },
-                                  "additionalProperties": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      },
-                                      {
-                                        "type": "boolean"
-                                      },
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "type": "array",
-                                        "items": {
-                                          "anyOf": [
-                                            {},
-                                            {
-                                              "type": "null"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      }
-                                    ]
-                                  }
-                                }
-                              ],
-                              "description": "Where the decision came from: a stored policy or the default."
-                            }
-                          },
-                          "required": [
-                            "sensitivity",
-                            "action",
-                            "approverRoles",
-                            "allowRequesterApproval",
-                            "source"
-                          ],
-                          "description": "The resolved approval policy for one sensitivity class."
+                        "allowRequesterApproval": {
+                          "type": "boolean",
+                          "description": "Whether the person who asked may approve their own action."
                         },
-                        "destructive": {
-                          "type": "object",
-                          "properties": {
-                            "sensitivity": {
-                              "enum": [
-                                "read",
-                                "write",
-                                "destructive"
-                              ],
-                              "type": "string",
-                              "description": "The tool sensitivity class the policy governs."
+                        "source": {
+                          "anyOf": [
+                            {
+                              "type": "string"
                             },
-                            "action": {
-                              "enum": [
-                                "allow",
-                                "require_approval",
-                                "deny"
-                              ],
-                              "type": "string",
-                              "description": "What happens when the agent calls a tool of this class."
+                            {
+                              "type": "number"
                             },
-                            "approverRoles": {
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
                               "type": "array",
                               "items": {
-                                "enum": [
-                                  "owner",
-                                  "admin",
-                                  "member",
-                                  "viewer"
-                                ],
-                                "type": "string",
-                                "description": "An organization role."
-                              },
-                              "description": "The roles that may resolve an approval."
-                            },
-                            "allowRequesterApproval": {
-                              "type": "boolean",
-                              "description": "Whether the person who asked may approve their own request."
-                            },
-                            "source": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "type": "array",
-                                  "items": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      },
-                                      {
-                                        "type": "boolean"
-                                      },
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "type": "array",
-                                        "items": {
-                                          "anyOf": [
-                                            {},
-                                            {
-                                              "type": "null"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      }
-                                    ]
-                                  }
-                                },
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
+                                "anyOf": [
+                                  {
                                     "type": "string"
                                   },
-                                  "additionalProperties": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      },
-                                      {
-                                        "type": "boolean"
-                                      },
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "type": "array",
-                                        "items": {
-                                          "anyOf": [
-                                            {},
-                                            {
-                                              "type": "null"
-                                            }
-                                          ]
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
                                         }
-                                      },
-                                      {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      }
-                                    ]
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
                                   }
-                                }
-                              ],
-                              "description": "Where the decision came from: a stored policy or the default."
+                                ]
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
                             }
-                          },
-                          "required": [
-                            "sensitivity",
-                            "action",
-                            "approverRoles",
-                            "allowRequesterApproval",
-                            "source"
                           ],
-                          "description": "The resolved approval policy for one sensitivity class."
+                          "description": "Where the routing came from: a stored policy or the default."
                         }
                       },
                       "required": [
-                        "read",
-                        "write",
-                        "destructive"
+                        "approverRoles",
+                        "allowRequesterApproval",
+                        "source"
                       ],
-                      "description": "One resolved decision per sensitivity class."
+                      "description": "Who resolves the interrupts that pause here."
                     }
                   },
                   "required": [
                     "scopeId",
                     "scopeChain",
-                    "decisions"
+                    "rows",
+                    "ceiling",
+                    "routing"
                   ],
                   "description": "The approval policy a session opened against this scope would carry."
                 }
@@ -11171,11 +10726,11 @@
         ]
       }
     },
-    "/policies/{scopeId}/{sensitivity}": {
+    "/policies/{scopeId}": {
       "put": {
         "operationId": "policies.set",
         "summary": "Set an approval policy",
-        "description": "Create or replace one scope's policy for one sensitivity class. A scope holds at most one policy per class. Approver fields are stored only for `require_approval`; outside a personal scope such a policy needs an approver role, because the requester cannot be its sole approver.",
+        "description": "Create or replace one scope's ceiling for one connector, or its scope-wide row. A scope holds at most one row per key. The row's interrupts must be resolvable: name an approver role, allow requester approval, or both.",
         "tags": [
           "Policies"
         ],
@@ -11189,20 +10744,6 @@
               "format": "uuid",
               "description": "The scope the policy applies to. A UUID."
             }
-          },
-          {
-            "name": "sensitivity",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "enum": [
-                "read",
-                "write",
-                "destructive"
-              ],
-              "type": "string",
-              "description": "The tool sensitivity class the policy governs."
-            }
           }
         ],
         "requestBody": {
@@ -11212,14 +10753,19 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "action": {
+                  "connectorKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The connector the row governs. Omit for the scope-wide row."
+                  },
+                  "maxMode": {
                     "enum": [
-                      "allow",
-                      "require_approval",
-                      "deny"
+                      "ask",
+                      "delegated",
+                      "full"
                     ],
                     "type": "string",
-                    "description": "What happens when the agent calls a tool of this class."
+                    "description": "An approval mode: ask pauses every connector call, delegated lets a call-time classifier escalate unsafe calls, full runs ungated."
                   },
                   "approverRoles": {
                     "type": "array",
@@ -11233,15 +10779,15 @@
                       "type": "string",
                       "description": "An organization role."
                     },
-                    "description": "The roles that may resolve an approval. Ignored unless `require_approval`."
+                    "description": "The roles that may resolve an interrupt routed by this row."
                   },
                   "allowRequesterApproval": {
                     "type": "boolean",
-                    "description": "Whether the person who asked may approve their own request. Ignored unless `require_approval`; defaults to false."
+                    "description": "Whether the person who asked may approve their own action. Defaults to true."
                   }
                 },
                 "required": [
-                  "action"
+                  "maxMode"
                 ],
                 "description": "The approval policy to store."
               }
@@ -11264,23 +10810,25 @@
                       "type": "string",
                       "description": "The scope the policy applies to."
                     },
-                    "sensitivity": {
-                      "enum": [
-                        "read",
-                        "write",
-                        "destructive"
+                    "connectorKey": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
                       ],
-                      "type": "string",
-                      "description": "The tool sensitivity class the policy governs."
+                      "description": "The connector the row governs; null bounds every connector in the scope."
                     },
-                    "action": {
+                    "maxMode": {
                       "enum": [
-                        "allow",
-                        "require_approval",
-                        "deny"
+                        "ask",
+                        "delegated",
+                        "full"
                       ],
                       "type": "string",
-                      "description": "What happens when the agent calls a tool of this class."
+                      "description": "The loosest approval mode a human may choose where this row applies. The most restrictive applicable row wins."
                     },
                     "approverRoles": {
                       "type": "array",
@@ -11294,11 +10842,11 @@
                         "type": "string",
                         "description": "An organization role."
                       },
-                      "description": "The roles that may resolve an approval. Empty unless the action requires one."
+                      "description": "The roles that may resolve an interrupt routed by this row."
                     },
                     "allowRequesterApproval": {
                       "type": "boolean",
-                      "description": "Whether the person who asked may approve their own request."
+                      "description": "Whether the person who asked may approve their own action."
                     },
                     "createdAt": {
                       "type": "string",
@@ -11312,14 +10860,14 @@
                   "required": [
                     "id",
                     "scopeId",
-                    "sensitivity",
-                    "action",
+                    "connectorKey",
+                    "maxMode",
                     "approverRoles",
                     "allowRequesterApproval",
                     "createdAt",
                     "updatedAt"
                   ],
-                  "description": "One scope's approval policy for one sensitivity class."
+                  "description": "One scope's approval-mode ceiling for one connector, or scope-wide."
                 }
               }
             }
@@ -11334,7 +10882,7 @@
       "delete": {
         "operationId": "policies.delete",
         "summary": "Delete an approval policy",
-        "description": "Remove one scope's policy for a class. The class then resolves through the wider scope, or through the built-in default when nothing else carries a row.",
+        "description": "Remove one scope's row for a connector, or its scope-wide row. The ceiling then resolves through the remaining rows, or the built-in default.",
         "tags": [
           "Policies"
         ],
@@ -11348,22 +10896,26 @@
               "format": "uuid",
               "description": "The scope whose policy to remove. A UUID."
             }
-          },
-          {
-            "name": "sensitivity",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "enum": [
-                "read",
-                "write",
-                "destructive"
-              ],
-              "type": "string",
-              "description": "The tool sensitivity class the policy governs."
-            }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "connectorKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The connector row to remove. Omit for the scope-wide row."
+                  }
+                },
+                "description": "The approval policy to remove."
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -11380,23 +10932,25 @@
                       "type": "string",
                       "description": "The scope the policy applies to."
                     },
-                    "sensitivity": {
-                      "enum": [
-                        "read",
-                        "write",
-                        "destructive"
+                    "connectorKey": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
                       ],
-                      "type": "string",
-                      "description": "The tool sensitivity class the policy governs."
+                      "description": "The connector the row governs; null bounds every connector in the scope."
                     },
-                    "action": {
+                    "maxMode": {
                       "enum": [
-                        "allow",
-                        "require_approval",
-                        "deny"
+                        "ask",
+                        "delegated",
+                        "full"
                       ],
                       "type": "string",
-                      "description": "What happens when the agent calls a tool of this class."
+                      "description": "The loosest approval mode a human may choose where this row applies. The most restrictive applicable row wins."
                     },
                     "approverRoles": {
                       "type": "array",
@@ -11410,11 +10964,11 @@
                         "type": "string",
                         "description": "An organization role."
                       },
-                      "description": "The roles that may resolve an approval. Empty unless the action requires one."
+                      "description": "The roles that may resolve an interrupt routed by this row."
                     },
                     "allowRequesterApproval": {
                       "type": "boolean",
-                      "description": "Whether the person who asked may approve their own request."
+                      "description": "Whether the person who asked may approve their own action."
                     },
                     "createdAt": {
                       "type": "string",
@@ -11428,14 +10982,14 @@
                   "required": [
                     "id",
                     "scopeId",
-                    "sensitivity",
-                    "action",
+                    "connectorKey",
+                    "maxMode",
                     "approverRoles",
                     "allowRequesterApproval",
                     "createdAt",
                     "updatedAt"
                   ],
-                  "description": "One scope's approval policy for one sensitivity class."
+                  "description": "One scope's approval-mode ceiling for one connector, or scope-wide."
                 }
               }
             }
@@ -13010,6 +12564,15 @@
                       }
                     ],
                     "description": "Who asked. Omit it for scheduled work that nobody triggered."
+                  },
+                  "approvalMode": {
+                    "enum": [
+                      "ask",
+                      "delegated",
+                      "full"
+                    ],
+                    "type": "string",
+                    "description": "The approval mode the requester chose for this thread. Defaults to ask; the gate clamps it to the policy ceiling per call."
                   }
                 },
                 "required": [
@@ -13282,451 +12845,77 @@
                           },
                           "description": "The scope IDs the policy resolved over."
                         },
-                        "decisions": {
-                          "type": "object",
-                          "properties": {
-                            "read": {
-                              "type": "object",
-                              "properties": {
-                                "sensitivity": {
-                                  "enum": [
-                                    "read",
-                                    "write",
-                                    "destructive"
-                                  ],
-                                  "type": "string",
-                                  "description": "The tool sensitivity class the decision governs."
-                                },
-                                "action": {
-                                  "enum": [
-                                    "allow",
-                                    "require_approval",
-                                    "deny"
-                                  ],
-                                  "type": "string",
-                                  "description": "What happens when the agent calls a tool of this class."
-                                },
-                                "approverRoles": {
-                                  "type": "array",
-                                  "items": {
-                                    "enum": [
-                                      "owner",
-                                      "admin",
-                                      "member",
-                                      "viewer"
-                                    ],
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The policy row's unique ID."
+                              },
+                              "scopeId": {
+                                "type": "string",
+                                "description": "The scope the row applies to."
+                              },
+                              "connectorKey": {
+                                "anyOf": [
+                                  {
                                     "type": "string"
                                   },
-                                  "description": "The roles that may resolve an approval for this class."
-                                },
-                                "allowRequesterApproval": {
-                                  "type": "boolean",
-                                  "description": "Whether the person who asked may approve their own request."
-                                },
-                                "source": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "number"
-                                    },
-                                    {
-                                      "type": "boolean"
-                                    },
-                                    {
-                                      "type": "null"
-                                    },
-                                    {
-                                      "type": "array",
-                                      "items": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "array",
-                                            "items": {
-                                              "anyOf": [
-                                                {},
-                                                {
-                                                  "type": "null"
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          {
-                                            "type": "object",
-                                            "propertyNames": {
-                                              "type": "string"
-                                            },
-                                            "additionalProperties": {}
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    {
-                                      "type": "object",
-                                      "propertyNames": {
-                                        "type": "string"
-                                      },
-                                      "additionalProperties": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "array",
-                                            "items": {
-                                              "anyOf": [
-                                                {},
-                                                {
-                                                  "type": "null"
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          {
-                                            "type": "object",
-                                            "propertyNames": {
-                                              "type": "string"
-                                            },
-                                            "additionalProperties": {}
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  ],
-                                  "description": "Where the decision came from: a stored policy or the default."
-                                }
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "The connector the row governs; null bounds every connector in the scope."
                               },
-                              "required": [
-                                "sensitivity",
-                                "action",
-                                "approverRoles",
-                                "allowRequesterApproval",
-                                "source"
-                              ],
-                              "description": "The resolved approval policy for one sensitivity class."
+                              "maxMode": {
+                                "enum": [
+                                  "ask",
+                                  "delegated",
+                                  "full"
+                                ],
+                                "type": "string",
+                                "description": "The loosest approval mode a human may choose where this row applies."
+                              },
+                              "approverRoles": {
+                                "type": "array",
+                                "items": {
+                                  "enum": [
+                                    "owner",
+                                    "admin",
+                                    "member",
+                                    "viewer"
+                                  ],
+                                  "type": "string"
+                                },
+                                "description": "The roles that may resolve an interrupt routed by this row."
+                              },
+                              "allowRequesterApproval": {
+                                "type": "boolean",
+                                "description": "Whether the person who asked may approve their own action."
+                              }
                             },
-                            "write": {
-                              "type": "object",
-                              "properties": {
-                                "sensitivity": {
-                                  "enum": [
-                                    "read",
-                                    "write",
-                                    "destructive"
-                                  ],
-                                  "type": "string",
-                                  "description": "The tool sensitivity class the decision governs."
-                                },
-                                "action": {
-                                  "enum": [
-                                    "allow",
-                                    "require_approval",
-                                    "deny"
-                                  ],
-                                  "type": "string",
-                                  "description": "What happens when the agent calls a tool of this class."
-                                },
-                                "approverRoles": {
-                                  "type": "array",
-                                  "items": {
-                                    "enum": [
-                                      "owner",
-                                      "admin",
-                                      "member",
-                                      "viewer"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "description": "The roles that may resolve an approval for this class."
-                                },
-                                "allowRequesterApproval": {
-                                  "type": "boolean",
-                                  "description": "Whether the person who asked may approve their own request."
-                                },
-                                "source": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "number"
-                                    },
-                                    {
-                                      "type": "boolean"
-                                    },
-                                    {
-                                      "type": "null"
-                                    },
-                                    {
-                                      "type": "array",
-                                      "items": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "array",
-                                            "items": {
-                                              "anyOf": [
-                                                {},
-                                                {
-                                                  "type": "null"
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          {
-                                            "type": "object",
-                                            "propertyNames": {
-                                              "type": "string"
-                                            },
-                                            "additionalProperties": {}
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    {
-                                      "type": "object",
-                                      "propertyNames": {
-                                        "type": "string"
-                                      },
-                                      "additionalProperties": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "array",
-                                            "items": {
-                                              "anyOf": [
-                                                {},
-                                                {
-                                                  "type": "null"
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          {
-                                            "type": "object",
-                                            "propertyNames": {
-                                              "type": "string"
-                                            },
-                                            "additionalProperties": {}
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  ],
-                                  "description": "Where the decision came from: a stored policy or the default."
-                                }
-                              },
-                              "required": [
-                                "sensitivity",
-                                "action",
-                                "approverRoles",
-                                "allowRequesterApproval",
-                                "source"
-                              ],
-                              "description": "The resolved approval policy for one sensitivity class."
-                            },
-                            "destructive": {
-                              "type": "object",
-                              "properties": {
-                                "sensitivity": {
-                                  "enum": [
-                                    "read",
-                                    "write",
-                                    "destructive"
-                                  ],
-                                  "type": "string",
-                                  "description": "The tool sensitivity class the decision governs."
-                                },
-                                "action": {
-                                  "enum": [
-                                    "allow",
-                                    "require_approval",
-                                    "deny"
-                                  ],
-                                  "type": "string",
-                                  "description": "What happens when the agent calls a tool of this class."
-                                },
-                                "approverRoles": {
-                                  "type": "array",
-                                  "items": {
-                                    "enum": [
-                                      "owner",
-                                      "admin",
-                                      "member",
-                                      "viewer"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "description": "The roles that may resolve an approval for this class."
-                                },
-                                "allowRequesterApproval": {
-                                  "type": "boolean",
-                                  "description": "Whether the person who asked may approve their own request."
-                                },
-                                "source": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "number"
-                                    },
-                                    {
-                                      "type": "boolean"
-                                    },
-                                    {
-                                      "type": "null"
-                                    },
-                                    {
-                                      "type": "array",
-                                      "items": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "array",
-                                            "items": {
-                                              "anyOf": [
-                                                {},
-                                                {
-                                                  "type": "null"
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          {
-                                            "type": "object",
-                                            "propertyNames": {
-                                              "type": "string"
-                                            },
-                                            "additionalProperties": {}
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    {
-                                      "type": "object",
-                                      "propertyNames": {
-                                        "type": "string"
-                                      },
-                                      "additionalProperties": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "array",
-                                            "items": {
-                                              "anyOf": [
-                                                {},
-                                                {
-                                                  "type": "null"
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          {
-                                            "type": "object",
-                                            "propertyNames": {
-                                              "type": "string"
-                                            },
-                                            "additionalProperties": {}
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  ],
-                                  "description": "Where the decision came from: a stored policy or the default."
-                                }
-                              },
-                              "required": [
-                                "sensitivity",
-                                "action",
-                                "approverRoles",
-                                "allowRequesterApproval",
-                                "source"
-                              ],
-                              "description": "The resolved approval policy for one sensitivity class."
-                            }
+                            "required": [
+                              "id",
+                              "scopeId",
+                              "connectorKey",
+                              "maxMode",
+                              "approverRoles",
+                              "allowRequesterApproval"
+                            ],
+                            "description": "One pinned approval-policy row."
                           },
-                          "required": [
-                            "read",
-                            "write",
-                            "destructive"
-                          ],
-                          "description": "One resolved decision per sensitivity class."
+                          "description": "The policy rows the approval gate resolves against, pinned at open."
                         }
                       },
                       "required": [
                         "version",
                         "scopeId",
                         "scopeChain",
-                        "decisions"
+                        "rows"
                       ],
-                      "description": "The approval policy pinned for the session's whole life."
+                      "description": "The approval-policy rows pinned for the session's whole life."
                     },
                     "snapshotHash": {
                       "type": "string",

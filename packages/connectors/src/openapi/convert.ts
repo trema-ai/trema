@@ -31,7 +31,6 @@ export const manifestCurationSchema = z
               .regex(/^[a-z0-9]+(?:_[a-z0-9]+)*$/)
               .optional(),
             description: z.string().trim().min(1).optional(),
-            sensitivity: z.enum(["read", "write", "destructive"]).optional(),
           })
           .strict()
           .refine(
@@ -144,12 +143,6 @@ function defaultDescription(found: FoundOperation, warnings: string[], name: str
     return `${text.slice(0, maxDescriptionLength - 1).trimEnd()}…`;
   }
   return text;
-}
-
-function defaultSensitivity(method: string): ToolDefinition["sensitivity"] {
-  if (method === "GET") return "read";
-  if (method === "DELETE") return "destructive";
-  return "write";
 }
 
 interface ResolvedParameter {
@@ -329,7 +322,6 @@ export function openApiSpecToToolManifest(
       method: found.method,
       path: found.path,
       paramsSchema,
-      sensitivity: curated.sensitivity ?? defaultSensitivity(found.method),
     });
     tools.push(tool);
   }

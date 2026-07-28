@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // API supports US, EU, and AU workspaces, so it is the org-capable transport.
 export const intercomProvider = {
   key: "intercom",
+  trusted: true,
   displayName: "Intercom",
   description:
     "Search contacts and conversations, reply to customers, and manage support work over the Intercom REST API.",
@@ -56,7 +57,6 @@ export const intercomProvider = {
         properties: { query: { type: "object" }, pagination: { type: "object" } },
         required: ["query"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_contact",
@@ -68,7 +68,6 @@ export const intercomProvider = {
         properties: { contactId: { type: "string" } },
         required: ["contactId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_contact",
@@ -87,7 +86,6 @@ export const intercomProvider = {
         },
         required: ["role"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_contact",
@@ -105,7 +103,6 @@ export const intercomProvider = {
         },
         required: ["contactId"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_conversations",
@@ -116,7 +113,6 @@ export const intercomProvider = {
         type: "object",
         properties: { per_page: { type: "integer" }, starting_after: { type: "string" } },
       },
-      sensitivity: "read",
     },
     {
       name: "get_conversation",
@@ -128,7 +124,6 @@ export const intercomProvider = {
         properties: { conversationId: { type: "string" } },
         required: ["conversationId"],
       },
-      sensitivity: "read",
     },
     {
       name: "reply_to_conversation",
@@ -146,7 +141,6 @@ export const intercomProvider = {
         },
         required: ["conversationId", "type", "message_type", "body"],
       },
-      sensitivity: "write",
     },
     {
       name: "manage_conversation",
@@ -165,7 +159,6 @@ export const intercomProvider = {
         },
         required: ["conversationId", "message_type"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_tags",
@@ -173,7 +166,6 @@ export const intercomProvider = {
       method: "GET",
       path: "/tags",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
   ],
   memberConnectable: true,

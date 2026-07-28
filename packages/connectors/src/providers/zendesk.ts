@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const zendeskProvider = {
   key: "zendesk",
+  trusted: true,
   displayName: "Zendesk",
   description: "Search, read, and update support tickets in a Zendesk instance.",
   logoUrl: "/connector-logos/zendesk.svg",
@@ -90,7 +91,6 @@ export const zendeskProvider = {
         },
         required: ["query"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_ticket",
@@ -102,7 +102,6 @@ export const zendeskProvider = {
         properties: { ticketId: { type: "integer" } },
         required: ["ticketId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_ticket_comments",
@@ -114,7 +113,6 @@ export const zendeskProvider = {
         properties: { ticketId: { type: "integer" } },
         required: ["ticketId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_ticket",
@@ -131,7 +129,6 @@ export const zendeskProvider = {
         },
         required: ["ticket"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_ticket",
@@ -150,7 +147,6 @@ export const zendeskProvider = {
         },
         required: ["ticketId", "ticket"],
       },
-      sensitivity: "write",
     },
     {
       name: "search_users",
@@ -164,7 +160,6 @@ export const zendeskProvider = {
         },
         required: ["query"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_user",
@@ -176,7 +171,6 @@ export const zendeskProvider = {
         properties: { userId: { type: "integer" } },
         required: ["userId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_organizations",
@@ -187,7 +181,6 @@ export const zendeskProvider = {
         type: "object",
         properties: { page: { type: "integer" }, per_page: { type: "integer" } },
       },
-      sensitivity: "read",
     },
     {
       name: "get_organization",
@@ -199,7 +192,6 @@ export const zendeskProvider = {
         properties: { organizationId: { type: "integer" } },
         required: ["organizationId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_views",
@@ -210,7 +202,6 @@ export const zendeskProvider = {
         type: "object",
         properties: { page: { type: "integer" }, per_page: { type: "integer" } },
       },
-      sensitivity: "read",
     },
     {
       name: "list_tickets_from_view",
@@ -226,7 +217,6 @@ export const zendeskProvider = {
         },
         required: ["viewId"],
       },
-      sensitivity: "read",
     },
   ],
   memberConnectable: false,

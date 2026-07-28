@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { call } from "@orpc/server";
 import {
   gammaProvider,
   googleWorkspaceProvider,
@@ -12,13 +11,9 @@ import {
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Prisma } from "#server/generated/prisma/client.js";
-import { createAuth } from "#server/lib/auth/index.js";
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
-import { parseEnv } from "#server/lib/env/schema.js";
 import { createLogger, withLogger } from "#server/lib/logger/index.js";
-import { connectorsRouter } from "#server/rpc/connectors.js";
-import { orgRouter } from "#server/rpc/org.js";
 import {
   ConnectorApprovalRequiredError,
   ConnectorReconnectRequiredError,
@@ -65,23 +60,12 @@ const basicProvider = {
         properties: { id: { type: "string" } },
         required: ["id"],
       },
-      sensitivity: "read",
     },
   ],
 } as const;
 
 integration("connector tool execution", () => {
   const db = createPrismaClient(databaseUrl);
-  const env = parseEnv({
-    NODE_ENV: "test",
-    DATABASE_URL: databaseUrl,
-    TREMA_AUTH_SECRET: "connector-execute-secret-at-least-32-chars",
-    TREMA_MODE: "hosted",
-    TREMA_AUTH_BASE_URL: "https://auth.trema.example",
-    TREMA_WEB_ORIGINS: "https://app.trema.example",
-    TREMA_CREDENTIAL_MASTER_KEY: masterKey,
-  });
-  const auth = createAuth({ db, env });
 
   beforeEach(async () => {
     await db.$executeRaw`TRUNCATE TABLE "Org", "user", "verification", "BootstrapToken" CASCADE`;
@@ -134,11 +118,10 @@ integration("connector tool execution", () => {
     catalogKey: string;
     connectionId: string;
     enabledTools?: "all" | string[];
-    sensitivityOverrides?: Record<string, "read" | "write" | "destructive">;
     syncedTools?: Array<{
       name: string;
       description?: string;
-      sensitivity: "read" | "write" | "destructive";
+      annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
     }>;
   }) {
     return db.item.create({
@@ -151,9 +134,6 @@ integration("connector tool execution", () => {
           catalogKey: input.catalogKey,
           connectionId: input.connectionId,
           enabledTools: input.enabledTools ?? "all",
-          ...(input.sensitivityOverrides
-            ? { sensitivityOverrides: input.sensitivityOverrides }
-            : {}),
           ...(input.syncedTools ? { syncedTools: input.syncedTools } : {}),
         } satisfies Prisma.InputJsonObject,
         status: "active",
@@ -208,6 +188,7 @@ integration("connector tool execution", () => {
       args: {},
       masterKey,
       fetch,
+      authority: "mode_full",
     });
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
       "Bearer narrow-token",
@@ -227,6 +208,7 @@ integration("connector tool execution", () => {
         args: {},
         masterKey,
         fetch,
+        authority: "mode_full",
       }),
     ).rejects.toBeInstanceOf(ConnectorReconnectRequiredError);
     expect(fetch).not.toHaveBeenCalled();
@@ -277,7 +259,7 @@ integration("connector tool execution", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("gates write tools and honors sensitivity overrides in both directions", async () => {
+  it("refuses every call without an authority and executes with one", async () => {
     const owner = await fixture();
     const google = await connection({
       orgId: owner.org.id,
@@ -294,6 +276,8 @@ integration("connector tool execution", () => {
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ id: "draft" }));
 
+    // There is no free class of call: a write pauses, and so does a read. A
+    // call site that says nothing about the gate gets the refusal.
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
@@ -306,24 +290,8 @@ integration("connector tool execution", () => {
       }),
     ).rejects.toMatchObject({
       code: "approval_required",
-      sensitivity: "write",
+      toolKey: "google_workspace:create_draft",
       installationItemId: item.id,
-    });
-    expect(fetch).not.toHaveBeenCalled();
-
-    await db.item.update({
-      where: { id: item.id },
-      data: {
-        body: {
-          catalogKey: "google_workspace",
-          connectionId: google.id,
-          enabledTools: "all",
-          sensitivityOverrides: {
-            search_messages: "write",
-            create_draft: "read",
-          },
-        },
-      },
     });
     await expect(
       executeConnectorTool(db, {
@@ -336,6 +304,21 @@ integration("connector tool execution", () => {
         fetch,
       }),
     ).rejects.toBeInstanceOf(ConnectorApprovalRequiredError);
+    expect(fetch).not.toHaveBeenCalled();
+
+    // Any of the gate's answers lets the same call run.
+    await expect(
+      executeConnectorTool(db, {
+        orgId: owner.org.id,
+        scopeChain: [owner.orgScope.id],
+        principalId: owner.principal.id,
+        toolKey: "google_workspace:search_messages",
+        args: {},
+        masterKey,
+        fetch,
+        authority: "mode_full",
+      }),
+    ).resolves.toMatchObject({ ok: true, status: 200 });
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
@@ -345,6 +328,7 @@ integration("connector tool execution", () => {
         args: { message: { raw: "body" } },
         masterKey,
         fetch,
+        authority: "approval_claimed",
       }),
     ).resolves.toMatchObject({ ok: true, status: 200 });
   });
@@ -374,6 +358,7 @@ integration("connector tool execution", () => {
       args: { id: "a/b", format: "metadata" },
       masterKey,
       fetch,
+      authority: "mode_full",
     });
     const getUrl = new URL(String(fetch.mock.calls[0]?.[0]));
     expect(getUrl.origin).toBe("https://gmail.googleapis.com");
@@ -392,7 +377,7 @@ integration("connector tool execution", () => {
       },
       masterKey,
       fetch,
-      authority: "policy_allowed",
+      authority: "mode_full",
     });
     const [postUrlValue, postInit] = fetch.mock.calls[1]!;
     const postUrl = new URL(String(postUrlValue));
@@ -429,6 +414,7 @@ integration("connector tool execution", () => {
         args: { format: "full" },
         masterKey,
         fetch,
+        authority: "mode_full",
       }),
     ).rejects.toBeInstanceOf(ConnectorToolValidationError);
     expect(fetch).not.toHaveBeenCalled();
@@ -491,6 +477,7 @@ integration("connector tool execution", () => {
         masterKey,
         fetch,
         catalog: testCase.catalog,
+        authority: "mode_full",
       });
       expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
         testCase.expected,
@@ -526,6 +513,7 @@ integration("connector tool execution", () => {
       masterKey,
       fetch,
       catalog: loadProviderCatalog([gammaProvider]),
+      authority: "mode_full",
     }).catch((error: unknown) => error);
 
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get("x-api-key")).toBe(apiKey);
@@ -568,6 +556,7 @@ integration("connector tool execution", () => {
       masterKey,
       fetch,
       catalog: loadProviderCatalog([zendeskProvider]),
+      authority: "mode_full",
       sleep: async (milliseconds) => {
         sleeps.push(milliseconds);
         await db.connectorConnection.update({
@@ -611,6 +600,7 @@ integration("connector tool execution", () => {
         masterKey,
         fetch,
         catalog: loadProviderCatalog([zendeskProvider]),
+        authority: "mode_full",
       }),
     ).rejects.toBeInstanceOf(ConnectorSsrfRejectedError);
     expect(fetch).not.toHaveBeenCalled();
@@ -655,6 +645,7 @@ integration("connector tool execution", () => {
       args: {},
       masterKey,
       fetch,
+      authority: "mode_full",
     }).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(ConnectorTransportError);
     const serialized = `${String(failure)} ${JSON.stringify(failure)}`;
@@ -698,6 +689,7 @@ integration("connector tool execution", () => {
       args: {},
       masterKey,
       fetch,
+      authority: "mode_full",
     });
 
     // `token_type` and a granted scope are labels, not secrets. Treating them
@@ -740,6 +732,7 @@ integration("connector tool execution", () => {
         args: {},
         masterKey,
         fetch,
+        authority: "mode_full",
         // Something in the retry machinery breaks in a way this module has no
         // vocabulary for, holding the credential in its message the way a
         // provider library's error would.
@@ -774,7 +767,7 @@ integration("connector tool execution", () => {
         {
           name: "search_pages",
           description: "Search pages",
-          sensitivity: "read",
+          annotations: { readOnlyHint: true },
         },
       ],
     });
@@ -804,6 +797,7 @@ integration("connector tool execution", () => {
         masterKey,
         catalog: loadProviderCatalog([notionMcpProvider]),
         clientFactory,
+        authority: "mode_full",
       }),
     ).resolves.toEqual({
       content: [{ type: "text", text: "found" }],
@@ -813,100 +807,5 @@ integration("connector tool execution", () => {
       arguments: { query: "roadmap" },
     });
     expect(close).toHaveBeenCalledOnce();
-  });
-
-  async function createRpcOwner() {
-    const email = `${randomUUID()}@example.com`;
-    const response = await auth.api.signUpEmail({
-      body: { name: "RPC Owner", email, password: "integration-password" },
-      asResponse: true,
-    });
-    const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-    if (!cookie) throw new Error("Sign-up did not return a session cookie");
-    const context = { db, auth, env, headers: new Headers({ cookie }) };
-    const membership = await call(orgRouter.create, { name: "RPC Connector Org" }, { context });
-    const orgScope = await db.scope.findFirstOrThrow({
-      where: { orgId: membership.org.id, kind: "org" },
-    });
-    return { ...membership, orgScope, context };
-  }
-
-  it("maps approval-required and reconnect-required through the admin RPC", async () => {
-    const owner = await createRpcOwner();
-    const agent = await db.principal.findFirstOrThrow({
-      where: { orgId: owner.org.id, kind: "agent" },
-    });
-    const stored = await connection({
-      orgId: owner.org.id,
-      principalId: agent.id,
-      providerKey: "google_workspace",
-      credential: { accessToken: "rpc-token" },
-    });
-    const item = await installation({
-      orgId: owner.org.id,
-      scopeId: owner.orgScope.id,
-      principalId: agent.id,
-      catalogKey: "google_workspace",
-      connectionId: stored.id,
-    });
-    const rpcContext = {
-      ...owner.context,
-      connectorFetch: vi.fn(async () => jsonResponse({ ok: true })),
-    };
-
-    await expect(
-      call(
-        connectorsRouter.tools.execute,
-        {
-          scopeChain: [owner.orgScope.id],
-          toolKey: "google_workspace:create_draft",
-          args: { message: { raw: "body" } },
-        },
-        { context: rpcContext },
-      ),
-    ).rejects.toMatchObject({
-      code: "PRECONDITION_FAILED",
-      data: {
-        code: "approval_required",
-        toolKey: "google_workspace:create_draft",
-        sensitivity: "write",
-        installationItemId: item.id,
-      },
-    });
-
-    await db.item.update({
-      where: { id: item.id },
-      data: {
-        body: {
-          catalogKey: "google_workspace",
-          connectionId: stored.id,
-          enabledTools: "all",
-          sensitivityOverrides: { search_messages: "read" },
-        },
-      },
-    });
-    await db.connectorConnection.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date() },
-    });
-    await expect(
-      call(
-        connectorsRouter.tools.execute,
-        {
-          scopeChain: [owner.orgScope.id],
-          toolKey: "google_workspace:search_messages",
-          args: {},
-        },
-        { context: rpcContext },
-      ),
-    ).rejects.toMatchObject({
-      code: "PRECONDITION_FAILED",
-      data: {
-        code: "reconnect_needed",
-        connectionId: stored.id,
-        providerKey: "google_workspace",
-        reason: "revoked",
-      },
-    });
   });
 });

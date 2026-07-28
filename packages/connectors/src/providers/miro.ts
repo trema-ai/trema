@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // mirror, so the REST API supplies the complete board-management integration.
 export const miroProvider = {
   key: "miro",
+  trusted: true,
   displayName: "Miro",
   description: "Read, create, and organize Miro boards and board items over the REST API.",
   logoUrl: "/connector-logos/miro.svg",
@@ -59,7 +60,6 @@ export const miroProvider = {
         type: "object",
         properties: { limit: { type: "integer" }, cursor: { type: "string" } },
       },
-      sensitivity: "read",
     },
     {
       name: "get_board",
@@ -71,7 +71,6 @@ export const miroProvider = {
         properties: { boardId: { type: "string" } },
         required: ["boardId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_board",
@@ -88,7 +87,6 @@ export const miroProvider = {
         },
         required: ["name"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_board",
@@ -105,7 +103,6 @@ export const miroProvider = {
         },
         required: ["boardId"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_board_items",
@@ -122,7 +119,6 @@ export const miroProvider = {
         },
         required: ["boardId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_board_item",
@@ -134,7 +130,6 @@ export const miroProvider = {
         properties: { boardId: { type: "string" }, itemId: { type: "string" } },
         required: ["boardId", "itemId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_sticky_note",
@@ -152,7 +147,6 @@ export const miroProvider = {
         },
         required: ["boardId", "content"],
       },
-      sensitivity: "write",
     },
     {
       name: "create_shape",
@@ -170,7 +164,6 @@ export const miroProvider = {
         },
         required: ["boardId", "content", "shape"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_board_item",
@@ -182,7 +175,6 @@ export const miroProvider = {
         properties: { boardId: { type: "string" }, itemId: { type: "string" } },
         required: ["boardId", "itemId"],
       },
-      sensitivity: "destructive",
     },
   ],
   memberConnectable: true,

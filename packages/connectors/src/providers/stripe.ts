@@ -5,6 +5,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // org connecting its own account, so this uses api_key mode instead.
 export const stripeProvider = {
   key: "stripe",
+  trusted: true,
   displayName: "Stripe",
   description:
     "A curated set of tools to read customers, invoices, and payments over the Stripe REST API.",
@@ -47,7 +48,6 @@ export const stripeProvider = {
         },
         required: ["query"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_customer",
@@ -59,7 +59,6 @@ export const stripeProvider = {
         properties: { customerId: { type: "string" } },
         required: ["customerId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_invoices",
@@ -75,7 +74,6 @@ export const stripeProvider = {
           starting_after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "list_payment_intents",
@@ -90,7 +88,6 @@ export const stripeProvider = {
           starting_after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "list_subscriptions",
@@ -110,7 +107,6 @@ export const stripeProvider = {
           starting_after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_subscription",
@@ -122,7 +118,6 @@ export const stripeProvider = {
         properties: { subscriptionId: { type: "string" } },
         required: ["subscriptionId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_charges",
@@ -138,7 +133,6 @@ export const stripeProvider = {
           starting_after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_charge",
@@ -150,7 +144,6 @@ export const stripeProvider = {
         properties: { chargeId: { type: "string" } },
         required: ["chargeId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_refund",
@@ -173,7 +166,6 @@ export const stripeProvider = {
           },
         },
       },
-      sensitivity: "destructive",
     },
     {
       name: "list_products",
@@ -189,7 +181,6 @@ export const stripeProvider = {
           starting_after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "list_prices",
@@ -207,7 +198,6 @@ export const stripeProvider = {
           starting_after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_invoice",
@@ -219,7 +209,6 @@ export const stripeProvider = {
         properties: { invoiceId: { type: "string" } },
         required: ["invoiceId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_balance_transactions",
@@ -236,7 +225,6 @@ export const stripeProvider = {
           starting_after: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "create_customer",
@@ -253,7 +241,6 @@ export const stripeProvider = {
           metadata: { type: "object", description: "Arbitrary key-value metadata." },
         },
       },
-      sensitivity: "write",
     },
     {
       name: "update_customer",
@@ -272,7 +259,6 @@ export const stripeProvider = {
         },
         required: ["customerId"],
       },
-      sensitivity: "write",
     },
   ],
   memberConnectable: false,

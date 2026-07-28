@@ -1,5 +1,3 @@
-export type Sensitivity = "read" | "write" | "destructive";
-
 export type FieldDescriptor = {
   type: "string";
   title: string;
@@ -29,7 +27,7 @@ export type CatalogProvider = {
   memberEnabled: boolean;
   configFields: Record<string, FieldDescriptor>;
   credentialFields: Record<string, FieldDescriptor>;
-  toolManifest?: Array<{ name: string; description: string; sensitivity: Sensitivity }>;
+  toolManifest?: Array<{ name: string; description: string }>;
   defaultScopes: string[];
   availableScopes?: string[];
 };
@@ -65,8 +63,11 @@ export type ConnectorInstallation = {
   catalogKey: string;
   connectionId: string;
   enabledTools: "all" | string[];
-  sensitivityOverrides: Record<string, Sensitivity>;
-  syncedTools: Array<{ name: string; description?: string; sensitivity: Sensitivity }>;
+  syncedTools: Array<{
+    name: string;
+    description?: string;
+    annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+  }>;
   status: "proposed" | "active" | "archived";
   updatedAt: string;
 };

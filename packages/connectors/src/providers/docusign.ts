@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // eSignature REST API provides this catalog entry.
 export const docusignProvider = {
   key: "docusign",
+  trusted: true,
   displayName: "DocuSign",
   description:
     "Create, send, view, and manage DocuSign envelopes and recipients over the eSignature REST API.",
@@ -59,7 +60,6 @@ export const docusignProvider = {
         },
         required: ["accountId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_envelope",
@@ -71,7 +71,6 @@ export const docusignProvider = {
         properties: { accountId: { type: "string" }, envelopeId: { type: "string" } },
         required: ["accountId", "envelopeId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_envelope",
@@ -89,7 +88,6 @@ export const docusignProvider = {
         },
         required: ["accountId", "emailSubject", "recipients", "status"],
       },
-      sensitivity: "write",
     },
     {
       name: "send_envelope",
@@ -105,7 +103,6 @@ export const docusignProvider = {
         },
         required: ["accountId", "envelopeId", "status"],
       },
-      sensitivity: "write",
     },
     {
       name: "void_envelope",
@@ -122,7 +119,6 @@ export const docusignProvider = {
         },
         required: ["accountId", "envelopeId", "status"],
       },
-      sensitivity: "destructive",
     },
     {
       name: "list_recipients",
@@ -134,7 +130,6 @@ export const docusignProvider = {
         properties: { accountId: { type: "string" }, envelopeId: { type: "string" } },
         required: ["accountId", "envelopeId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_documents",
@@ -146,7 +141,6 @@ export const docusignProvider = {
         properties: { accountId: { type: "string" }, envelopeId: { type: "string" } },
         required: ["accountId", "envelopeId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_recipient_view",
@@ -174,7 +168,6 @@ export const docusignProvider = {
           "clientUserId",
         ],
       },
-      sensitivity: "write",
     },
   ],
   memberConnectable: true,

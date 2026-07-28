@@ -123,7 +123,6 @@ describe("openApiSpecToToolManifest", () => {
     expect(tools.map(({ name }) => name)).toEqual(["list_tickets", "get_ticket"]);
     const [list, get] = tools;
     expect(list?.method).toBe("GET");
-    expect(list?.sensitivity).toBe("read");
     expect(list?.paramsSchema.properties).toHaveProperty("status");
     // Header params are transport concerns, skipped with a warning.
     expect(list?.paramsSchema.properties).not.toHaveProperty("X-Trace");
@@ -141,7 +140,6 @@ describe("openApiSpecToToolManifest", () => {
     });
     const properties = tools[0]?.paramsSchema.properties as Record<string, unknown>;
 
-    expect(tools[0]?.sensitivity).toBe("write");
     expect(properties.priority).toEqual({ type: "string", enum: ["low", "high"] });
     expect(properties.subject).toEqual({ type: "string" });
     expect(tools[0]?.paramsSchema.required).toEqual(["subject"]);
@@ -155,7 +153,6 @@ describe("openApiSpecToToolManifest", () => {
           path: "/tickets",
           name: "search_tickets",
           description: "Search open tickets.",
-          sensitivity: "read",
         },
       ],
     });
@@ -164,12 +161,11 @@ describe("openApiSpecToToolManifest", () => {
     expect(tools[0]?.description).toBe("Search open tickets.");
   });
 
-  it("classifies DELETE as destructive and warns on deprecated operations", () => {
-    const { tools, warnings } = openApiSpecToToolManifest(document(), {
+  it("warns on deprecated operations", () => {
+    const { warnings } = openApiSpecToToolManifest(document(), {
       tools: [{ operationId: "deleteTicket" }],
     });
 
-    expect(tools[0]?.sensitivity).toBe("destructive");
     expect(warnings.some((warning) => warning.includes("deprecated"))).toBe(true);
   });
 

@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // URLs, so the stable OAuth REST API is the catalog's shared transport.
 export const zapierProvider = {
   key: "zapier",
+  trusted: true,
   displayName: "Zapier",
   description:
     "Inspect and manage Zaps, Zap runs, app actions, and authentications over the Zapier REST API.",
@@ -46,7 +47,6 @@ export const zapierProvider = {
       method: "GET",
       path: "/v2/profile",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "list_zaps",
@@ -62,7 +62,6 @@ export const zapierProvider = {
           expand: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_zap",
@@ -74,7 +73,6 @@ export const zapierProvider = {
         properties: { id: { type: "string" }, expand: { type: "string" } },
         required: ["id"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_zap",
@@ -95,7 +93,6 @@ export const zapierProvider = {
         },
         required: ["data"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_zap",
@@ -107,7 +104,6 @@ export const zapierProvider = {
         properties: { id: { type: "string" }, data: { type: "object" } },
         required: ["id", "data"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_zap",
@@ -115,7 +111,6 @@ export const zapierProvider = {
       method: "DELETE",
       path: "/v2/zaps/{id}",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "destructive",
     },
     {
       name: "list_zap_runs",
@@ -130,7 +125,6 @@ export const zapierProvider = {
           offset: { type: "integer" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "list_actions",
@@ -145,7 +139,6 @@ export const zapierProvider = {
           offset: { type: "integer" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "list_authentications",
@@ -156,7 +149,6 @@ export const zapierProvider = {
         type: "object",
         properties: { limit: { type: "integer" }, offset: { type: "integer" } },
       },
-      sensitivity: "read",
     },
   ],
   memberConnectable: true,

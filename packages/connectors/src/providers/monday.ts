@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const mondayProvider = {
   key: "monday",
+  trusted: true,
   displayName: "monday.com",
   description:
     "Manage boards, items, docs, and workflows. Tools come from monday.com's official MCP server.",

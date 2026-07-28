@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 
 import type {
   Approval,
+  ApprovalMode,
   ApprovalStatus,
   ContextSession,
   Item,
   Prisma,
   Role,
   ScopeKind,
-  Sensitivity,
+  ToolGrant,
 } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
@@ -18,9 +19,9 @@ import {
 } from "#server/services/authorize/index.js";
 import { activateItem, getItem } from "#server/services/items/index.js";
 import {
-  defaultDecisions,
-  type PolicyAction,
-  type PolicyDecision,
+  type ApprovalRouting,
+  type PolicyRow,
+  resolveApprovalRouting,
   resolveScopePolicies,
 } from "#server/services/policies/index.js";
 
@@ -133,62 +134,26 @@ export function hashApprovalArgs(args: unknown): string {
     .digest("hex");
 }
 
-/** What the pinned snapshot says about one call. */
-export interface ApprovalRequirement {
-  action: PolicyAction;
-  sensitivity: Sensitivity;
-  approverRoles: Role[];
-  allowRequesterApproval: boolean;
-}
-
-export interface ResolveApprovalRequirementInput {
-  /** The decisions pinned on the session, never live policy. */
-  decisions: Record<Sensitivity, PolicyDecision>;
-  scopeKind: ScopeKind;
-  toolKey: string;
-  sensitivity: Sensitivity;
-}
-
 /**
- * Read one call's gate out of the session's pinned decisions.
- *
- * Standing-item activation is the one call whose gate is not the policy's to
- * remove: an item lands `proposed` precisely because a person has to confirm
- * it, so `context:activate_item` always requires an approval. The policy still
- * decides *who* confirms — the scope's `write` approvers when it gates writes
- * at all, and otherwise the built-in defaults for the scope kind, which is what
- * keeps a personal scope's confirm step with its owner and a shared scope's
- * with its admins.
+ * The routing an interrupt records: who may resolve it, pinned from the
+ * session's snapshot rows — never live policy. The most specific applicable
+ * row supplies it (the connector's own row before a scope-wide one, a narrower
+ * scope before a wider one), and the built-in defaults when nothing wrote one.
  */
-export function resolveApprovalRequirement(
-  input: ResolveApprovalRequirementInput,
-): ApprovalRequirement {
-  const decision = input.decisions[input.sensitivity];
-  if (!decision) {
-    throw new ApprovalValidationError(
-      `The session's policy snapshot carries no decision for '${input.sensitivity}'`,
-    );
+export function routingForSession(
+  session: SessionWithScope,
+  connectorKey?: string,
+): ApprovalRouting {
+  const snapshot = session.policySnapshot as { rows?: PolicyRow[] } | null;
+  if (!snapshot) {
+    throw new ApprovalValidationError("Session carries no policy snapshot");
   }
-
-  if (input.toolKey === ACTIVATE_ITEM_TOOL_KEY) {
-    const rule =
-      decision.action === "require_approval"
-        ? decision
-        : defaultDecisions(input.scopeKind)[input.sensitivity];
-    return {
-      action: "require_approval",
-      sensitivity: input.sensitivity,
-      approverRoles: [...rule.approverRoles],
-      allowRequesterApproval: rule.allowRequesterApproval,
-    };
-  }
-
-  return {
-    action: decision.action,
-    sensitivity: input.sensitivity,
-    approverRoles: [...decision.approverRoles],
-    allowRequesterApproval: decision.allowRequesterApproval,
-  };
+  return resolveApprovalRouting({
+    rows: snapshot.rows ?? [],
+    scopeChain: session.scopeChain,
+    scopeKind: session.scope.kind,
+    ...(connectorKey === undefined ? {} : { connectorKey }),
+  });
 }
 
 export type ApprovalResolutionCheck =
@@ -261,14 +226,6 @@ async function requireOpenSession(
   return session;
 }
 
-function pinnedDecisions(session: ContextSession): Record<Sensitivity, PolicyDecision> {
-  const snapshot = session.policySnapshot as { decisions?: Record<Sensitivity, PolicyDecision> };
-  if (!snapshot?.decisions) {
-    throw new ApprovalValidationError("Session carries no policy snapshot");
-  }
-  return snapshot.decisions;
-}
-
 export async function requireApproval(
   db: Database,
   orgId: string,
@@ -283,7 +240,12 @@ export interface RequestApprovalInput {
   orgId: string;
   sessionId: string;
   toolKey: string;
-  sensitivity: Sensitivity;
+  /** The approval mode the call paused under: `ask`, or a `delegated` escalation. */
+  mode: ApprovalMode;
+  /** The classifier's one-line reason for pausing a delegated-mode call. */
+  escalationReason?: string;
+  /** The connector the call reaches; routes the interrupt via its policy rows. */
+  connectorKey?: string;
   /** The call's arguments. Recorded verbatim; the approval covers these alone. */
   args: unknown;
   /** The model's one-line justification, rendered to the approver. */
@@ -300,47 +262,31 @@ export interface RequestApprovalInput {
   now?: Date;
 }
 
-export type ApprovalRequestOutcome =
-  | { outcome: "allow"; requirement: ApprovalRequirement }
-  | { outcome: "deny"; requirement: ApprovalRequirement }
-  | { outcome: "approval_required"; requirement: ApprovalRequirement; approval: Approval };
+export interface ApprovalRequest {
+  approval: Approval;
+  routing: ApprovalRouting;
+}
 
 /**
- * Ask the session's pinned policy about a call, and record an approval when it
- * needs one.
+ * Record the interrupt that pauses one call — the gate already decided the
+ * pause; this records who may end it.
  *
- * The caller executes on `allow`, refuses on `deny`, and pauses on
- * `approval_required` — the harness renders the prompt wherever the
- * conversation lives, and the control-plane UI is always an alternative
- * surface. Asking twice for the same call while the first ask is still pending
- * returns that same approval: a resumed run repeating its tool call is one
- * decision for a person, not two. That holds under concurrency because the
- * database holds it: the partial unique index
- * `Approval_one_pending_per_session_call` lets exactly one pending row exist
- * per call, and the loser of the race reads the winner's row.
+ * The harness renders the prompt wherever the conversation lives, and the
+ * control-plane UI is always an alternative surface. Asking twice for the same
+ * call while the first ask is still pending returns that same approval: a
+ * resumed run repeating its tool call is one decision for a person, not two.
+ * That holds under concurrency because the database holds it: the partial
+ * unique index `Approval_one_pending_per_session_call` lets exactly one
+ * pending row exist per call, and the loser of the race reads the winner's
+ * row.
  */
 export async function requestApproval(
   db: Database,
   input: RequestApprovalInput,
-): Promise<ApprovalRequestOutcome> {
+): Promise<ApprovalRequest> {
   const now = input.now ?? new Date();
   const session = await requireOpenSession(db, input.orgId, input.sessionId);
-  const requirement = resolveApprovalRequirement({
-    decisions: pinnedDecisions(session),
-    scopeKind: session.scope.kind,
-    toolKey: input.toolKey,
-    sensitivity: input.sensitivity,
-  });
-
-  if (requirement.action === "allow") return { outcome: "allow", requirement };
-  if (requirement.action === "deny") {
-    log.warn("Tool call denied by policy", {
-      sessionId: session.id,
-      toolKey: input.toolKey,
-      sensitivity: input.sensitivity,
-    });
-    return { outcome: "deny", requirement };
-  }
+  const routing = routingForSession(session, input.connectorKey);
 
   const reason = input.reason.trim();
   if (!reason) throw new ApprovalValidationError("An approval needs a one-line reason");
@@ -360,7 +306,7 @@ export async function requestApproval(
   });
   if (pending) {
     log.debug("Approval already pending", { approvalId: pending.id, sessionId: session.id });
-    return { outcome: "approval_required", requirement, approval: pending };
+    return { approval: pending, routing };
   }
 
   const create = () =>
@@ -374,9 +320,10 @@ export async function requestApproval(
           argsJson: (input.args ?? null) as Prisma.InputJsonValue,
           argsHash,
           reason,
-          sensitivity: input.sensitivity,
-          approverRoles: requirement.approverRoles,
-          allowRequesterApproval: requirement.allowRequesterApproval,
+          mode: input.mode,
+          ...(input.escalationReason ? { escalationReason: input.escalationReason } : {}),
+          approverRoles: routing.approverRoles,
+          allowRequesterApproval: routing.allowRequesterApproval,
           requesterPrincipalId: session.requesterPrincipalId,
           requesterExternalRef: session.requesterExternalRef,
           ...(input.executionBinding
@@ -398,7 +345,7 @@ export async function requestApproval(
             sessionId: session.id,
             scopeId: created.scopeId,
             toolKey: created.toolKey,
-            sensitivity: created.sensitivity,
+            mode: created.mode,
             argsHash: created.argsHash,
             approverRoles: created.approverRoles,
             allowRequesterApproval: created.allowRequesterApproval,
@@ -428,7 +375,7 @@ export async function requestApproval(
     if (!existing) throw error;
     if (existing.expiresAt.getTime() > now.getTime()) {
       log.debug("Approval already pending", { approvalId: existing.id, sessionId: session.id });
-      return { outcome: "approval_required", requirement, approval: existing };
+      return { approval: existing, routing };
     }
     await expireApproval(db, existing);
     approval = await create().catch(async (retried: unknown) => {
@@ -445,10 +392,10 @@ export async function requestApproval(
     sessionId: session.id,
     scopeId: approval.scopeId,
     toolKey: approval.toolKey,
-    sensitivity: approval.sensitivity,
+    mode: approval.mode,
     expiresAt: approval.expiresAt.toISOString(),
   });
-  return { outcome: "approval_required", requirement, approval };
+  return { approval, routing };
 }
 
 export interface RequestItemActivationInput {
@@ -490,19 +437,15 @@ export async function requestItemActivation(
     orgId: input.orgId,
     sessionId: input.sessionId,
     toolKey: ACTIVATE_ITEM_TOOL_KEY,
-    // Activating standing guidance is a write to the scope's context, so the
-    // write class decides who confirms it.
-    sensitivity: "write",
+    // An item lands `proposed` precisely because a person has to confirm it,
+    // so this interrupt exists in every mode; the scope's routing rows decide
+    // who confirms.
+    mode: "ask",
     args: { itemId: item.id },
     reason: input.reason,
     ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
     ...(input.now === undefined ? {} : { now: input.now }),
   });
-  if (requested.outcome !== "approval_required") {
-    // `resolveApprovalRequirement` forces the gate for this tool key, so this
-    // is unreachable rather than a case a caller has to handle.
-    throw new ApprovalValidationError("Item activation must be gated by an approval");
-  }
   return requested.approval;
 }
 
@@ -571,12 +514,25 @@ async function assertResolvable(
   }
 }
 
+/**
+ * Record one resolution — and, where the yes promised more than itself,
+ * whatever else has to land with it.
+ *
+ * `alsoWithin` runs inside the same transaction as the status change, against
+ * the resolved row. A resolution that promises a wider consent has to commit
+ * that consent with it: the status change is single-shot, so an approval that
+ * reached `approved` with the promise unkept can never be re-approved to keep
+ * it, and the person's `run` or `always` yes would be lost with nothing left
+ * to show for it. Failing the callback rolls the yes back and leaves the
+ * approval pending, which is a decision that can be made again.
+ */
 async function recordResolution(
   db: Database,
   approval: Approval,
   status: Extract<ApprovalStatus, "approved" | "denied">,
   approverPrincipalId: string,
   now: Date,
+  alsoWithin?: (transaction: Prisma.TransactionClient, resolved: Approval) => Promise<void>,
 ): Promise<Approval> {
   const resolved = await db.$transaction(async (transaction) => {
     // The status guard is what makes resolution single-shot: two approvers
@@ -605,12 +561,13 @@ async function recordResolution(
           sessionId: updated.sessionId,
           scopeId: updated.scopeId,
           toolKey: updated.toolKey,
-          sensitivity: updated.sensitivity,
+          mode: updated.mode,
           argsHash: updated.argsHash,
           requesterPrincipalId: updated.requesterPrincipalId,
         },
       },
     });
+    await alsoWithin?.(transaction, updated);
     return updated;
   });
 
@@ -623,10 +580,20 @@ async function recordResolution(
   return resolved;
 }
 
+/**
+ * How wide a yes is. `once` covers the recorded arguments and nothing else;
+ * `run` covers the tool for the rest of the thread; `always` is a standing,
+ * admin-visible exemption for the requester at the approval's scope. The two
+ * wider variants mint a {@link ToolGrant} — the coarser consent is the
+ * human's explicit choice, stated on the card, never a default.
+ */
+export type ApprovalGrantScope = "once" | "run" | "always";
+
 export interface ResolveApprovalInput {
   orgId: string;
   approvalId: string;
   approverPrincipalId: string;
+  grantScope?: ApprovalGrantScope;
   now?: Date;
 }
 
@@ -694,7 +661,7 @@ async function supersedeActivationApprovals(
           sessionId: approval.sessionId,
           scopeId: approval.scopeId,
           toolKey: approval.toolKey,
-          sensitivity: approval.sensitivity,
+          mode: approval.mode,
           itemId: input.itemId,
           ...(input.exceptApprovalId ? { supersededBy: input.exceptApprovalId } : {}),
         },
@@ -714,6 +681,97 @@ async function supersedeActivationApprovals(
 }
 
 /**
+ * Mint the wider consent an approval's `run` or `always` variant promises.
+ *
+ * A `run` grant names the approval's session and dies with it; an `always`
+ * grant names no session and stands at the approval's scope until revoked.
+ * Both name the requester where one is linked — for `always`, the caller has
+ * already required one.
+ *
+ * It writes through the caller's transaction rather than opening its own,
+ * because the yes and the consent it promised are one fact: see
+ * {@link recordResolution}.
+ */
+async function mintToolGrant(
+  transaction: Prisma.TransactionClient,
+  approval: Approval,
+  grantScope: Extract<ApprovalGrantScope, "run" | "always">,
+  approverPrincipalId: string,
+): Promise<ToolGrant> {
+  const grant = await transaction.toolGrant.create({
+    data: {
+      orgId: approval.orgId,
+      scopeId: approval.scopeId,
+      toolKey: approval.toolKey,
+      ...(grantScope === "run" ? { sessionId: approval.sessionId } : {}),
+      ...(approval.requesterPrincipalId
+        ? { requesterPrincipalId: approval.requesterPrincipalId }
+        : {}),
+      sourceApprovalId: approval.id,
+      createdById: approverPrincipalId,
+    },
+  });
+  await transaction.auditLog.create({
+    data: {
+      orgId: approval.orgId,
+      actorPrincipalId: approverPrincipalId,
+      action: "tool_grant.minted",
+      subject: grant.id,
+      payload: {
+        scopeId: grant.scopeId,
+        toolKey: grant.toolKey,
+        sessionId: grant.sessionId,
+        requesterPrincipalId: grant.requesterPrincipalId,
+        sourceApprovalId: approval.id,
+        grantScope,
+      },
+    },
+  });
+  return grant;
+}
+
+export interface FindToolGrantInput {
+  orgId: string;
+  toolKey: string;
+  sessionId: string;
+  /** Scope IDs in resolution order, widest first. */
+  scopeChain: readonly string[];
+  requesterPrincipalId: string | null;
+}
+
+/**
+ * The grant that lets one call skip the gate: a thread grant minted in this
+ * very session, or a standing grant for this requester at a scope in the
+ * chain. A session with no linked requester matches thread grants only — a
+ * standing grant always names the person it covers.
+ */
+export async function findToolGrant(
+  db: Database,
+  input: FindToolGrantInput,
+): Promise<ToolGrant | null> {
+  return db.toolGrant.findFirst({
+    where: {
+      orgId: input.orgId,
+      toolKey: input.toolKey,
+      revokedAt: null,
+      OR: [
+        { sessionId: input.sessionId },
+        ...(input.requesterPrincipalId
+          ? [
+              {
+                sessionId: null,
+                scopeId: { in: [...input.scopeChain] },
+                requesterPrincipalId: input.requesterPrincipalId,
+              },
+            ]
+          : []),
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+/**
  * Approve a pending call.
  *
  * Approving a `context:activate_item` approval also performs it: activation is
@@ -728,11 +786,51 @@ export async function approveApproval(
 ): Promise<ApprovalResolution> {
   const now = input.now ?? new Date();
   const approval = await requireApproval(db, input.orgId, input.approvalId);
+  const grantScope = input.grantScope ?? "once";
+  if (grantScope !== "once") {
+    // Validated before the resolution is recorded, so a refused variant leaves
+    // the approval pending for a plain yes rather than half-resolved.
+    if (approval.toolKey === ACTIVATE_ITEM_TOOL_KEY) {
+      throw new ApprovalValidationError("Item activation has no wider approval variant");
+    }
+    if (grantScope === "always" && !approval.requesterPrincipalId) {
+      throw new ApprovalValidationError(
+        "A standing grant names the requester it covers, and this approval has no linked requester",
+      );
+    }
+  }
   await assertResolvable(db, approval, input.approverPrincipalId, now);
   if (approval.toolKey !== ACTIVATE_ITEM_TOOL_KEY) {
-    return {
-      approval: await recordResolution(db, approval, "approved", input.approverPrincipalId, now),
-    };
+    // The wider yes and the grant that carries it are recorded together, so a
+    // mint that fails leaves the approval pending rather than `approved` with
+    // the consent the approver asked for silently missing.
+    let minted: ToolGrant | undefined;
+    const resolved = await recordResolution(
+      db,
+      approval,
+      "approved",
+      input.approverPrincipalId,
+      now,
+      grantScope === "once"
+        ? undefined
+        : async (transaction, approved) => {
+            minted = await mintToolGrant(
+              transaction,
+              approved,
+              grantScope,
+              input.approverPrincipalId,
+            );
+          },
+    );
+    if (minted) {
+      log.info("Tool grant minted", {
+        grantId: minted.id,
+        toolKey: minted.toolKey,
+        scopeId: minted.scopeId,
+        grantScope,
+      });
+    }
+    return { approval: resolved };
   }
 
   // Read the item out before anything is written. An activation approval whose
@@ -839,20 +937,14 @@ async function assertMayConfirmActivation(
   });
   if (!scope) throw new ApprovalValidationError("Item scope not found");
 
-  const { decisions } = await resolveScopePolicies(db, {
+  const { routing } = await resolveScopePolicies(db, {
     orgId: input.orgId,
     scopeId: scope.id,
   });
-  const requirement = resolveApprovalRequirement({
-    decisions,
-    scopeKind: scope.kind,
-    toolKey: ACTIVATE_ITEM_TOOL_KEY,
-    sensitivity: "write",
-  });
   const check = canResolveApproval({
     approval: {
-      approverRoles: requirement.approverRoles,
-      allowRequesterApproval: requirement.allowRequesterApproval,
+      approverRoles: routing.approverRoles,
+      allowRequesterApproval: routing.allowRequesterApproval,
       requesterPrincipalId: await activationRequesterId(db, input.orgId, input.item, scope),
     },
     approverPrincipalId: approver.id,
@@ -1150,7 +1242,7 @@ async function expireApproval(db: Database, approval: Approval): Promise<boolean
         sessionId: approval.sessionId,
         scopeId: approval.scopeId,
         toolKey: approval.toolKey,
-        sensitivity: approval.sensitivity,
+        mode: approval.mode,
         expiresAt: approval.expiresAt.toISOString(),
         nudgeCount: approval.nudgeCount,
       },

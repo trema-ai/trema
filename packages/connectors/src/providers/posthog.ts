@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const posthogProvider = {
   key: "posthog",
+  trusted: true,
   displayName: "PostHog",
   description:
     "Read product analytics people, events, cohorts, and insights over the PostHog REST API.",
@@ -43,7 +44,6 @@ export const posthogProvider = {
       method: "GET",
       path: "/api/users/@me",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "list_projects",
@@ -59,7 +59,6 @@ export const posthogProvider = {
         },
         required: ["organizationId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_persons",
@@ -77,7 +76,6 @@ export const posthogProvider = {
         },
         required: ["projectId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_event_definitions",
@@ -94,7 +92,6 @@ export const posthogProvider = {
         },
         required: ["projectId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_cohorts",
@@ -111,7 +108,6 @@ export const posthogProvider = {
         },
         required: ["projectId"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_insights",
@@ -129,7 +125,6 @@ export const posthogProvider = {
         },
         required: ["projectId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_insight",
@@ -141,7 +136,6 @@ export const posthogProvider = {
         properties: { projectId: { type: "string" }, insightId: { type: "string" } },
         required: ["projectId", "insightId"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_insight",
@@ -159,7 +153,6 @@ export const posthogProvider = {
         },
         required: ["projectId", "query"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_insight",
@@ -178,7 +171,6 @@ export const posthogProvider = {
         },
         required: ["projectId", "insightId"],
       },
-      sensitivity: "write",
     },
   ],
   memberConnectable: false,
