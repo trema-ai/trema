@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { Principal, Role } from "#server/generated/prisma/client.js";
+import { type Principal, Prisma, type Role } from "#server/generated/prisma/client.js";
 import { createAuth } from "#server/lib/auth/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
@@ -391,6 +391,34 @@ integration("run reads", () => {
         },
         null,
       ]);
+    });
+
+    it("keeps listing the thread when one run's log holds a malformed event", async () => {
+      const { org, alice, session, run } = await setup();
+      // A recorded event that is JSON null: deriving from it throws, which
+      // must cost this run its opening message — never the run, or the rest
+      // of the thread.
+      await appendEvents(org.org.id, run.id, [Prisma.JsonNull]);
+      const second = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 1000),
+      });
+      await appendEvents(org.org.id, second.id, [
+        { type: "run-started", trigger: "message" },
+        steering(alice.principal.id, "Still here."),
+      ]);
+
+      const listed = await call(
+        runsRouter.listByThread,
+        { threadRef: "web:alice" },
+        { context: alice.context },
+      );
+
+      expect(listed.runs.map(({ id }) => id)).toEqual([run.id, second.id]);
+      expect(listed.runs[0]?.openingMessage).toBeNull();
+      expect(listed.runs[1]?.openingMessage).toMatchObject({ text: "Still here." });
     });
 
     it("filters invisible runs down to an empty thread", async () => {

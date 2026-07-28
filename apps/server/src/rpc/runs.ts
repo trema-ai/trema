@@ -505,14 +505,21 @@ const listByThread = orgScoped
         take: OPENING_EVENT_WINDOW,
         select: { event: true },
       });
+      let openingMessage = null;
+      try {
+        openingMessage = deriveOpeningMessage(
+          leading.map(({ event }) => event as unknown as RunEventData),
+        );
+      } catch {
+        // Aligned with the events read: a malformed recorded event costs the
+        // run its opening message, never the run — or the rest of the thread.
+      }
       runs.push({
         id: verdict.run.id,
         state: verdict.run.state,
         trigger: verdict.run.trigger,
         createdAt: verdict.run.createdAt.toISOString(),
-        openingMessage: deriveOpeningMessage(
-          leading.map(({ event }) => event as unknown as RunEventData),
-        ),
+        openingMessage,
       });
     }
     return { runs };
