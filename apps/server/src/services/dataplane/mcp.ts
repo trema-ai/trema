@@ -430,7 +430,7 @@ export function createDataPlaneServer(
     {
       title: "Use connector",
       description:
-        "Do something in a connected system — read from it, or change something in it. The call runs here, with this organization's credential; you never see the credential and never call the system directly. Read the `status` of the reply: `executed` carries the system's answer, `approval_required` means stop and let a person decide, `denied` means the call is not allowed at all.",
+        "Do something in a connected system — read from it, or change something in it. The call runs here, with this organization's credential; you never see the credential and never call the system directly. Read the `status` of the reply: `executed` carries the system's answer, `approval_required` means stop and let a person decide — once approved, call again with the same arguments and the approvalId.",
       inputSchema: {
         toolKey: z
           .string()

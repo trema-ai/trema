@@ -514,12 +514,25 @@ async function assertResolvable(
   }
 }
 
+/**
+ * Record one resolution — and, where the yes promised more than itself,
+ * whatever else has to land with it.
+ *
+ * `alsoWithin` runs inside the same transaction as the status change, against
+ * the resolved row. A resolution that promises a wider consent has to commit
+ * that consent with it: the status change is single-shot, so an approval that
+ * reached `approved` with the promise unkept can never be re-approved to keep
+ * it, and the person's `run` or `always` yes would be lost with nothing left
+ * to show for it. Failing the callback rolls the yes back and leaves the
+ * approval pending, which is a decision that can be made again.
+ */
 async function recordResolution(
   db: Database,
   approval: Approval,
   status: Extract<ApprovalStatus, "approved" | "denied">,
   approverPrincipalId: string,
   now: Date,
+  alsoWithin?: (transaction: Prisma.TransactionClient, resolved: Approval) => Promise<void>,
 ): Promise<Approval> {
   const resolved = await db.$transaction(async (transaction) => {
     // The status guard is what makes resolution single-shot: two approvers
@@ -554,6 +567,7 @@ async function recordResolution(
         },
       },
     });
+    await alsoWithin?.(transaction, updated);
     return updated;
   });
 
@@ -673,50 +687,45 @@ async function supersedeActivationApprovals(
  * grant names no session and stands at the approval's scope until revoked.
  * Both name the requester where one is linked — for `always`, the caller has
  * already required one.
+ *
+ * It writes through the caller's transaction rather than opening its own,
+ * because the yes and the consent it promised are one fact: see
+ * {@link recordResolution}.
  */
 async function mintToolGrant(
-  db: Database,
+  transaction: Prisma.TransactionClient,
   approval: Approval,
   grantScope: Extract<ApprovalGrantScope, "run" | "always">,
   approverPrincipalId: string,
 ): Promise<ToolGrant> {
-  const grant = await db.$transaction(async (transaction) => {
-    const grant = await transaction.toolGrant.create({
-      data: {
-        orgId: approval.orgId,
-        scopeId: approval.scopeId,
-        toolKey: approval.toolKey,
-        ...(grantScope === "run" ? { sessionId: approval.sessionId } : {}),
-        ...(approval.requesterPrincipalId
-          ? { requesterPrincipalId: approval.requesterPrincipalId }
-          : {}),
-        sourceApprovalId: approval.id,
-        createdById: approverPrincipalId,
-      },
-    });
-    await transaction.auditLog.create({
-      data: {
-        orgId: approval.orgId,
-        actorPrincipalId: approverPrincipalId,
-        action: "tool_grant.minted",
-        subject: grant.id,
-        payload: {
-          scopeId: grant.scopeId,
-          toolKey: grant.toolKey,
-          sessionId: grant.sessionId,
-          requesterPrincipalId: grant.requesterPrincipalId,
-          sourceApprovalId: approval.id,
-          grantScope,
-        },
-      },
-    });
-    return grant;
+  const grant = await transaction.toolGrant.create({
+    data: {
+      orgId: approval.orgId,
+      scopeId: approval.scopeId,
+      toolKey: approval.toolKey,
+      ...(grantScope === "run" ? { sessionId: approval.sessionId } : {}),
+      ...(approval.requesterPrincipalId
+        ? { requesterPrincipalId: approval.requesterPrincipalId }
+        : {}),
+      sourceApprovalId: approval.id,
+      createdById: approverPrincipalId,
+    },
   });
-  log.info("Tool grant minted", {
-    grantId: grant.id,
-    toolKey: grant.toolKey,
-    scopeId: grant.scopeId,
-    grantScope,
+  await transaction.auditLog.create({
+    data: {
+      orgId: approval.orgId,
+      actorPrincipalId: approverPrincipalId,
+      action: "tool_grant.minted",
+      subject: grant.id,
+      payload: {
+        scopeId: grant.scopeId,
+        toolKey: grant.toolKey,
+        sessionId: grant.sessionId,
+        requesterPrincipalId: grant.requesterPrincipalId,
+        sourceApprovalId: approval.id,
+        grantScope,
+      },
+    },
   });
   return grant;
 }
@@ -792,15 +801,34 @@ export async function approveApproval(
   }
   await assertResolvable(db, approval, input.approverPrincipalId, now);
   if (approval.toolKey !== ACTIVATE_ITEM_TOOL_KEY) {
+    // The wider yes and the grant that carries it are recorded together, so a
+    // mint that fails leaves the approval pending rather than `approved` with
+    // the consent the approver asked for silently missing.
+    let minted: ToolGrant | undefined;
     const resolved = await recordResolution(
       db,
       approval,
       "approved",
       input.approverPrincipalId,
       now,
+      grantScope === "once"
+        ? undefined
+        : async (transaction, approved) => {
+            minted = await mintToolGrant(
+              transaction,
+              approved,
+              grantScope,
+              input.approverPrincipalId,
+            );
+          },
     );
-    if (grantScope !== "once") {
-      await mintToolGrant(db, resolved, grantScope, input.approverPrincipalId);
+    if (minted) {
+      log.info("Tool grant minted", {
+        grantId: minted.id,
+        toolKey: minted.toolKey,
+        scopeId: minted.scopeId,
+        grantScope,
+      });
     }
     return { approval: resolved };
   }

@@ -69,7 +69,7 @@ integration("approval policies", () => {
     return { ...signedUp, ...membership, orgScope, credential };
   }
 
-  async function addMember(orgId: string, orgScopeId: string, role: Role, name: string) {
+  async function addMember(orgId: string, orgScopeId: string, role: Role | null, name: string) {
     const signedUp = await signUp(name);
     const principal = await db.principal.create({
       data: {
@@ -80,9 +80,13 @@ integration("approval policies", () => {
         email: signedUp.user.email,
       },
     });
-    await db.grant.create({
-      data: { orgId, principalId: principal.id, scopeId: orgScopeId, role },
-    });
+    // A null role stands for someone who holds no org-scope grant at all —
+    // their reach is whatever their own scopes give them.
+    if (role !== null) {
+      await db.grant.create({
+        data: { orgId, principalId: principal.id, scopeId: orgScopeId, role },
+      });
+    }
     await db.session.updateMany({
       where: { userId: signedUp.user.id },
       data: { activeOrgId: orgId },
@@ -137,24 +141,85 @@ integration("approval policies", () => {
 
     await call(
       policiesRouter.set,
-      { scopeId: shared.id, connectorKey: "github", maxMode: "ask" },
+      { scopeId: shared.id, connectorKey: "github", maxMode: "full" },
       { context: org.context },
     );
 
-    // The connector row governs its connector; the scope-wide view and other
-    // connectors resolve the default ceiling.
+    // github is a curated catalog entry, so its row resolves as written.
     const github = await call(
       policiesRouter.resolved,
       { scopeId: shared.id, connectorKey: "github" },
       { context: org.context },
     );
-    expect(github.ceiling).toBe("ask");
+    expect(github.ceiling).toBe("full");
+
+    // A key no catalog entry claims is untrusted, and untrusted pins to ask
+    // whatever the rows say — the scope-wide row here is the loosest there is.
+    await call(
+      policiesRouter.set,
+      { scopeId: shared.id, maxMode: "full" },
+      { context: org.context },
+    );
+    const unknown = await call(
+      policiesRouter.resolved,
+      { scopeId: shared.id, connectorKey: "not-a-catalog-entry" },
+      { context: org.context },
+    );
+    expect(unknown.ceiling).toBe("ask");
+
     const scopeWide = await call(
       policiesRouter.resolved,
       { scopeId: shared.id },
       { context: org.context },
     );
-    expect(scopeWide.ceiling).toBe("delegated");
+    expect(scopeWide.ceiling).toBe("full");
+  });
+
+  it("resolves a personal scope over the whole chain but lists only readable rows", async () => {
+    const org = await createOrg();
+    // Owning a personal scope is this principal's whole reach: personal scopes
+    // do not inherit org roles, and they hold no org-scope grant.
+    const member = await addMember(org.org.id, org.orgScope.id, null, "Chain Reader");
+    const personal = await db.scope.create({
+      data: {
+        orgId: org.org.id,
+        kind: "personal",
+        ownerId: member.principal.id,
+        name: "Chain Reader",
+      },
+    });
+
+    await call(
+      policiesRouter.set,
+      { scopeId: org.orgScope.id, maxMode: "ask", approverRoles: ["admin"] },
+      { context: org.context },
+    );
+    const own = await call(
+      policiesRouter.set,
+      { scopeId: personal.id, connectorKey: "github", maxMode: "full" },
+      { context: member.context },
+    );
+
+    const resolved = await call(
+      policiesRouter.resolved,
+      { scopeId: personal.id },
+      { context: member.context },
+    );
+    // The org row still tightens the ceiling and routes the interrupt — that
+    // outcome governs the member's own sessions — but the org scope's rows
+    // themselves are not theirs to read.
+    expect(resolved.scopeChain).toEqual([org.orgScope.id, personal.id]);
+    expect(resolved.ceiling).toBe("ask");
+    expect(resolved.routing).toMatchObject({ approverRoles: ["admin"] });
+    expect(resolved.rows.map(({ id }) => id)).toEqual([own.id]);
+
+    // The owner reads the org scope's own resolution in full.
+    const asOwner = await call(
+      policiesRouter.resolved,
+      { scopeId: org.orgScope.id },
+      { context: org.context },
+    );
+    expect(asOwner.rows).toHaveLength(1);
   });
 
   it("replaces a scope's row per key and falls back again when it is deleted", async () => {

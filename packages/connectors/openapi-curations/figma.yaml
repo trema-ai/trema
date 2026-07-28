@@ -13,41 +13,31 @@ tools:
   - operationId: getFile
     name: get_file
     description: Get the document tree and metadata for a Figma file by key.
-    sensitivity: read
   - operationId: getComments
     name: get_file_comments
     description: List the comments on a Figma file.
-    sensitivity: read
   - operationId: postComment
     name: post_comment
     description: Post a comment on a Figma file, optionally pinned to a location.
-    sensitivity: write
   - operationId: getTeamProjects
     name: get_team_projects
     description: List the projects in a Figma team.
-    sensitivity: read
   - operationId: getProjectFiles
     name: get_project_files
     description: List the files in a Figma project.
-    sensitivity: read
   # --- added tools ---
   - operationId: getFileNodes
     name: get_file_nodes
     description: Get the document subtree and properties for specific nodes in a Figma file.
-    sensitivity: read
   - operationId: getImages
     name: get_image_renders
     description: Render specified Figma file nodes as PNG, JPG, SVG, or PDF images and return their URLs.
-    sensitivity: read
   - operationId: getFileVersions
     name: get_file_versions
     description: List the saved version history of a Figma file.
-    sensitivity: read
   - operationId: getTeamComponents
     name: get_team_components
     description: List the published components in a Figma team's library.
-    sensitivity: read
   - operationId: getCommentReactions
     name: get_comment_reactions
     description: List the reactions on a comment in a Figma file.
-    sensitivity: read

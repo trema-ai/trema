@@ -3,11 +3,13 @@ import { z } from "zod";
 
 import type { Policy } from "#server/generated/prisma/client.js";
 import { authorize } from "#server/services/authorize/index.js";
+import { loadProviderCatalog } from "#server/services/connectors/index.js";
 import {
   deletePolicy,
   listPolicies,
   PolicyNotFoundError,
   PolicyValidationError,
+  type ResolvedScopePolicies,
   resolveScopePolicies,
   setPolicy,
 } from "#server/services/policies/index.js";
@@ -152,15 +154,40 @@ const resolved = requireCapability("read", { scopeId: scopeIdFromInput })
       .describe("The approval policy a session opened against this scope would carry."),
   )
   .handler(async ({ context, input }) => {
+    // An unlisted connector key is an untrusted entry, and an untrusted entry
+    // pins to `ask` however loose the rows are — the same catalog trust the
+    // live gate reads, so the resolved view and the call agree.
+    const provider =
+      input.connectorKey === undefined
+        ? undefined
+        : loadProviderCatalog().find((candidate) => candidate.key === input.connectorKey);
+    let policies: ResolvedScopePolicies;
     try {
-      return await resolveScopePolicies(context.db, {
+      policies = await resolveScopePolicies(context.db, {
         orgId: context.org.id,
         scopeId: input.scopeId,
-        ...(input.connectorKey === undefined ? {} : { connectorKey: input.connectorKey }),
+        ...(input.connectorKey === undefined
+          ? {}
+          : { connectorKey: input.connectorKey, connectorTrusted: provider?.trusted === true }),
       });
     } catch (error) {
       throwPolicyError(error);
     }
+    // The capability check covers the requested scope alone, but the chain
+    // reaches wider scopes the caller may hold no role at — a member reading
+    // their own personal scope does not inherit the org's roles. So the raw
+    // rows are scoped-read material and each one's scope is checked, while
+    // `ceiling` and `routing` stay computed over the full chain: they are the
+    // effective outcome governing this caller's own sessions, and hiding it
+    // would defeat the endpoint.
+    const readable = new Map<string, boolean>();
+    for (const scopeId of new Set(policies.rows.map((row) => row.scopeId))) {
+      readable.set(scopeId, await authorize(context.principal, "read", scopeId, context.db));
+    }
+    return {
+      ...policies,
+      rows: policies.rows.filter((row) => readable.get(row.scopeId) === true),
+    };
   });
 
 const set = requireCapability("edit_policies", { scopeId: scopeIdFromInput })

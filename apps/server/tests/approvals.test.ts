@@ -19,6 +19,7 @@ import {
   ACTIVATE_ITEM_TOOL_KEY,
   ApprovalArgsMismatchError,
   ApprovalStateError,
+  approveApproval,
   claimApprovalExecution,
   findToolGrant,
   requestApproval,
@@ -150,6 +151,33 @@ integration("approvals", () => {
       { context: serviceContext(org.credential.secret) },
     );
     return { scope, policy, locationRef, session };
+  }
+
+  /**
+   * The same database with one write broken: inside a transaction, minting a
+   * tool grant throws. What survives the failure is the question.
+   */
+  function withFailingGrantMint(client: typeof db): typeof db {
+    const broken = (transaction: Prisma.TransactionClient) =>
+      new Proxy(transaction, {
+        get(target, property) {
+          if (property === "toolGrant") {
+            return { create: () => Promise.reject(new Error("Grant mint failed")) };
+          }
+          const value = Reflect.get(target, property) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    return new Proxy(client, {
+      get(target, property) {
+        if (property === "$transaction") {
+          return (run: (transaction: Prisma.TransactionClient) => Promise<unknown>) =>
+            target.$transaction((transaction) => run(broken(transaction)));
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
   }
 
   it("covers the recorded arguments alone, and refuses a changed call", async () => {
@@ -762,6 +790,64 @@ integration("approvals", () => {
         requesterPrincipalId: member.principal.id,
       }),
     ).resolves.toBeNull();
+  });
+
+  it("records the yes and the grant it promised as one fact", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "member", "Asker");
+    const admin = await addMember(org.org.id, org.orgScope.id, "admin", "Approver");
+    const opened = await openSharedSession(org, {
+      name: "Atomic Grant",
+      requesterPrincipalId: member.principal.id,
+    });
+    const requested = await requestApproval(db, {
+      orgId: org.org.id,
+      sessionId: opened.session.sessionId,
+      toolKey: "github:open_issue",
+      mode: "ask",
+      args: { title: "First" },
+      reason: "Filing the follow-up",
+    });
+
+    // A mint that fails takes the yes down with it. Otherwise the approval
+    // would sit `approved` with no grant behind it, and nobody could ever
+    // approve it again to mint the one the approver asked for.
+    await expect(
+      approveApproval(withFailingGrantMint(db), {
+        orgId: org.org.id,
+        approvalId: requested.approval.id,
+        approverPrincipalId: admin.principal.id,
+        grantScope: "run",
+      }),
+    ).rejects.toThrow("Grant mint failed");
+    await expect(
+      db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: requested.approval.id } },
+        select: { status: true, resolvedAt: true },
+      }),
+    ).resolves.toEqual({ status: "pending", resolvedAt: null });
+    expect(await db.toolGrant.count({ where: { orgId: org.org.id } })).toBe(0);
+
+    // The decision is still there to make, and made cleanly it leaves both.
+    const resolved = await approveApproval(db, {
+      orgId: org.org.id,
+      approvalId: requested.approval.id,
+      approverPrincipalId: admin.principal.id,
+      grantScope: "run",
+    });
+    expect(resolved.approval.status).toBe("approved");
+    await expect(
+      findToolGrant(db, {
+        orgId: org.org.id,
+        toolKey: "github:open_issue",
+        sessionId: opened.session.sessionId,
+        scopeChain: opened.session.scopeChain.map(({ id }) => id),
+        requesterPrincipalId: member.principal.id,
+      }),
+    ).resolves.toMatchObject({
+      sessionId: opened.session.sessionId,
+      sourceApprovalId: requested.approval.id,
+    });
   });
 
   it("stands an always grant for the requester at the scope, and requires one", async () => {

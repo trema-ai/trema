@@ -1,4 +1,10 @@
-import type { ApprovalMode, Policy, Role, ScopeKind } from "#server/generated/prisma/client.js";
+import type {
+  ApprovalMode,
+  Policy,
+  Prisma,
+  Role,
+  ScopeKind,
+} from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 
@@ -264,10 +270,15 @@ function normalizeWrite(input: SetPolicyInput): {
   return { maxMode: input.maxMode, approverRoles, allowRequesterApproval };
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
+
 /**
  * Create or replace the policy for one scope and connector (or the scope-wide
- * row). A scope holds at most one row per key, so writing is a set, not an
- * append; the partial unique indexes hold that under concurrency.
+ * row). A scope holds at most one row per key — the partial unique indexes
+ * hold that under concurrency, and a create that loses the race settles into
+ * an update of the winner's row rather than surfacing the constraint.
  */
 export async function setPolicy(db: Database, input: SetPolicyInput): Promise<Policy> {
   const scope = await db.scope.findFirst({
@@ -281,35 +292,48 @@ export async function setPolicy(db: Database, input: SetPolicyInput): Promise<Po
   const connectorKey = input.connectorKey?.trim() || null;
   const written = normalizeWrite(input);
 
-  const policy = await db.$transaction(async (transaction) => {
-    const existing = await transaction.policy.findFirst({
-      where: { orgId: input.orgId, scopeId: input.scopeId, connectorKey },
-    });
-    const policy = existing
-      ? await transaction.policy.update({
-          where: { orgId_id: { orgId: input.orgId, id: existing.id } },
-          data: written,
-        })
-      : await transaction.policy.create({
-          data: { orgId: input.orgId, scopeId: input.scopeId, connectorKey, ...written },
-        });
-    await transaction.auditLog.create({
-      data: {
-        orgId: input.orgId,
-        actorPrincipalId: input.actorPrincipalId,
-        action: "policy.set",
-        subject: policy.id,
-        payload: {
-          scopeId: policy.scopeId,
-          connectorKey: policy.connectorKey,
-          maxMode: policy.maxMode,
-          approverRoles: policy.approverRoles,
-          allowRequesterApproval: policy.allowRequesterApproval,
+  const write = () =>
+    db.$transaction(async (transaction) => {
+      const existing = await transaction.policy.findFirst({
+        where: { orgId: input.orgId, scopeId: input.scopeId, connectorKey },
+      });
+      const policy = existing
+        ? await transaction.policy.update({
+            where: { orgId_id: { orgId: input.orgId, id: existing.id } },
+            data: written,
+          })
+        : await transaction.policy.create({
+            data: { orgId: input.orgId, scopeId: input.scopeId, connectorKey, ...written },
+          });
+      await transaction.auditLog.create({
+        data: {
+          orgId: input.orgId,
+          actorPrincipalId: input.actorPrincipalId,
+          action: "policy.set",
+          subject: policy.id,
+          payload: {
+            scopeId: policy.scopeId,
+            connectorKey: policy.connectorKey,
+            maxMode: policy.maxMode,
+            approverRoles: policy.approverRoles,
+            allowRequesterApproval: policy.allowRequesterApproval,
+          },
         },
-      },
+      });
+      return policy;
     });
-    return policy;
-  });
+
+  let policy: Policy;
+  try {
+    policy = await write();
+  } catch (error) {
+    // A concurrent writer created the row between the read and the create and
+    // the partial unique index refused the loser. The whole transaction is
+    // aborted at that point, so the settle is a fresh attempt, which now finds
+    // the winner's row and updates it — a simultaneous set resolves to a set.
+    if (!isUniqueViolation(error)) throw error;
+    policy = await write();
+  }
 
   log.info("Approval policy set", {
     policyId: policy.id,

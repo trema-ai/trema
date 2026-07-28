@@ -305,6 +305,8 @@ export async function useConnector(
   const argsHash = hashApprovalArgs(args);
   const elapsed = () => Date.now() - startedAt;
   let resolved: ResolvedConnectorTool | undefined;
+  let mode: ApprovalMode | undefined;
+  let authority: ConnectorCallAuthority | undefined;
   const approvalId: string | undefined = input.approvalId;
 
   try {
@@ -335,7 +337,7 @@ export async function useConnector(
     // The requester's chosen mode, clamped to the pinned ceiling. An untrusted
     // catalog entry pins to `ask` whatever the rows say, and `delegated`
     // degrades to `ask` when no classifier is configured.
-    const mode = resolveEffectiveMode({
+    mode = resolveEffectiveMode({
       rows: session.policyRows,
       scopeChain: session.scopeChain,
       connectorKey: resolved.connectorKey,
@@ -343,7 +345,6 @@ export async function useConnector(
       requestedMode: session.approvalMode,
       classifierAvailable: input.classifier !== undefined,
     });
-    let authority: ConnectorCallAuthority | undefined;
     let escalationReason: string | undefined;
 
     if (approvalId) {
@@ -497,6 +498,8 @@ export async function useConnector(
       argsHash,
       outcome: "failed",
       ...(resolved ? { resolved } : {}),
+      ...(mode ? { mode } : {}),
+      ...(authority ? { authority } : {}),
       ...(approvalId ? { approvalId } : {}),
       errorCode: failureCode(error),
       durationMs: elapsed(),
