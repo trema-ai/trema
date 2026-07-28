@@ -1,6 +1,7 @@
 import type { ProviderDef, RestTransport, ToolDefinition } from "@trema/connectors";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 
+import type { ScopeKind } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import {
@@ -10,6 +11,7 @@ import {
   type Sensitivity,
 } from "#server/services/connectors/installations.js";
 import {
+  collectCredentialStrings,
   ConnectorReconnectRequiredError,
   type ResolvedConnectionCredential,
   resolveConnectionCredential,
@@ -88,25 +90,63 @@ export class ConnectorTransportError extends Error {
   }
 }
 
-export interface ExecuteConnectorToolInput {
+/**
+ * What lets a tool whose sensitivity is not `read` run.
+ *
+ * There is no default and no boolean: a caller that says nothing gets the
+ * refusal, so a new call site cannot execute a sensitive tool by forgetting to
+ * ask. Both values are the answer `services/approvals` gave for this exact
+ * call, and the data-plane proxy is the only thing that supplies one — the
+ * model never sees this field, because it is not part of the `use_connector`
+ * tool's input.
+ *
+ * - `policy_allowed` — the session's pinned policy allowed the call outright.
+ * - `approval_claimed` — a recorded approval covering exactly these arguments
+ *   was claimed, at most once.
+ */
+export type ConnectorCallAuthority = "policy_allowed" | "approval_claimed";
+
+export interface ResolveConnectorToolInput {
   orgId: string;
-  scopeIds: readonly string[];
-  principalId: string;
+  /**
+   * Scope IDs in resolution order, **widest first** — the order
+   * `ContextSession.scopeChain` stores and `resolveDecisions` reads. Narrowest
+   * wins here, so resolution walks the chain backwards; the order is stated by
+   * the type rather than assumed at a call site.
+   */
+  scopeChain: readonly string[];
+  /**
+   * The kind of scope the calling session sits in. It isolates installations
+   * both ways: a personal session resolves only installations in personal
+   * scopes, and an org or shared session never resolves one
+   * ([06-connectors.md](../../../../../wiki/docs/specs/context/06-connectors.md)).
+   * Absent for the capability-gated control-plane route, where an admin names
+   * the scopes explicitly.
+   */
+  sessionScopeKind?: ScopeKind;
   toolKey: string;
+  catalog?: ProviderCatalog;
+}
+
+export interface ExecuteConnectorToolInput extends ResolveConnectorToolInput {
+  principalId: string;
   args: unknown;
   masterKey?: string;
-  catalog?: ProviderCatalog;
   platformApps?: PlatformAppDirectory;
   fetch?: typeof globalThis.fetch;
   clientFactory?: McpClientFactory;
   now?: Date | Clock;
   sleep?: (milliseconds: number) => Promise<void>;
+  authority?: ConnectorCallAuthority;
   /**
-   * Phase C's policy/approval resolver replaces this seam. Until then,
-   * sensitive tools are denied unless a trusted internal caller explicitly
-   * confirms that approval has already been satisfied.
+   * The already-resolved tool, when the caller resolved it to ask the policy
+   * about its sensitivity. Passing it back keeps one call to one resolution
+   * *within a single call*: the sensitivity the policy answered about is the
+   * sensitivity that executes. It says nothing about an approval granted
+   * earlier — that round trip re-resolves from scratch, and comparing the two
+   * resolutions is `useConnector`'s job, not this one's.
    */
-  allowSensitiveToolExecution?: boolean;
+  resolved?: ResolvedConnectorTool;
 }
 
 export interface RestConnectorToolResult {
@@ -117,12 +157,17 @@ export interface RestConnectorToolResult {
 
 export type McpConnectorToolResult = McpToolCallResult;
 
-interface SelectedInstallation {
-  id: string;
+/** One connector tool, resolved to the installation that will serve it. */
+export interface ResolvedConnectorTool {
+  /** The `Item(kind=connector)` that won the narrowest-wins selection. */
+  installationItemId: string;
+  toolKey: string;
+  connectorKey: string;
+  toolName: string;
+  /** The effective class after the installation's overrides. */
+  sensitivity: Sensitivity;
   body: ConnectorInstallationBody;
   provider: ProviderDef;
-  toolName: string;
-  sensitivity: Sensitivity;
 }
 
 interface ParsedResponseBody {
@@ -130,11 +175,17 @@ interface ParsedResponseBody {
   record?: JsonRecord;
 }
 
+/**
+ * Everything this call decrypted or computed that must never reach the model or
+ * a log line. It is seeded by field rather than wholesale: a decrypted payload
+ * also holds labels and scope URLs, and splicing `[REDACTED]` over those would
+ * corrupt the provider body the model is handed for no gain in secrecy.
+ */
 class CredentialRedactor {
   readonly #values = new Set<string>();
 
   add(value: unknown): void {
-    collectStrings(value, this.#values);
+    collectCredentialStrings(value, this.#values);
   }
 
   addString(value: string | undefined): void {
@@ -173,14 +224,19 @@ class CredentialRedactor {
   }
 }
 
-function collectStrings(value: unknown, output: Set<string>, seen = new WeakSet<object>()): void {
-  if (typeof value === "string") {
-    if (value.length > 0) output.add(value);
-    return;
-  }
-  if (typeof value !== "object" || value === null || seen.has(value)) return;
-  seen.add(value);
-  for (const entry of Object.values(value)) collectStrings(entry, output, seen);
+/**
+ * What may be said in a log line about a failure nobody classified. The message
+ * passes through the redactor because an unknown error's text is the provider
+ * library's, not ours, and a stack is dropped entirely: it can quote the call
+ * that produced it.
+ */
+function redactedFailure(
+  error: unknown,
+  redactor: CredentialRedactor,
+): { errorName: string; errorMessage: string } {
+  const name = error instanceof Error ? error.name : typeof error;
+  const message = error instanceof Error ? error.message : String(error);
+  return { errorName: name, errorMessage: redactor.text(message) };
 }
 
 function recordValue(value: unknown): JsonRecord | undefined {
@@ -226,12 +282,36 @@ function providerExposesTool(
     : (body.syncedTools ?? []).some((tool) => tool.name === toolName);
 }
 
-async function resolveInstallation(
+/**
+ * The scope kinds a session of this kind may reach an installation in.
+ *
+ * A personal installation binds a member's own connection, so it serves that
+ * member's sessions and nothing else; the inverse holds because a shared thread
+ * acting through one person's credential would attribute their access to a room
+ * they share with others. Both directions are a lookup, never a judgement.
+ */
+function reachableScopeKinds(sessionScopeKind: ScopeKind): ScopeKind[] {
+  return sessionScopeKind === "personal" ? ["personal"] : ["org", "shared"];
+}
+
+/**
+ * Pick the installation that serves one tool call.
+ *
+ * Resolution commits to the narrowest scope in the chain that holds any active
+ * installation of the provider, and never leaves it. Inside that scope its
+ * installations are tried in order and the first that both exposes the tool and
+ * has it enabled wins; if none serves the call, the call fails. A wider scope
+ * is not consulted, because it holds a different connection, and the
+ * no-fallback credential rule is what stops a narrow installation's gap from
+ * silently escalating a call onto a broader credential
+ * ([06-connectors.md](../../../../../wiki/docs/specs/context/06-connectors.md)).
+ */
+export async function resolveConnectorTool(
   db: Database,
-  input: ExecuteConnectorToolInput,
-  catalog: ProviderCatalog,
-): Promise<SelectedInstallation> {
-  if (input.scopeIds.length === 0) {
+  input: ResolveConnectorToolInput,
+): Promise<ResolvedConnectorTool> {
+  const catalog = input.catalog ?? defaultCatalog;
+  if (input.scopeChain.length === 0) {
     throw new ConnectorToolValidationError("At least one connector scope is required");
   }
   const { catalogKey, toolName } = parseToolKey(input.toolKey);
@@ -241,41 +321,53 @@ async function resolveInstallation(
   const installations = await db.item.findMany({
     where: {
       orgId: input.orgId,
-      scopeId: { in: [...new Set(input.scopeIds)] },
+      scopeId: { in: [...new Set(input.scopeChain)] },
       kind: "connector",
       status: "active",
+      ...(input.sessionScopeKind
+        ? { scope: { kind: { in: reachableScopeKinds(input.sessionScopeKind) } } }
+        : {}),
     },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     select: { id: true, scopeId: true, body: true },
   });
 
-  for (const scopeId of input.scopeIds) {
-    for (const installation of installations) {
-      if (installation.scopeId !== scopeId || rawCatalogKey(installation.body) !== catalogKey) {
-        continue;
-      }
+  // Narrowest wins, and the chain arrives widest first.
+  for (const scopeId of [...input.scopeChain].reverse()) {
+    const atScope = installations.filter(
+      (installation) =>
+        installation.scopeId === scopeId && rawCatalogKey(installation.body) === catalogKey,
+    );
+    // The first scope holding this provider at all is the one that serves the
+    // call, whether or not it can. Everything below decides between that
+    // scope's own installations.
+    if (atScope.length === 0) continue;
+
+    for (const installation of atScope) {
       const parsed = createConnectorInstallationBodySchema(catalog).safeParse(installation.body);
       if (!parsed.success) {
         throw new ConnectorToolValidationError("Connector installation body is invalid");
       }
+      // A sibling at the same scope is a legitimate alternative — same scope,
+      // same reach — so both an unexposed tool and a disabled one move on to
+      // the next installation here, and to nothing at all beyond this scope.
       if (!providerExposesTool(provider, parsed.data, toolName)) continue;
-
       const effective = resolveInstallationTools(provider, parsed.data).find(
         (tool) => tool.name === toolName,
       );
-      if (!effective) {
-        // Selection has already happened. A broader installation must never
-        // become a credential fallback merely because this tool is disabled.
-        throw new ConnectorToolNotAvailableError(input.toolKey, installation.id);
-      }
+      if (!effective) continue;
+
       return {
-        id: installation.id,
-        body: parsed.data,
-        provider,
+        installationItemId: installation.id,
+        toolKey: input.toolKey,
+        connectorKey: provider.key,
         toolName,
         sensitivity: effective.sensitivity,
+        body: parsed.data,
+        provider,
       };
     }
+    throw new ConnectorToolNotAvailableError(input.toolKey, atScope[0]?.id);
   }
   throw new ConnectorToolNotAvailableError(input.toolKey);
 }
@@ -696,7 +788,7 @@ function argsRecord(args: unknown): JsonRecord {
 async function resolveCredential(
   db: Database,
   input: ExecuteConnectorToolInput,
-  installation: SelectedInstallation,
+  installation: ResolvedConnectorTool,
   catalog: ProviderCatalog,
 ): Promise<ResolvedConnectionCredential> {
   const resolved = await resolveConnectionCredential(db, {
@@ -719,7 +811,7 @@ async function resolveCredential(
 async function executeRest(
   db: Database,
   input: ExecuteConnectorToolInput,
-  installation: SelectedInstallation,
+  installation: ResolvedConnectorTool,
   catalog: ProviderCatalog,
   redactor: CredentialRedactor,
 ): Promise<RestConnectorToolResult> {
@@ -728,7 +820,9 @@ async function executeRest(
     throw new ConnectorToolValidationError("REST execution requested for an MCP connector");
   }
   const tool = provider.toolManifest.find(({ name }) => name === installation.toolName);
-  if (!tool) throw new ConnectorToolNotAvailableError(input.toolKey, installation.id);
+  if (!tool) {
+    throw new ConnectorToolNotAvailableError(input.toolKey, installation.installationItemId);
+  }
   const fetch = input.fetch ?? globalThis.fetch;
   const sleep = input.sleep ?? defaultSleep;
 
@@ -784,7 +878,7 @@ async function executeRest(
 async function executeMcp(
   db: Database,
   input: ExecuteConnectorToolInput,
-  installation: SelectedInstallation,
+  installation: ResolvedConnectorTool,
   catalog: ProviderCatalog,
   redactor: CredentialRedactor,
 ): Promise<McpConnectorToolResult> {
@@ -854,9 +948,9 @@ export async function executeConnectorTool(
   input: ExecuteConnectorToolInput,
 ): Promise<RestConnectorToolResult | McpConnectorToolResult> {
   const catalog = input.catalog ?? defaultCatalog;
-  let installation: SelectedInstallation;
+  let installation: ResolvedConnectorTool;
   try {
-    installation = await resolveInstallation(db, input, catalog);
+    installation = input.resolved ?? (await resolveConnectorTool(db, input));
   } catch (error) {
     if (
       error instanceof ConnectorToolValidationError ||
@@ -869,12 +963,12 @@ export async function executeConnectorTool(
   const connector = installation.provider.key;
   const tool = installation.toolName;
 
-  if (installation.sensitivity !== "read" && !input.allowSensitiveToolExecution) {
+  if (installation.sensitivity !== "read" && !input.authority) {
     log.warn("Connector tool call rejected", { connector, tool, reason: "approval_required" });
     throw new ConnectorApprovalRequiredError(
       input.toolKey,
       installation.sensitivity,
-      installation.id,
+      installation.installationItemId,
     );
   }
 
@@ -904,7 +998,7 @@ export async function executeConnectorTool(
         tool,
         durationMs,
         ...(error.status !== undefined ? { status: error.status } : {}),
-        error,
+        ...(error.providerCode !== undefined ? { providerCode: error.providerCode } : {}),
       };
       if (error.status !== undefined && error.status >= 400 && error.status < 500) {
         log.warn("Connector tool call failed", details);
@@ -919,7 +1013,16 @@ export async function executeConnectorTool(
     ) {
       log.warn("Connector tool call rejected", { connector, tool, reason: error.name });
     } else {
-      log.error("Connector tool call failed", { connector, tool, durationMs, error });
+      // Nothing on this path may log an error object as it stands: a provider
+      // library's error can carry the request it failed on, headers included.
+      // Name and redacted message only, and the redactor holds every credential
+      // string this call decrypted.
+      log.error("Connector tool call failed", {
+        connector,
+        tool,
+        durationMs,
+        ...redactedFailure(error, redactor),
+      });
     }
     throw error;
   }

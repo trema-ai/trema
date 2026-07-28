@@ -111,10 +111,152 @@ type RefreshExchangeResult = RefreshExchangeSuccess | RefreshExchangeFailure;
 
 const inFlightRefreshes = new Map<string, Promise<ResolvedConnectionCredential>>();
 
+const REDACTED = "[REDACTED]";
+
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/**
+ * The field names whose value is credential material. `token_type` is the one
+ * deliberate exclusion: it names a scheme (`Bearer`) rather than a token, and
+ * seeding a redactor with the word "Bearer" would splice `[REDACTED]` through
+ * every provider body that mentions it.
+ */
+const CREDENTIAL_FIELD_PATTERN = /token|secret|password|assertion|credential|api[_-]?key/i;
+
+/**
+ * The shortest string worth treating as a secret. A one- or two-word value in a
+ * credential field is far more likely to be a label than a token, and a short
+ * pattern would corrupt unrelated text everywhere it happened to appear.
+ */
+const MINIMUM_SECRET_LENGTH = 8;
+
+function credentialField(key: string): boolean {
+  return key !== "token_type" && CREDENTIAL_FIELD_PATTERN.test(key);
+}
+
+function addSecret(output: Set<string>, value: unknown): void {
+  if (typeof value === "string" && value.length >= MINIMUM_SECRET_LENGTH) output.add(value);
+}
+
+function collectKeyed(
+  value: unknown,
+  key: string,
+  output: Set<string>,
+  seen: WeakSet<object>,
+): void {
+  if (typeof value === "string") {
+    if (credentialField(key)) addSecret(output, value);
+    return;
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) return;
+  seen.add(value);
+  // A list inherits the field it sits under, so `{ tokens: [...] }` is still
+  // credential material and `{ scopes: [...] }` is still not.
+  if (Array.isArray(value)) {
+    for (const entry of value) collectKeyed(entry, key, output, seen);
+    return;
+  }
+  for (const [childKey, entry] of Object.entries(value)) {
+    collectKeyed(entry, childKey, output, seen);
+  }
+}
+
+/**
+ * Seed a redactor from credential material, and from nothing else.
+ *
+ * A decrypted payload is not uniformly secret: it carries `token_type`,
+ * granted scope URLs, a basic-auth username, an account label. Collecting every
+ * string in it would turn those into redaction patterns, which corrupts the
+ * provider bodies the proxy hands the model and can blank out the very error
+ * code a caller needs. So the walk is by field name, with one exception in
+ * either direction: a bare string is a secret the caller named outright — a
+ * master key, a client secret, a computed `Authorization` header — and is taken
+ * as given.
+ */
+export function collectCredentialStrings(value: unknown, output: Set<string>): void {
+  if (typeof value === "string") {
+    addSecret(output, value);
+    return;
+  }
+  collectKeyed(value, "", output, new WeakSet<object>());
+}
+
+/**
+ * A refresh holds the whole credential in clear text: the stored tokens, the
+ * client secret that authenticates the exchange, and the tokens the provider
+ * hands back. Anything leaving this module as a log line or an error string
+ * goes through the redactor first, because a transport failure or a chatty
+ * provider will happily echo the request body back at us.
+ */
+class CredentialRedactor {
+  readonly #values = new Set<string>();
+
+  add(value: unknown): void {
+    collectCredentialStrings(value, this.#values);
+  }
+
+  text(value: string): string {
+    let redacted = value;
+    for (const secret of [...this.#values].sort((left, right) => right.length - left.length)) {
+      if (secret.length > 0) redacted = redacted.split(secret).join(REDACTED);
+    }
+    return redacted;
+  }
+
+  contains(value: string): boolean {
+    return [...this.#values].some((secret) => secret.length > 0 && value.includes(secret));
+  }
+
+  /** A log-safe one-liner for a thrown value — never the raw object. */
+  describe(error: unknown): string {
+    return this.text(errorSummary(error));
+  }
+}
+
+function errorSummary(error: unknown, depth = 0): string {
+  if (typeof error === "string") return error;
+  if (typeof error === "number" || typeof error === "boolean") return String(error);
+  const record = recordValue(error);
+  if (!record) return "unknown error";
+  const name =
+    error instanceof Error ? error.name : typeof record.name === "string" ? record.name : "Error";
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof record.message === "string"
+        ? record.message
+        : "";
+  const code = typeof record.code === "string" ? record.code : undefined;
+  const cause =
+    depth < 3 && record.cause !== undefined && record.cause !== null
+      ? `; caused by ${errorSummary(record.cause, depth + 1)}`
+      : "";
+  return `${name}${code ? ` [${code}]` : ""}${message ? `: ${message}` : ""}${cause}`;
+}
+
+/**
+ * A rethrown error travels to callers that log it with their own rules, so a
+ * message that actually embeds a secret is scrubbed in place, stack included.
+ * The error keeps its class and identity; untainted messages are left exactly
+ * as they were.
+ */
+function redactErrorMessage(error: unknown, redactor: CredentialRedactor, depth = 0): void {
+  if (depth > 3 || !(error instanceof Error)) return;
+  if (redactor.contains(error.message)) {
+    try {
+      // V8 builds the stack string around the message header, so a tainted
+      // message is in the stack too — and a stack is what most loggers print.
+      if (typeof error.stack === "string") error.stack = redactor.text(error.stack);
+      error.message = redactor.text(error.message);
+    } catch {
+      // A frozen error keeps its message; the log line is redacted regardless.
+    }
+  }
+  redactErrorMessage(error.cause, redactor, depth + 1);
 }
 
 function credentialPayload(connection: ConnectorConnection, masterKey: string | undefined) {
@@ -122,7 +264,16 @@ function credentialPayload(connection: ConnectorConnection, masterKey: string | 
   try {
     value = decryptEnvelope<unknown>(connection.ciphertext, masterKey);
   } catch (error) {
-    log.error("Connector credential decryption failed", { connectionId: connection.id, error });
+    // Decryption failed, so no plaintext exists yet — but the key and the
+    // envelope do, and a cipher error is free to quote either one.
+    const redactor = new CredentialRedactor();
+    redactor.add(masterKey);
+    redactor.add(connection.ciphertext);
+    log.error("Connector credential decryption failed", {
+      connectionId: connection.id,
+      error: redactor.describe(error),
+    });
+    redactErrorMessage(error, redactor);
     throw error;
   }
   const payload = recordValue(value);
@@ -245,25 +396,23 @@ function tokenEndpointUrl(
     : undefined;
 }
 
-function safeCodeCandidate(value: unknown, sensitiveValues: readonly string[]): string | undefined {
+function safeCodeCandidate(value: unknown, redactor: CredentialRedactor): string | undefined {
   if (typeof value !== "string" || !/^[A-Za-z][A-Za-z0-9._:-]{0,127}$/.test(value)) {
     return undefined;
   }
-  return sensitiveValues.some((secret) => secret.length > 0 && value.includes(secret))
-    ? undefined
-    : value;
+  return redactor.contains(value) ? undefined : value;
 }
 
 function providerErrorCode(
   raw: Record<string, unknown> | undefined,
-  sensitiveValues: readonly string[],
+  redactor: CredentialRedactor,
 ): string | undefined {
   if (!raw) return undefined;
   const error = raw.error;
   return (
-    safeCodeCandidate(error, sensitiveValues) ??
-    safeCodeCandidate(recordValue(error)?.code, sensitiveValues) ??
-    safeCodeCandidate(raw.code, sensitiveValues)
+    safeCodeCandidate(error, redactor) ??
+    safeCodeCandidate(recordValue(error)?.code, redactor) ??
+    safeCodeCandidate(raw.code, redactor)
   );
 }
 
@@ -337,7 +486,9 @@ async function exchangeRefreshToken(
   provider: ProviderDef,
   input: ResolveConnectionCredentialInput,
   now: Date,
+  redactor: CredentialRedactor,
 ): Promise<RefreshExchangeResult> {
+  redactor.add(payload);
   const existingRefreshToken = refreshToken(payload);
   if (!existingRefreshToken) return { ok: false };
 
@@ -379,11 +530,13 @@ async function exchangeRefreshToken(
       clientId = client.clientId;
       clientSecret = client.clientSecret;
     }
+    redactor.add(clientId);
+    redactor.add(clientSecret);
   } catch (error) {
     log.warn("Connector refresh request preparation failed", {
       connectionId: connection.id,
       provider: connection.providerKey,
-      error,
+      error: redactor.describe(error),
     });
     return { ok: false };
   }
@@ -411,17 +564,11 @@ async function exchangeRefreshToken(
     log.warn("Connector refresh request preparation failed", {
       connectionId: connection.id,
       provider: connection.providerKey,
-      error,
+      error: redactor.describe(error),
     });
     return { ok: false };
   }
 
-  const sensitiveValues = [
-    existingRefreshToken,
-    typeof payload.accessToken === "string" ? payload.accessToken : "",
-    clientId,
-    clientSecret ?? "",
-  ];
   let response: Response;
   try {
     response = await (input.fetch ?? globalThis.fetch)(endpoint, {
@@ -431,17 +578,21 @@ async function exchangeRefreshToken(
       signal: AbortSignal.timeout(10_000),
     });
   } catch (error) {
+    // A transport error routinely carries the request it failed on, and the
+    // request is the refresh token.
     log.warn("Connector refresh token request failed", {
       connectionId: connection.id,
       provider: connection.providerKey,
-      error,
+      error: redactor.describe(error),
     });
     return { ok: false };
   }
 
   const raw = await parseResponseRecord(response);
   if (!response.ok) {
-    const code = providerErrorCode(raw, sensitiveValues);
+    // The failure body is not credential material and must not seed the
+    // redactor: its `error` field is the code we are trying to keep.
+    const code = providerErrorCode(raw, redactor);
     return {
       ok: false,
       status: response.status,
@@ -457,6 +608,9 @@ async function exchangeRefreshToken(
       ? raw.refresh_token
       : undefined;
   const expiresIn = numericExpiresIn(raw) ?? CONSERVATIVE_TOKEN_LIFETIME_SECONDS;
+  // The new tokens are secret from here on: everything downstream — the
+  // encrypt, the update, the outer catch — can fail while holding them.
+  redactor.add(raw);
   return {
     ok: true,
     raw,
@@ -535,6 +689,11 @@ async function resolveConnectionCredentialInternal(
   const catalog = input.catalog ?? defaultCatalog;
   const initial = await connectionRow(db, input.orgId, input.connectionId);
   const initialPayload = credentialPayload(initial, input.masterKey);
+  // One redactor spans the whole attempt: it collects the stored tokens here,
+  // the client secret and the rotated tokens inside the exchange, and guards
+  // the outer catch that sees failures from any of those stages.
+  const redactor = new CredentialRedactor();
+  redactor.add(initialPayload);
   assertConnectionAvailable(initial, initialPayload, now);
   const provider = providerFrom(catalog, initial.providerKey);
 
@@ -566,6 +725,7 @@ async function resolveConnectionCredentialInternal(
         // worker may have rotated the one-use refresh token while we waited.
         const connection = await connectionRow(transaction, input.orgId, input.connectionId);
         const payload = credentialPayload(connection, input.masterKey);
+        redactor.add(payload);
         assertConnectionAvailable(connection, payload, now);
         if (!connectionNeedsRefresh(connection, payload, provider, now)) {
           return { state: "resolved" as const, connection, payload };
@@ -588,6 +748,7 @@ async function resolveConnectionCredentialInternal(
           provider,
           input,
           now,
+          redactor,
         );
         if (!exchange.ok) {
           const isNewFailureWindow = connection.refreshFailureStartedAt === null;
@@ -704,9 +865,10 @@ async function resolveConnectionCredentialInternal(
     ) {
       log.error("Connector token refresh failed unexpectedly", {
         connectionId: input.connectionId,
-        error,
+        error: redactor.describe(error),
       });
     }
+    redactErrorMessage(error, redactor);
     throw error;
   }
 }

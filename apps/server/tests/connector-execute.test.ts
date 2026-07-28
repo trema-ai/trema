@@ -16,6 +16,7 @@ import { createAuth } from "#server/lib/auth/index.js";
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
+import { createLogger, withLogger } from "#server/lib/logger/index.js";
 import { connectorsRouter } from "#server/rpc/connectors.js";
 import { orgRouter } from "#server/rpc/org.js";
 import {
@@ -201,7 +202,7 @@ integration("connector tool execution", () => {
 
     await executeConnectorTool(db, {
       orgId: owner.org.id,
-      scopeIds: [owner.sharedScope.id, owner.orgScope.id],
+      scopeChain: [owner.orgScope.id, owner.sharedScope.id],
       principalId: owner.principal.id,
       toolKey: "google_workspace:search_messages",
       args: {},
@@ -220,7 +221,7 @@ integration("connector tool execution", () => {
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.sharedScope.id, owner.orgScope.id],
+        scopeChain: [owner.orgScope.id, owner.sharedScope.id],
         principalId: owner.principal.id,
         toolKey: "google_workspace:search_messages",
         args: {},
@@ -264,7 +265,7 @@ integration("connector tool execution", () => {
 
     const failure = await executeConnectorTool(db, {
       orgId: owner.org.id,
-      scopeIds: [owner.sharedScope.id, owner.orgScope.id],
+      scopeChain: [owner.orgScope.id, owner.sharedScope.id],
       principalId: owner.principal.id,
       toolKey: "google_workspace:get_message",
       args: { id: "gmail-id" },
@@ -296,7 +297,7 @@ integration("connector tool execution", () => {
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.orgScope.id],
+        scopeChain: [owner.orgScope.id],
         principalId: owner.principal.id,
         toolKey: "google_workspace:create_draft",
         args: { message: { raw: "body" } },
@@ -327,7 +328,7 @@ integration("connector tool execution", () => {
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.orgScope.id],
+        scopeChain: [owner.orgScope.id],
         principalId: owner.principal.id,
         toolKey: "google_workspace:search_messages",
         args: {},
@@ -338,7 +339,7 @@ integration("connector tool execution", () => {
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.orgScope.id],
+        scopeChain: [owner.orgScope.id],
         principalId: owner.principal.id,
         toolKey: "google_workspace:create_draft",
         args: { message: { raw: "body" } },
@@ -367,7 +368,7 @@ integration("connector tool execution", () => {
 
     await executeConnectorTool(db, {
       orgId: owner.org.id,
-      scopeIds: [owner.orgScope.id],
+      scopeChain: [owner.orgScope.id],
       principalId: owner.principal.id,
       toolKey: "google_workspace:get_message",
       args: { id: "a/b", format: "metadata" },
@@ -381,7 +382,7 @@ integration("connector tool execution", () => {
 
     await executeConnectorTool(db, {
       orgId: owner.org.id,
-      scopeIds: [owner.orgScope.id],
+      scopeChain: [owner.orgScope.id],
       principalId: owner.principal.id,
       toolKey: "google_workspace:create_event",
       args: {
@@ -391,7 +392,7 @@ integration("connector tool execution", () => {
       },
       masterKey,
       fetch,
-      allowSensitiveToolExecution: true,
+      authority: "policy_allowed",
     });
     const [postUrlValue, postInit] = fetch.mock.calls[1]!;
     const postUrl = new URL(String(postUrlValue));
@@ -422,7 +423,7 @@ integration("connector tool execution", () => {
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.orgScope.id],
+        scopeChain: [owner.orgScope.id],
         principalId: owner.principal.id,
         toolKey: "google_workspace:get_message",
         args: { format: "full" },
@@ -483,7 +484,7 @@ integration("connector tool execution", () => {
       const fetch: FetchMock = vi.fn(async () => jsonResponse({ ok: true }));
       await executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.orgScope.id],
+        scopeChain: [owner.orgScope.id],
         principalId: owner.principal.id,
         toolKey: testCase.toolKey,
         args: testCase.args,
@@ -518,7 +519,7 @@ integration("connector tool execution", () => {
 
     const failure = await executeConnectorTool(db, {
       orgId: owner.org.id,
-      scopeIds: [owner.orgScope.id],
+      scopeChain: [owner.orgScope.id],
       principalId: owner.principal.id,
       toolKey: "gamma:list_folders",
       args: {},
@@ -560,7 +561,7 @@ integration("connector tool execution", () => {
 
     await executeConnectorTool(db, {
       orgId: owner.org.id,
-      scopeIds: [owner.orgScope.id],
+      scopeChain: [owner.orgScope.id],
       principalId: owner.principal.id,
       toolKey: "zendesk:search",
       args: { query: "type:ticket" },
@@ -603,7 +604,7 @@ integration("connector tool execution", () => {
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.orgScope.id],
+        scopeChain: [owner.orgScope.id],
         principalId: owner.principal.id,
         toolKey: "zendesk:search",
         args: { query: "all" },
@@ -648,7 +649,7 @@ integration("connector tool execution", () => {
 
     const failure = await executeConnectorTool(db, {
       orgId: owner.org.id,
-      scopeIds: [owner.orgScope.id],
+      scopeChain: [owner.orgScope.id],
       principalId: owner.principal.id,
       toolKey: "google_workspace:search_messages",
       args: {},
@@ -659,6 +660,99 @@ integration("connector tool execution", () => {
     const serialized = `${String(failure)} ${JSON.stringify(failure)}`;
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain(refreshToken);
+  });
+
+  it("redacts the credential from a provider body without redacting words the credential mentions", async () => {
+    const owner = await fixture();
+    const token = "provider-body-access-token";
+    const grantedScope = "https://www.googleapis.com/auth/gmail.readonly";
+    const stored = await connection({
+      orgId: owner.org.id,
+      principalId: owner.principal.id,
+      providerKey: "google_workspace",
+      credential: {
+        accessToken: token,
+        raw: { access_token: token, token_type: "Bearer", scope: grantedScope },
+      },
+    });
+    await installation({
+      orgId: owner.org.id,
+      scopeId: owner.orgScope.id,
+      principalId: owner.principal.id,
+      catalogKey: "google_workspace",
+      connectionId: stored.id,
+    });
+    const fetch: FetchMock = vi.fn(async () =>
+      jsonResponse({
+        note: "Bearer authentication accepted",
+        scope: grantedScope,
+        echoed: token,
+      }),
+    );
+
+    const result = await executeConnectorTool(db, {
+      orgId: owner.org.id,
+      scopeChain: [owner.orgScope.id],
+      principalId: owner.principal.id,
+      toolKey: "google_workspace:search_messages",
+      args: {},
+      masterKey,
+      fetch,
+    });
+
+    // `token_type` and a granted scope are labels, not secrets. Treating them
+    // as secrets would hand the model a body with holes punched through it.
+    expect(result).toMatchObject({
+      body: {
+        note: "Bearer authentication accepted",
+        scope: grantedScope,
+        echoed: "[REDACTED]",
+      },
+    });
+  });
+
+  it("logs a failure nobody classified by name, with the credential taken out of its message", async () => {
+    const owner = await fixture();
+    const token = "unclassified-failure-token";
+    const stored = await connection({
+      orgId: owner.org.id,
+      principalId: owner.principal.id,
+      providerKey: "google_workspace",
+      credential: { accessToken: token },
+    });
+    await installation({
+      orgId: owner.org.id,
+      scopeId: owner.orgScope.id,
+      principalId: owner.principal.id,
+      catalogKey: "google_workspace",
+      connectionId: stored.id,
+    });
+    const fetch: FetchMock = vi.fn(async () => jsonResponse({ error: "rate_limited" }, 429));
+
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", write: (line) => lines.push(line) });
+    const failure = await withLogger(logger, () =>
+      executeConnectorTool(db, {
+        orgId: owner.org.id,
+        scopeChain: [owner.orgScope.id],
+        principalId: owner.principal.id,
+        toolKey: "google_workspace:search_messages",
+        args: {},
+        masterKey,
+        fetch,
+        // Something in the retry machinery breaks in a way this module has no
+        // vocabulary for, holding the credential in its message the way a
+        // provider library's error would.
+        sleep: () => Promise.reject(new Error(`boom ${token}`)),
+      }).catch((error: unknown) => error),
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    const written = lines.join("\n");
+    expect(written).toContain("Connector tool call failed");
+    expect(written).toContain("errorName=Error");
+    expect(written).toContain("[REDACTED]");
+    expect(written).not.toContain(token);
   });
 
   it("passes synced MCP tools through tools/call and closes the client", async () => {
@@ -703,7 +797,7 @@ integration("connector tool execution", () => {
     await expect(
       executeConnectorTool(db, {
         orgId: owner.org.id,
-        scopeIds: [owner.orgScope.id],
+        scopeChain: [owner.orgScope.id],
         principalId: owner.principal.id,
         toolKey: "notion:search_pages",
         args: { query: "roadmap" },
@@ -764,7 +858,7 @@ integration("connector tool execution", () => {
       call(
         connectorsRouter.tools.execute,
         {
-          scopeIds: [owner.orgScope.id],
+          scopeChain: [owner.orgScope.id],
           toolKey: "google_workspace:create_draft",
           args: { message: { raw: "body" } },
         },
@@ -799,7 +893,7 @@ integration("connector tool execution", () => {
       call(
         connectorsRouter.tools.execute,
         {
-          scopeIds: [owner.orgScope.id],
+          scopeChain: [owner.orgScope.id],
           toolKey: "google_workspace:search_messages",
           args: {},
         },

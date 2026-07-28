@@ -1,8 +1,47 @@
 export type ModelRole = "turns" | "utility" | "embed";
 
-export type ModelProtocol = "openai_compatible";
+export type ModelProtocol =
+  | "openai_compatible"
+  | "anthropic"
+  | "google"
+  | "openai_responses"
+  | "bedrock"
+  | "vertex";
 
-export type ModelCredentialMode = "api_key" | "none";
+export type ModelCredentialMode = "api_key" | "none" | "aws_sigv4" | "gcp_adc";
+
+/**
+ * Which credential modes each protocol takes, mirroring the record the registry
+ * enforces on write. It is here so the screens never offer a pair the server
+ * refuses, and the order is the server's order: the first entry is what a
+ * protocol defaults to, so a switch that invalidates the selected mode has
+ * somewhere to land.
+ */
+const credentialModes: Record<ModelProtocol, [ModelCredentialMode, ...ModelCredentialMode[]]> = {
+  openai_compatible: ["api_key", "none"],
+  anthropic: ["api_key", "none"],
+  google: ["api_key", "none"],
+  openai_responses: ["api_key", "none"],
+  bedrock: ["aws_sigv4"],
+  vertex: ["gcp_adc"],
+};
+
+export function allowedCredentialModes(
+  protocol: ModelProtocol,
+): [ModelCredentialMode, ...ModelCredentialMode[]] {
+  return credentialModes[protocol];
+}
+
+/**
+ * Protocol configuration a row carries, for the protocols that take any. Every
+ * field is optional because each protocol declares its own: a row's protocol
+ * says which are filled.
+ */
+export type ModelProviderSettings = {
+  region?: string | undefined;
+  project?: string | undefined;
+  location?: string | undefined;
+};
 
 export type CatalogEntry = {
   id: string;
@@ -22,6 +61,7 @@ export type ModelProvider = {
   hasCredential: boolean;
   catalog: CatalogEntry[];
   listQuery: Record<string, string>;
+  settings?: ModelProviderSettings | undefined;
   updatedAt: string;
 };
 
@@ -56,6 +96,7 @@ export type ModelProviderPreset = {
   credentialMode: ModelCredentialMode;
   icon?: string | undefined;
   listQuery?: Record<string, string> | undefined;
+  settings?: ModelProviderSettings | undefined;
 };
 
 /** What a catalog refresh wrote, or why it wrote nothing. */
@@ -104,12 +145,24 @@ const embedRole: RoleDescription = {
 export const roleDescriptions: RoleDescription[] = [turnsRole, utilityRole, embedRole];
 
 export function protocolLabel(protocol: string) {
-  const labels: Record<string, string> = { openai_compatible: "OpenAI-compatible" };
+  const labels: Record<string, string> = {
+    openai_compatible: "OpenAI-compatible",
+    anthropic: "Anthropic",
+    google: "Google",
+    openai_responses: "OpenAI Responses",
+    bedrock: "AWS Bedrock",
+    vertex: "Google Vertex",
+  };
   return labels[protocol] ?? protocol.replaceAll("_", " ");
 }
 
 export function credentialModeLabel(mode: string) {
-  const labels: Record<string, string> = { api_key: "API key", none: "No credential" };
+  const labels: Record<string, string> = {
+    api_key: "API key",
+    none: "No credential",
+    aws_sigv4: "AWS access key (SigV4)",
+    gcp_adc: "Google service account",
+  };
   return labels[mode] ?? mode.replaceAll("_", " ");
 }
 

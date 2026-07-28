@@ -107,7 +107,11 @@ export async function discoverMcpAuthServer(
       ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
     });
   } catch (error) {
-    log.warn("MCP OAuth discovery failed", { error });
+    // Reachable mid-refresh with tokens in scope — never log the raw error object.
+    log.warn("MCP OAuth discovery failed", {
+      serverUrl,
+      error: error instanceof Error ? `${error.name}: ${error.message}` : "unknown error",
+    });
     throw new McpOAuthDiscoveryError(
       `Could not discover the authorization server for ${serverUrl}: ${
         error instanceof Error ? error.message : "unknown error"

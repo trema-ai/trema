@@ -1,4 +1,4 @@
-import type { Item, ItemKind } from "#server/generated/prisma/client.js";
+import type { Item, ItemKind, ScopeKind } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
@@ -19,9 +19,19 @@ export interface DataPlaneSession {
   id: string;
   orgId: string;
   scopeId: string;
+  /** The session scope's kind. Connector resolution is isolated by it. */
+  scopeKind: ScopeKind;
   /** Scope IDs in resolution order, widest first. Reads never leave this list. */
   scopeChain: string[];
   actingPrincipalId: string;
+  /**
+   * The person the run is acting for, when they are linked to a principal. The
+   * audit tuple names them alongside the agent: an org's record of what its
+   * agent did in a connected system is incomplete without who asked for it.
+   */
+  requesterPrincipalId: string | null;
+  /** The requester's raw surface id, when no identity link resolved one. */
+  requesterExternalRef: string | null;
 }
 
 /**

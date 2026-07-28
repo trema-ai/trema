@@ -5,6 +5,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
+import { createLogger, withLogger } from "#server/lib/logger/index.js";
 import {
   ConnectorConnectionNotFoundError,
   ConnectorReconnectRequiredError,
@@ -491,6 +492,159 @@ integration("connector credential refresh", () => {
       refreshExhausted: true,
       lastRefreshFailure: exhaustedAt,
     });
+  });
+
+  it("redacts a transport failure that echoes the refresh token and client secret", async () => {
+    const now = new Date("2026-07-24T12:00:00.000Z");
+    const accessToken = "access-token-in-the-transport-error";
+    const refreshToken = "refresh-token-in-the-transport-error";
+    const clientSecret = "google-client-secret";
+    const owner = await connectorOwner();
+    const connection = await oauthConnection({
+      orgId: owner.org.id,
+      principalId: owner.principal.id,
+      accessToken,
+      refreshToken,
+      expiresAt: new Date(now.getTime() - 60_000),
+    });
+    // undici surfaces the request it failed on, and the request body is the
+    // refresh token and the client secret.
+    const fetch: FetchMock = vi.fn(async () => {
+      throw new TypeError("fetch failed", {
+        cause: new Error(
+          `POST https://oauth2.googleapis.com/token: grant_type=refresh_token&refresh_token=${refreshToken}&client_id=google-client-id&client_secret=${clientSecret}`,
+        ),
+      });
+    });
+
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", write: (line) => lines.push(line) });
+    const failure = await withLogger(logger, () =>
+      resolveConnectionCredential(db, {
+        orgId: owner.org.id,
+        connectionId: connection.id,
+        masterKey,
+        catalog: googleCatalog,
+        fetch,
+        now,
+      }).catch((error: unknown) => error),
+    );
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(failure).toBeInstanceOf(ConnectorReconnectRequiredError);
+    const logged = lines.join("\n");
+    expect(logged).toContain("Connector refresh token request failed");
+    expect(logged).toContain(`connectionId=${connection.id}`);
+    expect(logged).toContain("provider=google_workspace");
+    expect(logged).toContain("[REDACTED]");
+    for (const secret of [accessToken, refreshToken, clientSecret]) {
+      expect(logged).not.toContain(secret);
+      expect(String((failure as Error).message)).not.toContain(secret);
+      expect(String((failure as Error).stack)).not.toContain(secret);
+    }
+  });
+
+  it("redacts a provider failure body that echoes the refresh token and client secret", async () => {
+    const now = new Date("2026-07-24T12:00:00.000Z");
+    const accessToken = "access-token-in-the-provider-body";
+    const refreshToken = "refresh-token-in-the-provider-body";
+    const clientSecret = "google-client-secret";
+    const owner = await connectorOwner();
+    const connection = await oauthConnection({
+      orgId: owner.org.id,
+      principalId: owner.principal.id,
+      accessToken,
+      refreshToken,
+      expiresAt: new Date(now.getTime() - 60_000),
+    });
+    const fetch: FetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            // A code that embeds a secret is dropped; the clean one is kept.
+            error: { code: `denied.${clientSecret}` },
+            code: "invalid_grant",
+            error_description: `refresh_token ${refreshToken} rejected for client_secret ${clientSecret}`,
+            access_token: accessToken,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", write: (line) => lines.push(line) });
+    const failure = await withLogger(logger, () =>
+      resolveConnectionCredential(db, {
+        orgId: owner.org.id,
+        connectionId: connection.id,
+        masterKey,
+        catalog: googleCatalog,
+        fetch,
+        now,
+      }).catch((error: unknown) => error),
+    );
+
+    expect(failure).toBeInstanceOf(ConnectorReconnectRequiredError);
+    expect(failure).toMatchObject({
+      reason: "expired",
+      providerStatus: 400,
+      providerCode: "invalid_grant",
+    });
+    const logged = lines.join("\n");
+    expect(logged).toContain("Connector token refresh failed");
+    expect(logged).toContain("status=400");
+    expect(logged).toContain("reason=invalid_grant");
+    for (const secret of [accessToken, refreshToken, clientSecret]) {
+      expect(logged).not.toContain(secret);
+      expect(String((failure as Error).message)).not.toContain(secret);
+      expect(String((failure as Error).stack)).not.toContain(secret);
+    }
+  });
+
+  it("scrubs a tainted message out of a rethrown error's stack as well", async () => {
+    const now = new Date("2026-07-24T12:00:00.000Z");
+    const refreshToken = "refresh-token-in-the-rethrown-stack";
+    const owner = await connectorOwner();
+    const connection = await oauthConnection({
+      orgId: owner.org.id,
+      principalId: owner.principal.id,
+      refreshToken,
+      expiresAt: new Date(now.getTime() - 60_000),
+    });
+    // A failure with no class of its own, raised while reading the provider's
+    // answer. It travels back to a caller that will log it by its own rules,
+    // and a logger prints stacks: a V8 stack opens with the message.
+    const tainted = new Error(`grant_type=refresh_token&refresh_token=${refreshToken}`);
+    // Reading the stack once is what makes this bite: V8 formats it lazily and
+    // then keeps the string, so an error something has already inspected will
+    // not pick up a later correction to its message.
+    expect(tainted.stack).toContain(refreshToken);
+    const fetch: FetchMock = vi.fn(async () => {
+      const response = new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+      Object.defineProperty(response, "ok", {
+        get: () => {
+          throw tainted;
+        },
+      });
+      return response;
+    });
+
+    const failure = await resolveConnectionCredential(db, {
+      orgId: owner.org.id,
+      connectionId: connection.id,
+      masterKey,
+      catalog: googleCatalog,
+      fetch,
+      now,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBe(tainted);
+    expect(String((failure as Error).message)).not.toContain(refreshToken);
+    expect(String((failure as Error).stack)).not.toContain(refreshToken);
+    expect(String((failure as Error).stack)).toContain("[REDACTED]");
   });
 
   it("clears the entire failure streak after a successful refresh", async () => {

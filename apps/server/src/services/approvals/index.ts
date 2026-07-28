@@ -288,6 +288,14 @@ export interface RequestApprovalInput {
   args: unknown;
   /** The model's one-line justification, rendered to the approver. */
   reason: string;
+  /**
+   * What the approved call will run against, in the caller's own vocabulary —
+   * recorded here and handed back at claim time so the caller can compare it
+   * with what a re-resolution now says. This service records it and never
+   * reads it: what counts as "the same thing to run against" is a question
+   * only the caller can answer.
+   */
+  executionBinding?: Record<string, unknown>;
   ttlMs?: number;
   now?: Date;
 }
@@ -371,6 +379,9 @@ export async function requestApproval(
           allowRequesterApproval: requirement.allowRequesterApproval,
           requesterPrincipalId: session.requesterPrincipalId,
           requesterExternalRef: session.requesterExternalRef,
+          ...(input.executionBinding
+            ? { executionBinding: input.executionBinding as Prisma.InputJsonObject }
+            : {}),
           expiresAt: new Date(now.getTime() + (input.ttlMs ?? APPROVAL_TTL_MS)),
         },
       });
@@ -973,6 +984,13 @@ export interface ClaimApprovalInput {
  * At-most-once: the claim is a compare-and-swap on `executedAt`, so of any
  * number of concurrent executors exactly one proceeds and the rest are told the
  * call already ran.
+ *
+ * `expiresAt` is deliberately not one of them. It bounds how long a call waits
+ * on a person, and it is enforced where that wait ends, in `assertResolvable`.
+ * Once someone has said yes, the decision stands until it is executed: a
+ * separate window between approval and execution is a different promise — one
+ * nothing in the specs asks for yet — and adding it here would silently strand
+ * a resumed run that came back a day later with a granted approval in hand.
  */
 export async function claimApprovalExecution(
   db: Database,

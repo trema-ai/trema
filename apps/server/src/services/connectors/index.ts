@@ -59,6 +59,7 @@ export {
 } from "#server/services/connectors/connect.js";
 export {
   ConnectorApprovalRequiredError,
+  type ConnectorCallAuthority,
   ConnectorSsrfRejectedError,
   ConnectorToolNotAvailableError,
   ConnectorToolValidationError,
@@ -66,7 +67,10 @@ export {
   type ExecuteConnectorToolInput,
   executeConnectorTool,
   type McpConnectorToolResult,
+  type ResolveConnectorToolInput,
+  type ResolvedConnectorTool,
   type RestConnectorToolResult,
+  resolveConnectorTool,
 } from "#server/services/connectors/execute.js";
 export {
   type ArchiveConnectorInstallationInput,

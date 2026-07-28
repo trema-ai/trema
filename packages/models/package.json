@@ -26,6 +26,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "~5.0.32",
+    "@ai-sdk/anthropic": "^4.0.21",
+    "@ai-sdk/google": "^4.0.24",
+    "@ai-sdk/google-vertex": "5.0.31",
+    "@ai-sdk/openai": "~4.0.20",
     "@ai-sdk/openai-compatible": "^3.0.12",
     "@trema/harness": "workspace:*",
     "ai": "^7.0.31"
