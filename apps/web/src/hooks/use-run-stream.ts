@@ -67,6 +67,10 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
       projection: fold(runId, []),
       meta: emptyTimelineMeta(),
       malformed: 0,
+      // The read cursor: past every row seen, including rows the server
+      // skipped as malformed. The fold's `lastSeq` only advances on delivered
+      // events, so tailing from it would replay (and recount) skipped rows.
+      cursor: 0,
     };
     setSnapshot({
       phase: "loading",
@@ -102,6 +106,7 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
       const advanced = advanceTimeline(store.projection, store.meta, inputs);
       store.projection = advanced.projection;
       store.meta = advanced.meta;
+      store.cursor = Math.max(store.cursor, store.projection.lastSeq);
       store.malformed += malformed;
       const after = store.projection.status;
       if (source !== undefined) {
@@ -129,6 +134,8 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
         });
         if (cancelled) return;
         apply(page.events, page.malformed);
+        // The page cursor moves past server-skipped rows too.
+        store.cursor = Math.max(store.cursor, page.cursor);
         cursor = page.cursor;
         if (!page.hasMore) return;
       }
@@ -136,7 +143,7 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
 
     const openStream = () => {
       const stream = new EventSource(
-        `/api/v1/runs/${encodeURIComponent(runId)}/stream?after=${store.projection.lastSeq}`,
+        `/api/v1/runs/${encodeURIComponent(runId)}/stream?after=${store.cursor}`,
         { withCredentials: true },
       );
       source = stream;
@@ -156,10 +163,9 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
         if (cancelled || source !== stream) return;
         const seq = parseMalformedFrame((event as MessageEvent<unknown>).data);
         store.malformed += 1;
-        // Advance the cursor past the bad row so a reconnect never replays it.
-        if (seq !== null && seq > store.projection.lastSeq) {
-          store.projection = { ...store.projection, lastSeq: seq };
-        }
+        // Advance the read cursor past the bad row so a reconnect never
+        // replays it; the fold and meta cursors stay untouched and aligned.
+        if (seq !== null && seq > store.cursor) store.cursor = seq;
         publish("live");
       });
       stream.onerror = () => {
@@ -181,7 +187,7 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
         // events can repeat faster than pages return.
         if (reconciling) return;
         reconciling = true;
-        void loadPages(store.projection.lastSeq)
+        void loadPages(store.cursor)
           .catch(() => undefined)
           .finally(() => {
             reconciling = false;
@@ -203,6 +209,9 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
         isTerminalProjection(store.projection.status) ||
         isTerminalRunState(runStateRef.current)
       ) {
+        // The log can be ahead of the header read: a run that finished while
+        // history loaded still shows a live badge until the read refetches.
+        if (!isTerminalRunState(runStateRef.current)) settleHeader();
         publish("static");
         return;
       }
