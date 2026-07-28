@@ -246,6 +246,71 @@ integration("context sessions", () => {
     });
   });
 
+  it("refuses a web location that names another member, and leaves theirs open", async () => {
+    const org = await createOrg("Web Hijack Org");
+    const owner = await linkMember(org.org.id, org.orgScope.id, "Web Owner", "U-OWNER");
+    const other = await linkMember(org.org.id, org.orgScope.id, "Web Other", "U-OTHER");
+    const openWeb = (locationRef: string, principalId: string) =>
+      call(
+        sessionsRouter.open,
+        { surface: "web", locationRef, threadRef: "chat-1", requester: { principalId } },
+        { context: serviceContext(org.credential.secret) },
+      );
+
+    // The caller supplies the location ref, so nothing but this refusal keeps a
+    // service credential from claiming a chat that is not its requester's.
+    await expect(openWeb(owner.principal.id, other.principal.id)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      data: { code: "location_unbound" },
+    });
+    await expect(db.binding.count({ where: { orgId: org.org.id, surface: "web" } })).resolves.toBe(
+      0,
+    );
+    await expect(
+      db.scope.count({
+        where: {
+          orgId: org.org.id,
+          kind: "personal",
+          ownerId: { in: [owner.principal.id, other.principal.id] },
+        },
+      }),
+    ).resolves.toBe(0);
+
+    // And the member it named is not locked out of their own chat by it.
+    const opened = await openWeb(owner.principal.id, owner.principal.id);
+    const personal = await db.scope.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "personal", ownerId: owner.principal.id },
+    });
+    expect(opened.scopeChain.at(-1)?.id).toBe(personal.id);
+    expect(opened.actingPrincipalId).toBe(owner.principal.id);
+  });
+
+  it("gives an unknown surface no implicit location rule", async () => {
+    const org = await createOrg("Unknown Surface Org");
+    const member = await linkMember(org.org.id, org.orgScope.id, "Typo Human", "U-TYPO");
+
+    // `web` is the surface with no bindable locations; a surface the catalog
+    // never heard of resolves like any other unbound location.
+    await expect(
+      call(
+        sessionsRouter.open,
+        {
+          surface: "wbe",
+          locationRef: member.principal.id,
+          requester: { principalId: member.principal.id },
+        },
+        { context: serviceContext(org.credential.secret) },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND", data: { code: "location_unbound" } });
+
+    await expect(db.binding.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
+    await expect(
+      db.scope.count({
+        where: { orgId: org.org.id, kind: "personal", ownerId: member.principal.id },
+      }),
+    ).resolves.toBe(0);
+  });
+
   it("records an unlinked requester and refuses an unlinked DM or unbound location", async () => {
     const org = await createOrg();
     const shared = await call(scopesRouter.create, { name: "Helpdesk" }, { context: org.context });

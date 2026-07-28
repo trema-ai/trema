@@ -3,20 +3,21 @@ import { describe, expect, it } from "vitest";
 import type { Database } from "#server/lib/db/index.js";
 import {
   createBinding,
+  resolveLocation,
   SurfaceNotBindableError,
   UnknownSurfaceError,
 } from "#server/services/bindings/index.js";
 
-describe("createBinding", () => {
-  const db = new Proxy(
-    {},
-    {
-      get() {
-        throw new Error("surface validation must not query the database");
-      },
+const db = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error("surface validation must not query the database");
     },
-  ) as Database;
+  },
+) as Database;
 
+describe("createBinding", () => {
   it("rejects an unknown surface before querying the database", async () => {
     await expect(
       createBinding(db, {
@@ -39,5 +40,21 @@ describe("createBinding", () => {
         scopeId: "scope",
       }),
     ).rejects.toEqual(new SurfaceNotBindableError("Surface web has no bindable locations"));
+  });
+});
+
+describe("resolveLocation", () => {
+  it("refuses a direct location that names somebody other than its requester", async () => {
+    // The caller supplies the location ref, so a service credential could
+    // otherwise claim a member's chat — and, once a row existed, keep that
+    // member out of it. The refusal is a lookup, before any query runs.
+    await expect(
+      resolveLocation(db, {
+        orgId: "org",
+        surface: "web",
+        locationRef: "principal-a",
+        dm: { principal: { id: "principal-b", displayName: "Mallory" } },
+      }),
+    ).resolves.toEqual({ kind: "unbound" });
   });
 });

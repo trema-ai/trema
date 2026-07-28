@@ -16,7 +16,7 @@ import {
   assembleStanding,
   type StandingCandidate,
 } from "#server/services/sessions/standing.js";
-import { isLocationBindable } from "#server/services/surfaces/index.js";
+import { getSurface } from "#server/services/surfaces/index.js";
 
 export const SESSION_TOKEN_PREFIX = "trema_ses_";
 
@@ -174,12 +174,17 @@ async function resolveRequester(
  * needed. That is the web rule, read off the catalog rather than off a surface
  * id, and it stays pure lookup: web + requesting principal → that principal's
  * personal scope.
+ *
+ * It is a rule about a *known* surface. A surface the catalog has never heard
+ * of is not "not bindable", it is not a surface: it falls through to ordinary
+ * resolution, which finds no binding and reports `location_unbound`.
  */
 function directRequester(
   input: OpenSessionInput,
   requester: ResolvedRequester,
 ): Pick<ResolveLocationInput, "dm"> {
-  if (!isLocationBindable(input.surface)) {
+  const surface = getSurface(input.surface);
+  if (surface !== undefined && !surface.locationBindable) {
     if (!requester.principal) {
       throw new SessionValidationError(
         `A ${input.surface} session requires a requesting principal`,

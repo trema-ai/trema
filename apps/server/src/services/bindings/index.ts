@@ -233,10 +233,78 @@ async function personalScopesEnabled(db: Database, orgId: string): Promise<boole
   return org?.personalScopesEnabled ?? false;
 }
 
+/**
+ * Records where a personal scope became reachable.
+ *
+ * The implicit binding persists so admins can see where personal scopes are
+ * reachable — the spec keeps it as audit metadata, for web exactly as for a DM,
+ * which is why the row existing never makes the surface bindable. A concurrent
+ * first message loses the unique race harmlessly.
+ */
+async function recordImplicitBinding(
+  db: Database,
+  input: Pick<ResolveLocationInput, "orgId" | "surface" | "locationRef">,
+  scopeId: string,
+): Promise<void> {
+  try {
+    await db.binding.create({
+      data: {
+        orgId: input.orgId,
+        surface: input.surface,
+        locationRef: input.locationRef,
+        scopeId,
+      },
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
+}
+
+/**
+ * Resolves a location whose requester is a principal — the web rule.
+ *
+ * Such a surface gives a member exactly one location, their own chat with the
+ * agent, so the location *is* the principal: the ref names them, and identity
+ * is read off the requester rather than off a binding row. A caller naming
+ * anybody else names a location that does not exist on this surface, which is
+ * what keeps a service credential from claiming a member's chat — and, because
+ * nothing here trusts the row, from locking that member out of it either. The
+ * row is written afterwards as audit metadata and never read back for identity.
+ */
+async function resolveDirectPrincipal(
+  db: Database,
+  input: ResolveLocationInput,
+  principal: { id: string; displayName: string },
+): Promise<ResolveLocationResult> {
+  if (input.locationRef !== principal.id) {
+    log.warn("Direct location does not name its requester", { surface: input.surface });
+    return { kind: "unbound" };
+  }
+  // Off means off, before any row is consulted: a location that resolved
+  // yesterday stops resolving. Nothing is destroyed; re-enabling restores it.
+  if (!(await personalScopesEnabled(db, input.orgId))) {
+    return { kind: "personal_disabled" };
+  }
+
+  const scope = await ensurePersonalScope(db, {
+    orgId: input.orgId,
+    principalId: principal.id,
+    displayName: principal.displayName,
+  });
+  await recordImplicitBinding(db, input, scope.id);
+  return { kind: "scope", scope };
+}
+
 export async function resolveLocation(
   db: Database,
   input: ResolveLocationInput,
 ): Promise<ResolveLocationResult> {
+  // Resolved before any lookup: on a surface that names its requester directly
+  // the binding row is a record of the resolution, never its input.
+  if (input.dm !== undefined && "principal" in input.dm) {
+    return resolveDirectPrincipal(db, input, input.dm.principal);
+  }
+
   const binding = await db.binding.findUnique({
     where: {
       orgId_surface_locationRef: {
@@ -262,53 +330,32 @@ export async function resolveLocation(
     return { kind: "personal_disabled" };
   }
 
-  // Web skips the identity link entirely: its author is already a principal,
-  // so resolution is a lookup on that principal's personal scope. Every other
-  // surface must first map an external identity onto one.
-  let owner: { id: string; displayName: string };
-  if ("principal" in input.dm) {
-    owner = input.dm.principal;
-  } else {
-    const identity = await db.identityLink.findUnique({
-      where: {
-        orgId_surface_externalUserId: {
-          orgId: input.orgId,
-          surface: input.surface,
-          externalUserId: input.dm.externalUserId,
-        },
-      },
-      include: { principal: true },
-    });
-    if (identity?.principal.kind !== "human") {
-      return {
-        kind: "unlinked",
+  // A surface carrying external identities maps the sender onto a principal
+  // first; web, which needs no link step, never reaches here.
+  const identity = await db.identityLink.findUnique({
+    where: {
+      orgId_surface_externalUserId: {
+        orgId: input.orgId,
         surface: input.surface,
         externalUserId: input.dm.externalUserId,
-      };
-    }
-    owner = identity.principal;
+      },
+    },
+    include: { principal: true },
+  });
+  if (identity?.principal.kind !== "human") {
+    return {
+      kind: "unlinked",
+      surface: input.surface,
+      externalUserId: input.dm.externalUserId,
+    };
   }
+  const owner = identity.principal;
 
   const scope = await ensurePersonalScope(db, {
     orgId: input.orgId,
     principalId: owner.id,
     displayName: owner.displayName,
   });
-  // The implicit binding persists so admins can see where personal scopes are
-  // reachable — the spec keeps it as audit metadata, for web exactly as for a
-  // DM, which is why the row existing never makes the surface bindable. A
-  // concurrent first message loses the unique race harmlessly.
-  try {
-    await db.binding.create({
-      data: {
-        orgId: input.orgId,
-        surface: input.surface,
-        locationRef: input.locationRef,
-        scopeId: scope.id,
-      },
-    });
-  } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
-  }
+  await recordImplicitBinding(db, input, scope.id);
   return { kind: "scope", scope };
 }
