@@ -93,8 +93,8 @@
       "description": "The gated calls waiting on a person, and the decisions taken on them."
     },
     {
-      "name": "Runs",
-      "description": "Starting agent work from a script or another system."
+      "name": "Intents",
+      "description": "The one write seam for conversational input, from a script or another system."
     },
     {
       "name": "Schedules",
@@ -5124,6 +5124,129 @@
         "security": [
           {
             "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/intents": {
+      "post": {
+        "operationId": "intents.submit",
+        "summary": "Submit an intent",
+        "description": "Enter an intent into the thread's dispatch, exactly as a chat surface would. A message lands on the thread: an active run absorbs it, otherwise a new run starts. The response reports where the intent landed and never waits for execution: observe progress through the run's event stream.",
+        "tags": [
+          "Intents"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "intentId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Retry the same call with the same id to reach the same run exactly once."
+                  },
+                  "locationRef": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The surface-specific location identifier. It must be bound to a scope."
+                  },
+                  "surface": {
+                    "type": "string",
+                    "minLength": 1,
+                    "default": "api",
+                    "description": "The integration surface the location belongs to."
+                  },
+                  "threadRef": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The thread to join. It defaults to the surface and location."
+                  },
+                  "intent": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "const": "message",
+                            "description": "Says something to the agent on the thread."
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "What the message says."
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "text"
+                        ],
+                        "description": "A message for the thread."
+                      }
+                    ],
+                    "description": "What the caller is doing."
+                  }
+                },
+                "required": [
+                  "intentId",
+                  "locationRef",
+                  "intent"
+                ],
+                "description": "Where the intent goes and what it asks for."
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The run the intent landed on. Null when a duplicate call is still routing."
+                    },
+                    "outcome": {
+                      "enum": [
+                        "started",
+                        "steered",
+                        "follow-up",
+                        "duplicate"
+                      ],
+                      "type": "string",
+                      "description": "`started` created a run, `steered` added the message to the active run, `follow-up` queued it behind a run that is finishing, `duplicate` repeated a used id."
+                    },
+                    "threadRef": {
+                      "type": "string",
+                      "description": "The thread the intent landed on."
+                    }
+                  },
+                  "required": [
+                    "runId",
+                    "outcome",
+                    "threadRef"
+                  ],
+                  "description": "Where the intent landed."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "serviceCredential": []
           }
         ]
       }
@@ -11325,109 +11448,6 @@
         ]
       }
     },
-    "/runs": {
-      "post": {
-        "operationId": "runs.create",
-        "summary": "Start a run",
-        "description": "Enter a message into the thread's dispatch, exactly as a chat surface would. An active run on the thread absorbs the message; otherwise a new run starts. The response reports where the message landed and never waits for execution: observe progress through the run's event stream.",
-        "tags": [
-          "Runs"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "locationRef": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "The surface-specific location identifier. It must be bound to a scope."
-                  },
-                  "surface": {
-                    "type": "string",
-                    "minLength": 1,
-                    "default": "api",
-                    "description": "The integration surface the location belongs to."
-                  },
-                  "threadRef": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "The thread to join. It defaults to the surface and location."
-                  },
-                  "message": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "The message the run starts from, or the steering it adds to an active run."
-                  },
-                  "idempotencyKey": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Retry the same call with the same key to reach the same run exactly once."
-                  }
-                },
-                "required": [
-                  "locationRef",
-                  "message",
-                  "idempotencyKey"
-                ],
-                "description": "Where the message goes and what it says."
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "runId": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "The run the message landed on. Null when a duplicate call is still routing."
-                    },
-                    "outcome": {
-                      "enum": [
-                        "started",
-                        "steered",
-                        "duplicate"
-                      ],
-                      "type": "string",
-                      "description": "`started` created a run, `steered` added the message to the active run, `duplicate` repeated a used key."
-                    },
-                    "threadRef": {
-                      "type": "string",
-                      "description": "The thread the message landed on."
-                    }
-                  },
-                  "required": [
-                    "runId",
-                    "outcome",
-                    "threadRef"
-                  ],
-                  "description": "Where the message landed."
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "serviceCredential": []
-          }
-        ]
-      }
-    },
     "/schedules": {
       "post": {
         "operationId": "schedules.create",
@@ -14268,14 +14288,24 @@
                         ],
                         "type": "string",
                         "description": "Whether the surface is planned or available through an installed integration."
+                      },
+                      "builtIn": {
+                        "type": "boolean",
+                        "description": "Whether the surface ships with the deployment instead of arriving with an installed integration."
+                      },
+                      "locationBindable": {
+                        "type": "boolean",
+                        "description": "Whether the surface's locations can be bound to a scope. A surface that is not location-bindable resolves implicitly and has nothing to pick: web chat is one location per member, resolving to that member's personal scope."
                       }
                     },
                     "required": [
                       "id",
                       "name",
-                      "status"
+                      "status",
+                      "builtIn",
+                      "locationBindable"
                     ],
-                    "description": "An integration-backed surface that can provide bindable locations."
+                    "description": "A surface that can carry conversations, and how its locations reach a scope."
                   },
                   "description": "The surface catalog."
                 }

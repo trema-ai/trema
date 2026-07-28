@@ -85,12 +85,16 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   let usage = sumUsage(committed.map(({ usage: turnUsage }) => turnUsage));
   let turn = committed.length;
   let lastStopReason: StopReason = "stop";
+  // Input drained for the turn being built. It is committed with that turn,
+  // which is what lets a later execution replay it (see `TurnRecord.input`).
+  let turnInput: TranscriptMessage[] = [];
 
   while (true) {
     while (true) {
       const eventCursor = await input.store.eventCursor(input.runId);
       const usageBeforeTurn = usage;
       const steering = await input.store.drainSteering(input.runId);
+      turnInput.push(...steering.map(({ message }) => message));
       messages.push(...steering.map(({ message }) => message));
       const steeringEvents: RunEventData[] = steering.map(({ author, message }) => ({
         type: "steering",
@@ -157,7 +161,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
           message: "model port reported paused without a blocking elicitation",
           recoverable: false,
         });
-        await commit(input, turn, prepared.model, result, toolResults);
+        await commit(input, turn, prepared.model, turnInput, result, toolResults);
         observeCommit(input, turn, result, toolResults);
         return {
           status: "finished",
@@ -180,7 +184,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
             usage: usageBeforeTurn,
           };
         }
-        await commit(input, turn, prepared.model, result, toolResults);
+        await commit(input, turn, prepared.model, turnInput, result, toolResults);
         observeCommit(input, turn, result, toolResults);
         return {
           status: "finished",
@@ -232,26 +236,36 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
               ? "awaiting_approval"
               : "awaiting_input"
             : undefined;
-        await commit(input, turn, prepared.model, pausedResult, toolResults, pendingToolCall, {
-          events: [pause, { type: "segment-end", reason: "paused" }],
-          ...(state === undefined ? {} : { state }),
-          elicitation: {
-            runId: input.runId,
-            event: pause,
-            ...(input.elicitationExpiresAt === undefined
-              ? {}
-              : { expiresAt: input.elicitationExpiresAt }),
+        await commit(
+          input,
+          turn,
+          prepared.model,
+          turnInput,
+          pausedResult,
+          toolResults,
+          pendingToolCall,
+          {
+            events: [pause, { type: "segment-end", reason: "paused" }],
+            ...(state === undefined ? {} : { state }),
+            elicitation: {
+              runId: input.runId,
+              event: pause,
+              ...(input.elicitationExpiresAt === undefined
+                ? {}
+                : { expiresAt: input.elicitationExpiresAt }),
+            },
           },
-        });
+        );
         observeCommit(input, turn, pausedResult, toolResults);
         return { status: "paused", stopReason: "paused", turn, elicitation: pause, usage };
       }
 
       const contextAfterTurn = [...messages, result.message, ...toolResults];
       const stop = await shouldStop(input, turn, result, contextAfterTurn);
-      await commit(input, turn, prepared.model, result, toolResults);
+      await commit(input, turn, prepared.model, turnInput, result, toolResults);
       observeCommit(input, turn, result, toolResults);
       messages.push(result.message, ...toolResults);
+      turnInput = [];
       turn += 1;
 
       if (stop || turn >= (input.maxTurns ?? DEFAULT_MAX_TURNS)) {
@@ -271,6 +285,21 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
 
     const followUps = await input.store.drainFollowUps(input.threadRef);
     if (followUps.length > 0) {
+      // The answer that just ended is a finished segment: what a follow-up
+      // draws is the next surface message, not more of the last one. The
+      // follow-ups themselves land as `steering` events — the log's record of a
+      // user message this run absorbed, without which the thread would show an
+      // answer to a question nobody asked.
+      const followUpEvents: RunEventData[] = [
+        { type: "segment-end", reason: "completed" },
+        ...followUps.map(({ author, message }) => ({
+          type: "steering" as const,
+          author,
+          text: messageText(message),
+        })),
+      ];
+      await appendEvents(input, followUpEvents);
+      turnInput.push(...followUps.map(({ message }) => message));
       messages.push(...followUps.map(({ message }) => message));
       continue;
     }
@@ -383,6 +412,7 @@ async function commit(
   input: LoopInput,
   turn: number,
   model: ModelRef,
+  turnInput: TranscriptMessage[],
   result: TurnResult,
   toolResults: TranscriptMessage[],
   pendingToolCall?: TurnRecord["pendingToolCall"],
@@ -393,6 +423,7 @@ async function commit(
       runId: input.runId,
       index: turn,
       model,
+      ...(turnInput.length === 0 ? {} : { input: [...turnInput] }),
       message: result.message,
       toolResults,
       ...(pendingToolCall === undefined ? {} : { pendingToolCall }),
@@ -443,13 +474,25 @@ function observeCommit(
   }
 }
 
+/**
+ * Rebuilds the model context from durable state alone.
+ *
+ * The thread's record covers the runs that came before; this run contributes
+ * its committed turns, each one carrying the input it was given before its
+ * output — so a resumed execution shows the model the same conversation the
+ * first execution did, in the same order.
+ */
 function assembleCommittedMessages(
   threadMessages: TranscriptMessage[],
   turns: TurnRecord[],
 ): TranscriptMessage[] {
   return [
     ...threadMessages,
-    ...turns.flatMap(({ message, toolResults }) => [message, ...toolResults]),
+    ...turns.flatMap(({ input, message, toolResults }) => [
+      ...(input ?? []),
+      message,
+      ...toolResults,
+    ]),
   ];
 }
 

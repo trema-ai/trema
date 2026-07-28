@@ -360,6 +360,94 @@ describe("runLoop", () => {
     });
   });
 
+  it("replays steering-delivered messages when a parked run resumes", async () => {
+    const elicitation: Extract<RunEventData, { type: "elicitation" }> = {
+      type: "elicitation",
+      elicitationId: "elicit-1",
+      kind: "approval",
+      prompt: "Proceed?",
+      reference: { callId: "call-2" },
+      options: [{ id: "approve", label: "Approve" }],
+      blocking: true,
+    };
+    const fixture = await setup([]);
+    await fixture.store.enqueueSteering("run-1", {
+      id: "steer-open",
+      author,
+      message: message("user", "check staging"),
+    });
+    // biome-ignore lint/correctness/useYield: fixture is a deliberately empty event stream that only performs a side effect
+    async function* firstEvents(): AsyncIterable<RunEventData> {
+      await fixture.store.enqueueSteering("run-1", {
+        id: "steer-mid",
+        author,
+        message: message("user", "also check production"),
+      });
+    }
+    fixture.model = new FauxModelPort([
+      {
+        events: firstEvents(),
+        result: result("looking", "toolUse", [{ callId: "call-1", name: "lookup", input: {} }]),
+      },
+      {
+        events: [elicitation],
+        result: {
+          message: {
+            role: "assistant",
+            blocks: [
+              { type: "text", text: "I need approval" },
+              { type: "toolCall", callId: "call-2", name: "lookup", input: {} },
+            ],
+          },
+          toolCalls: [{ callId: "call-2", name: "lookup", input: {} }],
+          stopReason: "paused",
+          usage,
+        },
+      },
+      { events: [], result: result("both are healthy") },
+    ]);
+
+    const paused = await runLoop(loopInput(fixture));
+    expect(paused).toMatchObject({ status: "paused", elicitation });
+    await fixture.store.resolveElicitation("elicit-1", {
+      optionId: "approve",
+      decision: "approved",
+      scope: "once",
+      by: author,
+      at: clock.now(),
+    });
+
+    // A resume is a fresh execution reading the log; nothing survives in memory.
+    const resumed = await runLoop(loopInput(fixture));
+
+    expect(resumed).toMatchObject({ status: "finished", outcome: "completed" });
+    expect(fixture.model.turnRequests[2]?.messages).toEqual([
+      message("user", "start"),
+      message("user", "check staging"),
+      message("assistant", "looking"),
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        status: "ok",
+        blocks: [{ type: "text", text: '{"received":{}}' }],
+      },
+      message("user", "also check production"),
+      {
+        role: "assistant",
+        blocks: [
+          { type: "text", text: "I need approval" },
+          { type: "toolCall", callId: "call-2", name: "lookup", input: {} },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-2",
+        status: "ok",
+        blocks: [{ type: "text", text: '{"received":{}}' }],
+      },
+    ]);
+  });
+
   it("drains follow-ups only after the run would otherwise end", async () => {
     const fixture = await setup([]);
     // biome-ignore lint/correctness/useYield: fixture is a deliberately empty event stream that only performs a side effect
@@ -382,6 +470,14 @@ describe("runLoop", () => {
       message("user", "start"),
       message("assistant", "first answer"),
       message("user", "one more thing"),
+    ]);
+    // The answer is a finished segment and the follow-up is a message the run
+    // absorbed: both are facts of the log, so the thread can be read back from
+    // it without knowing what was queued.
+    const events = (await fixture.store.listEvents("run-1")).map(({ event }) => event);
+    expect(events).toEqual([
+      { type: "segment-end", reason: "completed" },
+      { type: "steering", author, text: "one more thing" },
     ]);
   });
 

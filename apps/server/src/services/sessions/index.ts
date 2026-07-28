@@ -9,13 +9,14 @@ import type {
 } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
-import { resolveLocation } from "#server/services/bindings/index.js";
+import { type ResolveLocationInput, resolveLocation } from "#server/services/bindings/index.js";
 import { type PolicySnapshot, resolvePolicySnapshot } from "#server/services/policies/index.js";
 import {
   type AssembledStanding,
   assembleStanding,
   type StandingCandidate,
 } from "#server/services/sessions/standing.js";
+import { getSurface } from "#server/services/surfaces/index.js";
 
 export const SESSION_TOKEN_PREFIX = "trema_ses_";
 
@@ -95,7 +96,11 @@ export interface OpenSessionInput {
   orgId: string;
   surface: string;
   locationRef: string;
-  /** Marks a one-to-one conversation with the agent, which resolves to a personal scope. */
+  /**
+   * Marks a one-to-one conversation with the agent, which resolves to a
+   * personal scope. Surfaces with no bindable locations — web — need no flag:
+   * every location on them is one, and the requesting principal names the owner.
+   */
   dm?: boolean;
   threadRef?: string;
   requester?: SessionRequester;
@@ -113,7 +118,7 @@ export interface OpenSessionResult {
 }
 
 interface ResolvedRequester {
-  principalId: string | null;
+  principal: { id: string; displayName: string } | null;
   externalRef: string | null;
 }
 
@@ -124,12 +129,12 @@ async function resolveRequester(
   requester: SessionRequester | undefined,
 ): Promise<ResolvedRequester> {
   // A scheduled run has no requester at all.
-  if (!requester) return { principalId: null, externalRef: null };
+  if (!requester) return { principal: null, externalRef: null };
 
   if ("principalId" in requester) {
     const principal = await db.principal.findFirst({
       where: { id: requester.principalId, orgId },
-      select: { id: true, kind: true, deactivatedAt: true },
+      select: { id: true, kind: true, displayName: true, deactivatedAt: true },
     });
     if (!principal) throw new SessionValidationError("Requester principal not found");
     if (principal.kind !== "human") {
@@ -138,38 +143,78 @@ async function resolveRequester(
     if (principal.deactivatedAt) {
       throw new SessionValidationError("Requester principal is deactivated");
     }
-    return { principalId: principal.id, externalRef: null };
+    return {
+      principal: { id: principal.id, displayName: principal.displayName },
+      externalRef: null,
+    };
   }
 
   const link = await db.identityLink.findUnique({
     where: {
       orgId_surface_externalUserId: { orgId, surface, externalUserId: requester.externalUserId },
     },
-    include: { principal: { select: { id: true, kind: true } } },
+    include: { principal: { select: { id: true, kind: true, displayName: true } } },
   });
   // An unlinked surface user may still trigger work in a shared scope; the raw
   // id is recorded so the audit trail names who asked.
   if (link?.principal.kind !== "human") {
-    return { principalId: null, externalRef: requester.externalUserId };
+    return { principal: null, externalRef: requester.externalUserId };
   }
-  return { principalId: link.principal.id, externalRef: requester.externalUserId };
+  return {
+    principal: { id: link.principal.id, displayName: link.principal.displayName },
+    externalRef: requester.externalUserId,
+  };
 }
 
-async function resolveScope(db: Database, input: OpenSessionInput): Promise<Scope> {
+/**
+ * Which one-to-one requester, if any, this location resolves through. A
+ * surface whose locations cannot be bound has exactly one location per member —
+ * their own chat with the agent — so every location on it is a one-to-one
+ * conversation with the requesting principal, no `dm` flag and no identity link
+ * needed. That is the web rule, read off the catalog rather than off a surface
+ * id, and it stays pure lookup: web + requesting principal → that principal's
+ * personal scope.
+ *
+ * It is a rule about a *known* surface. A surface the catalog has never heard
+ * of is not "not bindable", it is not a surface: it falls through to ordinary
+ * resolution, which finds no binding and reports `location_unbound`.
+ */
+function directRequester(
+  input: OpenSessionInput,
+  requester: ResolvedRequester,
+): Pick<ResolveLocationInput, "dm"> {
+  const surface = getSurface(input.surface);
+  if (surface !== undefined && !surface.locationBindable) {
+    if (!requester.principal) {
+      throw new SessionValidationError(
+        `A ${input.surface} session requires a requesting principal`,
+      );
+    }
+    return { dm: { principal: requester.principal } };
+  }
+
   const externalUserId =
     input.requester && "externalUserId" in input.requester
       ? input.requester.externalUserId
       : undefined;
-  // A one-to-one conversation resolves through the sender's surface identity,
-  // so the harness must say who sent it.
+  // A one-to-one conversation on a bindable surface resolves through the
+  // sender's surface identity, so the harness must say who sent it.
   if (input.dm && !externalUserId) {
     throw new SessionValidationError("A direct-message session requires a surface requester");
   }
+  return input.dm && externalUserId ? { dm: { externalUserId } } : {};
+}
+
+async function resolveScope(
+  db: Database,
+  input: OpenSessionInput,
+  requester: ResolvedRequester,
+): Promise<Scope> {
   const resolved = await resolveLocation(db, {
     orgId: input.orgId,
     surface: input.surface,
     locationRef: input.locationRef,
-    ...(input.dm && externalUserId ? { dm: { externalUserId } } : {}),
+    ...directRequester(input, requester),
   });
 
   if (resolved.kind === "scope") return resolved.scope;
@@ -226,10 +271,10 @@ async function resolveActingPrincipal(
     if (!scope.ownerId) throw new SessionValidationError("Personal scope has no owner");
     // A personal session acts as the human it belongs to, so only that human
     // can open one.
-    if (requester.principalId && requester.principalId !== scope.ownerId) {
+    if (requester.principal && requester.principal.id !== scope.ownerId) {
       throw new SessionValidationError("Only a personal scope's owner can open a session in it");
     }
-    if (!requester.principalId) {
+    if (!requester.principal) {
       throw new SessionValidationError("A personal session requires a linked requester");
     }
     const owner = await db.principal.findFirst({ where: { id: scope.ownerId, orgId } });
@@ -297,8 +342,10 @@ export async function openSession(
   input: OpenSessionInput,
 ): Promise<OpenSessionResult> {
   const now = input.now ?? new Date();
-  const scope = await resolveScope(db, input);
+  // The requester resolves first: a surface with no bindable locations resolves
+  // its scope through that principal.
   const requester = await resolveRequester(db, input.orgId, input.surface, input.requester);
+  const scope = await resolveScope(db, input, requester);
   const actingPrincipal = await resolveActingPrincipal(db, input.orgId, scope, requester);
   const scopeChain = await resolveScopeChain(db, input.orgId, scope);
   const scopeChainIds = scopeChain.map(({ id }) => id);
@@ -340,7 +387,7 @@ export async function openSession(
         mode,
         scopeChain: scopeChainIds,
         actingPrincipalId: actingPrincipal.id,
-        requesterPrincipalId: requester.principalId,
+        requesterPrincipalId: requester.principal?.id ?? null,
         requesterExternalRef: requester.externalRef,
         standing: {
           ...standing.standing,

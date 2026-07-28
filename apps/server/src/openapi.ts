@@ -135,8 +135,9 @@ export function generateOpenApiDocument() {
         description: "The gated calls waiting on a person, and the decisions taken on them.",
       },
       {
-        name: "Runs",
-        description: "Starting agent work from a script or another system.",
+        name: "Intents",
+        description:
+          "The one write seam for conversational input, from a script or another system.",
       },
       {
         name: "Schedules",

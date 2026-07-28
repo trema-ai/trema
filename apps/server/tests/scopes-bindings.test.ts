@@ -392,11 +392,12 @@ integration("scopes and surface bindings", () => {
   it("lists the surface catalog and rejects an unknown binding surface", async () => {
     const org = await createOrg();
     await expect(call(surfacesRouter.list, undefined, { context: org.context })).resolves.toEqual([
-      { id: "api", name: "API", status: "available" },
-      { id: "slack", name: "Slack", status: "planned" },
-      { id: "linear", name: "Linear", status: "planned" },
-      { id: "github", name: "GitHub", status: "planned" },
-      { id: "email", name: "Email", status: "planned" },
+      { id: "web", name: "Web", status: "available", builtIn: true, locationBindable: false },
+      { id: "api", name: "API", status: "available", builtIn: true, locationBindable: true },
+      { id: "slack", name: "Slack", status: "planned", builtIn: false, locationBindable: true },
+      { id: "linear", name: "Linear", status: "planned", builtIn: false, locationBindable: true },
+      { id: "github", name: "GitHub", status: "planned", builtIn: false, locationBindable: true },
+      { id: "email", name: "Email", status: "planned", builtIn: false, locationBindable: true },
     ]);
     await expect(
       call(
@@ -405,5 +406,18 @@ integration("scopes and surface bindings", () => {
         { context: org.context },
       ),
     ).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Unknown surface: discord" });
+    // Web is available, but nothing about it is bindable: a member's chat
+    // resolves to their own personal scope and an admin has nothing to pick.
+    const shared = await call(scopesRouter.create, { name: "Web" }, { context: org.context });
+    await expect(
+      call(
+        bindingsRouter.create,
+        { surface: "web", locationRef: org.principal.id, scopeId: shared.id },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Surface web has no bindable locations",
+    });
   });
 });

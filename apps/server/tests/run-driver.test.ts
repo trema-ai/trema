@@ -30,7 +30,7 @@ function snapshot() {
   };
 }
 
-function fixture(turns = 1) {
+function fixture(turns = 1, capture?: (run: RunRecord) => Promise<void>) {
   const store = new InMemoryRunStore({ now: () => now });
   const engine = new InMemoryEngine();
   const context = new FakeContextSession(snapshot());
@@ -78,6 +78,7 @@ function fixture(turns = 1) {
       }),
     },
     plan,
+    ...(capture === undefined ? {} : { capture }),
   });
   return { store, engine, context, lifecycle, driver, plan };
 }
@@ -186,8 +187,39 @@ describe("run driver", () => {
     expect(await subject.store.getRun(run.id)).toMatchObject({ state: "failed" });
   });
 
+  it("reports the opening message before the loop drains it", async () => {
+    let steeringWhenCaptured: boolean | undefined;
+    const capture = vi.fn(async (run: RunRecord) => {
+      steeringWhenCaptured = await subject.store.hasSteering(run.id);
+    });
+    const subject = fixture(1, capture);
+    const run = await queueRun(subject);
+
+    await subject.driver.execute(run.id);
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ id: run.id }));
+    // The message lives in the steering queue until the first turn boundary,
+    // so a capture any later than this would find nothing to report.
+    expect(steeringWhenCaptured).toBe(true);
+  });
+
+  it("finishes a run whose opening message could not be reported", async () => {
+    const capture = vi.fn(async () => {
+      throw new Error("conversation store unreachable");
+    });
+    const subject = fixture(1, capture);
+    const run = await queueRun(subject);
+
+    const result = await subject.driver.execute(run.id);
+
+    expect(result).toMatchObject({ status: "finished" });
+    expect((await subject.store.getRun(run.id))?.state).toBe("completed");
+  });
+
   it("resumes a parked run with the resume trigger", async () => {
-    const subject = fixture();
+    const capture = vi.fn(async () => undefined);
+    const subject = fixture(1, capture);
     const run = await queueRun(subject);
     await subject.lifecycle.start(run.id);
     await subject.store.commitTurn({
@@ -210,6 +242,9 @@ describe("run driver", () => {
       .map(({ event }) => event)
       .filter((event) => event.type === "run-started");
     expect(started.at(-1)).toMatchObject({ trigger: "resume" });
+    // A resume opens nothing: whatever the run was asked was reported by the
+    // execution that was asked it.
+    expect(capture).not.toHaveBeenCalled();
   });
 });
 

@@ -8,6 +8,7 @@ import {
   createBinding,
   deleteBinding,
   listBindings,
+  SurfaceNotBindableError,
   UnknownSurfaceError,
 } from "#server/services/bindings/index.js";
 import { requireCapability } from "./builders.js";
@@ -84,7 +85,7 @@ const create = requireCapability("manage_scopes")
       if (error instanceof BindingTargetError) {
         throw new ORPCError("BAD_REQUEST", { message: error.message });
       }
-      if (error instanceof UnknownSurfaceError) {
+      if (error instanceof UnknownSurfaceError || error instanceof SurfaceNotBindableError) {
         throw new ORPCError("BAD_REQUEST", { message: error.message });
       }
       throw error;

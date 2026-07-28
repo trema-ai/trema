@@ -3,6 +3,7 @@ import type { RunRecord, ToolDef } from "@trema/harness";
 import type { Database } from "#server/lib/db/index.js";
 import { toSessionStanding } from "#server/services/runs/context.js";
 import { type RunExecutionPlan, RunNotStartableError } from "#server/services/runs/driver.js";
+import { readThreadMessages } from "#server/services/runs/history.js";
 import type { ConfiguredModel } from "#server/services/runs/models.js";
 import { renewSession } from "#server/services/sessions/index.js";
 
@@ -32,6 +33,11 @@ export interface SessionRunPlanOptions {
   resolveModel: () => Promise<ConfiguredModel>;
   /** Hard cap on turns per run. */
   maxTurns?: number;
+  /**
+   * Cap on prior runs whose exchange is replayed into a new run's context.
+   * @defaultValue {@link DEFAULT_THREAD_HISTORY_RUNS}
+   */
+  threadHistoryRuns?: number;
   /** Milliseconds a blocking elicitation stays resolvable. */
   elicitationTtlMs?: number;
   now?: () => Date;
@@ -58,7 +64,7 @@ export function createSessionRunPlan(
     const [row, session] = await Promise.all([
       options.db.agentRun.findUnique({
         where: { orgId_id: { orgId: options.orgId, id: run.id } },
-        select: { toolAllowlist: true },
+        select: { toolAllowlist: true, createdAt: true },
       }),
       options.db.contextSession.findFirst({
         where: { orgId: options.orgId, id: run.sessionId },
@@ -76,6 +82,19 @@ export function createSessionRunPlan(
       await renewSession(options.db, { orgId: options.orgId, sessionId: session.id, now: at });
     }
 
+    // What the thread said before this run, derived from the prior runs' logs.
+    // This run's own opening message is not here: it is queued as steering, and
+    // the loop drains it at the first turn boundary and commits it with the turn
+    // it fed — which is where a resumed execution reads it back.
+    const threadMessages = await readThreadMessages({
+      db: options.db,
+      orgId: options.orgId,
+      threadRef: run.threadRef,
+      runId: run.id,
+      ...(row === null ? {} : { before: { createdAt: row.createdAt, id: run.id } }),
+      ...(options.threadHistoryRuns === undefined ? {} : { limit: options.threadHistoryRuns }),
+    });
+
     // Connector tool definitions join the session when the connector proxy
     // reaches the data plane; the allowlist narrows whatever it resolves.
     const sessionTools: ToolDef[] = [];
@@ -85,9 +104,7 @@ export function createSessionRunPlan(
       modelPort: configured.modelPort,
       standing: toSessionStanding(session.standing),
       tools: narrowTools(sessionTools, row?.toolAllowlist ?? []),
-      // The opening message is queued as steering, so the loop drains it at the
-      // first turn boundary and no message needs to be replayed here.
-      threadMessages: [],
+      threadMessages,
       ...(options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }),
       ...(options.elicitationTtlMs === undefined
         ? {}

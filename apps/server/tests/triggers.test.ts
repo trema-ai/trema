@@ -8,8 +8,8 @@ import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
 import { bindingsRouter } from "#server/rpc/bindings.js";
 import { serviceCredentialsRouter } from "#server/rpc/credentials.js";
+import { intentsRouter } from "#server/rpc/intents.js";
 import { orgRouter } from "#server/rpc/org.js";
-import { runsRouter } from "#server/rpc/runs.js";
 import { schedulesRouter } from "#server/rpc/schedules.js";
 import type { RunServices } from "#server/services/runs/index.js";
 import { createRunServices } from "#server/services/runs/index.js";
@@ -87,13 +87,17 @@ integration("triggers", () => {
     return createRunServices({ db, env, orgId, engine });
   }
 
-  describe("POST /runs", () => {
+  describe("POST /intents", () => {
     it("starts a run and reports where the message landed", async () => {
       const { serviceContext } = await setup();
 
       const accepted = await call(
-        runsRouter.create,
-        { locationRef: "ops", message: "Check the deploy.", idempotencyKey: "key-1" },
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: { type: "message", text: "Check the deploy." },
+          intentId: "key-1",
+        },
         { context: serviceContext },
       );
 
@@ -106,17 +110,25 @@ integration("triggers", () => {
       expect(queued[0]?.kind).toBe("steering");
     });
 
-    it("answers a repeated idempotency key with the run the first call made", async () => {
+    it("answers a repeated intent id with the run the first call made", async () => {
       const { serviceContext } = await setup();
       const first = await call(
-        runsRouter.create,
-        { locationRef: "ops", message: "Check the deploy.", idempotencyKey: "key-1" },
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: { type: "message", text: "Check the deploy." },
+          intentId: "key-1",
+        },
         { context: serviceContext },
       );
 
       const second = await call(
-        runsRouter.create,
-        { locationRef: "ops", message: "Check the deploy.", idempotencyKey: "key-1" },
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: { type: "message", text: "Check the deploy." },
+          intentId: "key-1",
+        },
         { context: serviceContext },
       );
 
@@ -127,14 +139,22 @@ integration("triggers", () => {
     it("steers the active run instead of starting a second one on the thread", async () => {
       const { serviceContext } = await setup();
       const first = await call(
-        runsRouter.create,
-        { locationRef: "ops", message: "Check the deploy.", idempotencyKey: "key-1" },
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: { type: "message", text: "Check the deploy." },
+          intentId: "key-1",
+        },
         { context: serviceContext },
       );
 
       const second = await call(
-        runsRouter.create,
-        { locationRef: "ops", message: "And the migration.", idempotencyKey: "key-2" },
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: { type: "message", text: "And the migration." },
+          intentId: "key-2",
+        },
         { context: serviceContext },
       );
 
@@ -143,10 +163,10 @@ integration("triggers", () => {
       expect(await db.runQueuedInput.count({ where: { runId: first.runId } })).toBe(2);
     });
 
-    it("reclaims an idempotency key whose claiming call died before routing", async () => {
+    it("reclaims an intent id whose claiming call died before routing", async () => {
       const { serviceContext, org } = await setup();
       // A claim with no recorded run, old enough that its call cannot still be
-      // routing: the crash left the key consumed and the message lost.
+      // routing: the crash left the intent id consumed and the message lost.
       await db.runIntent.create({
         data: {
           id: "key-1",
@@ -156,8 +176,12 @@ integration("triggers", () => {
       });
 
       const accepted = await call(
-        runsRouter.create,
-        { locationRef: "ops", message: "Check the deploy.", idempotencyKey: "key-1" },
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: { type: "message", text: "Check the deploy." },
+          intentId: "key-1",
+        },
         { context: serviceContext },
       );
 
@@ -174,8 +198,12 @@ integration("triggers", () => {
 
       await expect(
         call(
-          runsRouter.create,
-          { locationRef: "unbound", message: "Anyone there?", idempotencyKey: "key-1" },
+          intentsRouter.submit,
+          {
+            locationRef: "unbound",
+            intent: { type: "message", text: "Anyone there?" },
+            intentId: "key-1",
+          },
           { context: serviceContext },
         ),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
