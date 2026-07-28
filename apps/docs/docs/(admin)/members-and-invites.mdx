@@ -34,6 +34,8 @@ Pending invites appear on the member settings page. Revoke an invite when its li
 
 The recipient opens the link, signs in or creates an account, and sees the organization's name and who invited them. Confirming joins them with the invite's role. An invite is single-use: once redeemed, or past its expiry, the link is rejected.
 
+On a dedicated deployment the link is also what makes the account possible: sign-ups without a pending invite are refused, unless the operator sets [`TREMA_OPEN_SIGNUP=true`](/configuration#account-creation). A hosted deployment leaves sign-up open.
+
 ## Changing roles
 
 Roles change through the members endpoints in the [API reference](/api), and a change takes effect immediately. One rule holds: the organization's last owner cannot be demoted.

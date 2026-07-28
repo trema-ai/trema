@@ -1968,6 +1968,10 @@
                       "type": "boolean",
                       "description": "True when the deployment is dedicated and has no organization yet. The first user must redeem the bootstrap token."
                     },
+                    "openSignup": {
+                      "type": "boolean",
+                      "description": "True when the sign-in page may offer account creation without an invite. A bootstrapped dedicated deployment creates accounts through member invites instead."
+                    },
                     "providers": {
                       "type": "object",
                       "properties": {
@@ -2022,6 +2026,7 @@
                   "required": [
                     "mode",
                     "needsBootstrap",
+                    "openSignup",
                     "providers",
                     "legal"
                   ],
@@ -2438,13 +2443,14 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "scopeIds": {
+                  "scopeChain": {
                     "type": "array",
                     "minItems": 1,
                     "items": {
                       "type": "string",
                       "format": "uuid"
-                    }
+                    },
+                    "description": "Scope IDs in resolution order, widest first. The narrowest match wins."
                   },
                   "toolKey": {
                     "type": "string",
@@ -2537,7 +2543,7 @@
                   }
                 },
                 "required": [
-                  "scopeIds",
+                  "scopeChain",
                   "toolKey",
                   "args"
                 ]

@@ -73,16 +73,23 @@ function GoogleIcon() {
 export function SignInPage({
   providers,
   legal,
+  openSignup,
   defaultCreating = false,
 }: {
   providers: Providers;
   legal: Legal;
+  openSignup: boolean;
   defaultCreating?: boolean;
 }) {
   const session = authClient.useSession();
   const [search] = useSearchParams();
   const navigate = useNavigate();
-  const [creating, setCreating] = useState(defaultCreating);
+  // An invite is its own permission to create an account: the server accepts the
+  // sign-up when the token rides along, so the toggle stays available and the
+  // create view leads (invitees rarely have an account yet).
+  const inviteToken = search.get("invite");
+  const canCreate = openSignup || Boolean(inviteToken);
+  const [creating, setCreating] = useState(canCreate && (defaultCreating || Boolean(inviteToken)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const requestedReturnTo = search.get("returnTo");
@@ -100,7 +107,14 @@ export function SignInPage({
     const email = String(data.get("email"));
     const password = String(data.get("password"));
     const result = creating
-      ? await authClient.signUp.email({ name: String(data.get("name")), email, password })
+      ? await authClient.signUp.email({
+          name: String(data.get("name")),
+          email,
+          password,
+          ...(inviteToken
+            ? { fetchOptions: { headers: { "x-trema-invite-token": inviteToken } } }
+            : {}),
+        })
       : await authClient.signIn.email({ email, password });
     setBusy(false);
     if (result.error) setError(result.error.message ?? "Authentication failed");
@@ -162,7 +176,7 @@ export function SignInPage({
             Continue with Google
           </Button>
         )}
-        {providers.password && (
+        {providers.password && canCreate && (
           <p className="text-center text-meta text-muted-foreground">
             {creating ? "Already have an account?" : "New to Trema?"}{" "}
             <button

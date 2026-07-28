@@ -32,7 +32,12 @@ export function JoinPage() {
     );
   if (!session.data) {
     const returnTo = `/join?token=${encodeURIComponent(token)}`;
-    return <Navigate to={`/sign-in?returnTo=${encodeURIComponent(returnTo)}`} replace />;
+    return (
+      <Navigate
+        to={`/sign-in?invite=${encodeURIComponent(token)}&returnTo=${encodeURIComponent(returnTo)}`}
+        replace
+      />
+    );
   }
   if (preview.isPending) return <Loading />;
   if (preview.error)

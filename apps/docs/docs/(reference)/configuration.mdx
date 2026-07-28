@@ -48,6 +48,7 @@ Use `json` where a log shipper parses the stream, and `logfmt` when a person rea
 | `TREMA_AUTH_SECRET` | Yes | — | Signs sessions. At least 32 characters; generate with `openssl rand -base64 33`. |
 | `TREMA_AUTH_BASE_URL` | No | `http://127.0.0.1:3000` | Public base URL of the server. OAuth callback URLs derive from it. |
 | `TREMA_PASSWORD_AUTH_ENABLED` | No | `true` | Sign-in with email and password. |
+| `TREMA_OPEN_SIGNUP` | No | `false` | Accept account creation without an invite. A dedicated deployment closes account creation once its first organization exists; set this to `true` to reopen it. Hosted mode ignores it—signup is always open there. |
 | `TREMA_GOOGLE_CLIENT_ID` | No | unset | Google OAuth client ID. Set together with the secret. |
 | `TREMA_GOOGLE_CLIENT_SECRET` | No | unset | Google OAuth client secret. Set together with the ID. |
 | `TREMA_BOOTSTRAP_TOKEN` | No | unset | Dedicated mode only: the [first-boot](/first-boot) token. When unset, one is generated at first start and logged once. |
@@ -65,6 +66,10 @@ Set both variables; the sign-in screen shows the Google button whenever they are
 ### Disabling password sign-in
 
 Set `TREMA_PASSWORD_AUTH_ENABLED=false` to remove the email-and-password form. Configure another sign-in method first—with every method off, nobody can sign in.
+
+### Account creation
+
+A dedicated deployment accepts open account creation only until its first organization exists, so the operator can create an account and redeem the [bootstrap token](/first-boot). Afterwards a sign-up needs the token of a pending [invite](/members-and-invites), and one without is refused. Set `TREMA_OPEN_SIGNUP=true` to accept sign-ups without an invite again.
 
 ## Connectors
 
