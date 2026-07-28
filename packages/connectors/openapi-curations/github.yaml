@@ -5,7 +5,7 @@
 # Retrieved: 2026-07-23
 #
 # Regenerate with:
-#   pnpm exec tsx scripts/openapi-to-manifest.ts <spec> --curation openapi-curations/github.yaml --format ts
+#   pnpm exec tsx --conditions=development scripts/openapi-to-manifest.ts <spec> --curation openapi-curations/github.yaml --format ts
 # The generated output is a starting point; the checked-in provider file is
 # hand-polished (path placeholders normalized to camelCase, descriptions and
 # parameters trimmed).
