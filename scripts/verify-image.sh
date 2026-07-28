@@ -80,7 +80,19 @@ docker run --detach --name "$postgres" --network "$network" \
   --health-retries 60 \
   pgvector/pgvector:pg16 >/dev/null
 
-until [ "$(docker inspect --format '{{.State.Health.Status}}' "$postgres")" = "healthy" ]; do
+# Fail fast rather than hang: docker marks the container unhealthy after the
+# health retries run out, and the loop is bounded in case it never gets there.
+for attempt in $(seq 1 120); do
+  health="$(docker inspect --format '{{.State.Health.Status}}' "$postgres")"
+  [ "$health" = "healthy" ] && break
+  if [ "$health" = "unhealthy" ]; then
+    echo "postgres went unhealthy while waiting" >&2
+    exit 1
+  fi
+  if [ "$attempt" -eq 120 ]; then
+    echo "postgres not healthy after ${attempt}s" >&2
+    exit 1
+  fi
   sleep 1
 done
 
