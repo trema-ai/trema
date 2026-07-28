@@ -7,7 +7,9 @@ import { call } from "@orpc/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "#server/app.js";
+import type { Prisma } from "#server/generated/prisma/client.js";
 import { createAuth } from "#server/lib/auth/index.js";
+import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
 import { bindingsRouter } from "#server/rpc/bindings.js";
@@ -15,13 +17,16 @@ import { serviceCredentialsRouter } from "#server/rpc/credentials.js";
 import { orgRouter } from "#server/rpc/org.js";
 import { scopesRouter } from "#server/rpc/scopes.js";
 import { requestItemActivation } from "#server/services/approvals/index.js";
+import type { ConnectorFetch } from "#server/services/connectors/index.js";
 import { createItem } from "#server/services/items/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
+const masterKey = Buffer.alloc(32, 73).toString("base64");
 
 const origin = "http://context.test";
+const GMAIL_TOKEN = "acceptance-gmail-token";
 
 /**
  * The context app's acceptance path, driven the way a harness drives it: the
@@ -36,9 +41,27 @@ integration("acceptance", () => {
     TREMA_AUTH_SECRET: "acceptance-integration-secret-at-least-32-chars",
     TREMA_MODE: "hosted",
     TREMA_WEB_ORIGINS: "https://trema.example",
+    TREMA_CREDENTIAL_MASTER_KEY: masterKey,
   });
   const auth = createAuth({ db, env });
-  const app = createApp({ db, auth, env });
+
+  // The connected system is recorded, not live: this path proves the proxy
+  // chain and the approval gate, and CI never reaches a provider.
+  const providerCalls: { url: string; authorization: string | null }[] = [];
+  const connectorFetch: ConnectorFetch = async (url, init) => {
+    const authorization = new Headers(init?.headers).get("Authorization");
+    providerCalls.push({ url: String(url), authorization });
+    // A chatty provider echoes the credential it was handed back in its own
+    // answer. The proxy hands that answer to the model, so this is the case the
+    // redaction has to survive — a body with the token in it, not merely one
+    // without.
+    return Response.json({
+      id: "draft-9",
+      message: { id: "message-9" },
+      requestAuthorization: authorization,
+    });
+  };
+  const app = createApp({ db, auth, env, connectorFetch });
 
   beforeEach(async () => {
     await db.$executeRaw`TRUNCATE TABLE "Org", "user", "verification", "BootstrapToken" CASCADE`;
@@ -277,6 +300,99 @@ integration("acceptance", () => {
       "Priya runs it and announces the freeze on Monday evening.",
     ]);
 
+    // The organization has a connected Gmail account. The credential is stored
+    // encrypted at the org scope; the run never sees it and never calls Gmail.
+    const orgScope = await db.scope.findFirstOrThrow({
+      where: { orgId: org.id, kind: "org" },
+    });
+    const connection = await db.connectorConnection.create({
+      data: {
+        orgId: org.id,
+        principalId: principal.id,
+        providerKey: "google_workspace",
+        mode: "oauth2_code",
+        config: {},
+        ciphertext: encryptEnvelope({ accessToken: GMAIL_TOKEN }, masterKey),
+      },
+    });
+    await db.item.create({
+      data: {
+        orgId: org.id,
+        scopeId: orgScope.id,
+        kind: "connector",
+        title: "google_workspace",
+        body: {
+          catalogKey: "google_workspace",
+          connectionId: connection.id,
+          enabledTools: "all",
+        } satisfies Prisma.InputJsonObject,
+        status: "active",
+        disclosure: "retrieved",
+        createdById: principal.id,
+      },
+    });
+
+    // Drafting mail changes something in a connected system, so the call stops
+    // at the gate: an approval id comes back as a result, and nothing left the
+    // deployment.
+    const draftArgs = { message: { raw: "RnJlZXplIG5vdGljZQ" } };
+    const gated = (await client.callTool({
+      name: "use_connector",
+      arguments: {
+        toolKey: "google_workspace:create_draft",
+        args: draftArgs,
+        reason: "Draft the freeze notice so Priya only has to send it",
+      },
+    })) as CallToolResult;
+    expect(gated.isError).toBeFalsy();
+    expect(gated.structuredContent).toMatchObject({
+      status: "approval_required",
+      toolKey: "google_workspace:create_draft",
+      sensitivity: "write",
+    });
+    const gatedCall = gated.structuredContent as { approvalId: string };
+    expect(providerCalls).toEqual([]);
+
+    // The same person approves it, through the same endpoint that activated
+    // the rule — one approval vocabulary for tool calls and items alike.
+    const connectorApproval = await app.fetch(
+      new Request(`${origin}/api/v1/approvals/${gatedCall.approvalId}/approve`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: owner.context.headers.get("cookie") ?? "",
+        },
+      }),
+    );
+    expect(connectorApproval.status).toBe(200);
+    expect(await connectorApproval.json()).toMatchObject({ approval: { status: "approved" } });
+
+    // Calling again with the id and the same arguments runs it, once, with the
+    // organization's credential attached on this side of the boundary.
+    const ran = (await client.callTool({
+      name: "use_connector",
+      arguments: {
+        toolKey: "google_workspace:create_draft",
+        args: draftArgs,
+        reason: "Draft the freeze notice so Priya only has to send it",
+        approvalId: gatedCall.approvalId,
+      },
+    })) as CallToolResult;
+    expect(ran.isError).toBeFalsy();
+    expect(ran.structuredContent).toMatchObject({
+      status: "executed",
+      toolKey: "google_workspace:create_draft",
+      approvalId: gatedCall.approvalId,
+      result: { ok: true, status: 200, body: { id: "draft-9" } },
+    });
+    expect(providerCalls).toHaveLength(1);
+    expect(providerCalls[0]?.authorization).toBe(`Bearer ${GMAIL_TOKEN}`);
+    expect(JSON.stringify(ran)).not.toContain(GMAIL_TOKEN);
+    // The echo came back, with the credential taken out of it.
+    expect(ran.structuredContent).toMatchObject({
+      result: { body: { requestAuthorization: "[REDACTED]" } },
+    });
+
     await client.close();
 
     // The run's usage lands on the session, and the whole exchange is in the
@@ -309,8 +425,21 @@ integration("acceptance", () => {
         "item.activate",
         "session.messages",
         "dataplane.fetch_transcript",
+        "dataplane.use_connector",
         "session.close",
       ]),
     );
+
+    // Both halves of the proxied call are recorded, and the arguments stay in
+    // the approval row rather than the audit stream.
+    const proxied = await db.auditLog.findMany({
+      where: { orgId: org.id, action: "dataplane.use_connector" },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(proxied.map((entry) => (entry.payload as { outcome: string }).outcome)).toEqual([
+      "approval_required",
+      "executed",
+    ]);
+    expect(JSON.stringify(proxied)).not.toContain(draftArgs.message.raw);
   });
 });

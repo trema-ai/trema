@@ -171,6 +171,7 @@ integration("data plane", () => {
       "save_memory",
       "search_context",
       "update_memory",
+      "use_connector",
     ]);
 
     const result = (await client.callTool({
