@@ -25,6 +25,8 @@ export interface SessionSnapshot {
 export interface OpenSessionRequest {
   surface: string;
   locationRef: unknown;
+  /** The thread the session serves, where the surface has threads. */
+  threadRef?: string;
   /** Who asked. Omitted for work nobody triggered, such as a service call as the agent. */
   requester?: { externalUserId: string } | { principalId: string };
 }

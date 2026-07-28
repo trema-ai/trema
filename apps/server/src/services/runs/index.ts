@@ -13,12 +13,15 @@ import { InterruptManager, RunLifecycle, ThreadDispatchLock } from "@trema/harne
 
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
+import { createRunCapture } from "#server/services/runs/capture.js";
 import { ServerContextSession } from "#server/services/runs/context.js";
 import { createRunDriver, type RunDriver } from "#server/services/runs/driver.js";
 import type { ConfiguredModel } from "#server/services/runs/models.js";
 import { createSessionRunPlan } from "#server/services/runs/plan.js";
 import { PrismaRunStore } from "#server/services/runs/store.js";
 
+export type { CaptureOpeningMessages, QueuedMessage, RunCaptureOptions } from "./capture.js";
+export { createRunCapture, openingMessages } from "./capture.js";
 export { ContextCapabilityUnavailableError, ServerContextSession } from "./context.js";
 export type { DrainOptions, DrainResult } from "./drain.js";
 export { drainWorker, InFlightRuns } from "./drain.js";
@@ -159,6 +162,7 @@ export function createRunServices(options: RunServicesOptions): RunServices {
       store,
       lifecycle,
       toolExecutor: options.toolExecutor ?? createUnavailableToolExecutor(),
+      capture: createRunCapture({ db: options.db, orgId: options.orgId }),
       plan: createSessionRunPlan({
         db: options.db,
         orgId: options.orgId,

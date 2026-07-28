@@ -73,6 +73,12 @@ export interface RunDriverOptions {
   toolExecutor: ToolExecutor;
   /** Resolves the session-derived inputs for one execution. */
   plan: (run: RunRecord) => Promise<RunExecutionPlan>;
+  /**
+   * Reports the message the run was started with. It is a capability, not a
+   * database: where the messages go is the context app's business, and a
+   * deployment that reports them nowhere simply omits it.
+   */
+  capture?: (run: RunRecord) => Promise<void>;
 }
 
 /** Outcome of one delivered execution, reported to the engine as data. */
@@ -134,6 +140,23 @@ export function createRunDriver(options: RunDriverOptions): RunDriver {
         log.warn("Run could not start", { runId, error: message });
         await failToStart(run, trigger, message);
         return { status: "start-failed", error: message };
+      }
+
+      // What the person said is reported as the run starts, not when it ends:
+      // a chat thread reads its conversation, and it has to appear when the
+      // thread is spoken to rather than when its first run finishes. It also
+      // cannot wait for the loop, which drains the message from the steering
+      // queue at the first turn boundary. A resume opens nothing — whatever it
+      // was asked was reported by the execution that was asked it.
+      if (options.capture !== undefined && trigger !== "resume") {
+        try {
+          await options.capture(run);
+        } catch (error) {
+          // A conversation the sidebar shows late is degraded; a run dropped
+          // because of it is broken. The capture is idempotent, so the next
+          // execution of this run reports the message again.
+          log.warn("Opening message capture failed", { runId, error });
+        }
       }
 
       const result = await options.lifecycle.execute(

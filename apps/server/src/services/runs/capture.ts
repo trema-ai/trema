@@ -1,0 +1,127 @@
+import type { PrincipalRef, QueuedInput, RunRecord, TranscriptMessage } from "@trema/harness";
+
+import type { Database } from "#server/lib/db/index.js";
+import {
+  type CapturedMessageInput,
+  type CaptureSession,
+  captureMessages,
+} from "#server/services/conversations/index.js";
+
+/** A queued input and the moment it was queued, which is when it was said. */
+export interface QueuedMessage extends QueuedInput {
+  queuedAt: Date;
+}
+
+/**
+ * Reports the messages a run opened with.
+ *
+ * The driver holds this rather than a database: what a message is reported to
+ * — the context app in process here, an HTTP session elsewhere — is not the
+ * run loop's business.
+ */
+export type CaptureOpeningMessages = (run: RunRecord) => Promise<void>;
+
+/** Tenancy and persistence for the in-process capture. */
+export interface RunCaptureOptions {
+  db: Database;
+  orgId: string;
+}
+
+function messageText(message: TranscriptMessage): string {
+  return message.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
+}
+
+/**
+ * The captured form of what a run was asked to do.
+ *
+ * The queue entry's id is the `surfaceMessageRef`, and it is the intent id the
+ * caller sent: a redelivered execution reports the same reference, so the
+ * capture upserts instead of saying the same thing twice.
+ *
+ * Only a person's message is captured. A run a service credential or a
+ * schedule started has an agent for an author, and a conversation is what
+ * people said — the machinery's own prompts are audit, not context.
+ * A message with no text — an image, or blocks a surface added later — has
+ * nothing to index, and reporting it would refuse the whole batch.
+ */
+export function openingMessages(
+  queued: readonly QueuedMessage[],
+  humanPrincipalIds: ReadonlySet<string>,
+): CapturedMessageInput[] {
+  return queued.flatMap((input) => {
+    if (!humanPrincipalIds.has(input.author.principalId)) return [];
+    const text = messageText(input.message);
+    if (!text.trim()) return [];
+    return [
+      {
+        surfaceMessageRef: input.id,
+        author: { principalId: input.author.principalId },
+        sentAt: input.queuedAt,
+        text,
+      },
+    ];
+  });
+}
+
+/**
+ * Reports a run's opening message to the conversation its session names.
+ *
+ * The message is read from the steering queue, where dispatch left it: the
+ * loop drains it at the first turn boundary, so a capture that ran any later
+ * would find nothing. The session is the one the run pinned, which is what
+ * puts the conversation on the right thread and at the right scope.
+ */
+export function createRunCapture(options: RunCaptureOptions): CaptureOpeningMessages {
+  return async (run) => {
+    // A run with no session has no thread identity to report against.
+    if (run.sessionId === undefined) return;
+
+    const rows = await options.db.runQueuedInput.findMany({
+      where: { orgId: options.orgId, kind: "steering", runId: run.id },
+      orderBy: { position: "asc" },
+      select: { id: true, message: true, author: true, createdAt: true },
+    });
+    const queued: QueuedMessage[] = rows.flatMap((row) => {
+      const author = row.author as unknown as PrincipalRef | null;
+      if (typeof author?.principalId !== "string") return [];
+      return [
+        {
+          id: row.id,
+          author,
+          message: row.message as unknown as TranscriptMessage,
+          queuedAt: row.createdAt,
+        },
+      ];
+    });
+    if (queued.length === 0) return;
+
+    const humans = await options.db.principal.findMany({
+      where: {
+        orgId: options.orgId,
+        kind: "human",
+        id: { in: [...new Set(queued.map(({ author }) => author.principalId))] },
+      },
+      select: { id: true },
+    });
+    const messages = openingMessages(queued, new Set(humans.map(({ id }) => id)));
+    if (messages.length === 0) return;
+
+    const session = await options.db.contextSession.findFirst({
+      where: { orgId: options.orgId, id: run.sessionId },
+      select: {
+        id: true,
+        orgId: true,
+        scopeId: true,
+        surface: true,
+        locationRef: true,
+        threadRef: true,
+        actingPrincipalId: true,
+      },
+    });
+    // The plan reads the same session moments later and fails the run with a
+    // message when it is gone. Refusing here would only say it worse.
+    if (session === null) return;
+
+    await captureMessages(options.db, session satisfies CaptureSession, { messages });
+  };
+}

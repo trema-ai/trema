@@ -60,6 +60,9 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
     const snapshot = await services.context.open({
       surface: input.surface,
       locationRef: input.locationRef,
+      // The session names the thread it serves, so the conversation the run's
+      // messages land on is that thread and not the whole location.
+      threadRef: intent.threadRef,
       ...(input.requester === undefined ? {} : { requester: input.requester }),
     });
     const run = await services.lifecycle.create({
