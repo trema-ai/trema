@@ -5,12 +5,12 @@ import { bootstrapRouter } from "./rpc/bootstrap.js";
 import { configRouter } from "./rpc/config.js";
 import { connectorsRouter } from "./rpc/connectors.js";
 import { serviceCredentialsRouter } from "./rpc/credentials.js";
+import { intentsRouter } from "./rpc/intents.js";
 import { itemsRouter } from "./rpc/items.js";
 import { membersRouter } from "./rpc/members.js";
 import { modelProvidersRouter } from "./rpc/model-providers.js";
 import { orgRouter } from "./rpc/org.js";
 import { policiesRouter } from "./rpc/policies.js";
-import { runsRouter } from "./rpc/runs.js";
 import { schedulesRouter } from "./rpc/schedules.js";
 import { scopesRouter } from "./rpc/scopes.js";
 import { searchRouter } from "./rpc/search.js";
@@ -25,12 +25,12 @@ export const router = {
   bindings: bindingsRouter,
   config: configRouter,
   connectors: connectorsRouter,
+  intents: intentsRouter,
   members: membersRouter,
   items: itemsRouter,
   modelProviders: modelProvidersRouter,
   org: orgRouter,
   policies: policiesRouter,
-  runs: runsRouter,
   schedules: schedulesRouter,
   scopes: scopesRouter,
   search: searchRouter,

@@ -335,9 +335,9 @@ export async function tickSchedule(options: TickScheduleOptions): Promise<Schedu
   const started = await startRun({
     services,
     input: {
-      // The tick is part of the key, so a repeated evaluation of one minute
+      // The tick is part of the id, so a repeated evaluation of one minute
       // cannot start a second run.
-      idempotencyKey: `schedule:${schedule.id}:${due.toISOString()}`,
+      intentId: `schedule:${schedule.id}:${due.toISOString()}`,
       trigger: "schedule",
       surface: location.surface,
       locationRef: location.locationRef,

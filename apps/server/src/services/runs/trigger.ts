@@ -21,17 +21,25 @@ export interface RunOrigin {
 
 /** One request to start work on a thread. */
 export interface StartRunInput extends RunOrigin {
-  /** Plays `intentId`'s role: at-least-once callers, exactly-once runs. */
-  idempotencyKey: string;
+  /** Idempotency: at-least-once callers, exactly-once runs. */
+  intentId: string;
   /** Defaults to the surface and location, so one location is one thread. */
   threadRef?: string;
   message: TranscriptMessage;
   author: PrincipalRef;
 }
 
-/** Where the message landed. The caller never waits for execution. */
+/**
+ * Where the message landed. The caller never waits for execution.
+ *
+ * `follow-up` is the classification a message gets when it starts the next run
+ * behind one that is still finishing. Dispatch cannot produce it yet — the
+ * thread lock serializes classification, so a message either steers the active
+ * run or starts a new one — but it is part of the contract callers code
+ * against.
+ */
 export interface StartRunResult {
-  outcome: "started" | "steered" | "duplicate";
+  outcome: "started" | "steered" | "follow-up" | "duplicate";
   /** The run the message landed on, or `null` for a duplicate still being routed. */
   runId: string | null;
   threadRef: string;
@@ -132,7 +140,7 @@ async function dispatchRun(
   const dispatcher = buildDispatcher(services, input);
   const result = await dispatcher.dispatch({
     type: "message",
-    intentId: input.idempotencyKey,
+    intentId: input.intentId,
     threadRef,
     author: input.author,
     message: input.message,
@@ -140,7 +148,7 @@ async function dispatchRun(
 
   if (result.outcome === "duplicate") {
     const claimed = await services.db.runIntent.findUnique({
-      where: { orgId_id: { orgId: services.orgId, id: input.idempotencyKey } },
+      where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
       select: { runId: true, createdAt: true },
     });
     if (
@@ -155,7 +163,7 @@ async function dispatchRun(
       const released = await services.db.runIntent.deleteMany({
         where: {
           orgId: services.orgId,
-          id: input.idempotencyKey,
+          id: input.intentId,
           runId: null,
           createdAt: claimed.createdAt,
         },
@@ -175,7 +183,7 @@ async function dispatchRun(
   const outcome = result.outcome === "new-run" ? "started" : "steered";
   const runId = result.outcome === "new-run" ? result.run.id : result.runId;
   await services.db.runIntent.update({
-    where: { orgId_id: { orgId: services.orgId, id: input.idempotencyKey } },
+    where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
     data: { runId, outcome },
   });
   log.info("Run request accepted", { threadRef, runId, outcome, trigger: input.trigger });

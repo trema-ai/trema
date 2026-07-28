@@ -39,29 +39,41 @@ export function runServicesFor(context: RunServicesContext, orgId: string): RunS
   });
 }
 
-const messageSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .describe("The message the run starts from, or the steering it adds to an active run.");
+// One member today. Decisions on a run — resolve, stop, retry, feedback — join
+// this union as the surfaces that submit them land.
+const intentSchema = z
+  .discriminatedUnion("type", [
+    z
+      .object({
+        type: z.literal("message").describe("Says something to the agent on the thread."),
+        text: z.string().trim().min(1).describe("What the message says."),
+      })
+      .describe("A message for the thread."),
+  ])
+  .describe("What the caller is doing.");
 
-const create = serviceAuthed
+const submit = serviceAuthed
   .route({
     method: "POST",
-    path: "/runs",
+    path: "/intents",
     successStatus: 202,
-    summary: "Start a run",
+    summary: "Submit an intent",
     description: [
-      "Enter a message into the thread's dispatch, exactly as a chat surface would.",
-      "An active run on the thread absorbs the message; otherwise a new run starts.",
-      "The response reports where the message landed and never waits for execution:",
+      "Enter an intent into the thread's dispatch, exactly as a chat surface would.",
+      "A message lands on the thread: an active run absorbs it, otherwise a new run starts.",
+      "The response reports where the intent landed and never waits for execution:",
       "observe progress through the run's event stream.",
     ].join(" "),
-    tags: ["Runs"],
+    tags: ["Intents"],
   })
   .input(
     z
       .object({
+        intentId: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Retry the same call with the same id to reach the same run exactly once."),
         locationRef: z
           .string()
           .trim()
@@ -79,14 +91,9 @@ const create = serviceAuthed
           .min(1)
           .optional()
           .describe("The thread to join. It defaults to the surface and location."),
-        message: messageSchema,
-        idempotencyKey: z
-          .string()
-          .trim()
-          .min(1)
-          .describe("Retry the same call with the same key to reach the same run exactly once."),
+        intent: intentSchema,
       })
-      .describe("Where the message goes and what it says."),
+      .describe("Where the intent goes and what it asks for."),
   )
   .output(
     z
@@ -94,15 +101,15 @@ const create = serviceAuthed
         runId: z
           .string()
           .nullable()
-          .describe("The run the message landed on. Null when a duplicate call is still routing."),
+          .describe("The run the intent landed on. Null when a duplicate call is still routing."),
         outcome: z
-          .enum(["started", "steered", "duplicate"])
+          .enum(["started", "steered", "follow-up", "duplicate"])
           .describe(
-            "`started` created a run, `steered` added the message to the active run, `duplicate` repeated a used key.",
+            "`started` created a run, `steered` added the message to the active run, `follow-up` queued it behind a run that is finishing, `duplicate` repeated a used id.",
           ),
-        threadRef: z.string().describe("The thread the message landed on."),
+        threadRef: z.string().describe("The thread the intent landed on."),
       })
-      .describe("Where the message landed."),
+      .describe("Where the intent landed."),
   )
   .handler(async ({ context, input }) => {
     const services = runServicesFor(context, context.org.id);
@@ -110,7 +117,7 @@ const create = serviceAuthed
       return await startRun({
         services,
         input: {
-          idempotencyKey: input.idempotencyKey,
+          intentId: input.intentId,
           trigger: "api",
           surface: input.surface,
           locationRef: input.locationRef,
@@ -119,7 +126,7 @@ const create = serviceAuthed
           ...(context.principal.kind === "human"
             ? { requester: { principalId: context.principal.id } }
             : {}),
-          message: { role: "user", blocks: [{ type: "text", text: input.message }] },
+          message: { role: "user", blocks: [{ type: "text", text: input.intent.text }] },
           author: { principalId: context.principal.id, displayName: context.principal.displayName },
           ...(input.threadRef === undefined ? {} : { threadRef: input.threadRef }),
         },
@@ -142,4 +149,4 @@ const create = serviceAuthed
     }
   });
 
-export const runsRouter = { create };
+export const intentsRouter = { submit };
