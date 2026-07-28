@@ -140,6 +140,19 @@ export function generateOpenApiDocument() {
           "The one write seam for conversational input, from a script or another system.",
       },
       {
+        name: "Runs",
+        description:
+          "The durable runs the agent executed: their state, grant snapshots, queued input, and event logs, at the depth each viewer may see.",
+      },
+      {
+        name: "Threads",
+        description: "A thread's runs in order, each with the message it opened on.",
+      },
+      {
+        name: "Conversations",
+        description: "The caller's own captured threads, for the chat sidebar.",
+      },
+      {
         name: "Schedules",
         description: "Standing configuration that starts runs on a cron expression.",
       },

@@ -97,6 +97,18 @@
       "description": "The one write seam for conversational input, from a script or another system."
     },
     {
+      "name": "Runs",
+      "description": "The durable runs the agent executed: their state, grant snapshots, queued input, and event logs, at the depth each viewer may see."
+    },
+    {
+      "name": "Threads",
+      "description": "A thread's runs in order, each with the message it opened on."
+    },
+    {
+      "name": "Conversations",
+      "description": "The caller's own captured threads, for the chat sidebar."
+    },
+    {
       "name": "Schedules",
       "description": "Standing configuration that starts runs on a cron expression."
     },
@@ -4901,6 +4913,117 @@
                     "updatedAt",
                     "version"
                   ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/conversations": {
+      "get": {
+        "operationId": "conversations.list",
+        "summary": "List your conversations",
+        "description": "The caller's own conversation list — the threads captured in their personal scope, newest activity first. Owner-scoped by construction: nobody's conversations but the caller's ever appear, whatever their role.",
+        "tags": [
+          "Conversations"
+        ],
+        "parameters": [
+          {
+            "name": "surface",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only list this surface's conversations, e.g. `web`."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "How many conversations to return. Defaults to 50."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "conversations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The conversation's unique ID. A UUID (version 7)."
+                          },
+                          "surface": {
+                            "type": "string",
+                            "description": "The integration surface the thread happened on."
+                          },
+                          "locationRef": {
+                            "type": "string",
+                            "description": "The surface-specific location the thread lives at."
+                          },
+                          "threadRef": {
+                            "type": "string",
+                            "description": "The thread's surface identifier. Empty for a surface without threads."
+                          },
+                          "startedAt": {
+                            "type": "string",
+                            "description": "When the thread started. An ISO 8601 date-time."
+                          },
+                          "lastActivityAt": {
+                            "type": "string",
+                            "description": "When the thread last saw a message. An ISO 8601 date-time."
+                          },
+                          "firstMessageText": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The earliest captured message's text — the title until digests exist."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface",
+                          "locationRef",
+                          "threadRef",
+                          "startedAt",
+                          "lastActivityAt",
+                          "firstMessageText"
+                        ],
+                        "description": "One captured thread of the caller's own."
+                      }
+                    }
+                  },
+                  "required": [
+                    "conversations"
+                  ],
+                  "description": "The caller's conversations, newest activity first."
                 }
               }
             }
@@ -10990,6 +11113,1005 @@
                     "updatedAt"
                   ],
                   "description": "One scope's approval-mode ceiling for one connector, or scope-wide."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/runs/{id}": {
+      "get": {
+        "operationId": "runs.get",
+        "summary": "Get a run",
+        "description": "Read one run. A viewer with read at the run's scope gets the full record — state, thread, grant snapshot, queued input. An org admin looking at another person's personal-scope run gets audit metadata: that the run happened and which tools it called, never content. Anyone else finds nothing.",
+        "tags": [
+          "Runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The ID of the run to read."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "access": {
+                          "const": "full",
+                          "description": "The caller may read the run's content."
+                        },
+                        "id": {
+                          "type": "string",
+                          "description": "The run's unique ID."
+                        },
+                        "state": {
+                          "enum": [
+                            "queued",
+                            "running",
+                            "awaiting_approval",
+                            "awaiting_input",
+                            "completed",
+                            "failed",
+                            "cancelled",
+                            "stale"
+                          ],
+                          "type": "string",
+                          "description": "Where the run is in its lifecycle."
+                        },
+                        "trigger": {
+                          "enum": [
+                            "message",
+                            "api",
+                            "schedule",
+                            "retry",
+                            "resume"
+                          ],
+                          "type": "string",
+                          "description": "Why the run exists."
+                        },
+                        "threadRef": {
+                          "type": "string",
+                          "description": "The thread the run serializes against."
+                        },
+                        "surface": {
+                          "type": "string",
+                          "description": "The integration surface the run's session belongs to."
+                        },
+                        "locationRef": {
+                          "type": "string",
+                          "description": "The surface-specific location the session was opened at."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "description": "When the run was created. An ISO 8601 date-time."
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "description": "When the run last changed. An ISO 8601 date-time."
+                        },
+                        "turnCount": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "description": "Number of committed turns."
+                        },
+                        "usage": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "description": "Token and cost totals across the run's turns. Null until a turn commits."
+                        },
+                        "error": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The failure that ended the run, when one did."
+                        },
+                        "retryOfRunId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The run this retry follows, when it is one."
+                        },
+                        "retryAttempt": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "One-based attempt number across a retry chain."
+                        },
+                        "grantSnapshot": {
+                          "type": "object",
+                          "properties": {
+                            "scopeChain": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Scope IDs in resolution order, widest first, as pinned at session open."
+                            },
+                            "snapshotHash": {
+                              "type": "string",
+                              "description": "Fingerprint of the pinned policy snapshot."
+                            }
+                          },
+                          "required": [
+                            "scopeChain",
+                            "snapshotHash"
+                          ],
+                          "description": "What the run was allowed, pinned when its session opened."
+                        },
+                        "queuedInput": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The queued input's ID — the intent id the caller sent."
+                              },
+                              "kind": {
+                                "enum": [
+                                  "steering",
+                                  "follow_up"
+                                ],
+                                "type": "string",
+                                "description": "`steering` waits on this run's next turn boundary; `follow_up` waits on the thread and starts the next run."
+                              },
+                              "text": {
+                                "type": "string",
+                                "description": "What the message says."
+                              },
+                              "author": {
+                                "type": "object",
+                                "properties": {
+                                  "principalId": {
+                                    "type": "string"
+                                  },
+                                  "displayName": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "principalId"
+                                ],
+                                "description": "Who said it."
+                              },
+                              "position": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991,
+                                "description": "Drain order across the queue."
+                              },
+                              "queuedAt": {
+                                "type": "string",
+                                "description": "When it was queued. An ISO 8601 date-time."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "kind",
+                              "text",
+                              "author",
+                              "position",
+                              "queuedAt"
+                            ],
+                            "description": "One message waiting for a turn boundary."
+                          },
+                          "description": "Undrained steering and follow-ups, in drain order."
+                        }
+                      },
+                      "required": [
+                        "access",
+                        "id",
+                        "state",
+                        "trigger",
+                        "threadRef",
+                        "surface",
+                        "locationRef",
+                        "createdAt",
+                        "updatedAt",
+                        "turnCount",
+                        "usage",
+                        "error",
+                        "retryOfRunId",
+                        "retryAttempt",
+                        "grantSnapshot",
+                        "queuedInput"
+                      ],
+                      "description": "The run as its viewers see it."
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "access": {
+                          "const": "metadata",
+                          "description": "The caller sees that the run happened, never its content."
+                        },
+                        "id": {
+                          "type": "string",
+                          "description": "The run's unique ID."
+                        },
+                        "state": {
+                          "enum": [
+                            "queued",
+                            "running",
+                            "awaiting_approval",
+                            "awaiting_input",
+                            "completed",
+                            "failed",
+                            "cancelled",
+                            "stale"
+                          ],
+                          "type": "string",
+                          "description": "Where the run is in its lifecycle."
+                        },
+                        "trigger": {
+                          "enum": [
+                            "message",
+                            "api",
+                            "schedule",
+                            "retry",
+                            "resume"
+                          ],
+                          "type": "string",
+                          "description": "Why the run exists."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "description": "When the run was created. An ISO 8601 date-time."
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "description": "When the run last changed. An ISO 8601 date-time."
+                        },
+                        "turnCount": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "description": "Number of committed turns."
+                        },
+                        "usage": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "description": "Token and cost totals across the run's turns. Null until a turn commits."
+                        },
+                        "toolNames": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The distinct tools the run called, from its `tool-start` events."
+                        }
+                      },
+                      "required": [
+                        "access",
+                        "id",
+                        "state",
+                        "trigger",
+                        "createdAt",
+                        "updatedAt",
+                        "turnCount",
+                        "usage",
+                        "toolNames"
+                      ],
+                      "description": "The audit view of a run in someone else's personal scope."
+                    }
+                  ],
+                  "description": "The run, at the depth this caller may see."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/runs/{id}/events": {
+      "get": {
+        "operationId": "runs.events",
+        "summary": "Read a run's event log",
+        "description": "Read the run's persisted events in sequence order, from a cursor. Content-private: only a viewer with full access to the run reads its log — the audit view does not. Known event types are validated; unknown types pass through as recorded, for readers newer than this server. A stored event that fails validation is skipped and counted rather than failing the page.",
+        "tags": [
+          "Runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The ID of the run whose log to read."
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "default": 0,
+              "description": "Return events with a sequence number greater than this. Defaults to 0."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 200,
+              "description": "How many events to return. Defaults to 200."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991,
+                            "description": "One-based sequence number, dense within the run."
+                          },
+                          "at": {
+                            "type": "string",
+                            "description": "When the event was recorded. An ISO 8601 date-time."
+                          },
+                          "event": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {},
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "type": "string"
+                                      },
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {},
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "type": "string"
+                                      },
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                }
+                              }
+                            ],
+                            "description": "The event payload, exactly as recorded."
+                          }
+                        },
+                        "required": [
+                          "seq",
+                          "at",
+                          "event"
+                        ],
+                        "description": "One recorded event."
+                      },
+                      "description": "The page of events, ascending by sequence number."
+                    },
+                    "cursor": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "The last sequence number the page covers. Pass it back as `after`."
+                    },
+                    "hasMore": {
+                      "type": "boolean",
+                      "description": "Whether events beyond the cursor exist."
+                    },
+                    "malformed": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "Recorded events on this page that failed validation and were skipped."
+                    }
+                  },
+                  "required": [
+                    "events",
+                    "cursor",
+                    "hasMore",
+                    "malformed"
+                  ],
+                  "description": "One page of the run's event log."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/runs/{id}/outputs/{outputRef}": {
+      "get": {
+        "operationId": "runs.output",
+        "summary": "Read a tool call's full output",
+        "description": "Read the full output behind one tool call, as the run's transcript stores it — the `tool-result` event carries only a summary, and its `outputRef` names what this endpoint resolves. Content-private: only a viewer with full access to the run reads outputs; anyone else — the audit view included — finds nothing, indistinguishable from a run or a reference that does not exist. Text is cut at a byte cap with the cut declared; an oversized image keeps its media type but ships no data.",
+        "tags": [
+          "Runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The ID of the run the output belongs to."
+            }
+          },
+          {
+            "name": "outputRef",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The output reference from the run's `tool-result` event — the tool call's id."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "callId": {
+                      "type": "string",
+                      "description": "The tool call the output belongs to."
+                    },
+                    "status": {
+                      "enum": [
+                        "ok",
+                        "error",
+                        "denied"
+                      ],
+                      "type": "string",
+                      "description": "How the call ended: its output is a result, an error body, or a refusal."
+                    },
+                    "summary": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The summary the run's `tool-result` event carried, when the log has one — so the client renders the expansion without re-joining the event."
+                    },
+                    "blocks": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "text",
+                                "description": "Plain text output."
+                              },
+                              "text": {
+                                "type": "string",
+                                "description": "The text, cut at the byte cap when it exceeds it."
+                              },
+                              "truncated": {
+                                "type": "boolean",
+                                "description": "Whether the text was cut at the byte cap."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "text",
+                              "truncated"
+                            ],
+                            "description": "One text block of the output."
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "image",
+                                "description": "Base64-encoded image output."
+                              },
+                              "mediaType": {
+                                "type": "string",
+                                "description": "The image's media type, e.g. `image/png`."
+                              },
+                              "data": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "The base64 image data, or null when the image was omitted for size."
+                              },
+                              "omitted": {
+                                "type": "boolean",
+                                "description": "Whether the image exceeded the inline cap and its data was omitted."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "mediaType",
+                              "data",
+                              "omitted"
+                            ],
+                            "description": "One image block of the output."
+                          }
+                        ]
+                      },
+                      "description": "The output's content blocks, in transcript order."
+                    }
+                  },
+                  "required": [
+                    "callId",
+                    "status",
+                    "summary",
+                    "blocks"
+                  ],
+                  "description": "One tool call's full output, rendered by content type under size caps."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/threads/{threadRef}/runs": {
+      "get": {
+        "operationId": "runs.listByThread",
+        "summary": "List a thread's runs",
+        "description": "The thread's most recent runs in run order, each with the opening message its log derives — what the run was asked, by whom. Only runs the caller may fully read are listed; a thread whose runs are all invisible is indistinguishable from an empty one.",
+        "tags": [
+          "Threads"
+        ],
+        "parameters": [
+          {
+            "name": "threadRef",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The thread whose runs to list."
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100,
+              "description": "How many of the thread's most recent runs to consider. Defaults to 100."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The run's unique ID."
+                          },
+                          "state": {
+                            "enum": [
+                              "queued",
+                              "running",
+                              "awaiting_approval",
+                              "awaiting_input",
+                              "completed",
+                              "failed",
+                              "cancelled",
+                              "stale"
+                            ],
+                            "type": "string",
+                            "description": "Where the run is in its lifecycle."
+                          },
+                          "trigger": {
+                            "enum": [
+                              "message",
+                              "api",
+                              "schedule",
+                              "retry",
+                              "resume"
+                            ],
+                            "type": "string",
+                            "description": "Why the run exists."
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "description": "When the run was created. An ISO 8601 date-time."
+                          },
+                          "openingMessage": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "author": {
+                                    "type": "object",
+                                    "properties": {
+                                      "principalId": {
+                                        "type": "string"
+                                      },
+                                      "displayName": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "principalId"
+                                    ],
+                                    "description": "Who asked."
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "description": "What was asked."
+                                  }
+                                },
+                                "required": [
+                                  "author",
+                                  "text"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The message the run opened with, derived from its log. Null for a run nobody messaged — a schedule firing, a resume."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "state",
+                          "trigger",
+                          "createdAt",
+                          "openingMessage"
+                        ],
+                        "description": "One run on the thread."
+                      },
+                      "description": "The runs the caller may read, in run order."
+                    }
+                  },
+                  "required": [
+                    "runs"
+                  ],
+                  "description": "The thread's visible runs."
                 }
               }
             }
