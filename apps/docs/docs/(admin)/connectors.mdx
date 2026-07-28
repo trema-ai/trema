@@ -23,7 +23,7 @@ The catalog ships 30 providers, grouped below by how they authorize. A provider 
 | MCP OAuth | Airtable, Apollo, Asana, ClickUp, Granola, Linear, monday.com, Notion, Sentry, Supabase |
 | API key | Gamma, n8n, PostHog, Stripe, Vercel |
 
-OAuth-app and API-key providers expose a curated set of REST tools; MCP providers expose whatever tools their server publishes. Every tool carries a sensitivity—`read`, `write`, or `destructive`.
+OAuth-app and API-key providers expose a curated set of REST tools; MCP providers expose whatever tools their server publishes. Whether a call runs at once or pauses for a person is governed by the scope's [approval policy](/approval-policies), not by the tool.
 
 ## Set up an OAuth app
 
@@ -60,14 +60,15 @@ Use **Add to scope** on a connection to bind more scopes later, and **Remove fro
 **Configure tools** on a scope binding controls what the agent can call there:
 
 - Turn individual tools on or off, or keep **All tools** on—new synced tools then arrive enabled.
-- Override a tool's sensitivity. The scope's [approval policy](/approval-policies) decides what a `write` or `destructive` call needs—by default, approval in shared and organization scopes.
 - Choices apply only to that binding, so the same connection can expose different tools in different scopes.
+
+Turning a tool off removes it outright. Bounding how freely the enabled tools run is a policy decision instead. An [approval policy](/approval-policies) sets a per-connector or scope-wide ceiling on the approval mode.
 
 ## Sync MCP tools
 
 An MCP installation copies its tool list from the provider's server when it is created. To pick up changes, choose **Sync tools now** on the binding; the result reports added, removed, and changed tools. A removed tool drops out of the enabled list, and with an explicit tool selection, new tools stay off until you turn them on.
 
-Synced tools take their sensitivity from the server's annotations and default to `destructive` when a tool declares none.
+A synced tool keeps the server's own MCP annotations verbatim. They gate nothing—the delegated-mode classifier reads them as untrusted signal; see [Approval policies](/approval-policies).
 
 ## Open a provider to members
 
