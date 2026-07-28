@@ -34,6 +34,7 @@ COPY apps/docs/package.json apps/docs/
 COPY packages/connectors/package.json packages/connectors/
 COPY packages/harness/package.json packages/harness/
 COPY packages/models/package.json packages/models/
+COPY packages/projection/package.json packages/projection/
 # Every workspace manifest is copied so `--frozen-lockfile` still agrees with
 # the lockfile, but only the two projects the image ships get installed: the
 # docs app pulls wrangler, workerd and miniflare, a quarter of a gigabyte that
@@ -50,8 +51,10 @@ FROM deps AS server
 COPY tsconfig.base.json ./
 COPY packages/ packages/
 COPY apps/server/ apps/server/
-# The server build runs `prisma generate` first; its dependencies build with it.
-RUN pnpm --filter @trema/server... build
+# The server build runs `prisma generate` first; its dependencies build with
+# it. Projection is web's dependency, not the server's, but it builds here so
+# the web stage below finds its dist through the production condition.
+RUN pnpm --filter @trema/server... --filter @trema/projection build
 
 # Pruning the production install and building the web assets both need the
 # server build and nothing from each other, so the two stages below run
