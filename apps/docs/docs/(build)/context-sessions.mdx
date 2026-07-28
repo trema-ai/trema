@@ -24,6 +24,8 @@ curl -X POST https://trema.example.com/api/v1/sessions \
 
 The requester is who asked, as either the surface's raw user id or a `principalId`. Omit it for scheduled work that nobody triggered. A one-to-one conversation with the agent sets `dm: true`, requires a surface requester, and resolves to that person's personal scope. Pass `threadRef` when the surface has threads.
 
+Pass `approvalMode` when the requester chose one for the thread—`ask`, `delegated`, or `full`, defaulting to `ask`. The connector gate clamps each call to the scope's policy ceiling, so the choice can only be narrowed; see [Approval policies](/approval-policies).
+
 The response carries the session and everything the harness injects into the model:
 
 | Field | What it is |
@@ -33,7 +35,7 @@ The response carries the session and everything the harness injects into the mod
 | `mode` | Either `service`, acting as the organization's agent, or `delegated`, acting as the requesting person. |
 | `scopeChain` | The scopes the session reads, widest first. Writes land at the last one. |
 | `standing` | The instructions, standing memories, and skill index to inject into every turn, cut to a token budget. |
-| `policySnapshot` | The approval policy pinned for the session's whole life. |
+| `policySnapshot` | The policy rows pinned for the session's whole life. The connector gate resolves each call against them. |
 | `snapshotHash` | A stable identifier for the resolved snapshot. Two sessions resolving the same context share it. |
 
 The `tools` array is empty in the current release. If the call answers 404 with the code `location_unbound`, bind the location to a scope and retry. A 403 with `identity_unlinked` means the requesting user is not linked to a person.
@@ -122,5 +124,6 @@ Every tool is scoped to the session's scope chain, so there is nothing to filter
 | `save_memory` | Saves a memory with a `type`, `title`, and `content` at the session's scope. A restated memory replaces the old one, and the reply names what it superseded. |
 | `update_memory` | Rewrites a memory's `content` in place. The type and title stay, and the earlier wording stays in the item's history. |
 | `fetch_transcript` | Reads a bounded window of a captured conversation, centered on `aroundSeq` or ending the thread when omitted. |
+| `use_connector` | Executes one connector tool by `toolKey`, with the credential attached server-side. A reply with status `approval_required` names a pending approval; once a person approves it, the same call with that `approvalId` executes. |
 
 The memory writes follow the writer policy. A `fact` or `preference` takes effect at once; a `rule` or `procedure` lands proposed and waits for a person to confirm it. Rewriting is narrower still: only facts and preferences saved at the session's own scope, because a confirmed rule or procedure needs a person.

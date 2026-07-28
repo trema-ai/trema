@@ -19,11 +19,12 @@ Every entry names its action, a dotted string such as `invite.create`. The recor
 | `item.create`, `item.update`, `item.activate`, `item.archive`, `item.restore` | An item is written or moves through its lifecycle. |
 | `policy.set`, `policy.delete` | An [approval policy](/approval-policies) is written or removed. |
 | `approval.request`, `approval.approved`, `approval.denied`, `approval.expired`, `approval.superseded` | A gated call asks for a decision, or the decision lands. |
+| `tool_grant.minted` | An approval resolved with a wider width mints a thread or standing tool grant. |
 | `connector.installation.create`, `connector.installation.update`, `connector.installation.archive`, `connector.installation.sync` | A connector installation changes or syncs. |
 | `binding.create`, `binding.delete` | A surface binding is created or deleted. |
 | `service_credential.create`, `service_credential.revoke` | A service credential is created or revoked. |
 | `session.open`, `session.renew`, `session.close`, `session.messages` | A context session opens, renews, or closes, or a run reports messages into one. |
-| `dataplane.search_context`, `dataplane.get_item`, `dataplane.save_memory`, `dataplane.update_memory`, `dataplane.fetch_transcript` | The agent reads or writes context during a session. |
+| `dataplane.search_context`, `dataplane.get_item`, `dataplane.save_memory`, `dataplane.update_memory`, `dataplane.fetch_transcript`, `dataplane.use_connector` | The agent reads or writes context, or calls a connector tool, during a session. |
 | `admin.reset_password`, `admin.promote` | A [host command](/cli) resets a password or promotes an owner. |
 
 ## What an entry carries
