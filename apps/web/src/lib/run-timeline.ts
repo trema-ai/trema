@@ -1,4 +1,4 @@
-import type { FoldInput, RunStatus } from "@trema/projection";
+import { advance, type FoldInput, type Projection, type RunStatus } from "@trema/projection";
 
 /**
  * Pure logic behind the run view's timeline: SSE frame parsing, terminal-state
@@ -74,8 +74,6 @@ export interface PauseBoundary {
 export interface TimelineMeta {
   /** Highest seq folded into this meta, mirroring the projection's cursor. */
   lastSeq: number;
-  /** Whether an unclosed segment exists, mirroring the fold's segmenting. */
-  openSegment: boolean;
   /** Whether the next event is the one that ends the last boundary's park. */
   awaitingResume: boolean;
   /** One entry per closed segment, in order. */
@@ -85,35 +83,7 @@ export interface TimelineMeta {
 }
 
 export function emptyTimelineMeta(): TimelineMeta {
-  return { lastSeq: 0, openSegment: false, awaitingResume: false, boundaries: [], steeringAt: {} };
-}
-
-/**
- * Event types the fold turns into parts — the ones that open a segment.
- * `data` is handled separately: only durable data events become parts, so a
- * transient one must not open a segment here that the fold never creates.
- */
-const PART_EVENT_TYPES: ReadonlySet<string> = new Set([
-  "text-start",
-  "text-delta",
-  "text-end",
-  "reasoning-start",
-  "reasoning-delta",
-  "reasoning-end",
-  "tool-start",
-  "tool-input-delta",
-  "tool-input",
-  "tool-note",
-  "tool-result",
-  "elicitation",
-  "steering",
-  "error",
-]);
-
-/** Mirrors the fold: a `data` event becomes a part unless marked transient. */
-function isDurableData(type: string, event: unknown): boolean {
-  if (type !== "data") return false;
-  return (event as { transient?: unknown }).transient !== true;
+  return { lastSeq: 0, awaitingResume: false, boundaries: [], steeringAt: {} };
 }
 
 function eventType(event: unknown): string | undefined {
@@ -122,46 +92,57 @@ function eventType(event: unknown): string | undefined {
   return typeof type === "string" ? type : undefined;
 }
 
+function closedSegments(projection: Projection) {
+  return projection.segments.filter((segment) => segment.end !== undefined);
+}
+
+export interface TimelineAdvance {
+  projection: Projection;
+  meta: TimelineMeta;
+}
+
 /**
- * Advances the meta with newly delivered events. Pure and idempotent over
- * re-delivery, like the fold's `advance`: stale seqs are skipped, and an
- * all-stale batch returns the same object.
+ * Advances the projection and its meta together, one event at a time, with
+ * the fold as the only event interpreter: a boundary is recorded exactly when
+ * the fold closes a segment. Re-classifying raw events here would be a second
+ * interpreter that drifts — malformed payloads the fold skips, transient
+ * data, results reconciled into prior segments — so the meta observes what
+ * the fold did instead of predicting it. Idempotent over re-delivery like
+ * `advance` itself: stale seqs are skipped, and an all-stale batch returns
+ * both inputs unchanged.
  */
-export function advanceTimelineMeta(
+export function advanceTimeline(
+  projection: Projection,
   meta: TimelineMeta,
   inputs: readonly FoldInput[],
-): TimelineMeta {
+): TimelineAdvance {
+  let nextProjection = projection;
   let draft: TimelineMeta | undefined;
   for (const input of inputs) {
     if (input.seq <= (draft ?? meta).lastSeq) continue;
     draft ??= { ...meta, boundaries: [...meta.boundaries], steeringAt: { ...meta.steeringAt } };
     draft.lastSeq = input.seq;
-    const type = eventType(input.event);
-    if (type === undefined) continue;
     if (draft.awaitingResume) {
       const position = draft.boundaries.length - 1;
       const last = draft.boundaries[position];
       if (last !== undefined) draft.boundaries[position] = { ...last, resumeAt: input.at };
       draft.awaitingResume = false;
     }
-    if (type === "segment-end") {
-      // Mirrors the fold: a boundary with nothing open closes nothing, so it
-      // must not consume a slot in the closed-segment order either.
-      if (draft.openSegment) {
-        const reason = (input.event as { reason?: unknown }).reason;
-        draft.boundaries.push({
-          reason: typeof reason === "string" ? reason : "completed",
-          endAt: input.at,
-        });
-        draft.openSegment = false;
-        draft.awaitingResume = true;
-      }
-    } else if (PART_EVENT_TYPES.has(type) || isDurableData(type, input.event)) {
-      draft.openSegment = true;
-      if (type === "steering") draft.steeringAt[input.seq] = input.at;
+    const closedBefore = closedSegments(nextProjection).length;
+    nextProjection = advance(nextProjection, [input]);
+    const closed = closedSegments(nextProjection);
+    for (let position = closedBefore; position < closed.length; position += 1) {
+      draft.boundaries.push({
+        reason: closed[position]?.end?.reason ?? "completed",
+        endAt: input.at,
+      });
+      draft.awaitingResume = true;
     }
+    // Timestamp capture only: if the fold skipped a malformed steering event,
+    // no part carries this seq and the entry is simply never read.
+    if (eventType(input.event) === "steering") draft.steeringAt[input.seq] = input.at;
   }
-  return draft ?? meta;
+  return { projection: nextProjection, meta: draft ?? meta };
 }
 
 /** "3h 12m" style duration, coarse on purpose: two units, largest first. */

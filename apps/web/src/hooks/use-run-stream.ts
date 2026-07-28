@@ -1,11 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { advance, type FoldInput, fold, type Projection } from "@trema/projection";
+import { type FoldInput, fold, type Projection } from "@trema/projection";
 import { useEffect, useRef, useState } from "react";
 
 import type { RunState } from "#web/components/trema/run-state-badge.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import {
-  advanceTimelineMeta,
+  advanceTimeline,
   emptyTimelineMeta,
   isTerminalProjection,
   isTerminalRunState,
@@ -99,8 +99,9 @@ export function useRunStream(runId: string, runState: RunState): RunStreamSnapsh
 
     const apply = (inputs: readonly FoldInput[], malformed: number) => {
       const before = store.projection.status;
-      store.projection = advance(store.projection, inputs);
-      store.meta = advanceTimelineMeta(store.meta, inputs);
+      const advanced = advanceTimeline(store.projection, store.meta, inputs);
+      store.projection = advanced.projection;
+      store.meta = advanced.meta;
       store.malformed += malformed;
       const after = store.projection.status;
       if (source !== undefined) {
