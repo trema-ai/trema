@@ -3,6 +3,7 @@ import { ORPCError, os } from "@orpc/server";
 import type { Engine } from "@trema/harness";
 
 import type { Auth } from "#server/lib/auth/index.js";
+import { resolveOrgPrincipal } from "#server/lib/auth/org-principal.js";
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { bindLogger, log } from "#server/lib/logger/index.js";
@@ -144,55 +145,18 @@ export const sessionAuthed = pub.use(
 );
 
 export const orgScoped = authed.use(async ({ context, next }) => {
-  const { activeOrgId } = context.session.session;
+  const resolved = await resolveOrgPrincipal(context.db, context.session);
 
-  if (!activeOrgId) {
+  if (!resolved.ok) {
     throw new ORPCError("FORBIDDEN", {
-      message: "No active organization",
+      message: resolved.message,
     });
   }
-
-  const [org, principal] = await Promise.all([
-    context.db.org.findUnique({
-      where: { id: activeOrgId },
-    }),
-    context.db.principal.findUnique({
-      where: {
-        orgId_authId: {
-          orgId: activeOrgId,
-          authId: context.session.user.id,
-        },
-      },
-    }),
-  ]);
-
-  if (!org) {
-    log.warn("Active organization not found", { orgId: activeOrgId });
-    throw new ORPCError("FORBIDDEN", {
-      message: "Active organization not found",
-    });
-  }
-
-  if (!principal) {
-    log.warn("Principal not found in active organization", { orgId: activeOrgId });
-    throw new ORPCError("FORBIDDEN", {
-      message: "Principal not found in active organization",
-    });
-  }
-
-  if (principal.deactivatedAt) {
-    log.warn("Principal is deactivated", { orgId: org.id, principalId: principal.id });
-    throw new ORPCError("FORBIDDEN", {
-      message: "Principal is deactivated",
-    });
-  }
-
-  bindLogger({ orgId: org.id, principalId: principal.id });
 
   return next({
     context: {
-      org,
-      principal,
+      org: resolved.org,
+      principal: resolved.principal,
     },
   });
 });

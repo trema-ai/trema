@@ -14,6 +14,7 @@ import type { Environment } from "./lib/env/schema.js";
 import { log, withLogger } from "./lib/logger/index.js";
 import { generateOpenApiDocument, OPENAPI_PREFIX } from "./openapi.js";
 import { router } from "./router.js";
+import { createRunStreamHandler, type RunStreamTiming } from "./routes/run-stream.js";
 import type { RpcContext } from "./rpc/builders.js";
 import {
   type ConnectorFetch,
@@ -36,6 +37,8 @@ export interface AppDependencies {
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
   runEngineFor?: (orgId: string) => Engine;
+  /** Poll and heartbeat cadence for the run SSE tail. Tests shorten both. */
+  runStream?: RunStreamTiming;
 }
 
 export function safeConnectorReturnUrl(
@@ -124,6 +127,7 @@ export function createApp({
   mcpClientFactory,
   platformApps,
   runEngineFor,
+  runStream,
 }: AppDependencies): Hono {
   const app = new Hono();
   const rpcHandler = new RPCHandler<RpcContext>(router, {
@@ -258,6 +262,15 @@ export function createApp({
       ...(platformApps ? { platformApps } : {}),
     });
   });
+
+  // The run tail is SSE — a long-lived streaming read the oRPC mold does not
+  // fit — so like the MCP data plane it is a raw mount that never appears in
+  // the OpenAPI document. Registered before the OpenAPI handler so the path
+  // is ours.
+  app.get(
+    `${OPENAPI_PREFIX}/runs/:id/stream`,
+    createRunStreamHandler({ db, auth, ...runStream }),
+  );
 
   app.use(`${OPENAPI_PREFIX}/*`, async (context, next) => {
     const { matched, response } = await openApiHandler.handle(context.req.raw, {
