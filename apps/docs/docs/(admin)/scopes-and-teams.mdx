@@ -1,0 +1,50 @@
+---
+title: Scopes and teams
+description: Split shared context into team spaces, bind surface locations to them, and control where personal scopes apply.
+---
+
+A scope is where context lives: items, approval policies, and conversations each belong to exactly one scope. Managing scopes requires the `manage_scopes` capability, held by owners and admins, and every change described here is recorded in the audit log.
+
+| Kind | One per | Notes |
+| --- | --- | --- |
+| `org` | organization | Created with the organization. Its context reaches every session. |
+| `shared` | team | Created and renamed by owners and admins. |
+| `personal` | member | Created automatically while personal scopes are enabled, owned by that member. |
+
+## Create a shared scope
+
+Create a shared scope from the scopes page—select **New scope** and name it—or through the scopes endpoints in the [API reference](/api). Renaming works the same way and applies only to shared scopes. The organization scope carries the organization's name, and a personal scope carries its owner's. Nothing in the current release deletes a scope.
+
+## Control who can use a scope
+
+Access to a scope is a grant: one member, one role, one scope. A plain invite grants its role on the organization scope, and an organization role carries into every shared scope. A `member` of the organization can therefore read and write items in any shared scope without a second grant. Which capabilities each role holds is covered in [Roles and permissions](/roles-and-permissions).
+
+To give someone one team and nothing more, create the invite with that shared scope's ID. Redeeming grants the role on that scope only, with no standing on the organization scope, which suits external collaborators. [Members and invites](/members-and-invites) covers creating and revoking invites.
+
+Personal scopes sit outside this inheritance. Each member acts with `admin` rights over their own personal scope. Organization roles do not reach into another member's personal scope, not even an owner's.
+
+## Bind a location to a scope
+
+A binding ties a surface location—an identifier for a place the agent is reachable—to an organization or shared scope. A session opened at that location resolves to the bound scope, so the agent works with that scope's context there. A location no binding covers does not resolve, and the session is rejected. The one exception is a direct message, which can resolve to the sender's personal scope as described below.
+
+Create a binding from the scopes page—select **New binding**—or through the bindings endpoints in the [API reference](/api). Either way it takes a surface, a location reference, and a target scope. Three rules apply:
+
+- One binding per location. Binding an already-bound location is rejected as a conflict.
+- The target must be an organization or shared scope. Personal scopes cannot be explicit binding targets.
+- The surface must come from the surface catalog. The API surface is available in the current release; Slack, Linear, GitHub, and email are cataloged as planned.
+
+Deleting a binding stops new activity at that location from resolving to the scope. Sessions already open keep the scope they resolved.
+
+## Turn personal scopes on or off
+
+Personal scopes back direct messages: a member messages the agent privately, and the session acts on that member's behalf. The toggle sits at the bottom of the scope list, with a matching personal-policy endpoint in the [API reference](/api).
+
+Enabling creates a personal scope for every current member and for each member who joins afterwards. A direct message then resolves to the sender's personal scope, provided the sender's surface identity is linked to a member. The first message records a binding there, so listings show where personal scopes are reachable. Disabling stops direct messages from creating or resolving personal scopes. Nothing is deleted: existing scopes and their items become reachable again when the policy is re-enabled.
+
+Listings respect ownership: a member sees only their own personal scope, while owners and admins see them all.
+
+## Trace what a session reads
+
+A session reads from its scope chain: the organization scope first, then the session's own scope. A session in the organization scope reads that scope alone. Standing context, memory search, and conversation reads all draw from the chain; nothing outside it is readable. New memories land in the session's own scope.
+
+The chain never widens sideways. Two shared scopes cannot see each other's items, and personal items never appear in a shared or organization session. [Context sessions](/context-sessions) covers how a session opens and pins its chain.

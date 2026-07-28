@@ -1,0 +1,241 @@
+---
+title: Roles and permissions
+description: Every role and capability, and the minimum role each API operation requires.
+---
+
+Every human member holds a role on a scope, each role grants a fixed set of capabilities, and every protected operation checks exactly one capability. This page is the complete matrix; [Members and invites](/members-and-invites) covers granting and changing roles.
+
+## Roles
+
+The four roles nest strictly: each holds everything the previous one does.
+
+| Role | Adds |
+| --- | --- |
+| `viewer` | Reading. |
+| `member` | Creating and editing items, installing skills. |
+| `admin` | Managing connectors, scopes, policies, schedules, members, and model providers; reading the audit log. |
+| `owner` | Organization administration. |
+
+## Capabilities
+
+A call that fails a capability check answers with status 403 and a message naming the capability, such as `Capability required: manage_members`.
+
+| Capability | Minimum role | Governs |
+| --- | --- | --- |
+| `read` | `viewer` | Listing and reading scopes, items, members, schedules, policies, bindings, and surfaces. |
+| `write_items` | `member` | Creating, editing, activating, archiving, and restoring items. |
+| `install_skills` | `member` | Reserved for skill installation. No operation checks it in this release. |
+| `manage_connectors` | `admin` | Connector connections, installations, registrations, provider settings, tool execution, and service credentials. |
+| `manage_scopes` | `admin` | Shared scopes, surface bindings, and the personal-scope policy. |
+| `edit_policies` | `admin` | Setting and deleting approval policies. |
+| `manage_schedules` | `admin` | Creating, editing, and changing the status of schedules. |
+| `manage_members` | `admin` | Member roles, invites, deactivation, and reactivation. |
+| `manage_models` | `admin` | Model providers, role defaults, and the search index. |
+| `read_audit` | `admin` | The audit log. |
+| `manage_org` | `owner` | Renaming the organization. |
+
+## Where a role counts
+
+A capability check runs at a scope, and the roles that count there depend on the scope's kind:
+
+- The role a member holds on the organization scope is their membership role—the one the member list shows.
+- A shared scope counts direct grants on it plus the caller's organization-scope grant.
+- A personal scope does not inherit organization roles. Its owner holds `admin` there, and direct grants on it still count.
+- An operation that names no scope checks the capability at the organization scope.
+
+Two rules sit in front of every check:
+
+- The organization's agent principal holds no role. Every capability check denies it; the control plane belongs to people.
+- A deactivated member is refused on every call, before any capability check.
+
+## Operations
+
+The tables below list every protected operation and what it requires. Unless the row says otherwise, the capability is checked at the organization scope. Some requirements are not capabilities—an invite token, a service credential, plain membership. Those rows say so, and their minimum-role column is empty.
+
+### Members
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| List members | `GET /members` | `read` | `viewer` |
+| Set a member's role | `POST /members/role` | `manage_members` | `admin` |
+| Deactivate a member | `POST /principals/{id}/deactivate` | `manage_members` | `admin` |
+| Reactivate a member | `POST /principals/{id}/reactivate` | `manage_members` | `admin` |
+
+- The organization's last owner cannot be demoted, and its last active owner cannot be deactivated; both fail with a conflict.
+
+### Invites
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| Create an invite | `POST /invites` | `manage_members` at the invite's scope | `admin` |
+| List pending invites | `GET /invites` | `manage_members` | `admin` |
+| Revoke an invite | `POST /invites/{id}/revoke` | `manage_members` | `admin` |
+| Preview an invite | `POST /invites/preview` | The invite token | — |
+| Redeem an invite | `POST /invites/redeem` | A signed-in account and the invite token | — |
+
+- Only human principals may redeem an invite, and a deactivated member cannot redeem one.
+
+### Scopes, bindings, and surfaces
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| Create a shared scope | `POST /scopes` | `manage_scopes` | `admin` |
+| List scopes | `GET /scopes` | `read`, filtered per scope | `viewer` |
+| Get a scope | `GET /scopes/{id}` | `read` | `viewer` |
+| Rename a shared scope | `PATCH /scopes/{id}` | `manage_scopes` | `admin` |
+| Read the personal-scope policy | `GET /scopes/personal-policy` | `read` | `viewer` |
+| Set the personal-scope policy | `PATCH /scopes/personal-policy` | `manage_scopes` | `admin` |
+| Create a surface binding | `POST /bindings` | `manage_scopes` | `admin` |
+| List surface bindings | `GET /bindings` | `read` | `viewer` |
+| Delete a surface binding | `DELETE /bindings/{id}` | `manage_scopes` | `admin` |
+| List surfaces | `GET /surfaces` | `read` | `viewer` |
+
+- The scope list returns what the caller may read; a holder of `manage_scopes` also sees personal scopes without gaining read access inside them.
+
+### Items and search
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| Create an item | `POST /items` | `write_items` at the target scope | `member` |
+| List items | `GET /items` | `read` at each item's scope, filtered | `viewer` |
+| Get an item | `GET /items/{id}` | `read` at the item's scope | `viewer` |
+| List an item's versions | `GET /items/{id}/versions` | `read` at the item's scope | `viewer` |
+| Update an item | `PATCH /items/{id}` | `write_items` at the item's scope | `member` |
+| Activate an item | `POST /items/{id}/activate` | `write_items` at the item's scope, plus the approver rule | `member` |
+| Archive an item | `POST /items/{id}/archive` | `write_items` at the item's scope | `member` |
+| Restore an item | `POST /items/{id}/restore` | `write_items` at the item's scope | `member` |
+| Search items | `GET /items/search` | `read` on every requested scope | `viewer` |
+| Rebuild the search index | `POST /items/reindex` | `manage_models` | `admin` |
+| Read the index status | `GET /items/index-status` | `manage_models` | `admin` |
+
+- Activation is an approval decision, not just a write: the caller must also satisfy the approver rule—the one pinned on a pending activation approval where a run asked, otherwise the scope's current policy. See [Approval policies](/approval-policies).
+
+### Connectors
+
+Every operation on the organization agent's connections requires `manage_connectors`, so the minimum role throughout this table is `admin`.
+
+| Operation | Route | Checked at |
+| --- | --- | --- |
+| Get deployment metadata | `GET /connectors/meta` | The organization scope |
+| Update provider settings | `PATCH /connector-providers/{providerKey}/settings` | The organization scope |
+| Start an OAuth connection | `POST /connector-connections/oauth` | The organization scope |
+| Create a static connection | `POST /connector-connections/static` | The organization scope |
+| List connections | `GET /connector-connections` | The organization scope |
+| Rename a connection | `PATCH /connector-connections/{connectionId}` | The organization scope |
+| Revoke a connection | `POST /connector-connections/{connectionId}/revoke` | The organization scope |
+| Create a client registration | `POST /connector-registrations` | The organization scope |
+| List client registrations | `GET /connector-registrations` | The organization scope |
+| Delete a client registration | `DELETE /connector-registrations/{id}` | The organization scope |
+| Create an installation | `POST /connector-installations` | The target scope |
+| List installations | `GET /connector-installations` | The requested scope |
+| Update an installation | `PATCH /connector-installations/{installationItemId}` | The installation's scope |
+| Sync an installation's tools | `POST /connector-installations/{installationItemId}/sync` | The installation's scope |
+| Archive an installation | `POST /connector-installations/{installationItemId}/archive` | The installation's scope |
+| Execute a connector tool | `POST /connector-tools/execute` | Every requested scope |
+
+The member routes carry no capability check: any active member, whatever their role, manages their own personal connections through them.
+
+| Operation | Route | Requires |
+| --- | --- | --- |
+| List the connector catalog | `GET /connector-catalog` | Membership |
+| Start a personal OAuth connection | `POST /member/connector-connections/oauth` | Membership; member access enabled for the provider |
+| Create a personal static connection | `POST /member/connector-connections/static` | Membership; member access enabled for the provider |
+| List your connections | `GET /member/connector-connections` | Membership |
+| Revoke one of your connections | `POST /member/connector-connections/{connectionId}/revoke` | Owning the connection |
+| Create a personal installation | `POST /member/connector-installations` | Membership; member access enabled for the provider |
+
+- Ownership alone gates revocation: a member can always revoke their own connection, even after member access for the provider is turned off.
+- A member may install connectors only in their own personal scope; any other scope is refused.
+
+### Service credentials
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| Create a service credential | `POST /service-credentials` | `manage_connectors` | `admin` |
+| List service credentials | `GET /service-credentials` | `manage_connectors` | `admin` |
+| Revoke a service credential | `POST /service-credentials/revoke` | `manage_connectors` | `admin` |
+| Resolve a service credential | `GET /service-credentials/whoami` | The credential itself | — |
+
+### Model providers
+
+Every model-provider operation requires `manage_models`, so the minimum role throughout this table is `admin`.
+
+| Operation | Route |
+| --- | --- |
+| List model providers | `GET /model-providers` |
+| Get a model provider | `GET /model-providers/{name}` |
+| Create a model provider | `POST /model-providers` |
+| Create or replace a model provider | `PUT /model-providers/{name}` |
+| Delete a model provider | `DELETE /model-providers/{name}` |
+| Probe a model provider | `POST /model-providers/{name}/probe` |
+| List a provider's remote models | `GET /model-providers/{name}/remote-models` |
+| Refresh a provider's model catalog | `POST /model-providers/{name}/refresh-catalog` |
+| List the role defaults | `GET /model-defaults` |
+| Set a role default | `PUT /model-defaults/{role}` |
+| Delete a role default | `DELETE /model-defaults/{role}` |
+| List the bundled provider presets | `GET /model-provider-presets` |
+
+### Policies
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| List policies | `GET /policies` | `read` at each policy's scope, filtered | `viewer` |
+| Resolve a scope's policy | `GET /policies/resolved` | `read` at that scope | `viewer` |
+| Set a policy | `PUT /policies/{scopeId}/{sensitivity}` | `edit_policies` at that scope | `admin` |
+| Delete a policy | `DELETE /policies/{scopeId}/{sensitivity}` | `edit_policies` at that scope | `admin` |
+
+What the policies decide—which calls pause for a person, and who that person is—is covered in [Approval policies](/approval-policies).
+
+### Approvals
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| List approvals awaiting you | `GET /approvals` | Membership; returns only approvals the caller may resolve | — |
+| Get an approval | `GET /approvals/{id}` | `read` at the approval's scope | `viewer` |
+| Approve a gated call | `POST /approvals/{id}/approve` | The rule pinned on the approval | — |
+| Deny a gated call | `POST /approvals/{id}/deny` | The rule pinned on the approval | — |
+
+- Resolution follows the rule pinned when the approval was asked, never the scope's current policy: the caller must hold one of the pinned approver roles at the approval's scope.
+- The person the run was acting for may not resolve their own approval unless the pinned rule allows it—holding an approver role does not buy past that.
+- In a personal scope, the scope's owner satisfies an `owner` approver role.
+- An approval in a scope the caller cannot read reports as not found.
+
+### Audit
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| List audit log entries | `GET /audit` | `read_audit` | `admin` |
+| List distinct audit actions | `GET /audit/actions` | `read_audit` | `admin` |
+
+### Schedules
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| Create a schedule | `POST /schedules` | `manage_schedules` at the schedule's scope | `admin` |
+| List schedules | `GET /schedules` | `read` at each schedule's scope, filtered | `viewer` |
+| Edit a schedule | `PATCH /schedules/{id}` | `manage_schedules` at its scope | `admin` |
+| Change a schedule's status | `POST /schedules/{id}/status` | `manage_schedules` at its scope | `admin` |
+
+- Schedules take an approver-grade role because an active schedule is standing authority to act with the scope's connector credentials unattended.
+
+### Organization
+
+| Operation | Route | Requires | Minimum role |
+| --- | --- | --- | --- |
+| Create an organization | `POST /orgs` | A signed-in account; hosted mode only | — |
+| List your organizations | `GET /orgs` | A signed-in account | — |
+| Get the active organization | `GET /orgs/current` | Membership | any |
+| Rename the organization | `PATCH /orgs/current` | `manage_org` | `owner` |
+| Switch the active organization | `POST /orgs/switch` | Membership in the target organization | — |
+
+### Runs and sessions
+
+Runs and sessions authenticate with bearer credentials rather than roles.
+
+| Operation | Route | Requires |
+| --- | --- | --- |
+| Start a run | `POST /runs` | A service credential |
+| Open a session | `POST /sessions` | A service credential |
+| Renew a session | `POST /sessions/{id}/renew` | The session's token |
+| Close a session | `POST /sessions/{id}/close` | The session's token |
+| Send session messages | `POST /sessions/{id}/messages` | The session's token |

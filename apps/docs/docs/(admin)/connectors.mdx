@@ -1,0 +1,96 @@
+---
+title: Connectors
+description: Register provider apps, connect accounts, bind them into scopes, and control which tools the agent can use.
+---
+
+A connector gives the agent tools from an external product—repositories from GitHub, pages from Notion, charges from Stripe. Admins manage connectors on the connector settings page or through the connector endpoints in the [API reference](/api). Three records carry the lifecycle:
+
+| Record | What it is |
+| --- | --- |
+| Registration | The OAuth client identity used at a provider—your organization's own app, or one supplied by the deployment. |
+| Connection | One authorized provider account, with its credential stored encrypted. |
+| Installation | A binding that makes one connection available in one scope, with per-scope tool choices. |
+
+Managing connectors requires the `manage_connectors` capability, held by owners and admins. Members connect their own accounts without it.
+
+## Choose a provider
+
+The catalog ships 30 providers, grouped below by how they authorize. A provider uses an OAuth app, the OAuth flow of its Model Context Protocol (MCP) server, or an API key.
+
+| Authorization | Providers |
+| --- | --- |
+| OAuth app | Box, Canva, DocuSign, Dropbox, Figma, GitHub, Google Workspace, HubSpot, Intercom, Lucid, Miro, NetSuite, Slack, Zapier, Zendesk |
+| MCP OAuth | Airtable, Apollo, Asana, ClickUp, Granola, Linear, monday.com, Notion, Sentry, Supabase |
+| API key | Gamma, n8n, PostHog, Stripe, Vercel |
+
+OAuth-app and API-key providers expose a curated set of REST tools; MCP providers expose whatever tools their server publishes. Every tool carries a sensitivity—`read`, `write`, or `destructive`.
+
+## Set up an OAuth app
+
+OAuth-app providers mint tokens through a client app registered at the provider. A hosted deployment can supply platform apps, in which case these providers connect without setup. When a provider is marked as needing setup, register your organization's own app:
+
+1. Open the provider on the connector settings page and manage its app credentials.
+2. Copy the callback URL from the dialog and create an OAuth app at the provider with that callback URL. The linked provider guide shows where.
+3. Paste the app's client ID and client secret, and save. The secret is stored encrypted and cannot be viewed again.
+
+Your organization's app takes precedence over a platform app for new connections. Removing an app stops new connections through it. Existing connections also lose token refresh: they fail once the current access token expires, and need a reconnect.
+
+MCP and API-key providers skip this step. For an MCP provider, Trema discovers the provider's authorization server and registers a client automatically where the server supports dynamic registration.
+
+## Connect an account
+
+Connections made from the settings page belong to the organization's agent principal: the agent acts as that account in organization and shared scopes. For OAuth and MCP providers:
+
+1. On the provider page, click **Connect**.
+2. Fill any provider-specific fields. Providers with a published scope catalog also show a scope picker, with the defaults preselected.
+3. Click **Continue**. The browser goes to the provider's consent screen and returns to Trema when you approve.
+
+For API-key providers, **Connect** opens a credential form instead. The credential is verified against the provider before it is stored; a credential that fails verification is never written. Either way, [Credential security](/credential-security) describes how the flow and the stored secret are protected.
+
+Connect more than one account to reach separate workspaces—each becomes its own connection. **Rename** gives a connection a label so accounts stay distinguishable.
+
+## Add a connection to scopes
+
+A connection does nothing until it is installed into a scope. After a connect completes, Trema offers to add the new connection to organization and shared scopes. The organization scope starts selected for a provider's first installation, and each selected scope gets its own installation with all tools enabled.
+
+Use **Add to scope** on a connection to bind more scopes later, and **Remove from scope** to archive a binding without touching the connection. Installation changes are recorded in the audit log.
+
+## Configure tools per scope
+
+**Configure tools** on a scope binding controls what the agent can call there:
+
+- Turn individual tools on or off, or keep **All tools** on—new synced tools then arrive enabled.
+- Override a tool's sensitivity. The scope's [approval policy](/approval-policies) decides what a `write` or `destructive` call needs—by default, approval in shared and organization scopes.
+- Choices apply only to that binding, so the same connection can expose different tools in different scopes.
+
+## Sync MCP tools
+
+An MCP installation copies its tool list from the provider's server when it is created. To pick up changes, choose **Sync tools now** on the binding; the result reports added, removed, and changed tools. A removed tool drops out of the enabled list, and with an explicit tool selection, new tools stay off until you turn them on.
+
+Synced tools take their sensitivity from the server's annotations and default to `destructive` when a tool declares none.
+
+## Open a provider to members
+
+Member-connectable providers let members connect their own accounts, so the agent acts as them in their personal sessions. Member access is on by default; the **Member access** toggle on the provider page turns it off per provider.
+
+Members connect from the Connections tab of their personal scope, and the connection is bound to that scope automatically. A personal installation always uses the owner's own connection, never the organization agent's. Turning member access off stops new personal connections for that provider; members can always revoke a connection they own.
+
+## Watch credential health
+
+An OAuth connection refreshes on use: a call that needs a credential near expiry refreshes it first. An idle connection is not refreshed in the background. Connection listings show whether each connection is valid, expired, revoked, or needs reconnection. They also carry refresh bookkeeping—last success, last failure, and attempt count—but no secret material. After four days of failed refreshes, a connection is marked as needing reconnection.
+
+Use **Reconnect** on a connection to run the connect flow again in place: the refreshed credential keeps the connection's identity and every scope binding.
+
+## Revoke and remove
+
+Three levers, from narrowest to broadest:
+
+- **Remove from scope** archives one installation. The connection stays available to other scopes.
+- **Revoke connection** marks the connection invalid immediately. Every scope bound to it stops working until its binding points at another connection.
+- **Disconnect**, in the provider's danger zone, archives every binding and revokes every connection for the provider. App credentials are kept.
+
+Deleting an OAuth app registration removes the stored client secret with it; new connections can no longer use the app, and existing credentials are unchanged.
+
+## How tools reach the agent
+
+The server proxies every connector tool call. It resolves the installation for the session's scopes, decrypts the credential at the moment of use, and injects it into the provider request. The model never sees a token, and credential material is redacted from results; see [Credential security](/credential-security).

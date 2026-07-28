@@ -1,0 +1,59 @@
+---
+title: Audit log
+description: Read and query the record of every recorded change in the organization.
+---
+
+The audit log records what changed in the organization and who changed it—members, the agent, and the system itself all leave entries. Reading it takes the `admin` or `owner` role.
+
+## What gets recorded
+
+Every entry names its action, a dotted string such as `invite.create`. The recorded actions, grouped by what they concern:
+
+| Actions | Recorded when |
+| --- | --- |
+| `org.bootstrap`, `org.create`, `org.rename` | An organization is bootstrapped, created, or renamed. |
+| `grant.set_role` | A member's role is set. |
+| `invite.create`, `invite.revoke`, `invite.redeem` | An [invite](/members-and-invites) is created, revoked, or redeemed. |
+| `principal.deactivate`, `principal.reactivate` | A member is deactivated or reactivated. |
+| `scope.create`, `scope.rename`, `scope.personal_policy` | A shared scope is created or renamed, or personal scopes are switched on or off. |
+| `item.create`, `item.update`, `item.activate`, `item.archive`, `item.restore` | An item is written or moves through its lifecycle. |
+| `policy.set`, `policy.delete` | An [approval policy](/approval-policies) is written or removed. |
+| `approval.request`, `approval.approved`, `approval.denied`, `approval.expired`, `approval.superseded` | A gated call asks for a decision, or the decision lands. |
+| `connector.installation.create`, `connector.installation.update`, `connector.installation.archive`, `connector.installation.sync` | A connector installation changes or syncs. |
+| `binding.create`, `binding.delete` | A surface binding is created or deleted. |
+| `service_credential.create`, `service_credential.revoke` | A service credential is created or revoked. |
+| `session.open`, `session.renew`, `session.close`, `session.messages` | A context session opens, renews, or closes, or a run reports messages into one. |
+| `dataplane.search_context`, `dataplane.get_item`, `dataplane.save_memory`, `dataplane.update_memory`, `dataplane.fetch_transcript` | The agent reads or writes context during a session. |
+| `admin.reset_password`, `admin.promote` | A [host command](/cli) resets a password or promotes an owner. |
+
+## What an entry carries
+
+| Field | Holds |
+| --- | --- |
+| `action` | The recorded action. |
+| `actor` | The principal that acted—a person or the agent. Null when the system acted on its own, as when an approval expires or a host command runs. |
+| `subject` | The ID of the record the action changed. |
+| `payload` | The action-specific details, as JSON. An approval entry, for example, carries the tool key and the arguments' fingerprint. |
+| `createdAt` | When the action happened. |
+
+## Reading the log
+
+Open **Settings → Audit log**. The page lists entries newest first and is limited to organization admins. Filter by action, by actor—the list includes the agent principal and people no longer members—or by date range. Select a row to see the full entry, including its payload; **Load more** reads the next page.
+
+## Querying through the API
+
+The audit endpoints in the [API reference](/api) serve the same log. The list endpoint pages newest first—pass the returned cursor to read the next page—and takes these filters:
+
+| Parameter | Filters by |
+| --- | --- |
+| `action` | The exact action. |
+| `actionPrefix` | Actions starting with a prefix, such as `invite.`. |
+| `actorPrincipalId` | One acting principal. |
+| `from`, `to` | A time range, as ISO 8601 date-times. |
+| `limit` | The page size: up to 200 entries, 50 by default. |
+
+A second endpoint lists the distinct actions present in the log; the web app's action filter is built from it.
+
+## Retention
+
+Nothing in the current release trims the log. An entry is written once, never updated, and kept for the life of the organization.

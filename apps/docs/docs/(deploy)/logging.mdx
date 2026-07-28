@@ -1,0 +1,62 @@
+---
+title: Logging and monitoring
+description: Ship the log stream, wire uptime and readiness probes, and alert on what the server reports.
+---
+
+The server and the run worker write structured log records to stderr, one per line. This page connects that stream and the probe endpoints to your monitoring. The record format, its fields, and the logging variables are in the [configuration reference](/configuration#logging).
+
+## Ship the logs
+
+Logs go only to stderr—stdout stays a data channel for commands that print values, such as the [bootstrap token](/cli#re-mint-a-bootstrap-token). Point your collector at stderr; a process manager or container runtime captures it by default.
+
+For a log shipper, switch the format so each line parses as one JSON object:
+
+```sh
+TREMA_LOG_FORMAT=json
+```
+
+The default `info` level records every request. Raising the level to `warn` keeps only rejections and failures; lowering it to `debug` adds a completion record per procedure with its duration.
+
+## Probes
+
+Three endpoints answer monitoring checks without authentication:
+
+| Endpoint | Answers |
+| --- | --- |
+| `GET /health` | `{"ok":true}` while the process is up. |
+| `GET /ready` | `{"ok":true}` when a database query succeeds; `{"ok":false}` with status 503 when it fails. |
+| `GET /api/v1/system/ping` | Confirmation that the API is reachable, with the server's current time. |
+
+Point an uptime probe at `/health` and a readiness probe at `/ready`. Each failed readiness check also logs `Readiness check failed` at the `error` level with the database error.
+
+Requests to `/health` and `/ready` log at `debug`, so a probe every few seconds does not fill the `info`-level log.
+
+## Trace a request
+
+Every request gets an id: the value of its incoming `x-request-id` header, or a generated UUID. The server echoes it in the `x-request-id` response header, so an id a client reports maps straight to the request's log lines:
+
+```sh
+# collect one request's records from a captured stream
+grep 'requestId=6f5b0c1e-9d21-4f7a-8f0c-2b1d7c3a5e88' server.log
+```
+
+The `requestId` appears on every record the request produces, wherever in the stack it was logged. More ids bind as the request resolves: `procedure` when a procedure call starts, `userId` after authentication, then `orgId` and `principalId` once the organization resolves.
+
+## What the levels mean
+
+An `error` record is a failure the server owns: an unhandled exception, a response with status 500 or higher, a failed readiness check. A rejection the client caused never reaches `error`—an unauthorized or forbidden call logs `Procedure rejected` at `warn` with its code.
+
+The `warn` level also carries degraded-but-running conditions. Two examples: a connector token refresh that failed, and run scheduling that is off because `HATCHET_CLIENT_TOKEN` is not set.
+
+## What to alert on
+
+Alert on every `error` record—the level is reserved for failures the server owns, so it stays quiet in normal operation. The highest-signal messages:
+
+- `Request failed` — a response with status 500 or higher, or a handler that threw.
+- `Readiness check failed` — the database stopped answering.
+- `Schedule tick failed` — evaluating a schedule threw, so it did not fire its run.
+- `Run worker shutdown failed` — the worker could not drain cleanly.
+
+## Check from the host
+
+For a one-shot check of a deployment—environment, database access, migration status, organization count—run the [doctor command](/cli#check-deployment-health) on the host. Any failed check exits nonzero, so a deploy script can gate on it.

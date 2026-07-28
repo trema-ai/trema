@@ -1,0 +1,106 @@
+---
+title: Model providers
+description: Add the endpoints the agent calls, connect self-hosted model servers, and assign the model each role runs on.
+---
+
+A model provider is a named endpoint in the organization's registry: a base URL, a wire protocol, and an encrypted credential. Manage providers on the models settings page or through the model-provider endpoints in the [API reference](/api); both require the `admin` or `owner` role.
+
+## Add a provider
+
+1. On the models settings page, click **Add provider**.
+2. Pick a preset, or **Custom** to enter the endpoint yourself.
+3. Keep or edit the name. Role assignments reference it, and it must be unique within the organization.
+4. Enter the API key and click **Add**.
+
+The bundled presets:
+
+| Preset | Base URL | Authentication |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | API key |
+| OpenRouter | `https://openrouter.ai/api/v1` | API key |
+| Groq | `https://api.groq.com/openai/v1` | API key |
+| Mistral | `https://api.mistral.ai/v1` | API key |
+| Local model server | `http://localhost:11434/v1` | None |
+
+Every preset speaks the OpenAI-compatible protocol, the one protocol in the current release. A preset fills in the base URL and the credential mode, both editable afterwards. It carries no model list—the provider is asked what it serves.
+
+The API key is stored envelope-encrypted and write-only: it can be replaced or removed, never read back. [Credential security](/credential-security) describes the encryption and the master key it depends on.
+
+Adding the provider reads its model list and stores it as the provider's catalog. A provider that does not answer is still added, with an empty catalog to refresh once it is reachable.
+
+## Connect a self-hosted endpoint
+
+Any server that speaks the OpenAI-compatible protocol can be a provider. The Local model server preset points at `http://localhost:11434/v1`, where an Ollama-style server on the same host answers without a credential; pick **Custom** for anything else.
+
+The base URL:
+
+- includes the version path, the way the provider documents it
+- is an absolute `http` or `https` URL
+- carries no query string or fragment; a trailing slash is dropped
+- carries no credentials—store a token as the credential or a header instead
+
+Set authentication to **No credential** for an endpoint on a trusted network; requests then carry no bearer key.
+
+A gateway that wants more than a bearer key takes extra headers, sent with every request to the provider. Header values get the credential's write-only treatment, since nothing stops a token living in one. The API reports header names only, and replacing the set means typing every value again.
+
+## Assign models to roles
+
+Three roles decide which model each duty runs on:
+
+| Role | Serves |
+| --- | --- |
+| `turns` | The agent loop behind [runs](/durable-runs). |
+| `utility` | Short completions beside a run: titles, extraction, classification. |
+| `embed` | Vectors for memory retrieval and ingestion. |
+
+Pick a model for each role under the default models section of the models settings page. A role stores an ordered fallback chain and resolves to the first entry whose provider exists and is readable. The settings page assigns a chain of one; a longer chain is written through the role-defaults endpoint in the [API reference](/api).
+
+Model configuration is read when a run opens, so a change applies from the next run without a restart. A role left unassigned degrades on its own terms: without a `turns` model, runs cannot execute; without an `embed` model, search matches on text alone.
+
+Changing the `embed` role rebuilds the search index with the new model, after a confirmation. Vectors written by the old model stop counting the moment the assignment changes; until the rebuild finishes, search matches on text alone.
+
+## Choose the models on offer
+
+A provider's catalog can run to hundreds of models; the offered flag marks the short list shown in the model picker. Click **Select models** under the available models section to toggle it per model. A role can name any model in a catalog, even one not offered.
+
+## Refresh a provider's catalog
+
+The catalog is what the provider said it serves, as of the last refresh. Click **Refresh models** on the provider's page, or call the refresh-catalog endpoint, to read the listing again. The refresh merges rather than overwrites:
+
+- A model already in the catalog keeps its entry whole, including its label, context window, and picker choice.
+- A newly listed model is imported bare.
+- An entry the provider stopped listing is dropped, unless it carries one of those annotations or a role default names it.
+
+Refreshes run on demand only—providers rate-limit, so nothing reads a model list in the background. An unreachable provider leaves the stored catalog exactly as it was.
+
+## Check that a provider works
+
+Click **Check now** in the provider's credential section, or call the probe endpoint. The check makes one authenticated call to the provider's own model listing and reports the latency and the model count. A failure comes back as a sentence naming the cause: a rejected credential, a redirect, an unresolved host, a timeout.
+
+## Swap a provider
+
+Swapping model vendors is a registry edit; nothing else moves.
+
+1. Add the new provider.
+2. Reassign each role that should run on it. The `embed` role rebuilds the index as part of the change.
+3. Remove the old provider once no role needs it, or keep it as a fallback entry in a chain.
+
+## Remove a provider
+
+Removing a provider deletes its stored credential with it. Role defaults that name it keep their remaining entries, because a chain link pointing at a missing provider is skipped at resolution. A role left with no usable entry degrades the way an unassigned one does.
+
+To drop only the credential, click **Remove credential** on the provider's page. Requests to the provider then go unauthenticated, which most providers answer with a 401 until a new key is entered.
+
+## Seed the registry from the environment
+
+A deployment can boot with providers already in place—useful where no administrator has signed in yet, such as an air-gapped [first boot](/first-boot). The environment names the endpoints and, optionally, the model the `turns` role starts on:
+
+```sh
+# apps/server/.env — read only while the registry is empty
+TREMA_MODEL_ENDPOINTS='{"openai":{"protocol":"openai-compatible","baseUrl":"https://api.openai.com/v1","apiKey":"sk-..."}}'
+TREMA_MODEL_ID=gpt-4.1
+# Names which endpoint serves the turns default. Optional with a single endpoint.
+TREMA_MODEL_PROVIDER=openai
+```
+
+The variables are bootstrap, not configuration: they seed an organization whose registry is empty and are ignored from the first stored provider onward. The seeded rows are ordinary providers—edit or remove them like any other. [Configuration](/configuration) lists every variable the server reads.

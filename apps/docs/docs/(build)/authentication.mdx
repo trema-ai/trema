@@ -1,0 +1,76 @@
+---
+title: Authentication
+description: Choose a credential for scripted API calls and make your first authenticated request.
+---
+
+Every API operation names the credential it accepts, and the [API reference](/api) lists it per endpoint. Confirm the API is reachable before wiring any credential:
+
+```sh
+curl https://trema.example.com/api/v1/system/ping
+# {"ok":true,"time":"2026-07-28T09:14:03.512Z"}
+```
+
+The ping endpoint is public. Everything else takes one of three credentials:
+
+| Credential | Sent as | Use it for |
+| --- | --- | --- |
+| Session cookie | The cookie set at sign-in | Control-plane calls as a signed-in member: items, scopes, members, connectors. |
+| Service credential | `Authorization: Bearer trema_sc_…` | Machine calls: starting runs and opening context sessions. |
+| Session token | `Authorization: Bearer trema_ses_…` | Data-plane calls within one open context session. See [Context sessions](/context-sessions). |
+
+## Session cookies
+
+Sign in through the auth endpoints under `/api/auth` to receive the session cookie. With password sign-in enabled, the default, a script signs in with email and password and keeps the cookie in a jar:
+
+```sh
+curl -c cookies.txt https://trema.example.com/api/auth/sign-in/email \
+  -H 'content-type: application/json' \
+  -d '{"email":"priya@acme.dev","password":"<password>"}'
+```
+
+The cookie is named `better-auth.session_token` and carries the `__Secure-` prefix over HTTPS. Send the jar with each call:
+
+```sh
+curl -b cookies.txt https://trema.example.com/api/v1/orgs/current
+```
+
+Organization-scoped operations act on the session's active organization. An account that belongs to exactly one organization is pinned to it at sign-in. A member of several selects one through the organizations endpoints in the [API reference](/api).
+
+## Service credentials
+
+A service credential is the machine credential: a bearer secret with the `trema_sc_` prefix. An owner or administrator creates one while signed in:
+
+```sh
+curl -b cookies.txt -X POST https://trema.example.com/api/v1/service-credentials \
+  -H 'content-type: application/json' \
+  -d '{"name":"deploy-bot"}'
+```
+
+The response carries the `secret` field exactly once—store it now. Only a SHA-256 hash of the secret is kept, so a lost secret cannot be recovered; create a new credential instead. [Credential security](/credential-security) describes the storage posture.
+
+Send the secret as a bearer token, and verify it resolves:
+
+```sh
+curl https://trema.example.com/api/v1/service-credentials/whoami \
+  -H "authorization: Bearer $TREMA_SERVICE_CREDENTIAL"
+```
+
+The response names the credential's organization and the principal it acts as.
+
+A service credential is bound to the organization's agent principal, which holds no member role. It works only on the operations that list it: starting runs and opening context sessions. The member endpoints take the session cookie instead.
+
+## Lifecycle and revocation
+
+A service credential never expires; revocation is the only way to end it.
+
+```sh
+# Metadata only: id, name, principalId, createdAt, revokedAt.
+curl -b cookies.txt https://trema.example.com/api/v1/service-credentials
+
+# Revoke by id. Takes effect on the next API call.
+curl -b cookies.txt -X POST https://trema.example.com/api/v1/service-credentials/revoke \
+  -H 'content-type: application/json' \
+  -d '{"credentialId":"01983d2f-4c1e-7a3b-9f0e-6d2a8c4b1e5f"}'
+```
+
+Every creation and revocation lands in the organization's audit log with the acting principal.

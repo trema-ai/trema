@@ -1,0 +1,73 @@
+---
+title: Approval policies
+description: Decide which agent tool calls run, which wait for a person, and who may approve them.
+---
+
+An approval policy decides what happens when the agent calls a tool: the call runs, waits for a person, or is refused. A policy belongs to a scope and covers one sensitivity class, so a team scope can gate deletions without restating the organization's read rule.
+
+## What a policy decides
+
+Every tool carries a sensitivity class—`read`, `write`, or `destructive`. Connector tools declare theirs in the provider's tool manifest, and an installation can override the class per tool. A tool with no declared class counts as `destructive`. The policy maps each class to one action:
+
+| Action | Effect |
+| --- | --- |
+| `allow` | The call runs. |
+| `require_approval` | The call waits until a person approves it. |
+| `deny` | The call is refused. |
+
+A `require_approval` policy also names who may answer: the roles that may resolve the approval, and whether the requester may approve their own request. The requester is the person the run was acting for.
+
+## Built-in defaults
+
+A class no policy covers falls back to the built-in default for the scope's kind:
+
+| Class | Personal scope | Shared and organization scopes |
+| --- | --- | --- |
+| `read` | Runs. | Runs. |
+| `write` | Runs. | Waits for an `admin` or `owner`; the requester may confirm their own. |
+| `destructive` | Waits for the scope's owner. | Waits for an `admin` or `owner`; the requester may never approve their own. |
+
+## Writing a policy
+
+Members with the `admin` or `owner` role write policies through the policies endpoints in the [API reference](/api). Nothing in the current release edits them from the web app. A scope holds at most one policy per class, so writing one replaces the last. Deleting one lets the class fall back to a wider scope's policy, or to the built-in default.
+
+Two rules hold for `require_approval`. The policy needs an approver role or requester approval—to refuse a class outright, use `deny`. And outside a personal scope it needs an approver role, because the requester cannot be its sole approver.
+
+Resolution is most-specific-wins, one class at a time: the scope's own policy beats the organization's, which beats the built-in default. The resolved endpoint shows what each class resolves to for a scope right now—exactly what a session opened against it would get.
+
+A session pins the resolved policy when it opens and keeps it for its whole life. A policy edit therefore reaches the next session, never a run already underway.
+
+## Who gets asked
+
+An approval carries the rule pinned when it was asked: the approver roles, and whether the requester may resolve it themselves. Who may answer never changes under a later policy edit. Three checks decide:
+
+- Only a person resolves an approval; the agent principal cannot.
+- The requester is refused unless the rule allows requester approval—holding an approver role does not buy past this.
+- Anyone else needs one of the rule's roles at the approval's scope. In a personal scope, the scope's owner satisfies the `owner` role.
+
+Roles are described in [Members and invites](/members-and-invites).
+
+## While an approval waits
+
+A run whose tool call is waiting on a decision parks in the awaiting-approval state. The pause ends execution—no worker blocks on the person—and resuming is a fresh execution. [Durable runs](/durable-runs) covers the mechanism.
+
+A repeated ask for the same call returns the same pending approval. A resumed run repeating its tool call is one decision for a person, not two. An approval waits 24 hours before it expires.
+
+## Responding to an approval
+
+Approvals are listed and resolved through the approvals endpoints in the [API reference](/api). Nothing in the current release renders an approvals inbox in the web app. The list returns exactly the approvals you may resolve. Each one carries the call's arguments verbatim and the model's one-line reason. Approve or deny by ID:
+
+- Approving permits one execution of exactly the recorded arguments. A call whose arguments changed is refused and needs a new approval.
+- Denying refuses the call; the run reads the denial as the tool's result and carries on without it.
+
+## When nobody answers
+
+An approval nobody resolves within 24 hours expires. An expired or denied approval never executes, and a late answer gets a conflict rather than a quiet success. If the agent still needs the call, its next ask opens a new approval.
+
+Every ask and outcome is recorded: `approval.request`, `approval.approved`, `approval.denied`, and `approval.expired` all land in the [audit log](/audit-log).
+
+## Activating proposed items
+
+A rule, instruction, or skill the agent proposes lands as a `proposed` item, and turning it on is an approval like any other. Activation always requires one, whatever the policy says; the policy still decides who confirms, through the `write` class. Approving activates the item in the same step, and any other pending ask about the same item retires as superseded.
+
+In the web app, open the item on the **Customize** page and select **Activate**. The button performs the approval, so it faces the same approver rule: in a personal scope, the person the item was proposed for confirms it.

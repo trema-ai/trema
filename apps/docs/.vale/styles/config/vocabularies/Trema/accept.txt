@@ -14,3 +14,12 @@ PKCE
 [Ss]tdout
 [Ss]tderr
 [Ll]ogfmt
+Groq
+Airtable
+Asana
+Canva
+Figma
+Supabase
+Vercel
+Zapier
+Zendesk
