@@ -198,6 +198,54 @@ integration("context sessions", () => {
     expect(orgWide.requesterExternalRef).toBeNull();
   });
 
+  it("resolves a web location to the requester's own personal scope", async () => {
+    const org = await createOrg("Web Org");
+    const member = await linkMember(org.org.id, org.orgScope.id, "Web Human", "U-WEB");
+    const openWeb = (requester: { principalId: string } | { externalUserId: string }) =>
+      call(
+        sessionsRouter.open,
+        { surface: "web", locationRef: member.principal.id, threadRef: "chat-1", requester },
+        { context: serviceContext(org.credential.secret) },
+      );
+
+    // No binding, no identity link, no dm flag: the surface itself says this
+    // location is the requester's own chat with the agent.
+    const opened = await openWeb({ principalId: member.principal.id });
+    expect(opened.mode).toBe("delegated");
+    expect(opened.actingPrincipalId).toBe(member.principal.id);
+    expect(opened.requesterPrincipalId).toBe(member.principal.id);
+    expect(opened.requesterExternalRef).toBeNull();
+    expect(opened.scopeChain.map(({ kind }) => kind)).toEqual(["org", "personal"]);
+
+    const personal = await db.scope.findFirstOrThrow({
+      where: { orgId: org.org.id, kind: "personal", ownerId: member.principal.id },
+    });
+    const bindings = await db.binding.findMany({
+      where: { orgId: org.org.id, surface: "web" },
+    });
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]?.scopeId).toBe(personal.id);
+
+    // A second chat on the same location reuses the implicit binding.
+    const again = await openWeb({ principalId: member.principal.id });
+    expect(again.scopeChain.at(-1)?.id).toBe(personal.id);
+    await expect(db.binding.count({ where: { orgId: org.org.id, surface: "web" } })).resolves.toBe(
+      1,
+    );
+
+    // Web has no external identities, so a surface id names nobody.
+    await expect(openWeb({ externalUserId: "U-WEB" })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "A web session requires a requesting principal",
+    });
+
+    await call(scopesRouter.setPersonalPolicy, { enabled: false }, { context: org.context });
+    await expect(openWeb({ principalId: member.principal.id })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      data: { code: "personal_scopes_disabled" },
+    });
+  });
+
   it("records an unlinked requester and refuses an unlinked DM or unbound location", async () => {
     const org = await createOrg();
     const shared = await call(scopesRouter.create, { name: "Helpdesk" }, { context: org.context });

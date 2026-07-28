@@ -14048,14 +14048,24 @@
                         ],
                         "type": "string",
                         "description": "Whether the surface is planned or available through an installed integration."
+                      },
+                      "builtIn": {
+                        "type": "boolean",
+                        "description": "Whether the surface ships with the deployment instead of arriving with an installed integration."
+                      },
+                      "locationBindable": {
+                        "type": "boolean",
+                        "description": "Whether the surface's locations can be bound to a scope. A surface that is not location-bindable resolves implicitly and has nothing to pick: web chat is one location per member, resolving to that member's personal scope."
                       }
                     },
                     "required": [
                       "id",
                       "name",
-                      "status"
+                      "status",
+                      "builtIn",
+                      "locationBindable"
                     ],
-                    "description": "An integration-backed surface that can provide bindable locations."
+                    "description": "A surface that can carry conversations, and how its locations reach a scope."
                   },
                   "description": "The surface catalog."
                 }

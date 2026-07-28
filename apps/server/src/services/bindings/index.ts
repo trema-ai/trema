@@ -2,7 +2,7 @@ import type { Scope } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { ensurePersonalScope } from "#server/services/scopes/index.js";
-import { isKnownSurface } from "#server/services/surfaces/index.js";
+import { isKnownSurface, isLocationBindable } from "#server/services/surfaces/index.js";
 
 export class BindingConflictError extends Error {
   constructor(message: string) {
@@ -29,6 +29,13 @@ export class UnknownSurfaceError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "UnknownSurfaceError";
+  }
+}
+
+export class SurfaceNotBindableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SurfaceNotBindableError";
   }
 }
 
@@ -66,6 +73,13 @@ export async function createBinding(db: Database, input: CreateBindingInput) {
   if (!isKnownSurface(input.surface)) {
     log.warn("Unknown binding surface", { surface: input.surface });
     throw new UnknownSurfaceError(`Unknown surface: ${input.surface}`);
+  }
+  // Web has no admin-pickable locations: its one location per member resolves
+  // implicitly to that member's personal scope, and personal scopes are never
+  // explicit binding targets.
+  if (!isLocationBindable(input.surface)) {
+    log.warn("Surface has no bindable locations", { surface: input.surface });
+    throw new SurfaceNotBindableError(`Surface ${input.surface} has no bindable locations`);
   }
 
   const target = await db.scope.findFirst({
@@ -187,11 +201,22 @@ export async function deleteBinding(db: Database, input: DeleteBindingInput) {
   return binding;
 }
 
+/**
+ * A one-to-one conversation with the agent, which resolves to the person's
+ * personal scope. A surface carrying external identities names the sender by
+ * their surface id and resolves it through an identity link; web names the
+ * principal directly, because the author of a web message is already a
+ * principal from the browser session — the DM rule with no link step.
+ */
+export type DirectRequester =
+  | { externalUserId: string }
+  | { principal: { id: string; displayName: string } };
+
 export interface ResolveLocationInput {
   orgId: string;
   surface: string;
   locationRef: string;
-  dm?: { externalUserId: string };
+  dm?: DirectRequester;
 }
 
 export type ResolveLocationResult =
@@ -237,31 +262,42 @@ export async function resolveLocation(
     return { kind: "personal_disabled" };
   }
 
-  const identity = await db.identityLink.findUnique({
-    where: {
-      orgId_surface_externalUserId: {
-        orgId: input.orgId,
+  // Web skips the identity link entirely: its author is already a principal,
+  // so resolution is a lookup on that principal's personal scope. Every other
+  // surface must first map an external identity onto one.
+  let owner: { id: string; displayName: string };
+  if ("principal" in input.dm) {
+    owner = input.dm.principal;
+  } else {
+    const identity = await db.identityLink.findUnique({
+      where: {
+        orgId_surface_externalUserId: {
+          orgId: input.orgId,
+          surface: input.surface,
+          externalUserId: input.dm.externalUserId,
+        },
+      },
+      include: { principal: true },
+    });
+    if (identity?.principal.kind !== "human") {
+      return {
+        kind: "unlinked",
         surface: input.surface,
         externalUserId: input.dm.externalUserId,
-      },
-    },
-    include: { principal: true },
-  });
-  if (identity?.principal.kind !== "human") {
-    return {
-      kind: "unlinked",
-      surface: input.surface,
-      externalUserId: input.dm.externalUserId,
-    };
+      };
+    }
+    owner = identity.principal;
   }
 
   const scope = await ensurePersonalScope(db, {
     orgId: input.orgId,
-    principalId: identity.principal.id,
-    displayName: identity.principal.displayName,
+    principalId: owner.id,
+    displayName: owner.displayName,
   });
-  // The DM binding persists so admins can see where personal scopes are
-  // reachable; a concurrent first DM loses the unique race harmlessly.
+  // The implicit binding persists so admins can see where personal scopes are
+  // reachable — the spec keeps it as audit metadata, for web exactly as for a
+  // DM, which is why the row existing never makes the surface bindable. A
+  // concurrent first message loses the unique race harmlessly.
   try {
     await db.binding.create({
       data: {
