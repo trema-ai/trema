@@ -271,7 +271,10 @@ function SettingsPoliciesPage() {
           {scopes.isPending ? (
             <PolicySkeleton />
           ) : selectedScope ? (
-            <ScopePolicy scope={selectedScope} scopeNames={scopeNames} />
+            // Keyed by scope so a scope change (including browser back with the
+            // editor open) resets every bit of pane state; a stale editor must
+            // never save into the newly selected scope.
+            <ScopePolicy key={selectedScope.id} scope={selectedScope} scopeNames={scopeNames} />
           ) : (
             <Alert variant="destructive">
               <AlertDescription>No scope was found to show a policy for.</AlertDescription>

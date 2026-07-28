@@ -139,7 +139,9 @@ function summarizeArgs(args: unknown) {
 export function SettingsApprovalsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [resolving, setResolving] = useState<{ id: string; option: string }>();
+  // In-flight resolutions by approval id, so one card's mutation neither
+  // blocks nor mislabels another's.
+  const [resolving, setResolving] = useState<Record<string, string>>({});
   const [limit, setLimit] = useState(PAGE_SIZE);
   const statusParam = searchParams.get("status");
   const status: Status = isStatus(statusParam) ? statusParam : "pending";
@@ -187,7 +189,11 @@ export function SettingsApprovalsPage() {
       toast.error(messageFrom(cause));
       await queryClient.invalidateQueries({ queryKey: orpc.approvals.list.key() });
     },
-    onSettled: () => setResolving(undefined),
+    onSettled: (_data, _error, variables) =>
+      setResolving((current) => {
+        const { [variables.id]: _settled, ...rest } = current;
+        return rest;
+      }),
   });
 
   function selectStatus(next: string) {
@@ -203,8 +209,8 @@ export function SettingsApprovalsPage() {
   }
 
   function handleResolve(id: string, option: string) {
-    if (resolving !== undefined) return;
-    setResolving({ id, option });
+    if (resolving[id] !== undefined) return;
+    setResolving((current) => ({ ...current, [id]: option }));
     resolve.mutate({ id, option });
   }
 
@@ -212,8 +218,12 @@ export function SettingsApprovalsPage() {
     (approval) => approval.status === status,
   );
   const empty = emptyStates[status];
+  // After a tab switch the kept data belongs to the previous status: its rows
+  // fail the filter, which must read as loading, never as an empty tab.
+  const stalePlaceholder = approvals.isPlaceholderData && rows.length === 0;
   // A full page means there may be more; the server offers no cursor past its cap.
-  const maybeMore = (approvals.data?.approvals.length ?? 0) >= limit;
+  const maybeMore =
+    !approvals.isPlaceholderData && (approvals.data?.approvals.length ?? 0) >= limit;
 
   return (
     <main className="mx-auto w-full max-w-3xl p-4 sm:p-6 lg:p-8">
@@ -234,7 +244,7 @@ export function SettingsApprovalsPage() {
             <Alert variant="destructive">
               <AlertDescription>{approvals.error.message}</AlertDescription>
             </Alert>
-          ) : approvals.isPending ? (
+          ) : approvals.isPending || stalePlaceholder ? (
             <div className="space-y-4">
               <Skeleton className="h-44 w-full" />
               <Skeleton className="h-44 w-full" />
@@ -252,7 +262,7 @@ export function SettingsApprovalsPage() {
                   approval={approval}
                   memberNames={memberNames}
                   scopeNames={scopeNames}
-                  resolving={resolving?.id === approval.id ? resolving.option : undefined}
+                  resolving={resolving[approval.id]}
                   onResolve={handleResolve}
                 />
               ))}
