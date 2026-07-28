@@ -11,6 +11,28 @@ export type ModelProtocol =
 export type ModelCredentialMode = "api_key" | "none" | "aws_sigv4" | "gcp_adc";
 
 /**
+ * Which credential modes each protocol takes, mirroring the record the registry
+ * enforces on write. It is here so the screens never offer a pair the server
+ * refuses, and the order is the server's order: the first entry is what a
+ * protocol defaults to, so a switch that invalidates the selected mode has
+ * somewhere to land.
+ */
+const credentialModes: Record<ModelProtocol, [ModelCredentialMode, ...ModelCredentialMode[]]> = {
+  openai_compatible: ["api_key", "none"],
+  anthropic: ["api_key", "none"],
+  google: ["api_key", "none"],
+  openai_responses: ["api_key", "none"],
+  bedrock: ["aws_sigv4"],
+  vertex: ["gcp_adc"],
+};
+
+export function allowedCredentialModes(
+  protocol: ModelProtocol,
+): [ModelCredentialMode, ...ModelCredentialMode[]] {
+  return credentialModes[protocol];
+}
+
+/**
  * Protocol configuration a row carries, for the protocols that take any. Every
  * field is optional because each protocol declares its own: a row's protocol
  * says which are filled.

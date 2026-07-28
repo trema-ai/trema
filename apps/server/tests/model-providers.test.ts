@@ -459,6 +459,59 @@ integration("model provider registry", () => {
     ).rejects.toThrow(/entering its credential again/);
   });
 
+  it("takes only the credential modes a protocol can spend", async () => {
+    const org = await createOrg();
+
+    // A protocol and a mode are one decision. The pair refused here is the one
+    // that reads as configured on the screen and vanishes at resolution: a
+    // Bedrock row holding a plain string nothing can sign with.
+    await expect(
+      call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "mismatched",
+          protocol: "bedrock",
+          baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          credentialMode: "api_key",
+          credential: "not-a-key-pair",
+          settings: { region: "us-east-1" },
+        },
+        { context: org.context },
+      ),
+    ).rejects.toThrow("The bedrock protocol authenticates with aws_sigv4, not api_key");
+    // And the other way round: a signing mode on a protocol that has nothing to
+    // sign with is refused by the same lookup.
+    await expect(
+      call(
+        modelProvidersRouter.providers.put,
+        { ...openAiCompatible, name: "signed-openai", credentialMode: "gcp_adc" },
+        { context: org.context },
+      ),
+    ).rejects.toThrow(
+      "The openai_compatible protocol authenticates with api_key or none, not gcp_adc",
+    );
+
+    // A create that names no mode lands in the one its protocol leads with, so
+    // adding a Bedrock row is not a matter of knowing the word `aws_sigv4`.
+    const created = await call(
+      modelProvidersRouter.providers.put,
+      {
+        name: "bedrock",
+        protocol: "bedrock",
+        baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        settings: { region: "us-east-1" },
+      },
+      { context: org.context },
+    );
+    expect(created).toMatchObject({ credentialMode: "aws_sigv4", hasCredential: false });
+    const endpoints = await resolveEndpoints(db, org.org.id, { masterKey });
+    expect(endpoints.bedrock).toEqual({
+      protocol: "bedrock",
+      baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+    });
+  });
+
   it("takes a Vertex service account as the key file it was downloaded as, or none at all", async () => {
     const org = await createOrg();
     const vertex = {
@@ -1693,6 +1746,10 @@ integration("model provider registry", () => {
           credentialMode: "aws_sigv4",
           credential: bedrockKeys,
           settings: { region: "eu-west-1" },
+          // Stored as an admin typed it, capitals and all: the signer names
+          // headers as it normalizes them, so a set added beside the signed one
+          // would arrive as a second, differently-cased copy.
+          headers: { "X-Tenant": "acme" },
         },
         { context: org.context },
       );
@@ -1721,6 +1778,12 @@ integration("model provider registry", () => {
       expect(authorization).toContain("Credential=AKIAEXAMPLEKEYID/");
       expect(authorization).toMatch(/\/eu-west-1\/bedrock\/aws4_request/);
       expect(call1.seen.headers?.get("x-amz-date")).toMatch(/^\d{8}T\d{6}Z$/);
+      // The builder returns the whole header set, so the stored header travels
+      // once — a second copy would show up here joined with a comma — and it is
+      // inside the signature rather than beside it.
+      expect(call1.seen.headers?.get("x-tenant")).toBe("acme");
+      const signedHeaders = authorization.match(/signedheaders=([^,]+)/i)?.[1] ?? "";
+      expect(signedHeaders.split(";")).toContain("x-tenant");
       // The secret signs the request and never travels in it.
       expect(JSON.stringify([...(call1.seen.headers ?? [])])).not.toContain("the-signing-secret");
       expect(listed).toEqual({
@@ -1791,6 +1854,41 @@ integration("model provider registry", () => {
       });
       expect(await probeProvider(db, org.org.id, "ambient", { masterKey, fetch })).toMatchObject({
         ok: false,
+      });
+      expect(called).toBe(false);
+    });
+
+    it("reports a stored configuration it cannot read as a failed probe", async () => {
+      const org = await createOrg();
+      await call(
+        modelProvidersRouter.providers.put,
+        {
+          name: "hand-edited",
+          protocol: "bedrock",
+          baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          credentialMode: "aws_sigv4",
+          settings: { region: "us-east-1" },
+        },
+        { context: org.context },
+      );
+      // Written past the service, the way a restored backup or a column edited
+      // by hand arrives: a shape the protocol never declared.
+      await db.modelProvider.update({
+        where: { orgId_name: { orgId: org.org.id, name: "hand-edited" } },
+        data: { settingsJson: { region: 5 } },
+      });
+
+      let called = false;
+      const fetch: typeof globalThis.fetch = async () => {
+        called = true;
+        return new Response("{}", { status: 200 });
+      };
+      // "Is this provider usable" is the question both screens ask, so an
+      // unreadable row answers it with a sentence rather than a transport
+      // error the screen has nowhere to put.
+      expect(await probeProvider(db, org.org.id, "hand-edited", { masterKey, fetch })).toEqual({
+        ok: false,
+        reason: "The stored configuration cannot be read. Save the provider again to replace it.",
       });
       expect(called).toBe(false);
     });

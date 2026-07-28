@@ -41,6 +41,7 @@ import { Textarea } from "#web/components/ui/textarea.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
+  allowedCredentialModes,
   type CatalogRefresh,
   credentialModeLabel,
   descriptorOf,
@@ -180,6 +181,21 @@ function EndpointSection({
   const settingsIncomplete =
     (needsRegion && region.trim() === "") ||
     (needsProject && (project.trim() === "" || location.trim() === ""));
+  // The mode this save sends. The registry takes a protocol and a credential
+  // mode as one decision and refuses a pair it cannot spend, so carrying the
+  // stored mode across a protocol switch would be a dead end. Where the chosen
+  // protocol cannot take it: a signing protocol lands in its own mode, whose
+  // credential this form drops — which leaves the row signing with the server's
+  // own credentials, a supported state; and a protocol that authenticates with
+  // a key lands in `none` rather than `api_key`, because a key is a value this
+  // form has no field for and the credential section below is where it goes.
+  const allowedModes = allowedCredentialModes(protocol);
+  const credentialMode = allowedModes.includes(provider.credentialMode)
+    ? provider.credentialMode
+    : allowedModes.includes("none")
+      ? "none"
+      : allowedModes[0];
+  const credentialDropped = credentialMode !== provider.credentialMode;
   const dirty =
     label !== provider.label ||
     baseUrl !== provider.baseUrl ||
@@ -193,6 +209,11 @@ function EndpointSection({
         label: label.trim() || provider.name,
         baseUrl: baseUrl.trim(),
         protocol,
+        credentialMode,
+        // A credential belongs to the mode that wrote it, and the registry
+        // refuses one kept across a change of shape, so dropping it is stated
+        // here rather than left to fail.
+        ...(credentialDropped ? { credential: null } : {}),
         // Sent only where the protocol takes it, and cleared where it does not:
         // every other protocol refuses a value outright.
         settings: needsRegion
@@ -261,6 +282,20 @@ function EndpointSection({
             </Select>
           }
         />
+        {credentialDropped ? (
+          <SettingRow
+            label=""
+            orientation="stack"
+            control={
+              <p className="text-meta text-destructive">
+                Saving switches authentication to {credentialModeLabel(credentialMode)}, which is
+                what {protocolLabel(protocol)} takes
+                {provider.hasCredential ? ", and drops the stored credential" : ""}. The credential
+                section below takes the new one.
+              </p>
+            }
+          />
+        ) : null}
         {needsRegion ? (
           <SettingRow
             label="Region"

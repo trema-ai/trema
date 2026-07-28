@@ -7,7 +7,10 @@ import {
 } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
-import { resolveProviderTransport } from "#server/services/model-providers/index.js";
+import {
+  ModelProviderValidationError,
+  resolveProviderTransport,
+} from "#server/services/model-providers/index.js";
 
 /** What one probe learned. A failure carries a sentence an admin can act on. */
 export type ModelProviderProbeResult =
@@ -102,6 +105,12 @@ type ListingRequest =
  * A builder is handed the same fetch the listing itself will use, because one
  * protocol authenticates by asking somebody else first: a token exchange is
  * another call, and it belongs on the same wire as the one it authorizes.
+ *
+ * What a builder returns is the whole header set the request goes out with,
+ * the row's stored headers included. The call site adds nothing of its own: a
+ * signed request carries its header names as the signature computed them, and
+ * spreading the stored ones over that afterwards would put a second,
+ * differently-cased copy of each beside the names the signature covers.
  */
 type ListingRequestBuilders = {
   [Protocol in ModelEndpoint["protocol"]]: (
@@ -140,10 +149,16 @@ function bedrockControlPlaneUrl(baseUrl: string, region: string): string {
 }
 
 const listingRequests: ListingRequestBuilders = {
+  // The stored headers come last in every plain builder: an admin who set a
+  // header the protocol also sets meant the one they typed, which is how a
+  // gateway that names its own authentication scheme is reached.
   "openai-compatible": (endpoint, query) => ({
     ok: true,
     url: withQuery(`${endpoint.baseUrl}/models`, query),
-    headers: endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` },
+    headers: {
+      ...(endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` }),
+      ...endpoint.headers,
+    },
   }),
   anthropic: (endpoint, query) => ({
     ok: true,
@@ -151,19 +166,26 @@ const listingRequests: ListingRequestBuilders = {
     headers: {
       "anthropic-version": "2023-06-01",
       ...(endpoint.apiKey === undefined ? {} : { "x-api-key": endpoint.apiKey }),
+      ...endpoint.headers,
     },
   }),
   google: (endpoint, query) => ({
     ok: true,
     url: withQuery(`${endpoint.baseUrl}/models`, query),
-    headers: endpoint.apiKey === undefined ? {} : { "x-goog-api-key": endpoint.apiKey },
+    headers: {
+      ...(endpoint.apiKey === undefined ? {} : { "x-goog-api-key": endpoint.apiKey }),
+      ...endpoint.headers,
+    },
   }),
   // The Responses surface keeps the OpenAI-shaped listing beside it, so the
   // path is the same one and the answer parses as the same `data` array.
   "openai-responses": (endpoint, query) => ({
     ok: true,
     url: withQuery(`${endpoint.baseUrl}/models`, query),
-    headers: endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` },
+    headers: {
+      ...(endpoint.apiKey === undefined ? {} : { authorization: `Bearer ${endpoint.apiKey}` }),
+      ...endpoint.headers,
+    },
   }),
   bedrock: async (endpoint, query) => {
     // Only this row's own credential is ever spent. The run path may sign with
@@ -179,7 +201,9 @@ const listingRequests: ListingRequestBuilders = {
     }
     const url = withQuery(bedrockControlPlaneUrl(endpoint.baseUrl, endpoint.region), query);
     // The stored headers are signed with the rest: added afterwards they would
-    // travel outside the signature, which is a difference worth not having.
+    // travel outside the signature, which is a difference worth not having. The
+    // signer names them as it normalizes them, so what comes back out is the
+    // complete set, each header once and cased the way the signature covers it.
     const signer = new AwsV4Signer({
       method: "GET",
       url,
@@ -235,7 +259,7 @@ const listingRequests: ListingRequestBuilders = {
       // the catalog is the publisher's and the token says whose quota reads it.
       ok: true,
       url: withQuery(`${endpoint.baseUrl}/publishers/google/models`, query),
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${token}`, ...endpoint.headers },
     };
   },
 };
@@ -297,6 +321,17 @@ async function listModels(
         reason: "The stored credential cannot be read. Enter it again to replace it.",
       };
     }
+    // A row whose stored settings or credential no longer parse is this
+    // provider's answer too, not a crash: both screens document a failed call
+    // as a result carrying a sentence, and a hand-edited column is exactly the
+    // kind of thing an admin fixes by saving the provider again.
+    if (error instanceof ModelProviderValidationError) {
+      log.warn("Model provider configuration unreadable", { providerName: name, error });
+      return {
+        ok: false,
+        reason: "The stored configuration cannot be read. Save the provider again to replace it.",
+      };
+    }
     throw error;
   }
 
@@ -314,10 +349,8 @@ async function listModels(
   try {
     response = await call(request.url, {
       method: "GET",
-      headers: {
-        ...request.headers,
-        ...endpoint.headers,
-      },
+      // The builder's set goes on the wire verbatim, stored headers and all.
+      headers: request.headers,
       // Nothing is followed: a redirect to another host would carry the stored
       // headers there, and the admin should point the base URL at whatever
       // answers instead.

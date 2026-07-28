@@ -25,6 +25,7 @@ import { Textarea } from "#web/components/ui/textarea.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
 import {
+  allowedCredentialModes,
   credentialModeLabel,
   type ModelCredentialMode,
   type ModelProtocol,
@@ -119,6 +120,13 @@ export function CreateProviderDialog({
   const signing = credentialMode === "aws_sigv4";
   const signingKeys = accessKeyId.trim() !== "" && secretAccessKey.trim() !== "";
   const serviceAccount = credentialMode === "gcp_adc";
+  // Half a key pair is not a choice to sign with the server's own role, it is a
+  // typo — and sending it as none at all would store a provider the admin
+  // believes holds their keys. Saying so beats guessing which half was meant.
+  const signingPartial =
+    signing &&
+    !signingKeys &&
+    (accessKeyId.trim() !== "" || secretAccessKey.trim() !== "" || sessionToken.trim() !== "");
 
   // The server refuses a name already in the registry; this only says so before
   // the round trip, and cannot be the guarantee — two admins can race it.
@@ -175,7 +183,7 @@ export function CreateProviderDialog({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (taken) return;
+    if (taken || signingPartial) return;
     create.mutate();
   }
 
@@ -292,7 +300,19 @@ export function CreateProviderDialog({
                   <Label htmlFor="provider-protocol">Protocol</Label>
                   <Select
                     value={protocol}
-                    onValueChange={(value) => setProtocol(value as ModelProtocol)}
+                    onValueChange={(value) => {
+                      const chosenProtocol = value as ModelProtocol;
+                      setProtocol(chosenProtocol);
+                      // A protocol and a credential mode are one decision, and
+                      // the registry refuses a pair it cannot spend. So a mode
+                      // the new protocol does not take snaps to its default
+                      // here rather than waiting to be refused on save.
+                      const allowed = allowedCredentialModes(chosenProtocol);
+                      if (!allowed.includes(credentialMode)) {
+                        setCredentialMode(allowed[0]);
+                        clearSecrets();
+                      }
+                    }}
                   >
                     <SelectTrigger id="provider-protocol" className="w-full">
                       <SelectValue />
@@ -321,10 +341,13 @@ export function CreateProviderDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="api_key">{credentialModeLabel("api_key")}</SelectItem>
-                      <SelectItem value="none">{credentialModeLabel("none")}</SelectItem>
-                      <SelectItem value="aws_sigv4">{credentialModeLabel("aws_sigv4")}</SelectItem>
-                      <SelectItem value="gcp_adc">{credentialModeLabel("gcp_adc")}</SelectItem>
+                      {/* Only what the chosen protocol takes: a pair the registry
+                          refuses is not an option worth offering. */}
+                      {allowedCredentialModes(protocol).map((mode) => (
+                        <SelectItem key={mode} value={mode}>
+                          {credentialModeLabel(mode)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -403,6 +426,12 @@ export function CreateProviderDialog({
                     credentials the server itself runs with, and the model list stays empty until
                     keys are entered here.
                   </p>
+                  {signingPartial ? (
+                    <p className="text-meta text-destructive">
+                      Enter both the access key ID and the secret access key, or leave every field
+                      blank to sign with the server's own role.
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               {serviceAccount ? (
@@ -451,7 +480,7 @@ export function CreateProviderDialog({
                 <ChevronLeft />
                 Presets
               </Button>
-              <Button disabled={taken || create.isPending}>
+              <Button disabled={taken || signingPartial || create.isPending}>
                 {create.isPending ? "Adding…" : "Add"}
               </Button>
             </DialogFooter>

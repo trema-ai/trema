@@ -113,6 +113,26 @@ const protocolSettings: Record<ModelProtocol, ProtocolSettings | undefined> = {
 };
 
 /**
+ * Which credential modes each protocol can spend. A protocol and a mode are one
+ * decision, not two: a Bedrock row in `api_key` mode holds a plain string
+ * nothing can sign with, and it would read as configured on the screen while
+ * `resolveEndpoints` dropped it. Every protocol has a line, so adding one is a
+ * decision made rather than a default inherited, and the first entry is the
+ * mode a create lands in when it names none.
+ */
+const protocolCredentialModes: Record<
+  ModelProtocol,
+  [ModelCredentialMode, ...ModelCredentialMode[]]
+> = {
+  openai_compatible: ["api_key", "none"],
+  anthropic: ["api_key", "none"],
+  google: ["api_key", "none"],
+  openai_responses: ["api_key", "none"],
+  bedrock: ["aws_sigv4"],
+  vertex: ["gcp_adc"],
+};
+
+/**
  * The credential shape `aws_sigv4` stores: a key pair and, for temporary
  * credentials, the session token that goes with them. It is one JSON object in
  * the same encrypted column every other mode's single string uses — the column
@@ -523,7 +543,20 @@ export async function putProvider(
   const existing = await db.modelProvider.findUnique({
     where: { orgId_name: { orgId: input.orgId, name } },
   });
-  const credentialMode = input.credentialMode ?? existing?.credentialMode ?? "api_key";
+  // A create that names no mode lands in the one its protocol leads with, so
+  // adding a Bedrock row without saying `aws_sigv4` is a row that signs rather
+  // than a row refused for a word it never had to type.
+  const allowedModes = protocolCredentialModes[input.protocol];
+  const credentialMode = input.credentialMode ?? existing?.credentialMode ?? allowedModes[0];
+  // The pair is checked where it is written, because nothing downstream can
+  // repair it: a mode the protocol cannot spend produces a credential
+  // `toEndpoint` refuses to read, and a row dropped there is a row the screen
+  // still shows as configured.
+  if (!allowedModes.includes(credentialMode)) {
+    throw new ModelProviderValidationError(
+      `The ${input.protocol} protocol authenticates with ${allowedModes.join(" or ")}, not ${credentialMode}`,
+    );
+  }
 
   // A provider with no way to authenticate is a configuration error caught
   // here, not a 401 the run loop discovers three turns in.
