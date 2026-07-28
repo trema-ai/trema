@@ -409,6 +409,18 @@ integration("run reads", () => {
         { type: "run-started", trigger: "message" },
         steering(alice.principal.id, "Still here."),
       ]);
+      // A steering payload that derives without throwing but is shaped wrong
+      // for the response: it must cost the opening message, not the list.
+      const third = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 2000),
+      });
+      await appendEvents(org.org.id, third.id, [
+        { type: "run-started", trigger: "message" },
+        { type: "steering", text: 42 },
+      ]);
 
       const listed = await call(
         runsRouter.listByThread,
@@ -416,9 +428,10 @@ integration("run reads", () => {
         { context: alice.context },
       );
 
-      expect(listed.runs.map(({ id }) => id)).toEqual([run.id, second.id]);
+      expect(listed.runs.map(({ id }) => id)).toEqual([run.id, second.id, third.id]);
       expect(listed.runs[0]?.openingMessage).toBeNull();
       expect(listed.runs[1]?.openingMessage).toMatchObject({ text: "Still here." });
+      expect(listed.runs[2]?.openingMessage).toBeNull();
     });
 
     it("filters invisible runs down to an empty thread", async () => {

@@ -503,17 +503,30 @@ const listByThread = orgScoped
         where: { orgId: context.org.id, runId: row.id },
         orderBy: { seq: "asc" },
         take: OPENING_EVENT_WINDOW,
-        select: { event: true },
+        select: { seq: true, at: true, v: true, event: true },
       });
-      let openingMessage = null;
-      try {
-        openingMessage = deriveOpeningMessage(
-          leading.map(({ event }) => event as unknown as RunEventData),
-        );
-      } catch {
-        // Aligned with the events read: a malformed recorded event costs the
-        // run its opening message, never the run — or the rest of the thread.
+      // Aligned with the events read: recorded events validate before they are
+      // used, so a malformed payload — one that would throw here or emerge
+      // shaped wrong for the response — costs the run its opening message,
+      // never the run or the rest of the thread. Derivation stops at the first
+      // malformed row: past it, "what opened this run" cannot be trusted.
+      const validated: RunEventData[] = [];
+      for (const event of leading) {
+        try {
+          validated.push(
+            parseRunEvent({
+              runId: row.id,
+              seq: event.seq,
+              at: event.at.toISOString(),
+              v: event.v,
+              event: event.event,
+            }).value.event as RunEventData,
+          );
+        } catch {
+          break;
+        }
       }
+      const openingMessage = deriveOpeningMessage(validated);
       runs.push({
         id: verdict.run.id,
         state: verdict.run.state,
