@@ -1,0 +1,63 @@
+---
+title: Upgrades and backups
+description: Upgrade a deployment in the right order and keep restorable backups of its data.
+---
+
+An upgrade is a build, a migration, and a restart, in that order. Starting the server does not apply migrations—`trema serve` runs against whatever schema it finds—so migrate before any process starts on the new version. This page assumes a deployment set up as in [Self-hosting](/self-hosting).
+
+## Upgrade
+
+1. Fetch and build the new version:
+
+   ```sh
+   git pull
+   pnpm install
+   pnpm --filter @trema/server build
+   pnpm --filter @trema/web build
+   ```
+
+2. Apply pending migrations with the [migrate command](/cli#apply-migrations):
+
+   ```sh
+   trema migrate
+   ```
+
+   If migration fails, the command exits nonzero and nothing has restarted—the running processes stay on the old version. Fix the cause and re-run; the [doctor command](/cli#check-deployment-health) reports whether migrations are still pending.
+
+3. Restart the server. On SIGTERM it logs `Shutting down`, closes its listener, disconnects from the database, and logs `Shutdown complete`.
+
+4. Restart the worker, if the deployment runs one. On SIGTERM the worker stops accepting runs and waits up to 30 seconds—`TREMA_WORKER_DRAIN_TIMEOUT_MS`—for in-flight runs to finish. When the timeout passes it exits anyway and logs `Runs still executing at shutdown` with the run ids: each of those runs resumes from its last committed turn, and a turn that never committed replays, so stopping the worker mid-run loses no committed work.
+
+Confirm the result with `trema doctor` and a request to `/ready`—see [Logging and monitoring](/logging).
+
+## Container images
+
+The image built by the repository's `Dockerfile` runs the `serve` and `worker` commands. The `migrate` and `doctor` commands do not work inside it: both shell out to the `prisma` command-line tool, which is pruned from the runtime stage. Apply migrations from a separate job or from the build stage.
+
+## Back up
+
+Everything the server stores lives in the PostgreSQL database at `DATABASE_URL`; the server keeps no state on disk. Dump it with standard tooling:
+
+```sh
+pg_dump --format=custom --file=trema-$(date +%F).dump "$DATABASE_URL"
+```
+
+Run scheduling goes through Hatchet, which the worker reaches through its own connection settings; a dump of `DATABASE_URL` does not include that service.
+
+A dump alone does not restore a deployment. Connector credentials and OAuth client secrets are stored encrypted under `TREMA_CREDENTIAL_MASTER_KEY`, and a restore that runs under a different key cannot decrypt them—see [credential security](/credential-security). Keep the server's environment, especially the master key and `TREMA_AUTH_SECRET`, in a secret store maintained alongside the dumps.
+
+## Restore
+
+1. Provision PostgreSQL 16 with the `vector` extension available—the item search index needs it. The repository's compose file uses the `pgvector/pgvector:pg16` image, which ships it.
+
+2. Restore the dump:
+
+   ```sh
+   pg_restore --clean --if-exists --dbname="$DATABASE_URL" trema-2026-07-28.dump
+   ```
+
+3. Configure the server with the environment the dump ran under, including the same `TREMA_CREDENTIAL_MASTER_KEY`.
+
+4. Run `trema doctor`. It checks the environment, database access, migration status, and the organization count.
+
+5. Start the server and the worker.

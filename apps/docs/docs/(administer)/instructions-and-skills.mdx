@@ -1,0 +1,67 @@
+---
+title: Instructions and skills
+description: Write standing instructions for each scope, review what the agent remembers, and manage the items behind them.
+---
+
+Instructions, memories, and skills are all items: versioned records that live in exactly one scope and shape what the agent knows there ([Core concepts](/core-concepts)). The **Customize** page manages them across the Memory, Instructions, Skills, and Connections tabs. A scope picker at the top right switches between your personal scope, the organization, and any shared scopes you can read. Anything the tabs do, a script can do through the items endpoints in the [API reference](/api).
+
+Prerequisites: the `member` role or higher. A `viewer` can read every tab but change nothing.
+
+## Write instructions
+
+Instructions are standing guidance: the text joins every session the scope serves, in full, ahead of anything the agent retrieves on its own.
+
+1. Open **Customize → Instructions**.
+2. Pick a scope from the picker at the top right.
+3. Write the guidance and click **Save**. New sessions receive it from then on; a session already open keeps its snapshot.
+
+The scope decides who is affected.
+
+| Scope | Sessions that receive it |
+| --- | --- |
+| Personal | Your personal sessions only. |
+| A shared scope | Sessions in that scope, after the organization's instructions. |
+| Organization | Every session in the organization. |
+
+A session receives the chain widest first: the organization's instructions, then the session scope's own. A narrower scope refines the wider one instead of replacing it. When you edit a narrower scope, the organization's instructions appear collapsed at the top of the tab for reference. A scope holds one active instruction; saving again edits it in place and retains the prior version.
+
+Only you can edit your personal scope—organization roles do not reach into it. For how scopes relate, see [Scopes and teams](/scopes-and-teams).
+
+To stop the instructions from reaching sessions, choose **Archive** from the menu in the editor's header. Nothing is deleted: the restore endpoint in the [API reference](/api) brings an archived instruction back.
+
+## Review what the agent remembers
+
+The agent saves memories from its sessions; the Memory tab is where you audit them. Each memory has one of four types, and the type decides how the agent's save lands:
+
+| Type | Saved as | Reaches sessions |
+| --- | --- | --- |
+| Fact | Active | When relevant. |
+| Preference | Active | In every session. |
+| Rule | Proposed | In every session, once activated. |
+| Procedure | Proposed | When relevant, once activated. |
+
+A person's writes and edits take effect immediately; the proposed state exists for the agent's. Filter the list by type or status, or search titles and content. The status filter defaults to Active—switch it to Proposed to see what awaits review.
+
+Memories that reach every session share a per-session token budget with instructions; what the budget cuts stays reachable through context search. See [Context sessions](/context-sessions).
+
+## Activate or dismiss a proposal
+
+A proposed item does not affect sessions until a person turns it on. Click the memory to open its editor, then click **Activate** in the footer. The activation records who confirmed it and lands in the audit log. To dismiss the proposal instead, archive it.
+
+## Edit a memory
+
+Click any row in the Memory tab to open the editor. Change the title, type, or content and click **Save changes**. The metadata section shows the memory's status, whether it joins every session or only when relevant, its version, timestamps, and who created it. A save from a session is marked as proposed by the agent.
+
+Lifecycle actions sit in the footer: activate a proposed memory, archive an active one, restore an archived one. Archiving stops the memory from affecting sessions and is always reversible.
+
+## Roll back a change
+
+Every content change to an item retains the prior version. The editor's version history lists every version with its author—a person by name, or the agent—and a word-level diff. Click **Restore** on a prior version to write its content back as a new version; history is append-only, so the rollback itself is recorded.
+
+Instructions carry the same history behind the **History** link in the editor's footer.
+
+## Skills
+
+A skill is a procedure the agent loads on demand rather than carrying in every session: a set of files with a `SKILL.md` entry point. The Skills tab on the Customize page is where a scope's skills appear, each with its source, version, and file contents.
+
+The current release includes no way to add one. The items endpoint rejects the skill kind, and no gallery of prebuilt skills exists; installation and agent-proposed skills arrive in a later release.

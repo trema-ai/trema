@@ -1,8 +1,102 @@
 ---
 title: Quickstart
-description: Install Trema and run your first agent.
+description: Run Trema on your machine, create the first organization, and give the agent a model to run on.
 ---
 
-This page is a placeholder. The quickstart lands here with the first release.
+By the end of this page, Trema runs on your machine: a local server, an organization you own, and a model for the agent. This is the local path; [Self-hosting](/self-hosting) covers a production deployment.
 
-To run Trema on your own infrastructure today, start with [Self-hosting](/self-hosting), then [First boot](/first-boot).
+## Prerequisites
+
+- Git
+- Docker, for the bundled PostgreSQL container
+- [mise](https://mise.jdx.dev), which installs the pinned Node.js and pnpm
+- an API key for OpenAI, used in the last section
+
+## Run the server
+
+1. Clone the repository:
+
+   ```sh
+   git clone https://github.com/trema-ai/trema.git
+   cd trema
+   ```
+
+2. Install Node.js and pnpm at the versions the repository pins in `mise.toml`:
+
+   ```sh
+   mise install
+   ```
+
+3. Install dependencies:
+
+   ```sh
+   pnpm install
+   ```
+
+4. Create the server's environment file:
+
+   ```sh
+   mise run env:init
+   ```
+
+   The task writes `apps/server/.env` with generated secrets and confirms:
+
+   ```
+   Created apps/server/.env with generated secrets (dev slot 0)
+   ```
+
+5. Start the database and apply migrations:
+
+   ```sh
+   mise run db:migrate
+   ```
+
+   The task starts the PostgreSQL container from the bundled compose file, then applies every migration. If another container already holds port 5432, the task refuses and names the container; stop it and run the task again.
+
+6. Build the server and the web app:
+
+   ```sh
+   pnpm --filter @trema/server build
+   pnpm --filter @trema/web build
+   ```
+
+7. Start the server:
+
+   ```sh
+   cd apps/server
+   TREMA_WEB_DIST=../web/dist node dist/index.js
+   ```
+
+   The first start on an empty database prints the bootstrap token, then the address:
+
+   ```
+   time=2026-07-24T10:00:00.000Z level=info msg="Bootstrap token generated" bootstrapToken=<token>
+   time=2026-07-24T10:00:00.000Z level=info msg="Server listening" url=http://localhost:3000
+   ```
+
+   Copy the token; the next section redeems it. The log also warns that run scheduling is off, and nothing in this quickstart needs it.
+
+## Create your organization
+
+While no organization exists, the web app serves only the setup screen. The token flow itself, including how to re-mint a lost token, is covered in [First boot](/first-boot).
+
+1. Open `http://localhost:3000` in a browser.
+2. Create an account with your name, email, and a password.
+3. Enter an organization name and paste the bootstrap token.
+4. Click **Set up Trema**. You land in the app as the organization's owner, and the home screen reads "Your organization is ready."
+
+## Add a model provider
+
+The agent needs a model to run on, and models come from the providers your organization registers—see [Model providers](/model-providers) for the full treatment.
+
+1. Open the user menu at the bottom of the sidebar and choose **Settings**, then **Models**.
+2. Click **Add provider** and pick **OpenAI**. The preset fills in the endpoint and the credential mode.
+3. Paste your API key and click **Add**. The key is stored encrypted and never shown again; adding the provider reads its model list, so its models appear ready to assign.
+4. Under **Default models**, choose a model for **Agent turns**, the role the agent loop runs on. The page confirms with "Agent turns saved."
+
+## Next steps
+
+- [First boot](/first-boot) — what redeeming the token created
+- [Members and invites](/members-and-invites) — bring in your team with invite links
+- [Credential security](/credential-security) — how stored keys are encrypted
+- [Self-hosting](/self-hosting) — run Trema on a server with a real domain

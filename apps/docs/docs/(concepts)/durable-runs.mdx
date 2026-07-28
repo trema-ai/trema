@@ -1,0 +1,51 @@
+---
+title: Durable runs
+description: How agent runs survive crashes, deploys, and long waits for a human decision, with the turn as the unit of durability.
+---
+
+A run is the unit of agent work; a turn is the unit of durability. The loop commits every turn to PostgreSQL before it continues, so a run survives whatever kills the process executing it.
+
+## Runs and turns
+
+A run executes model turns on a thread until the model finishes, a person stops it, or a failure ends it. A turn is one model call plus the tool results it produced. Committing a turn is one database transaction. The turn row, the run's turn counter, the appended events, and any state change land together or not at all.
+
+That transaction is the checkpoint. Work inside an uncommitted turn can be lost and repeated; a committed turn never runs again.
+
+A run moves through a fixed set of states:
+
+| State | Meaning |
+| --- | --- |
+| `queued` | The run exists; execution has not started. |
+| `running` | A worker is executing turns. |
+| `awaiting_approval` | Parked on a tool call that needs a person's approval. |
+| `awaiting_input` | Parked on a question the model asked a person. |
+| `completed`, `failed`, `cancelled` | Terminal outcomes, recorded with usage and any error. |
+| `stale` | An unresolved pause expired, so the run cannot resume. |
+
+## The workflow engine
+
+The worker process takes delivery from Hatchet, a workflow engine reached through `HATCHET_CLIENT_TOKEN`. Its job is deliberately small: keep delivery alive, keep it ordered, and retry infrastructure failures. The record lives in the run tables, never in the engine.
+
+One run is one durable task. The task carries the run's ID and a concurrency key—nothing else—so a redelivered task can never act on stale values. On every delivery, the driver reloads the run, its committed turns, and its queued input from the database.
+
+The concurrency key serializes execution per thread: one run at a time, later runs queued behind it. A new message for a thread with an active run is folded in as steering input, not a second run.
+
+## Crashes and deploys
+
+A worker that dies mid-run loses only the turn in flight. The engine hands the run to the next available worker. That execution reads the committed turns, rebuilds the transcript from them, and continues where the record ends. Delivering a run already in a terminal state does nothing.
+
+A deploy is the same event with a grace period. On the termination signal, the worker stops accepting work and waits out in-flight turns, up to a drain timeout. A turn that commits during the drain is a valid checkpoint the next execution reads; one that does not was never committed, and replays.
+
+## Errors are data
+
+A failed turn is a recorded fact, not an exception unwinding a stack. Every turn records a `stopReason`—one of `stop`, `toolUse`, `length`, `error`, `aborted`, or `paused`. A provider failure becomes `error`, with a message, whether a retry may help, and any provider-requested delay. The run moves to `failed` with the error on its row, and the event log keeps the full sequence.
+
+A failure that may pass on retry never re-executes the failed run. A retry is a new run, linked to the one it retries; automatic retries stop after two. A run that cannot start at all—no model provider is configured, say—fails the same way. The error is recorded on the run instead of thrown at the engine.
+
+## Pausing for a person
+
+A pause ends execution; no process waits on a human. When a tool call needs a decision, the turn commits with a blocking prompt for a person, and the run parks as `awaiting_approval` or `awaiting_input`. The worker slot is free the moment the commit lands, whether the answer arrives in seconds or days.
+
+The decision itself is an approval row with its own guarantees. The rule that gates the call is pinned when the approval is asked, so a later policy edit cannot change who may answer it. The requester cannot wave through their own call unless the rule allows it. Resolution is single-shot: when two people answer at once, one wins and the other is told. An approved call is bound to the exact arguments that were approved—a changed call is refused—and it covers at most one execution. An approval nobody answers expires after 24 hours. [Approval policies](/approval-policies) covers who approves what.
+
+Resuming is a fresh execution, not a woken process. The run re-enters the queue under its own ID—no second row. The fresh execution finds the pending turn and reads the recorded decision. A denial becomes the tool's result: the model reads the refusal and carries on without the call. A pause that reaches its expiry unresolved moves the run to `stale`, and a manual retry starts the work over as a new run.

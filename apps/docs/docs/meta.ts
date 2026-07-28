@@ -6,6 +6,7 @@ export default defineMeta({
     "get-started",
     "deploy",
     "administer",
+    "build",
     "concepts",
     "reference",
   ],

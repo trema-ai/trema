@@ -2,5 +2,5 @@ import { defineMeta } from "blume";
 
 export default defineMeta({
   title: "Concepts",
-  pages: ["credential-security"],
+  pages: ["architecture", "durable-runs", "credential-security"],
 });

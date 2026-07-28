@@ -1,0 +1,90 @@
+---
+title: Scripting the API
+description: Drive a Trema deployment from scripts through the same REST API the web app uses.
+---
+
+Anything the web app does goes through this same API: there is no private surface, so a script can automate whatever the UI can do. All routes sit under `/api/v1`, and the examples below use the cookie jar and service credential from [Authentication](/authentication).
+
+## The OpenAPI document
+
+The server serves its own OpenAPI document—the same one the [API reference](/api) renders:
+
+```sh
+curl -s https://trema.example.com/api/v1/spec.json | jq -r '.paths | keys[]'
+```
+
+Every operation in it carries the request schema, the response schema, and the credential it accepts, so a generated client stays exact.
+
+## How routes are organized
+
+Routes are resource-oriented and shallow:
+
+```
+/items                 # collection: GET lists, POST creates
+/items/{id}            # one resource: GET reads, PATCH edits
+/items/{id}/archive    # lifecycle actions are POST subroutes
+```
+
+The [API reference](/api) groups the operations by area, from items and scopes through connectors and policies to runs, schedules, and audit.
+
+## List items
+
+Collections take query filters. The context items the web app shows are the same rows this call returns:
+
+```sh
+# The active memories in every scope you can read.
+curl -b cookies.txt 'https://trema.example.com/api/v1/items?kind=memory&status=active'
+```
+
+The filters are optional: restrict by kind, by lifecycle status, or by scope with `scopeId`.
+
+## Create an item
+
+An item lives in exactly one scope, so read the scope list first and pick an `id` from it:
+
+```sh
+curl -b cookies.txt https://trema.example.com/api/v1/scopes
+```
+
+Then create a memory in that scope:
+
+```sh
+curl -b cookies.txt -X POST https://trema.example.com/api/v1/items \
+  -H 'content-type: application/json' \
+  -d '{
+    "scopeId": "01983d2f-4c1e-7a3b-9f0e-6d2a8c4b1e5f",
+    "kind": "memory",
+    "title": "Release train",
+    "body": {
+      "type": "fact",
+      "content": "The release train leaves every Tuesday at 10:00 and freezes on Monday evening."
+    }
+  }'
+```
+
+The response is the stored item with its `id` and `version`; later edits through the update endpoint retain each prior version. The kind-specific body shapes are in the item schemas in the [API reference](/api).
+
+## Start a run
+
+Starting a run takes a service credential and enters a message exactly as a chat surface would:
+
+```sh
+curl -X POST https://trema.example.com/api/v1/runs \
+  -H "authorization: Bearer $TREMA_SERVICE_CREDENTIAL" \
+  -H 'content-type: application/json' \
+  -d '{
+    "locationRef": "deploys",
+    "message": "Summarize the failed deploys from the last 24 hours.",
+    "idempotencyKey": "deploy-digest-2026-07-28"
+  }'
+```
+
+The surface defaults to `api`, and the location must be bound to a scope beforehand through the bindings endpoints in the [API reference](/api). The call answers `202` with where the message landed and never waits for execution:
+
+| Field | Meaning |
+| --- | --- |
+| `runId` | The run the message landed on. Null while a duplicate call is still routing. |
+| `outcome` | Either `started` a new run, `steered` an active run on the thread, or `duplicate` for a repeated key. |
+| `threadRef` | The thread the message landed on. It defaults to the surface and location. |
+
+Retrying the call with the same `idempotencyKey` reaches the same run exactly once, so a crashed script can safely resend.
