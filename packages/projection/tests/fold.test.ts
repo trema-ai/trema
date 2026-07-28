@@ -98,6 +98,34 @@ describe("implicit opens", () => {
     ]);
   });
 
+  it("reopens a settled activity when its call starts again", () => {
+    const projection = fold(
+      "run-1",
+      log([
+        { type: "tool-note", callId: "call-9", note: "queued" },
+        { type: "tool-result", callId: "call-9", status: "ok", summary: "first attempt" },
+        {
+          type: "tool-start",
+          callId: "call-9",
+          name: "shell",
+          title: "Run shell",
+          kind: "execute",
+        },
+        { type: "tool-input-delta", callId: "call-9", delta: "ls" },
+      ]),
+    );
+
+    const part = projection.segments[0]?.parts[0];
+    expect(part).toMatchObject({
+      kind: "activity",
+      status: "streaming",
+      name: "shell",
+      title: "Run shell",
+      toolKind: "execute",
+      input: "ls",
+    });
+  });
+
   it("opens an activity with placeholders from a bare note", () => {
     const projection = fold(
       "run-1",

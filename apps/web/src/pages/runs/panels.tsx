@@ -106,7 +106,10 @@ export function UsagePanel({
  * usually many runs, and debugging follows the thread.
  */
 export function ThreadPanel({ runId, threadRef }: { runId: string; threadRef: string }) {
-  const query = useQuery(orpc.runs.listByThread.queryOptions({ input: { threadRef } }));
+  // The API caps this read at 200 runs; past that the current run can fall
+  // outside the page and navigation degrades to the thread id alone. Precise
+  // neighbors for arbitrarily long threads need a dedicated read.
+  const query = useQuery(orpc.runs.listByThread.queryOptions({ input: { threadRef, limit: 200 } }));
   const runs = query.data?.runs ?? [];
   const position = runs.findIndex((run) => run.id === runId);
   const previous = position > 0 ? runs[position - 1] : undefined;

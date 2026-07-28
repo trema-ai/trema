@@ -88,7 +88,11 @@ export function emptyTimelineMeta(): TimelineMeta {
   return { lastSeq: 0, openSegment: false, awaitingResume: false, boundaries: [], steeringAt: {} };
 }
 
-/** Event types the fold turns into parts — the ones that open a segment. */
+/**
+ * Event types the fold turns into parts — the ones that open a segment.
+ * `data` is handled separately: only durable data events become parts, so a
+ * transient one must not open a segment here that the fold never creates.
+ */
 const PART_EVENT_TYPES: ReadonlySet<string> = new Set([
   "text-start",
   "text-delta",
@@ -104,8 +108,13 @@ const PART_EVENT_TYPES: ReadonlySet<string> = new Set([
   "elicitation",
   "steering",
   "error",
-  "data",
 ]);
+
+/** Mirrors the fold: a `data` event becomes a part unless marked transient. */
+function isDurableData(type: string, event: unknown): boolean {
+  if (type !== "data") return false;
+  return (event as { transient?: unknown }).transient !== true;
+}
 
 function eventType(event: unknown): string | undefined {
   if (typeof event !== "object" || event === null) return undefined;
@@ -147,7 +156,7 @@ export function advanceTimelineMeta(
         draft.openSegment = false;
         draft.awaitingResume = true;
       }
-    } else if (PART_EVENT_TYPES.has(type)) {
+    } else if (PART_EVENT_TYPES.has(type) || isDurableData(type, input.event)) {
       draft.openSegment = true;
       if (type === "steering") draft.steeringAt[input.seq] = input.at;
     }

@@ -167,10 +167,12 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
           notes: [],
         });
       } else {
-        // A start for a known call refreshes identity fields in place.
+        // A start for a known call refreshes identity fields and reopens the
+        // part, mirroring `text-start`/`reasoning-start`.
         part.name = event.name;
         part.title = event.title;
         part.toolKind = event.kind;
+        part.status = "streaming";
       }
       break;
     }

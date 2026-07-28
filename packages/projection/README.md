@@ -1,6 +1,6 @@
 # `@trema/projection`
 
-`@trema/projection` is the shared fold from a run's event log to its message projection ([interface 02](../../../wiki/docs/specs/interface/02-messages.md)): segments of ordered, typed parts. Every consumer — the chat thread, the run view, tests — folds through this one code path, so a rendering discrepancy between surfaces is provably a renderer bug.
+`@trema/projection` is the shared fold from a run's event log to its message projection (interface spec 02, `docs/specs/interface/02-messages.md` in the workspace wiki): segments of ordered, typed parts. Every consumer folds through this one code path — today the run view and the golden tests, the chat thread when it lands — so a rendering discrepancy between surfaces is provably a renderer bug.
 
 The package is browser-safe. It depends only on `@trema/harness` for the event schema, and touches no Node globals, no database, and no React.
 
