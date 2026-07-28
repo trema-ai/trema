@@ -169,9 +169,15 @@ export function createRunStreamHandler(dependencies: RunStreamDependencies) {
                 });
               } catch {
                 // Aligned with the paged read: a malformed known event is
-                // skipped and the cursor still advances past it. The comment
-                // keeps reconnecting clients' Last-Event-ID moving too.
-                await stream.write(`: malformed event ${row.seq} skipped\n\n`);
+                // skipped and the cursor still advances past it. A named event
+                // rather than a comment, because only an `id:` field moves the
+                // client's Last-Event-ID — a comment would leave reconnects
+                // replaying the bad row forever.
+                await stream.writeSSE({
+                  id: String(row.seq),
+                  event: "run-event-malformed",
+                  data: JSON.stringify({ seq: row.seq }),
+                });
                 lastWriteAt = Date.now();
                 continue;
               }

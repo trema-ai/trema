@@ -17,6 +17,7 @@ const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 /** One parsed SSE frame: whatever fields the block carried. */
 interface SseFrame {
   id?: string;
+  event?: string;
   data?: string;
   comments: string[];
 }
@@ -31,6 +32,8 @@ function parseFrame(raw: string): SseFrame {
       frame.data = frame.data === undefined ? chunk : `${frame.data}\n${chunk}`;
     } else if (line.startsWith("id: ")) {
       frame.id = line.slice("id: ".length);
+    } else if (line.startsWith("event: ")) {
+      frame.event = line.slice("event: ".length);
     }
   }
   return frame;
@@ -360,7 +363,9 @@ integration("run event stream", () => {
     await appendEvents(org.org.id, run.id, [
       { type: "run-started", trigger: "message" },
       { type: "telemetry-blip", detail: { spanId: "s1" } },
-      // A known type with an invalid payload: skipped, never emitted.
+      // A known type with an invalid payload: its content is never emitted,
+      // but the frame still carries an `id:` — only an id moves the client's
+      // Last-Event-ID, so a reconnect must not replay the bad row.
       { type: "steering", text: 42 },
       finished,
     ]);
@@ -369,11 +374,15 @@ integration("run event stream", () => {
       (frame) => frame.data !== undefined,
     );
 
-    expect(frames.map(({ id }) => id)).toEqual(["1", "2", "4"]);
+    expect(frames.map(({ id }) => id)).toEqual(["1", "2", "3", "4"]);
     expect((JSON.parse(frames[1]!.data!) as { event: unknown }).event).toEqual({
       type: "telemetry-blip",
       detail: { spanId: "s1" },
     });
+    expect(frames[2]?.event).toBe("run-event-malformed");
+    expect(JSON.parse(frames[2]!.data!)).toEqual({ seq: 3 });
+    // The malformed frame names its kind; real events stay unnamed.
+    expect(frames[3]?.event).toBeUndefined();
   });
 
   it("heartbeats while the run is quiet", async () => {
