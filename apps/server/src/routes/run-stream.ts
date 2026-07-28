@@ -158,7 +158,7 @@ export function createRunStreamHandler(dependencies: RunStreamDependencies) {
             for (const row of rows) {
               if (abort.signal.aborted) return;
               cursor = row.seq;
-              let parsed;
+              let parsed: ReturnType<typeof parseRunEvent>;
               try {
                 parsed = parseRunEvent({
                   runId,

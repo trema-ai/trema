@@ -267,10 +267,7 @@ export function createApp({
   // fit — so like the MCP data plane it is a raw mount that never appears in
   // the OpenAPI document. Registered before the OpenAPI handler so the path
   // is ours.
-  app.get(
-    `${OPENAPI_PREFIX}/runs/:id/stream`,
-    createRunStreamHandler({ db, auth, ...runStream }),
-  );
+  app.get(`${OPENAPI_PREFIX}/runs/:id/stream`, createRunStreamHandler({ db, auth, ...runStream }));
 
   app.use(`${OPENAPI_PREFIX}/*`, async (context, next) => {
     const { matched, response } = await openApiHandler.handle(context.req.raw, {

@@ -154,7 +154,12 @@ integration("run read access", () => {
     // No real trigger produces a sessionless run; one appears only after its
     // scope (and with it the session) was deleted. Nobody can hold read at a
     // scope that is gone, so only the audit-grade org roles see anything.
-    const asAdmin = await resolveRunAccess({ db, orgId, principal: admin, runId: sessionlessRunId });
+    const asAdmin = await resolveRunAccess({
+      db,
+      orgId,
+      principal: admin,
+      runId: sessionlessRunId,
+    });
     const asMember = await resolveRunAccess({
       db,
       orgId,

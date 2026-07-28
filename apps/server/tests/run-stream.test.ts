@@ -99,7 +99,12 @@ integration("run event stream", () => {
   const auth = createAuth({ db, env });
   // Short cadence so a test never sleeps real seconds; the heartbeat stays
   // above the poll interval, mirroring production proportions.
-  const app = createApp({ db, auth, env, runStream: { pollIntervalMs: 15, heartbeatIntervalMs: 60 } });
+  const app = createApp({
+    db,
+    auth,
+    env,
+    runStream: { pollIntervalMs: 15, heartbeatIntervalMs: 60 },
+  });
 
   // Streams a test failed to drain would keep the poll loop — and the test
   // process — alive; every reader registers here and is cancelled after.
@@ -190,11 +195,7 @@ integration("run event stream", () => {
     });
   }
 
-  async function createRun(options: {
-    orgId: string;
-    sessionId: string;
-    state?: RunState;
-  }) {
+  async function createRun(options: { orgId: string; sessionId: string; state?: RunState }) {
     return db.agentRun.create({
       data: {
         id: `run-${randomUUID()}`,
@@ -245,7 +246,11 @@ integration("run event stream", () => {
     return { org, alice, bob, scope, session, run };
   }
 
-  function stream(runId: string, cookie: string, options: { query?: string; lastEventId?: string } = {}) {
+  function stream(
+    runId: string,
+    cookie: string,
+    options: { query?: string; lastEventId?: string } = {},
+  ) {
     return app.request(`/api/v1/runs/${runId}/stream${options.query ?? ""}`, {
       headers: {
         cookie,
@@ -276,7 +281,10 @@ integration("run event stream", () => {
     const events = frames.filter((frame) => frame.data !== undefined);
     expect(events.map(({ id }) => id)).toEqual(["1", "2", "3", "4", "5", "6"]);
     const envelopes = events.map((frame) => JSON.parse(frame.data!) as Record<string, unknown>);
-    expect(envelopes[0]).toMatchObject({ seq: 1, event: { type: "run-started", trigger: "message" } });
+    expect(envelopes[0]).toMatchObject({
+      seq: 1,
+      event: { type: "run-started", trigger: "message" },
+    });
     expect(envelopes[1]?.event).toEqual(steering(alice.principal.id, "Check the deploy."));
     expect(typeof envelopes[0]?.at).toBe("string");
     expect(envelopes[5]?.event).toEqual(finished);

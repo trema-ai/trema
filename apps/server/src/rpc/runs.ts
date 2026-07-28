@@ -1,8 +1,8 @@
 import { ORPCError } from "@orpc/server";
 import {
-  parseRunEvent,
   type PrincipalRef,
   PrincipalRefSchema,
+  parseRunEvent,
   type RunEventData,
   type TranscriptMessage,
 } from "@trema/harness";

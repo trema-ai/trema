@@ -177,7 +177,13 @@ integration("run output resolution", () => {
     await appendEvents(org.org.id, run.id, [
       { type: "run-started", trigger: "message" },
       { type: "tool-start", callId: "call-1", name: "lookup", title: "Lookup", kind: "search" },
-      { type: "tool-result", callId: "call-1", status: "ok", summary: "3 rows", outputRef: "call-1" },
+      {
+        type: "tool-result",
+        callId: "call-1",
+        status: "ok",
+        summary: "3 rows",
+        outputRef: "call-1",
+      },
     ]);
 
     const output = await call(
@@ -264,7 +270,11 @@ integration("run output resolution", () => {
     await appendTurn(org.org.id, run.id, 0, [
       toolResult("call-1", [
         { type: "image", mediaType: "image/png", data: "aGVsbG8=" },
-        { type: "image", mediaType: "image/jpeg", data: "A".repeat(TOOL_OUTPUT_IMAGE_BYTE_CAP + 1) },
+        {
+          type: "image",
+          mediaType: "image/jpeg",
+          data: "A".repeat(TOOL_OUTPUT_IMAGE_BYTE_CAP + 1),
+        },
         { type: "text", text: "two screenshots" },
       ]),
     ]);

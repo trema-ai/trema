@@ -47,7 +47,14 @@ integration("run session referential integrity", () => {
     sessionId = session.id;
     runId = `run-${randomUUID()}`;
     await db.agentRun.create({
-      data: { id: runId, orgId, threadRef: `thread-${runId}`, state: "completed", trigger: "message", sessionId },
+      data: {
+        id: runId,
+        orgId,
+        threadRef: `thread-${runId}`,
+        state: "completed",
+        trigger: "message",
+        sessionId,
+      },
     });
   });
 
