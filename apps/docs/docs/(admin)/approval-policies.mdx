@@ -45,7 +45,7 @@ A session pins the applicable rows when it opens and keeps them for its whole li
 
 ## Who gets asked
 
-The routing—the approver roles and whether the requester may approve their own call—comes from the most specific applicable row. A connector's own row beats a scope-wide one, and the session's scope beats the organization's. When no row supplies one, the defaults apply: in a personal scope the scope's owner approves; elsewhere an `admin` or `owner` does. The requester may approve their own call by default everywhere—refusing that is a separation-of-duties rule an organization writes, not a built-in.
+The routing—the approver roles and whether the requester may approve their own call—comes from the most specific applicable row. A connector's own row anywhere in the chain beats every scope-wide row. Among rows of the same kind, the session's scope beats the organization's. When no row supplies one, the defaults apply: in a personal scope the scope's owner approves; elsewhere an `admin` or `owner` does. The requester may approve their own call by default everywhere—refusing that is a separation-of-duties rule an organization writes, not a built-in.
 
 An approval carries the routing pinned when it was asked, so who may answer never changes under a later policy edit. Three checks decide:
 

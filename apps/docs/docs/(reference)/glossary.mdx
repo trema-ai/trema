@@ -9,7 +9,7 @@ Terms are alphabetical, with the exact spelling the product and API use. For how
 | --- | --- |
 | Agent principal | The organization's one principal of kind `agent`. Service-mode sessions act as it, and it holds no control-plane role. |
 | Approval | One gated tool call waiting on a human decision: pending, approved, denied, or expired. It covers the exact recorded arguments and nothing else. |
-| Approval mode | How a session's connector calls are gated: `ask` pauses every call, `delegated` lets a call-time classifier escalate unsafe calls, `full` runs ungated. Chosen per thread, clamped to the policy ceiling. |
+| Approval mode | How a session's connector calls are gated: `ask` pauses every call, `delegated` lets a call-time classifier escalate unsafe calls (`ask` while no classifier is configured), `full` runs ungated. Chosen per thread, clamped to the policy ceiling. |
 | Approval policy | One scope's ceiling on approval modes—scope-wide or for one connector—plus the roles that resolve its interrupts. The most restrictive applicable row wins. |
 | Audit log | The append-only record of control-plane actions: which principal did what, to which subject, and when. |
 | Binding | The mapping from a surface location to a scope. Sessions opened at that location resolve to the bound scope. |
