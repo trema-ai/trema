@@ -1,0 +1,60 @@
+---
+title: Core concepts
+description: The primitives behind a Trema deployment and how scopes, principals, items, grants, policies, sessions, and runs fit together.
+---
+
+Trema is built from a small set of primitives, applied uniformly. Everything the agent knows, may do, and has done maps onto one of them:
+
+| Primitive | What it is |
+| --- | --- |
+| Scope | The container context lives in: the organization scope, shared scopes, personal scopes. |
+| Principal | An actor: a person, or the organization's agent. |
+| Item | The uniform envelope for context: memories, instructions, connector installations. |
+| Grant | One principal holding one role at one scope. |
+| Policy | An approval rule for one sensitivity class at one scope. |
+| Context session | The runtime handshake that fixes what one stretch of agent work sees and may do. |
+| Run | One durable agent execution with a checkpoint at every turn. |
+
+This page explains each primitive and how they relate. The linked pages go deeper.
+
+## Scopes
+
+Every item, policy, and session belongs to exactly one scope, and the scope decides who reaches its content. There are three kinds. The organization scope (`org`) holds context that reaches every session. A shared scope (`shared`) is a named space for a group of people, such as a team. A personal scope (`personal`) belongs to one person, and an organization can turn personal scopes off entirely.
+
+Scopes resolve as a chain, widest first: the organization scope, then the session's own scope. Context assembles from the whole chain, and rules resolve most-specific-wins. See [Scopes and teams](/scopes-and-teams).
+
+## Principals
+
+Every actor is a principal, and a principal is either a person or the organization's agent. People sign in, hold roles, and appear in the audit trail. The agent principal is the identity the agent acts as in organization and shared scopes. It holds no role, and the authorization check denies it every control-plane capability by construction.
+
+An identity link maps a surface user id, such as a chat account, to a principal. That is how a message on a surface resolves to a known person. See [Members and invites](/members-and-invites).
+
+## Items
+
+Everything the agent knows arrives in one envelope: an item with a scope, kind, title, JSON body, status, and disclosure. Memories record facts, preferences, rules, and procedures. Instructions carry a scope's standing guidance, and a scope holds at most one active instruction. Connector installations enable an external provider's tools in a scope. See [Instructions and skills](/instructions-and-skills) and [Connectors](/connectors).
+
+Two fields drive behavior. Status is the lifecycle: an item is proposed, active, or archived, and only active items reach the agent. A person's writes land active, while agent-written rules, procedures, and instructions land proposed until a person activates them. Disclosure decides delivery: a standing item loads into every session opened in its scope, and a retrieved item surfaces on demand through search. Every edit records a version, so an item's history stays available.
+
+## Grants and roles
+
+A grant gives one principal one role at one scope, and the roles are `owner`, `admin`, `member`, and `viewer`. Each role maps to a fixed set of capabilities; the check is a table lookup, never model judgment. Grants at the organization scope carry into shared scopes. Personal scopes sit outside that inheritance: the owner holds `admin` there, and organization roles do not reach in. See [Roles and permissions](/roles-and-permissions).
+
+## Approval policies
+
+Every tool a connector exposes carries a sensitivity class: `read`, `write`, or `destructive`. An approval policy names the action for one class at one scope: allow, require approval, or deny. Each class resolves independently down the scope chain. The narrowest scope with a policy for a class decides it, and built-in defaults cover classes nobody wrote a policy for. The defaults allow reads everywhere and gate writes and destructive calls behind approval in shared and organization scopes. A personal scope allows writes and keeps a confirm step for destructive calls.
+
+A gated call becomes an approval: a durable record of the exact arguments, resolved as approved, denied, or expired. Execution runs exactly what was approved and nothing else. See [Approval policies](/approval-policies).
+
+## Context sessions
+
+Nothing reads context or calls tools anonymously. Before agent work starts, the harness opens a context session against a scope. The scope comes from a binding, which maps a surface location, such as a channel, to a scope. A direct message resolves to the sender's personal scope. The scope kind fixes the session's mode. A personal scope opens `delegated`, acting as the owner; every other scope opens `service`, acting as the agent principal.
+
+At open, the session pins what it resolved: the scope chain, the standing items within a token budget, and the policy snapshot. A hash of the snapshot ties a run to exactly the context that shaped it. Edits made while a session runs reach the next session, never the running one. Session tokens live fifteen minutes and renew while work continues. See [Context sessions](/context-sessions).
+
+## Runs and turns
+
+A run is one durable execution of agent work against a conversation thread, and a thread carries one run at a time. The turn is the checkpoint grain: one model message plus its tool results, committed atomically at its end with a stop reason. Anything in flight when a worker dies was never committed and re-runs.
+
+Pauses are states, not blocked workers. A run awaiting approval or input holds no worker, and resume is a fresh execution reading the committed record. A blocking question to a person is an elicitation: an approval, confirmation, choice, or form. An elicitation that expires unresolved marks the run stale. Every step also lands in an append-only, server-sequenced list of run events, so a run can be replayed exactly.
+
+Runs start from a closed set of triggers: a message, an API call, a schedule firing, a retry, or a resume. A schedule is standing configuration that starts runs on a `cron` expression in a named time zone. See [Durable runs](/durable-runs).

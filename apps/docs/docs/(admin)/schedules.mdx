@@ -1,0 +1,67 @@
+---
+title: Schedules
+description: Run a standing prompt on a recurring schedule, with human activation and the scope's normal approval gates.
+---
+
+A schedule is a standing prompt fired on a `cron` expression—each firing starts an ordinary run in the schedule's scope. Nothing in the current release evaluates ticks in the background yet, so an active schedule does not fire on its own. Creation, edits, and status changes work today through the schedules endpoints in the [API reference](/api).
+
+## Create a schedule
+
+Members with the `admin` or `owner` role on a scope create its schedules. An active schedule is standing authority to act with the scope's credentials unattended, which is why the bar is an approver role. A schedule carries:
+
+- the scope its firings run against
+- a five-field `cron` expression, read in an IANA time zone
+- the prompt each firing starts with
+- an optional `toolAllowlist`, which narrows the session's resolved tools and never widens them
+
+A new schedule starts as `proposed` and fires nothing until a person activates it. That gap is what lets an agent suggest a schedule a human then approves. Create it with status `active` to skip the proposal step; that records you as the activator.
+
+The expression, the time zone, the prompt, and the `toolAllowlist` can change at any time through the schedules endpoints. An archived schedule cannot be edited.
+
+## Write the `cron` expression
+
+An expression has five fields: minute, hour, day of the month, month, and day of the week.
+
+```
+0 9 * * 1-5    # 09:00 Monday through Friday
+*/15 * * * *   # every 15 minutes
+0 8 1,15 * *   # 08:00 on the 1st and the 15th
+30 22 * * 0    # 22:30 every Sunday; 0 and 7 both mean Sunday
+```
+
+Each field accepts `*`, single values, ranges, lists, and steps. Month and weekday names such as `MON` are rejected, so one expression has one reading. When the expression restricts both day fields, a tick fires when either matches—the standard `cron` rule. The expression `0 9 1 * 1` fires on the first of the month and on every Monday.
+
+The expression is read in the schedule's IANA time zone, such as `Europe/Paris`. Daylight saving is resolved by the zone rather than by clock arithmetic: a local time the zone skips never occurs, so it never fires. An invalid expression or an unknown zone is rejected at creation and on every edit.
+
+## Activate, pause, and resume
+
+Status moves through the status endpoint, and only these changes are legal:
+
+| From | Can become |
+| --- | --- |
+| `proposed` | `active`, `archived` |
+| `active` | `paused`, `archived` |
+| `paused` | `active`, `archived` |
+| `archived` | — |
+
+Activating a schedule records you as the principal who took responsibility for it running unattended. A pause stops ticks immediately and leaves runs that earlier firings started to finish under the normal rules. Ticks that pass while a schedule is paused are not made up on resume.
+
+## Archive a schedule
+
+There is no delete. Archiving is the end state: an archived schedule stops ticking, cannot be edited, and cannot return to `active`. Its record still appears when you list schedules, so what ran unattended, and on whose authority, remains answerable.
+
+## What a firing starts
+
+A due tick starts an ordinary [durable run](/durable-runs): the prompt is the opening user message, and the session opens against the schedule's scope. Every permission check and approval gate applies as it would for a person asking—a schedule automates the asking, never the approving. The run names the schedule's activator as its requester, and the `toolAllowlist`, when set, narrows the tools the session resolves.
+
+All of one schedule's firings share one thread, so recurring output lands in one place. One tick starts at most one run.
+
+## Missed ticks and overlap
+
+Only the newest due tick can start a run. When evaluation falls behind—after downtime, for example—earlier ticks are recorded as skipped and never made up. Evaluation looks back at most 24 hours. The next tick delivers; a visible skip count beats a surprise backlog.
+
+A tick that finds the schedule's previous run still active is skipped for overlap rather than queued behind it. Both kinds of skip add to the schedule's `skippedCount`, and `lastFiredAt` records when a firing last started a run.
+
+## The web app
+
+The web app calls a schedule an automation, with a sidebar entry of its own. The page is a placeholder in the current release and lists nothing yet; manage schedules through the API.

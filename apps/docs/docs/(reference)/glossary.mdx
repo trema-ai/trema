@@ -1,0 +1,58 @@
+---
+title: Glossary
+description: Definitions for the terms used across the Trema product, API, and documentation.
+---
+
+Terms are alphabetical, with the exact spelling the product and API use. For how the primitives relate, see [Core concepts](/core-concepts).
+
+| Term | Definition |
+| --- | --- |
+| Agent principal | The organization's one principal of kind `agent`. Service-mode sessions act as it, and it holds no control-plane role. |
+| Approval | One gated tool call waiting on a human decision: pending, approved, denied, or expired. It covers the exact recorded arguments and nothing else. |
+| Approval policy | A per-scope rule for one sensitivity class: allow the call, require approval, or deny it, plus the roles that may approve. |
+| Audit log | The append-only record of control-plane actions: which principal did what, to which subject, and when. |
+| Binding | The mapping from a surface location to a scope. Sessions opened at that location resolve to the bound scope. |
+| Capability | A named permission, such as `manage_connectors`, that a role either holds or lacks. Authorization checks it against a fixed role table. |
+| Client registration | An organization's OAuth client for one connector provider, from a `platform`, `customer`, or `dynamic` source. |
+| Connector | An integration with an external provider whose tools the agent can call. Credentials stay server-side; the model never sees them. |
+| Connector connection | One stored credential for a provider, held by a principal and envelope-encrypted at rest. |
+| Connector installation | The connector-kind item that enables a provider's tools in a scope, naming the connection it uses and the tools it exposes. |
+| Context session | The handshake the harness opens before reading context or calling tools. It pins the scope chain, standing set, and policy snapshot at open. |
+| Conversation | One captured thread on a surface, keyed by surface, location, and thread so repeated sessions extend it. |
+| Disclosure | An item's delivery mode: a `standing` item loads into every session in its scope, and a `retrieved` item surfaces through search. |
+| Elicitation | A blocking question a run puts to a person: an approval, confirmation, choice, or form. One that expires unresolved marks the run stale. |
+| Grant | One principal holding one role at one scope. |
+| Identity link | The mapping from a surface user id to a principal, so surface messages resolve to a known person. |
+| Instruction | The item kind carrying a scope's standing guidance. A scope holds at most one active instruction. |
+| Invite | A single-use link that joins a person to the organization with a role. Only a hash of its token is stored. |
+| Item | The uniform envelope for context: a scope, kind, title, JSON body, status, disclosure, and version history. |
+| Memory | The item kind recording a `fact`, `preference`, `rule`, or `procedure`. |
+| Model default | The ordered provider-and-model chain one model role resolves to. The first entry whose provider still exists wins; the rest are fallbacks. |
+| Model provider | One entry in the organization's model registry: an endpoint, a protocol, and the credential that reaches it. |
+| Model role | What a model is asked to do: `turns`, `utility`, or `embed`. Each role resolves to its own provider and model. |
+| Organization | The tenancy boundary. Every record belongs to exactly one organization. |
+| Organization scope | The single scope of kind `org`. Context and policies here reach every session in the organization. |
+| Personal scope | One person's scope of kind `personal`. Sessions here run delegated as the owner, and an organization can turn personal scopes off entirely. |
+| Policy snapshot | The approval decisions a session resolved at open. Policy edits reach the next session, never a running one. |
+| Principal | An actor in an organization: a person (`human`) or the organization's agent (`agent`). |
+| Queued input | A message waiting for a turn boundary. Steering input joins the active run; a follow-up starts the thread's next run. |
+| Requester | The person whose message caused a session or approval. An unlinked requester is recorded by raw surface id. |
+| Role | One of `owner`, `admin`, `member`, or `viewer`, held at a scope through a grant. |
+| Run | One durable execution of agent work against a thread, with a checkpoint per turn, resumable across restarts. A thread carries one run at a time. |
+| Run event | One append-only record in a run's dense, server-assigned sequence. Surfaces replay a run from its events. |
+| Schedule | Standing configuration that starts runs on a `cron` expression in a named time zone, with a fixed prompt. |
+| Schedule firing | One evaluated `cron` tick: started, skipped because the thread's run still ran, or skipped as missed. |
+| Scope | The container context lives in. Kinds are `org`, `shared`, and `personal`. |
+| Scope chain | The scopes a session resolves through, widest first: the organization scope, then the session's scope. |
+| Sensitivity class | The class every connector tool carries: `read`, `write`, or `destructive`. Approval policies are written per class, never per tool. |
+| Service credential | A long-lived API token bound to a principal. The token renders once and is stored as a hash. |
+| Session mode | Whether a session acts as the agent principal (`service`) or as a personal scope's owner (`delegated`). The mode follows from the scope kind. |
+| Shared scope | A named scope of kind `shared` for a group of people. Organization-scope grants carry into it. |
+| Snapshot hash | The hash of everything a session resolved. Two sessions resolving the same context share a hash, so a run traces to what shaped it. |
+| Standing set | The active standing-disclosure items assembled into a session from its scope chain, within a token budget. |
+| Stop reason | Why a turn ended: `stop`, `toolUse`, `length`, `error`, `aborted`, or `paused`. |
+| Surface | The interface a session, binding, or conversation names, such as a chat product or the API. |
+| Thread | The conversation a run serializes against. One run executes per thread at a time. |
+| Tool key | A connector tool's identifier, in the `catalogKey:toolName` format. |
+| Trigger | Why a run exists: `message`, `api`, `schedule`, `retry`, or `resume`. |
+| Turn | The checkpoint grain of a run: one model message plus its tool results, committed atomically with a stop reason. |

@@ -1,18 +1,20 @@
 import type { ProviderCatalog } from "@trema/connectors";
 
-import type { Approval, Prisma } from "#server/generated/prisma/client.js";
+import type { Approval, ApprovalMode, Prisma } from "#server/generated/prisma/client.js";
 import {
   CredentialDecryptionError,
   CredentialEncryptionConfigError,
 } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
+import type { ApprovalClassifier } from "#server/services/approvals/classifier.js";
 import {
   ApprovalArgsMismatchError,
   ApprovalNotFoundError,
   ApprovalStateError,
   ApprovalValidationError,
   claimApprovalExecution,
+  findToolGrant,
   hashApprovalArgs,
   requestApproval,
   requireApproval,
@@ -33,9 +35,9 @@ import {
   type PlatformAppDirectory,
   type ResolvedConnectorTool,
   resolveConnectorTool,
-  type Sensitivity,
 } from "#server/services/connectors/index.js";
 import { type DataPlaneSession, DataPlaneToolError } from "#server/services/dataplane/index.js";
+import { resolveEffectiveMode } from "#server/services/policies/index.js";
 
 /**
  * The namespace the built-in context approvals own.
@@ -55,6 +57,12 @@ export interface UseConnectorInput {
   reason: string;
   /** The approval a person granted for this exact call, on the second attempt. */
   approvalId?: string;
+  /**
+   * The delegated-mode classifier, when one is configured. Absent, `delegated`
+   * is unavailable and the gate degrades those sessions to `ask` — the safe
+   * default needs no LLM.
+   */
+  classifier?: ApprovalClassifier;
   masterKey?: string;
   catalog?: ProviderCatalog;
   platformApps?: PlatformAppDirectory;
@@ -67,27 +75,24 @@ export type UseConnectorResult =
   | {
       status: "executed";
       toolKey: string;
-      sensitivity: Sensitivity;
+      /** The approval mode the call ran under. */
+      mode: ApprovalMode;
       result: unknown;
       approvalId?: string;
     }
   | {
       status: "approval_required";
       toolKey: string;
-      sensitivity: Sensitivity;
+      mode: ApprovalMode;
       approvalId: string;
+      /** The classifier's one-line reason, when a delegated call escalated. */
+      escalationReason?: string;
       expiresAt: string;
-      message: string;
-    }
-  | {
-      status: "denied";
-      toolKey: string;
-      sensitivity: Sensitivity;
       message: string;
     };
 
 /** How the audit stream records what became of one proxied call. */
-type ConnectorCallOutcome = "executed" | "approval_required" | "denied" | "failed";
+type ConnectorCallOutcome = "executed" | "approval_required" | "failed";
 
 interface AuditInput {
   session: DataPlaneSession;
@@ -95,6 +100,10 @@ interface AuditInput {
   argsHash: string;
   outcome: ConnectorCallOutcome;
   resolved?: ResolvedConnectorTool;
+  /** The effective mode the gate resolved for this call, once it resolved one. */
+  mode?: ApprovalMode;
+  /** What let an executed call run. */
+  authority?: ConnectorCallAuthority;
   approvalId?: string;
   errorCode?: string;
   durationMs: number;
@@ -144,7 +153,8 @@ async function writeCallRecord(db: Database, input: AuditInput): Promise<void> {
         toolKey: input.toolKey,
         connector: input.resolved?.connectorKey ?? null,
         tool: input.resolved?.toolName ?? null,
-        sensitivity: input.resolved?.sensitivity ?? null,
+        mode: input.mode ?? null,
+        authority: input.authority ?? null,
         installationItemId: input.resolved?.installationItemId ?? null,
         argsHash: input.argsHash,
         outcome: input.outcome,
@@ -259,20 +269,20 @@ function bindingHolds(approval: Approval, expected: ExecutionBinding): boolean {
  * Proxy one connector call for a running session.
  *
  * Everything that decides whether the call may happen sits here, on the far
- * side of the harness: the installation the session's scope chain resolves to,
- * the tool's effective sensitivity, and the session's *pinned* policy. A
- * `read` call runs; anything the policy gates comes back as
- * `approval_required` with an id, which is a result and not an error — the
- * harness renders the prompt, relays the decision, and calls again with the id
- * and the same arguments.
+ * side of the harness: the installation the session's scope chain resolves
+ * to, and the approval gate — the requester's chosen mode clamped to the
+ * pinned policy ceiling, thread grants, and in delegated mode the call-time
+ * classifier. A call the gate pauses comes back as `approval_required` with
+ * an id, which is a result and not an error — the harness renders the
+ * prompt, relays the decision, and calls again with the id and the same
+ * arguments.
  *
  * The approve round trip re-resolves everything from the database, so the call
  * that executes is checked against the call that was approved rather than
- * assumed to be it: same session, same tool key, same arguments, same
- * sensitivity, and the same installation and connection. An admin who repoints
- * an installation or reclassifies a tool while a person is deciding invalidates
- * the decision rather than silently redirecting it, and the run is told to ask
- * again.
+ * assumed to be it: same session, same tool key, same arguments, and the same
+ * installation and connection. An admin who repoints an installation while a
+ * person is deciding invalidates the decision rather than silently
+ * redirecting it, and the run is told to ask again.
  *
  * The second call claims the approval before the provider is touched, so a
  * provider that answers slowly or not at all still costs exactly one
@@ -295,7 +305,9 @@ export async function useConnector(
   const argsHash = hashApprovalArgs(args);
   const elapsed = () => Date.now() - startedAt;
   let resolved: ResolvedConnectorTool | undefined;
-  let approvalId: string | undefined = input.approvalId;
+  let mode: ApprovalMode | undefined;
+  let authority: ConnectorCallAuthority | undefined;
+  const approvalId: string | undefined = input.approvalId;
 
   try {
     if (toolKey.startsWith(RESERVED_NAMESPACE)) {
@@ -322,7 +334,18 @@ export async function useConnector(
 
     resolved = await resolveConnectorTool(db, engineInput);
     const binding = executionBinding(resolved);
-    let authority: ConnectorCallAuthority;
+    // The requester's chosen mode, clamped to the pinned ceiling. An untrusted
+    // catalog entry pins to `ask` whatever the rows say, and `delegated`
+    // degrades to `ask` when no classifier is configured.
+    mode = resolveEffectiveMode({
+      rows: session.policyRows,
+      scopeChain: session.scopeChain,
+      connectorKey: resolved.connectorKey,
+      connectorTrusted: resolved.provider.trusted === true,
+      requestedMode: session.approvalMode,
+      classifierAvailable: input.classifier !== undefined,
+    });
+    let escalationReason: string | undefined;
 
     if (approvalId) {
       const approval = await requireApproval(db, session.orgId, approvalId);
@@ -336,13 +359,13 @@ export async function useConnector(
           "That approval was granted for a different call",
         );
       }
-      // And these two stop the call from changing underneath a decision that
-      // has already been made. Both run before the claim: an approval refused
+      // And this one stops the call from changing underneath a decision that
+      // has already been made. It runs before the claim: an approval refused
       // here was never spent, so a person can grant the changed call afresh.
       // The resolution compared here is the resolution the execution below is
       // pinned to, so a repoint landing between the two runs the call against
       // the pair the approver saw — never the repointed one.
-      if (approval.sensitivity !== resolved.sensitivity || !bindingHolds(approval, binding)) {
+      if (!bindingHolds(approval, binding)) {
         log.warn("Approval no longer matches its call", {
           approvalId,
           sessionId: session.id,
@@ -360,56 +383,89 @@ export async function useConnector(
         ...(input.now ? { now: input.now } : {}),
       });
       authority = "approval_claimed";
+    } else if (mode === "full") {
+      authority = "mode_full";
     } else {
+      // A person may already have widened their consent: a thread grant from
+      // this session, or a standing grant for this requester. Either skips
+      // the gate in both remaining modes.
+      const grant = await findToolGrant(db, {
+        orgId: session.orgId,
+        toolKey,
+        sessionId: session.id,
+        scopeChain: session.scopeChain,
+        requesterPrincipalId: session.requesterPrincipalId,
+      });
+      if (grant) {
+        authority = "thread_grant";
+      } else if (mode === "delegated" && input.classifier) {
+        // The classifier's one power is to add a pause. A judge that throws
+        // is an escalation — delegated mode fails open only on an explicit
+        // `proceed`, never on an error.
+        const verdict = await input.classifier
+          .judge({
+            toolKey,
+            connectorKey: resolved.connectorKey,
+            toolName: resolved.toolName,
+            ...(resolved.description ? { description: resolved.description } : {}),
+            ...(resolved.annotations ? { annotations: resolved.annotations } : {}),
+            args,
+            scopeKind: session.scopeKind,
+          })
+          .catch((error: unknown) => {
+            log.warn("Approval classifier failed; escalating", {
+              sessionId: session.id,
+              toolKey,
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+            return {
+              verdict: "escalate",
+              reason: "The classifier could not judge this call",
+            } as const;
+          });
+        if (verdict.verdict === "proceed") {
+          authority = "delegated_proceed";
+        } else {
+          escalationReason = verdict.reason;
+        }
+      }
+    }
+
+    if (authority === undefined) {
       const requested = await requestApproval(db, {
         orgId: session.orgId,
         sessionId: session.id,
         toolKey,
-        sensitivity: resolved.sensitivity,
+        mode,
+        ...(escalationReason ? { escalationReason } : {}),
+        connectorKey: resolved.connectorKey,
         args,
         reason: input.reason,
         executionBinding: { ...binding },
         ...(input.now ? { now: input.now } : {}),
       });
-
-      if (requested.outcome === "deny") {
-        await recordCall(db, {
-          session,
-          toolKey,
-          argsHash,
-          outcome: "denied",
-          resolved,
-          durationMs: elapsed(),
-        });
-        return {
-          status: "denied",
-          toolKey,
-          sensitivity: resolved.sensitivity,
-          message: `This organization's policy does not allow a ${resolved.sensitivity} call to ${toolKey}. Tell the person what you were going to do instead of doing it.`,
-        };
-      }
-      if (requested.outcome === "approval_required") {
-        await recordCall(db, {
-          session,
-          toolKey,
-          argsHash,
-          outcome: "approval_required",
-          resolved,
-          approvalId: requested.approval.id,
-          durationMs: elapsed(),
-        });
-        return {
-          status: "approval_required",
-          toolKey,
-          sensitivity: resolved.sensitivity,
-          approvalId: requested.approval.id,
-          expiresAt: requested.approval.expiresAt.toISOString(),
-          message:
-            "A person has to approve this call. Say so and stop here; once it is approved, call again with the same arguments and this approvalId.",
-        };
-      }
-      authority = "policy_allowed";
-      approvalId = undefined;
+      await recordCall(db, {
+        session,
+        toolKey,
+        argsHash,
+        outcome: "approval_required",
+        resolved,
+        mode,
+        approvalId: requested.approval.id,
+        durationMs: elapsed(),
+      });
+      return {
+        status: "approval_required",
+        toolKey,
+        mode,
+        approvalId: requested.approval.id,
+        ...(requested.approval.escalationReason
+          ? { escalationReason: requested.approval.escalationReason }
+          : {}),
+        expiresAt: requested.approval.expiresAt.toISOString(),
+        message:
+          "A person has to approve this call. Say so and stop here; once it is approved, call again with the same arguments and this approvalId.",
+      };
     }
 
     const result = await executeConnectorTool(db, { ...engineInput, resolved, authority });
@@ -419,13 +475,15 @@ export async function useConnector(
       argsHash,
       outcome: "executed",
       resolved,
+      mode,
+      authority,
       ...(approvalId ? { approvalId } : {}),
       durationMs: elapsed(),
     });
     return {
       status: "executed",
       toolKey,
-      sensitivity: resolved.sensitivity,
+      mode,
       result,
       ...(approvalId ? { approvalId } : {}),
     };
@@ -440,6 +498,8 @@ export async function useConnector(
       argsHash,
       outcome: "failed",
       ...(resolved ? { resolved } : {}),
+      ...(mode ? { mode } : {}),
+      ...(authority ? { authority } : {}),
       ...(approvalId ? { approvalId } : {}),
       errorCode: failureCode(error),
       durationMs: elapsed(),

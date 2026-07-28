@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const linearProvider = {
   key: "linear",
+  trusted: true,
   displayName: "Linear",
   description:
     "Access issues, projects, and comments in Linear workspaces. Tools come from Linear's official MCP server.",

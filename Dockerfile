@@ -61,6 +61,9 @@ WORKDIR /srv/trema
 COPY --from=build /prod/server ./
 COPY --from=build /repo/apps/web/dist ./web
 ENV TREMA_WEB_DIST=/srv/trema/web
+# The CLI on PATH, so `docker exec <container> trema <command>` works.
+RUN printf '#!/bin/sh\nexec node /srv/trema/dist/cli.js "$@"\n' > /usr/local/bin/trema \
+    && chmod 755 /usr/local/bin/trema
 USER node
 EXPOSE 3000
-CMD ["node", "dist/cli.js", "serve"]
+CMD ["trema", "serve"]

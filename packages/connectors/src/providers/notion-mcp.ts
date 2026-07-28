@@ -2,6 +2,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 
 export const notionMcpProvider = {
   key: "notion",
+  trusted: true,
   displayName: "Notion",
   description:
     "Access pages, databases, and workspace content. Tools come from Notion's official MCP server.",

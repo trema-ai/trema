@@ -1,0 +1,54 @@
+---
+title: Architecture
+description: The processes, packages, and API boundaries of a Trema deployment, and the design stances behind them.
+---
+
+A Trema deployment is two processes and one database. Both processes come from the same build and the same binary, and everything durable is a row in PostgreSQL.
+
+```
+trema serve     the API process
+├─ /api/v1          the public REST API (document at /api/v1/spec.json)
+├─ /api/v1/mcp      the context data plane, spoken over MCP
+├─ /api/auth        sign-in and session cookies
+├─ /rpc             the web app's transport for the same procedures
+└─ /                the built web app, served as static files
+
+trema worker    the run process, fed by the workflow engine
+
+PostgreSQL      the only durable store
+```
+
+The Docker image bundles the server and the built web app, so one container plays either role. [Self-hosting](/self-hosting) covers running it.
+
+## One durable store
+
+Everything the deployment must not lose is a PostgreSQL row: context items, run records and their turns, approvals, encrypted connector credentials, the audit log. The processes keep no state of their own, so either one can restart or move hosts without losing work. The development compose file provisions exactly one service: a PostgreSQL image that adds the vector extension, which the item search index uses.
+
+Run scheduling is the one capability with a second dependency. The worker takes delivery from Hatchet, a workflow engine reached through `HATCHET_CLIENT_TOKEN`. A server without that variable still serves everything else; the run endpoints return a service-unavailable error until it is set. [Configuration](/configuration) lists the variables; [durable runs](/durable-runs) covers what the workflow engine does and does not own.
+
+## Packages
+
+The repository is one workspace, split along the seams that matter:
+
+| Package | What it owns |
+| --- | --- |
+| `apps/server` | The API, the services behind it, the worker entry point, the database schema, and the `trema` command. |
+| `apps/web` | The web app. It builds to static files the server process serves. |
+| `apps/docs` | This documentation site. |
+| `packages/harness` | The run loop: runs, turns, states, events, and the ports execution needs. Its only dependency is a schema library; every effect goes through a port. |
+| `packages/models` | The model port: provider endpoints behind the harness's model interface. |
+| `packages/connectors` | The connector catalog: declarative provider definitions, their REST and MCP transports, and OpenAPI-to-tool conversion. Definitions only—execution lives in the server. |
+
+## The model layer is a port
+
+The harness reaches models through a two-method port: stream one turn, or complete one prompt. The implementation in `packages/models` resolves a named endpoint and speaks to it. An endpoint names a protocol and carries a base URL, an optional API key, and optional headers. One protocol ships today, `openai-compatible`, which covers hosted providers, gateways, and local servers that speak that wire surface.
+
+Which model a run uses is control-plane data, not deployment configuration. Providers and role defaults are rows the organization edits over the API, and a run resolves its model at the moment it opens. Changing providers is an edit to that registry—no migration, no redeploy. See [Model providers](/model-providers).
+
+## Connector calls stay server-side
+
+A connector tool call executes on the server, never in the model. The server resolves the installation and decrypts the stored credential at the moment of use. The server attaches the credential to the outbound request and redacts it from results and logs. The model and the API caller only ever see the call's result. How credentials are stored and protected is covered in [Credential security](/credential-security).
+
+## One API for every client
+
+The web app holds no privileged surface. The REST handler under `/api/v1` and the transport under `/rpc` are two mounts of one procedure router: same handlers, same authorization, different wire formats. A capability exists on both or on neither, so anything the web app does, a script can do with a service credential. The OpenAPI document is generated from that router at startup and served at `/api/v1/spec.json`.

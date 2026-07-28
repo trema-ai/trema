@@ -1,4 +1,3 @@
-import type { ProviderDef } from "@trema/connectors";
 import { githubProvider, loadProviderCatalog, notionMcpProvider } from "@trema/connectors";
 import { describe, expect, it } from "vitest";
 import {
@@ -26,7 +25,7 @@ describe("connector installation body", () => {
         catalogKey: "notion",
         connectionId,
         enabledTools: ["search_pages"],
-        syncedTools: [{ name: "search_pages", sensitivity: "read" }],
+        syncedTools: [{ name: "search_pages", annotations: { readOnlyHint: true } }],
       }).success,
     ).toBe(true);
   });
@@ -37,7 +36,7 @@ describe("connector installation body", () => {
         catalogKey: "github",
         connectionId,
         enabledTools: [],
-        syncedTools: [{ name: "get_issue", sensitivity: "read" }],
+        syncedTools: [{ name: "get_issue" }],
       }).success,
     ).toBe(false);
     expect(
@@ -58,7 +57,7 @@ describe("connector installation body", () => {
         catalogKey: "notion",
         connectionId,
         enabledTools: ["missing_from_sync"],
-        syncedTools: [{ name: "search_pages", sensitivity: "read" }],
+        syncedTools: [{ name: "search_pages" }],
       }).success,
     ).toBe(false);
     expect(
@@ -73,7 +72,7 @@ describe("connector installation body", () => {
     ).toBe(true);
   });
 
-  it("keeps connection config and provider scopes off installations", () => {
+  it("keeps connection config, provider scopes, and sensitivity overrides off installations", () => {
     expect(
       bodySchema.safeParse({
         catalogKey: "github",
@@ -88,6 +87,25 @@ describe("connector installation body", () => {
         connectionId,
         enabledTools: "all",
         config: { tenant: "example" },
+      }).success,
+    ).toBe(false);
+    // Per-tool sensitivity classes are gone: every call goes through the
+    // approval gate, so an installation carries no override map.
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: "all",
+        syncedTools: [{ name: "delete_page" }],
+        sensitivityOverrides: { delete_page: "read" },
+      }).success,
+    ).toBe(false);
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: "all",
+        syncedTools: [{ name: "delete_page", sensitivity: "destructive" }],
       }).success,
     ).toBe(false);
   });
@@ -111,29 +129,37 @@ describe("resolveInstallationTools", () => {
     ).toEqual(["get_issue"]);
   });
 
-  it("applies overrides before synced sensitivity", () => {
+  it("carries REST manifest descriptions onto the resolved tools", () => {
+    const manifestTool = github.toolManifest.find(({ name }) => name === "get_issue")!;
+    expect(
+      resolveInstallationTools(github, {
+        catalogKey: "github",
+        connectionId,
+        enabledTools: ["get_issue"],
+      }),
+    ).toEqual([{ name: "get_issue", description: manifestTool.description }]);
+  });
+
+  it("keeps synced descriptions and annotations verbatim as classifier signal", () => {
     expect(
       resolveInstallationTools(notion, {
         catalogKey: "notion",
         connectionId,
         enabledTools: "all",
-        syncedTools: [{ name: "delete_page", sensitivity: "destructive" }],
-        sensitivityOverrides: { delete_page: "write" },
+        syncedTools: [
+          {
+            name: "delete_page",
+            description: "Delete a page",
+            annotations: { destructiveHint: true },
+          },
+        ],
       }),
-    ).toEqual([{ name: "delete_page", sensitivity: "write" }]);
-  });
-
-  it("uses destructive as the conservative final fallback", () => {
-    const incompleteProvider = {
-      ...github,
-      toolManifest: [{ ...github.toolManifest[0], sensitivity: undefined }],
-    } as unknown as ProviderDef;
-    expect(
-      resolveInstallationTools(incompleteProvider, {
-        catalogKey: "github",
-        connectionId,
-        enabledTools: "all",
-      })[0]?.sensitivity,
-    ).toBe("destructive");
+    ).toEqual([
+      {
+        name: "delete_page",
+        description: "Delete a page",
+        annotations: { destructiveHint: true },
+      },
+    ]);
   });
 });

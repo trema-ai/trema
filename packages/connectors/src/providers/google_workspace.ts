@@ -10,6 +10,7 @@ const driveFile = "https://www.googleapis.com/auth/drive.file";
 
 export const googleWorkspaceProvider = {
   key: "google_workspace",
+  trusted: true,
   displayName: "Google Workspace",
   description:
     "A curated set of Gmail, Google Calendar, and Google Drive tools for a connected Google Workspace account.",
@@ -75,7 +76,6 @@ export const googleWorkspaceProvider = {
           pageToken: { type: "string", description: "Page token from a previous response." },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_message",
@@ -96,7 +96,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["id"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_thread",
@@ -113,7 +112,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["id"],
       },
-      sensitivity: "read",
     },
     {
       name: "list_labels",
@@ -123,7 +121,6 @@ export const googleWorkspaceProvider = {
       baseUrl: "https://gmail.googleapis.com",
       path: "/gmail/v1/users/me/labels",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "create_draft",
@@ -144,7 +141,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["message"],
       },
-      sensitivity: "write",
     },
     {
       name: "send_message",
@@ -161,7 +157,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["raw"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_calendars",
@@ -170,7 +165,6 @@ export const googleWorkspaceProvider = {
       method: "GET",
       path: "/calendar/v3/users/me/calendarList",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "list_events",
@@ -190,7 +184,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["calendarId"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_event",
@@ -206,7 +199,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["calendarId", "eventId"],
       },
-      sensitivity: "read",
     },
     {
       name: "check_availability",
@@ -227,7 +219,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["timeMin", "timeMax", "items"],
       },
-      sensitivity: "read",
     },
     {
       name: "create_event",
@@ -250,7 +241,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["calendarId", "summary", "start", "end"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_event",
@@ -274,7 +264,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["calendarId", "eventId"],
       },
-      sensitivity: "write",
     },
     {
       name: "delete_event",
@@ -290,7 +279,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["calendarId", "eventId"],
       },
-      sensitivity: "destructive",
     },
     {
       name: "search_files",
@@ -306,7 +294,6 @@ export const googleWorkspaceProvider = {
           fields: { type: "string", description: "Partial-response field selector." },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_file_metadata",
@@ -322,7 +309,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["fileId"],
       },
-      sensitivity: "read",
     },
     {
       name: "export_file",
@@ -341,7 +327,6 @@ export const googleWorkspaceProvider = {
         },
         required: ["fileId", "mimeType"],
       },
-      sensitivity: "read",
     },
   ],
   memberConnectable: true,

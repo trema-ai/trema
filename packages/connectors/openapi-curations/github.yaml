@@ -14,65 +14,49 @@ tools:
   - operationId: search/issues-and-pull-requests
     name: search_issues
     description: Search issues and pull requests visible to the connected GitHub account.
-    sensitivity: read
   - operationId: issues/get
     name: get_issue
     description: Get one issue from a GitHub repository.
-    sensitivity: read
   - operationId: issues/create-comment
     name: create_issue_comment
     description: Add a comment to an issue or pull request in a GitHub repository.
-    sensitivity: write
   - operationId: pulls/get
     name: get_pull_request
     description: Get one pull request from a GitHub repository.
-    sensitivity: read
   # --- added tools ---
   - operationId: pulls/list
     name: list_pull_requests
     description: List pull requests in a GitHub repository, filterable by state, head, and base.
-    sensitivity: read
   - operationId: issues/create
     name: create_issue
     description: Open a new issue in a GitHub repository.
-    sensitivity: write
   - operationId: issues/update
     name: update_issue
     description: Update a GitHub issue's title, body, state, labels, or assignees.
-    sensitivity: write
   - operationId: issues/list-comments
     name: list_issue_comments
     description: List the comments on a GitHub issue or pull request.
-    sensitivity: read
   - operationId: repos/get
     name: get_repository
     description: Get metadata for one GitHub repository.
-    sensitivity: read
   - operationId: repos/list-for-authenticated-user
     name: list_repositories
     description: List repositories the connected GitHub account can access.
-    sensitivity: read
   - operationId: repos/get-content
     name: get_file_contents
     description: Get the contents of a file or directory in a GitHub repository at a path.
-    sensitivity: read
   - operationId: repos/list-commits
     name: list_commits
     description: List commits on a GitHub repository, filterable by branch, path, or author.
-    sensitivity: read
   - operationId: search/repos
     name: search_repositories
     description: Search GitHub repositories with GitHub's repository search syntax.
-    sensitivity: read
   - operationId: search/code
     name: search_code
     description: Search for code across GitHub repositories with GitHub's code search syntax.
-    sensitivity: read
   - operationId: pulls/list-files
     name: list_pull_request_files
     description: List the files changed in a GitHub pull request.
-    sensitivity: read
   - operationId: pulls/create-review-comment
     name: create_pull_request_comment
     description: Add a review comment on a specific line of a GitHub pull request's diff.
-    sensitivity: write

@@ -1,7 +1,8 @@
-import type { Item, ItemKind, ScopeKind } from "#server/generated/prisma/client.js";
+import type { ApprovalMode, Item, ItemKind, ScopeKind } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
+import type { PolicyRow } from "#server/services/policies/index.js";
 import { type ItemSearchResult, searchItems } from "#server/services/search/index.js";
 
 /** How many matches `search_context` returns when the caller asks for no number. */
@@ -32,6 +33,10 @@ export interface DataPlaneSession {
   requesterPrincipalId: string | null;
   /** The requester's raw surface id, when no identity link resolved one. */
   requesterExternalRef: string | null;
+  /** The approval mode the requester chose for this thread; clamped per call. */
+  approvalMode: ApprovalMode;
+  /** The policy rows pinned at session open. The gate resolves against these. */
+  policyRows: PolicyRow[];
 }
 
 /**

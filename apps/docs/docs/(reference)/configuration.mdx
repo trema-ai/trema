@@ -14,6 +14,7 @@ The server validates its environment at startup and refuses to start on an inval
 | `PORT` | No | `3000` | Port the server listens on. |
 | `NODE_ENV` | No | `development` | One of `development`, `test`, or `production`. |
 | `TREMA_MODE` | No | `dedicated` | Deployment mode: `dedicated` runs a single organization created through the [bootstrap flow](/first-boot), while `hosted` leaves organization creation open to any signed-in account. |
+| `HATCHET_CLIENT_TOKEN` | No | unset | Token for the Hatchet workflow engine that executes [runs](/durable-runs). When unset, the server starts, warns that run scheduling is off, and the runs endpoints report the feature unavailable. |
 
 ## Logging
 
@@ -73,27 +74,11 @@ Set `TREMA_PASSWORD_AUTH_ENABLED=false` to remove the email-and-password form. C
 
 ## Search
 
-Item search always matches text. An organization that also configures an embeddings endpoint gets meaning-based matches beside the text ones. Those find an item that answers the question in different words.
+Item search always matches text. An organization whose `embed` model role names a model also gets meaning-based matches beside the text ones. Those find an item that answers the question in different words.
 
-No environment variable turns this on. The endpoint belongs to the organization, so it lives in the database and you set it through the API:
+No environment variable turns this on. The embedding model belongs to the organization's model provider registry, assigned in the web app or through the API—see [Model providers](/model-providers).
 
-```
-PUT  /api/v1/embedding-settings
-GET  /api/v1/embedding-settings
-POST /api/v1/items/reindex
-```
-
-The `PUT` body takes three fields:
-
-| Field | Required | Description |
-| --- | --- | --- |
-| `endpoint` | Yes | Base URL of an OpenAI-compatible embeddings API, including the version path, such as `https://api.openai.com/v1`. A model server on your own network works the same way. |
-| `model` | Yes | The model that produces the vectors. |
-| `apiKey` | No | Stored encrypted under `TREMA_CREDENTIAL_MASTER_KEY` and never returned. Omit it to keep the stored key. Send `null` for an endpoint that needs no key. |
-
-An organization with no settings row searches text only. That is the default, and nothing fails because of it: if the endpoint stops answering, search keeps returning its text matches.
-
-Each vector records the model that produced it. Search compares only the vectors from the current model, so switching models hides the old vectors rather than mixing them. Run `POST /api/v1/items/reindex` afterwards to embed everything again. The same command repairs any item the endpoint failed to embed.
+Each vector records the model that produced it. Search compares only the vectors from the model the `embed` role currently names, so changing the assignment hides old vectors rather than mixing them. Run `POST /api/v1/items/reindex` afterwards to embed everything again. To see which model the stored vectors came from, and how many items still lack a vector from the current one, call `GET /api/v1/items/index-status`. An organization with no `embed` assignment searches text only, and nothing fails because of it.
 
 ## Web app
 

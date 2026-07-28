@@ -31,7 +31,6 @@ import {
   createConnectorInstallation,
   createStaticConnection,
   deleteClientRegistration,
-  executeConnectorTool,
   listClientRegistrations,
   listConnectorConnections,
   listConnectorInstallations,
@@ -42,7 +41,6 @@ import {
   requireMemberConnectorAccess,
   revokeConnectorConnection,
   StaticCredentialValidationError,
-  sensitivities,
   startOAuthConnect,
   syncConnectorInstallation,
   UnsupportedConnectorAuthModeError,
@@ -52,9 +50,7 @@ import {
 } from "#server/services/connectors/index.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
-const sensitivitySchema = z.enum(sensitivities);
 const enabledToolsSchema = z.union([z.literal("all"), z.array(z.string().trim().min(1))]);
-const sensitivityOverridesSchema = z.record(z.string().trim().min(1), sensitivitySchema);
 const configSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
 
 const registrationSchema = z.object({
@@ -192,7 +188,6 @@ function throwConnectorError(error: unknown): never {
       data: {
         code: error.code,
         toolKey: error.toolKey,
-        sensitivity: error.sensitivity,
         installationItemId: error.installationItemId,
       },
     });
@@ -392,7 +387,6 @@ const createInstallation = requireCapability("manage_connectors", {
       catalogKey: z.string().trim().min(1),
       connectionId: z.uuid(),
       enabledTools: enabledToolsSchema.optional(),
-      sensitivityOverrides: sensitivityOverridesSchema.optional(),
     }),
   )
   .output(installationSchema)
@@ -406,9 +400,6 @@ const createInstallation = requireCapability("manage_connectors", {
           catalogKey: input.catalogKey,
           connectionId: input.connectionId,
           ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
-          ...(input.sensitivityOverrides
-            ? { sensitivityOverrides: input.sensitivityOverrides }
-            : {}),
           ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
             ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
             : {}),
@@ -427,7 +418,7 @@ const updateInstallation = installationScoped
     method: "PATCH",
     path: "/connector-installations/{installationItemId}",
     summary: "Update a connector installation",
-    description: "Update its connection, tool intent, or sensitivity overrides.",
+    description: "Update its connection or tool intent.",
     tags: ["Connectors"],
   })
   .input(
@@ -436,15 +427,10 @@ const updateInstallation = installationScoped
         installationItemId: z.uuid(),
         connectionId: z.uuid().optional(),
         enabledTools: enabledToolsSchema.optional(),
-        sensitivityOverrides: sensitivityOverridesSchema.optional(),
       })
-      .refine(
-        (input) =>
-          input.connectionId !== undefined ||
-          input.enabledTools !== undefined ||
-          input.sensitivityOverrides !== undefined,
-        { message: "At least one editable field is required" },
-      ),
+      .refine((input) => input.connectionId !== undefined || input.enabledTools !== undefined, {
+        message: "At least one editable field is required",
+      }),
   )
   .output(installationSchema)
   .handler(async ({ context, input }) => {
@@ -456,9 +442,6 @@ const updateInstallation = installationScoped
           installationItemId: input.installationItemId,
           ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
           ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
-          ...(input.sensitivityOverrides !== undefined
-            ? { sensitivityOverrides: input.sensitivityOverrides }
-            : {}),
         }),
       );
     } catch (error) {
@@ -472,12 +455,16 @@ const listedInstallationSchema = z.object({
   catalogKey: z.string(),
   connectionId: z.uuid(),
   enabledTools: enabledToolsSchema,
-  sensitivityOverrides: sensitivityOverridesSchema,
   syncedTools: z.array(
     z.object({
       name: z.string(),
       description: z.string().optional(),
-      sensitivity: sensitivitySchema,
+      annotations: z
+        .object({
+          readOnlyHint: z.boolean().optional(),
+          destructiveHint: z.boolean().optional(),
+        })
+        .optional(),
     }),
   ),
   status: z.enum(["proposed", "active", "archived"]),
@@ -573,61 +560,6 @@ const syncInstallation = installationScoped
     }
   });
 
-// The admin's dry run of an installation, not a way past a policy: it carries
-// no approval authority, so a tool classified `write` or `destructive` comes
-// back `approval_required` here exactly as it would in a session. Sensitive
-// calls belong to the data plane's `use_connector`, where a session's pinned
-// policy and a recorded approval decide them.
-const executeTool = requireCapability("manage_connectors", {
-  scopeId: (input) => (input as { scopeChain?: string[] }).scopeChain?.[0],
-})
-  .route({
-    method: "POST",
-    path: "/connector-tools/execute",
-    summary: "Execute a connector tool",
-    description:
-      "Resolve the narrowest enabled connector installation and execute one curated REST or synced MCP tool.",
-    tags: ["Connectors"],
-  })
-  .input(
-    z.object({
-      scopeChain: z
-        .array(z.uuid())
-        .min(1)
-        .describe("Scope IDs in resolution order, widest first. The narrowest match wins."),
-      toolKey: z.string().trim().min(3),
-      args: z.record(z.string(), z.json()),
-    }),
-  )
-  .output(z.json())
-  .handler(async ({ context, input }) => {
-    try {
-      for (const scopeId of input.scopeChain.slice(1)) {
-        if (!(await authorize(context.principal, "manage_connectors", scopeId, context.db))) {
-          throw new ORPCError("FORBIDDEN", {
-            message: "Capability required: manage_connectors",
-          });
-        }
-      }
-      return (await executeConnectorTool(context.db, {
-        orgId: context.org.id,
-        scopeChain: input.scopeChain,
-        principalId: context.principal.id,
-        toolKey: input.toolKey,
-        args: input.args,
-        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-          : {}),
-        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
-        ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
-        ...(context.platformApps ? { platformApps: context.platformApps } : {}),
-      })) as z.infer<ReturnType<typeof z.json>>;
-    } catch (error) {
-      if (error instanceof ORPCError) throw error;
-      throwConnectorError(error);
-    }
-  });
-
 const catalog = orgScoped
   .route({
     method: "GET",
@@ -653,15 +585,7 @@ const catalog = orgScoped
         availableScopes: z.array(z.string()).optional(),
         configFields: z.record(z.string(), fieldDescriptorSchema),
         credentialFields: z.record(z.string(), fieldDescriptorSchema),
-        toolManifest: z
-          .array(
-            z.object({
-              name: z.string(),
-              description: z.string(),
-              sensitivity: sensitivitySchema,
-            }),
-          )
-          .optional(),
+        toolManifest: z.array(z.object({ name: z.string(), description: z.string() })).optional(),
       }),
     ),
   )
@@ -687,10 +611,9 @@ const catalog = orgScoped
       credentialFields: provider.credentialFields,
       ...(provider.transport.type === "rest"
         ? {
-            toolManifest: provider.toolManifest.map(({ name, description, sensitivity }) => ({
+            toolManifest: provider.toolManifest.map(({ name, description }) => ({
               name,
               description,
-              sensitivity,
             })),
           }
         : {}),
@@ -1109,7 +1032,6 @@ export const connectorsRouter = {
   meta,
   catalog: { list: catalog },
   providers: { updateSettings: updateProviderSettings },
-  tools: { execute: executeTool },
   installations: {
     create: createInstallation,
     list: listInstallations,

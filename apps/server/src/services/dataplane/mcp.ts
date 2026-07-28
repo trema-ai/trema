@@ -6,11 +6,10 @@ import { z } from "zod";
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { bindLogger, log } from "#server/lib/logger/index.js";
-import {
-  type ConnectorFetch,
-  type McpClientFactory,
-  type PlatformAppDirectory,
-  sensitivities,
+import type {
+  ConnectorFetch,
+  McpClientFactory,
+  PlatformAppDirectory,
 } from "#server/services/connectors/index.js";
 import { describeConnectorFailure, useConnector } from "#server/services/dataplane/connector.js";
 import {
@@ -28,6 +27,7 @@ import {
   fetchTranscript,
 } from "#server/services/dataplane/transcript.js";
 import { ItemValidationError, memoryTypes } from "#server/services/items/index.js";
+import type { PolicyRow } from "#server/services/policies/index.js";
 import {
   authenticateSession,
   isSessionExpired,
@@ -430,7 +430,7 @@ export function createDataPlaneServer(
     {
       title: "Use connector",
       description:
-        "Do something in a connected system — read from it, or change something in it. The call runs here, with this organization's credential; you never see the credential and never call the system directly. Read the `status` of the reply: `executed` carries the system's answer, `approval_required` means stop and let a person decide, `denied` means the call is not allowed at all.",
+        "Do something in a connected system — read from it, or change something in it. The call runs here, with this organization's credential; you never see the credential and never call the system directly. Read the `status` of the reply: `executed` carries the system's answer, `approval_required` means stop and let a person decide — once approved, call again with the same arguments and the approvalId.",
       inputSchema: {
         toolKey: z
           .string()
@@ -460,14 +460,18 @@ export function createDataPlaneServer(
       },
       outputSchema: {
         status: z
-          .enum(["executed", "approval_required", "denied"])
+          .enum(["executed", "approval_required"])
           .describe(
-            "`executed`: the call ran. `approval_required`: a person must approve it first. `denied`: policy refuses this call.",
+            "`executed`: the call ran. `approval_required`: a person must approve it first.",
           ),
         toolKey: z.string().describe("The tool this reply is about."),
-        sensitivity: z
-          .enum(sensitivities)
-          .describe("How the call is classified: `read`, `write`, or `destructive`."),
+        mode: z
+          .enum(["ask", "delegated", "full"])
+          .describe("The approval mode the call ran under."),
+        escalationReason: z
+          .string()
+          .optional()
+          .describe("Why a delegated-mode call paused, when the classifier escalated it."),
         result: z.unknown().optional().describe("What the connected system replied, when it ran."),
         approvalId: z
           .string()
@@ -556,6 +560,8 @@ async function resolveSession(
       actingPrincipalId: session.actingPrincipalId,
       requesterPrincipalId: session.requesterPrincipalId,
       requesterExternalRef: session.requesterExternalRef,
+      approvalMode: session.approvalMode,
+      policyRows: (session.policySnapshot as { rows?: PolicyRow[] } | null)?.rows ?? [],
     };
   } catch (error) {
     if (error instanceof SessionAuthenticationError) {

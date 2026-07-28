@@ -1,0 +1,126 @@
+---
+title: Context sessions
+description: Open a context session from an agent harness and reach the organization's context over MCP.
+---
+
+A context session is the handshake an agent harness performs before a run touches the organization's context. Opening one resolves a surface location to a scope. The response carries the standing context to inject into the model and a token for its tool calls. The data plane behind that token speaks the Model Context Protocol (MCP), so any MCP client can consume it.
+
+Prerequisites: a service credential from [Authentication](/authentication), and a surface location bound to a scope through the bindings endpoints in the [API reference](/api).
+
+## Open a session
+
+Post the location and the requester to the sessions endpoint:
+
+```sh
+curl -X POST https://trema.example.com/api/v1/sessions \
+  -H "authorization: Bearer $TREMA_SERVICE_CREDENTIAL" \
+  -H 'content-type: application/json' \
+  -d '{
+    "surface": "slack",
+    "locationRef": "T024BE7LD:C02J8B5T9",
+    "requester": { "externalUserId": "U023H94KQ" }
+  }'
+```
+
+The requester is who asked, as either the surface's raw user id or a `principalId`. Omit it for scheduled work that nobody triggered. A one-to-one conversation with the agent sets `dm: true`, requires a surface requester, and resolves to that person's personal scope. Pass `threadRef` when the surface has threads.
+
+The response carries the session and everything the harness injects into the model:
+
+| Field | What it is |
+| --- | --- |
+| `sessionToken` | The bearer token for data-plane calls, prefixed `trema_ses_`. Returned only once. |
+| `expiresAt` | The token expiry, fifteen minutes out. |
+| `mode` | Either `service`, acting as the organization's agent, or `delegated`, acting as the requesting person. |
+| `scopeChain` | The scopes the session reads, widest first. Writes land at the last one. |
+| `standing` | The instructions, standing memories, and skill index to inject into every turn, cut to a token budget. |
+| `policySnapshot` | The approval policy pinned for the session's whole life. |
+| `snapshotHash` | A stable identifier for the resolved snapshot. Two sessions resolving the same context share it. |
+
+The `tools` array is empty in the current release. If the call answers 404 with the code `location_unbound`, bind the location to a scope and retry. A 403 with `identity_unlinked` means the requesting user is not linked to a person.
+
+## Renew and close
+
+Session tokens live fifteen minutes, and renewal restarts the clock without changing the token:
+
+```sh
+curl -X POST "https://trema.example.com/api/v1/sessions/$SESSION_ID/renew" \
+  -H "authorization: Bearer $SESSION_TOKEN"
+```
+
+An expired session cannot be renewed—open a new one instead. Closing records usage and still works after expiry, so usage is never lost.
+
+```sh
+curl -X POST "https://trema.example.com/api/v1/sessions/$SESSION_ID/close" \
+  -H "authorization: Bearer $SESSION_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"usage":{"inputTokens":18234,"outputTokens":2411,"costUsd":0.19}}'
+```
+
+## Report the conversation
+
+The harness reports the thread's messages—from people and agent alike—so later runs can search them and quote them exactly:
+
+```sh
+curl -X POST "https://trema.example.com/api/v1/sessions/$SESSION_ID/messages" \
+  -H "authorization: Bearer $SESSION_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "messages": [
+      {
+        "surfaceMessageRef": "1753692840.001200",
+        "author": { "externalRef": "U023H94KQ" },
+        "sentAt": "2026-07-28T09:34:00Z",
+        "text": "Which deploys failed overnight?"
+      }
+    ]
+  }'
+```
+
+Report batches oldest first, up to 200 messages per call. The reference is the message's identity: reporting it again edits the stored copy, and repeating a whole batch changes nothing. An `operation` of `delete` removes a message retracted on the surface. The thread is identified by the session's surface location, so repeated sessions on it extend one conversation.
+
+## The MCP endpoint
+
+The data plane is mounted at `/api/v1/mcp` and speaks MCP over HTTP, with the session token as its only credential:
+
+```ts
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+// The sessionToken returned by POST /sessions.
+const sessionToken = process.env.SESSION_TOKEN!;
+
+const transport = new StreamableHTTPClientTransport(
+  new URL("https://trema.example.com/api/v1/mcp"),
+  { requestInit: { headers: { authorization: `Bearer ${sessionToken}` } } },
+);
+const client = new Client({ name: "acme-harness", version: "1.0.0" });
+await client.connect(transport);
+
+const found = await client.callTool({
+  name: "search_context",
+  arguments: { query: "release train" },
+});
+```
+
+The mount is stateless: every call carries the token, so any number of server processes can serve one session. The server identifies itself as `trema-context`, answers each call with JSON, and refuses the GET stream for server-initiated messages. A refused call is a JSON-RPC error whose `data.code` says what to do next:
+
+| Code | What to do |
+| --- | --- |
+| `session_token_required`, `invalid_session_token` | Send the session token as the bearer credential. |
+| `session_expired` | Open a new session; renewal is too late. |
+| `session_closed` | Open a new session. |
+| `sse_unsupported` | Stop waiting for a server stream; every exchange is client-initiated. |
+
+## The tools
+
+Every tool is scoped to the session's scope chain, so there is nothing to filter by hand:
+
+| Tool | What it does |
+| --- | --- |
+| `search_context` | Searches the active context for a plain-words `query`, optionally restricted by `kinds` and `limit`. Returns ids, titles, and snippets, never full bodies. |
+| `get_item` | Reads one item in full by `id`, and records that the run used it. |
+| `save_memory` | Saves a memory with a `type`, `title`, and `content` at the session's scope. A restated memory replaces the old one, and the reply names what it superseded. |
+| `update_memory` | Rewrites a memory's `content` in place. The type and title stay, and the earlier wording stays in the item's history. |
+| `fetch_transcript` | Reads a bounded window of a captured conversation, centered on `aroundSeq` or ending the thread when omitted. |
+
+The memory writes follow the writer policy. A `fact` or `preference` takes effect at once; a `rule` or `procedure` lands proposed and waits for a person to confirm it. Rewriting is narrower still: only facts and preferences saved at the session's own scope, because a confirmed rule or procedure needs a person.

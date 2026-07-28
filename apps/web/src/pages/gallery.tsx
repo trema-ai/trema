@@ -19,13 +19,13 @@ import {
 import { IdChip } from "#web/components/trema/id-chip.tsx";
 import { KeyValueList } from "#web/components/trema/key-value-list.tsx";
 import { LogLine } from "#web/components/trema/log-line.tsx";
+import { ModeBadge } from "#web/components/trema/mode-badge.tsx";
 import { OutputViewer } from "#web/components/trema/output-viewer.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { ReasoningBlock } from "#web/components/trema/reasoning-block.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
 import { type RunState, RunStateBadge } from "#web/components/trema/run-state-badge.tsx";
 import { SegmentDivider } from "#web/components/trema/segment-divider.tsx";
-import { SensitivityBadge } from "#web/components/trema/sensitivity-badge.tsx";
 import { SettingRow, SettingsSection } from "#web/components/trema/settings-section.tsx";
 import { StatusDot } from "#web/components/trema/status-dot.tsx";
 import { SteeringNote } from "#web/components/trema/steering-note.tsx";
@@ -453,9 +453,9 @@ function BadgesSection() {
           ))}
         </Row>
         <Row>
-          {(["read", "write", "destructive"] as const).map((sensitivity) => (
-            <Variant key={sensitivity} label={`SensitivityBadge ${sensitivity}`}>
-              <SensitivityBadge sensitivity={sensitivity} />
+          {(["ask", "delegated", "full"] as const).map((mode) => (
+            <Variant key={mode} label={`ModeBadge ${mode}`}>
+              <ModeBadge mode={mode} />
             </Variant>
           ))}
         </Row>
@@ -698,12 +698,14 @@ function ApprovalsSection() {
             action={{
               toolTitle: "Create issue",
               connector: "Linear",
-              sensitivity: "write",
+              mode: "delegated",
+              escalationReason: "Creates a ticket other people will be assigned to.",
               argsSummary: '{"team":"SUP","title":"Widget fails to sync","priority":2}',
             }}
             requestedBy="Nightly digest #1041"
             options={[
               { id: "approve", label: "Approve", variant: "primary" },
+              { id: "approve_thread", label: "Approve for thread", variant: "secondary" },
               { id: "deny", label: "Deny", variant: "destructive" },
             ]}
             expiresAt={new Date(Date.now() + 45 * 60_000)}
@@ -733,7 +735,7 @@ function ApprovalsSection() {
             action={{
               toolTitle: "Create issue",
               connector: "Linear",
-              sensitivity: "write",
+              mode: "ask",
               argsSummary: '{"team":"SUP","title":"Widget fails to sync","priority":2}',
             }}
             requestedBy="Nightly digest #1041"
@@ -750,7 +752,7 @@ function ApprovalsSection() {
             action={{
               toolTitle: "Delete records",
               connector: "CRM",
-              sensitivity: "destructive",
+              mode: "ask",
               argsSummary: '{"table":"contacts","ids":[311,318,319,…]}',
             }}
             requestedBy="Backfill import #1044"

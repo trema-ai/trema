@@ -69,7 +69,7 @@ integration("approval policies", () => {
     return { ...signedUp, ...membership, orgScope, credential };
   }
 
-  async function addMember(orgId: string, orgScopeId: string, role: Role, name: string) {
+  async function addMember(orgId: string, orgScopeId: string, role: Role | null, name: string) {
     const signedUp = await signUp(name);
     const principal = await db.principal.create({
       data: {
@@ -80,9 +80,13 @@ integration("approval policies", () => {
         email: signedUp.user.email,
       },
     });
-    await db.grant.create({
-      data: { orgId, principalId: principal.id, scopeId: orgScopeId, role },
-    });
+    // A null role stands for someone who holds no org-scope grant at all —
+    // their reach is whatever their own scopes give them.
+    if (role !== null) {
+      await db.grant.create({
+        data: { orgId, principalId: principal.id, scopeId: orgScopeId, role },
+      });
+    }
     await db.session.updateMany({
       where: { userId: signedUp.user.id },
       data: { activeOrgId: orgId },
@@ -94,136 +98,197 @@ integration("approval policies", () => {
     return { db, auth, env, headers: new Headers({ authorization: `Bearer ${secret}` }) };
   }
 
-  it("resolves the narrowest scope's row per class and keeps the defaults elsewhere", async () => {
+  it("resolves the strictest applicable ceiling and routes by the most specific row", async () => {
     const org = await createOrg();
     const shared = await call(scopesRouter.create, { name: "Support" }, { context: org.context });
 
     await call(
       policiesRouter.set,
-      { scopeId: org.orgScope.id, sensitivity: "destructive", action: "deny" },
+      { scopeId: org.orgScope.id, maxMode: "full" },
       { context: org.context },
     );
     const narrow = await call(
       policiesRouter.set,
-      {
-        scopeId: shared.id,
-        sensitivity: "destructive",
-        action: "require_approval",
-        approverRoles: ["owner"],
-      },
+      { scopeId: shared.id, maxMode: "ask", approverRoles: ["owner"] },
       { context: org.context },
     );
 
+    // The shared scope tightens the org's ceiling; it never loosens it.
     const resolvedShared = await call(
       policiesRouter.resolved,
       { scopeId: shared.id },
       { context: org.context },
     );
     expect(resolvedShared.scopeChain).toEqual([org.orgScope.id, shared.id]);
-    expect(resolvedShared.decisions.destructive).toMatchObject({
-      action: "require_approval",
+    expect(resolvedShared.ceiling).toBe("ask");
+    expect(resolvedShared.routing).toMatchObject({
       approverRoles: ["owner"],
-      source: { kind: "policy", policyId: narrow.id, scopeId: shared.id },
+      source: { kind: "policy", policyId: narrow.id },
     });
-    // Nobody wrote a read or write row, so those classes stay on the defaults.
-    expect(resolvedShared.decisions.read).toMatchObject({ action: "allow" });
-    expect(resolvedShared.decisions.write.source).toMatchObject({ kind: "default" });
 
-    // A session opened at the organization scope sees the organization's row.
     const resolvedOrg = await call(
       policiesRouter.resolved,
       { scopeId: org.orgScope.id },
       { context: org.context },
     );
     expect(resolvedOrg.scopeChain).toEqual([org.orgScope.id]);
-    expect(resolvedOrg.decisions.destructive).toMatchObject({ action: "deny" });
+    expect(resolvedOrg.ceiling).toBe("full");
   });
 
-  it("replaces a scope's row per class and falls back again when it is deleted", async () => {
+  it("resolves connector rows against the connector, and pins untrusted entries to ask", async () => {
+    const org = await createOrg();
+    const shared = await call(scopesRouter.create, { name: "Ops" }, { context: org.context });
+
+    await call(
+      policiesRouter.set,
+      { scopeId: shared.id, connectorKey: "github", maxMode: "full" },
+      { context: org.context },
+    );
+
+    // github is a curated catalog entry, so its row resolves as written.
+    const github = await call(
+      policiesRouter.resolved,
+      { scopeId: shared.id, connectorKey: "github" },
+      { context: org.context },
+    );
+    expect(github.ceiling).toBe("full");
+
+    // A key no catalog entry claims is untrusted, and untrusted pins to ask
+    // whatever the rows say — the scope-wide row here is the loosest there is.
+    await call(
+      policiesRouter.set,
+      { scopeId: shared.id, maxMode: "full" },
+      { context: org.context },
+    );
+    const unknown = await call(
+      policiesRouter.resolved,
+      { scopeId: shared.id, connectorKey: "not-a-catalog-entry" },
+      { context: org.context },
+    );
+    expect(unknown.ceiling).toBe("ask");
+
+    const scopeWide = await call(
+      policiesRouter.resolved,
+      { scopeId: shared.id },
+      { context: org.context },
+    );
+    expect(scopeWide.ceiling).toBe("full");
+  });
+
+  it("resolves a personal scope over the whole chain but lists only readable rows", async () => {
+    const org = await createOrg();
+    // Owning a personal scope is this principal's whole reach: personal scopes
+    // do not inherit org roles, and they hold no org-scope grant.
+    const member = await addMember(org.org.id, org.orgScope.id, null, "Chain Reader");
+    const personal = await db.scope.create({
+      data: {
+        orgId: org.org.id,
+        kind: "personal",
+        ownerId: member.principal.id,
+        name: "Chain Reader",
+      },
+    });
+
+    await call(
+      policiesRouter.set,
+      { scopeId: org.orgScope.id, maxMode: "ask", approverRoles: ["admin"] },
+      { context: org.context },
+    );
+    const own = await call(
+      policiesRouter.set,
+      { scopeId: personal.id, connectorKey: "github", maxMode: "full" },
+      { context: member.context },
+    );
+
+    const resolved = await call(
+      policiesRouter.resolved,
+      { scopeId: personal.id },
+      { context: member.context },
+    );
+    // The org row still tightens the ceiling and routes the interrupt — that
+    // outcome governs the member's own sessions — but the org scope's rows
+    // themselves are not theirs to read.
+    expect(resolved.scopeChain).toEqual([org.orgScope.id, personal.id]);
+    expect(resolved.ceiling).toBe("ask");
+    expect(resolved.routing).toMatchObject({ approverRoles: ["admin"] });
+    expect(resolved.rows.map(({ id }) => id)).toEqual([own.id]);
+
+    // The owner reads the org scope's own resolution in full.
+    const asOwner = await call(
+      policiesRouter.resolved,
+      { scopeId: org.orgScope.id },
+      { context: org.context },
+    );
+    expect(asOwner.rows).toHaveLength(1);
+  });
+
+  it("replaces a scope's row per key and falls back again when it is deleted", async () => {
     const org = await createOrg();
     const shared = await call(scopesRouter.create, { name: "Sales" }, { context: org.context });
 
     const first = await call(
       policiesRouter.set,
-      { scopeId: shared.id, sensitivity: "write", action: "allow" },
+      { scopeId: shared.id, maxMode: "full" },
       { context: org.context },
     );
     const second = await call(
       policiesRouter.set,
-      { scopeId: shared.id, sensitivity: "write", action: "deny" },
+      { scopeId: shared.id, maxMode: "ask" },
       { context: org.context },
     );
     expect(second.id).toBe(first.id);
+
+    // The scope-wide row and a connector row are separate keys.
+    const connectorRow = await call(
+      policiesRouter.set,
+      { scopeId: shared.id, connectorKey: "github", maxMode: "delegated" },
+      { context: org.context },
+    );
+    expect(connectorRow.id).not.toBe(second.id);
 
     const listed = await call(
       policiesRouter.list,
       { scopeId: shared.id },
       { context: org.context },
     );
-    expect(listed.policies).toHaveLength(1);
-    expect(listed.policies[0]).toMatchObject({ sensitivity: "write", action: "deny" });
+    expect(listed.policies).toHaveLength(2);
+    expect(listed.policies[0]).toMatchObject({ connectorKey: null, maxMode: "ask" });
 
-    await call(
-      policiesRouter.delete,
-      { scopeId: shared.id, sensitivity: "write" },
-      { context: org.context },
-    );
+    await call(policiesRouter.delete, { scopeId: shared.id }, { context: org.context });
     const resolved = await call(
       policiesRouter.resolved,
       { scopeId: shared.id },
       { context: org.context },
     );
-    expect(resolved.decisions.write.source).toMatchObject({ kind: "default" });
+    // The github row still stands; the scope-wide view is back on defaults.
+    expect(resolved.ceiling).toBe("delegated");
+    expect(resolved.routing.source).toMatchObject({ kind: "default" });
     await expect(
-      call(
-        policiesRouter.delete,
-        { scopeId: shared.id, sensitivity: "write" },
-        { context: org.context },
-      ),
+      call(policiesRouter.delete, { scopeId: shared.id }, { context: org.context }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("refuses a gate nobody can resolve and stores no approvers for an ungated class", async () => {
+  it("refuses a row nobody could resolve and guards unknown scopes", async () => {
     const org = await createOrg();
-    const shared = await call(scopesRouter.create, { name: "Ops" }, { context: org.context });
+    const shared = await call(scopesRouter.create, { name: "Ops 2" }, { context: org.context });
 
-    // Separation of duties: outside a personal scope the requester cannot be
-    // the sole approver, so a shared-scope gate needs an approver role.
     await expect(
       call(
         policiesRouter.set,
         {
           scopeId: shared.id,
-          sensitivity: "destructive",
-          action: "require_approval",
+          maxMode: "ask",
           approverRoles: [],
-          allowRequesterApproval: true,
+          allowRequesterApproval: false,
         },
         { context: org.context },
       ),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
-    const allowed = await call(
-      policiesRouter.set,
-      {
-        scopeId: shared.id,
-        sensitivity: "write",
-        action: "allow",
-        approverRoles: ["admin"],
-        allowRequesterApproval: true,
-      },
-      { context: org.context },
-    );
-    expect(allowed).toMatchObject({ approverRoles: [], allowRequesterApproval: false });
-
     // An unknown scope fails the capability check before the service sees it:
     // nobody holds a role at a scope that does not exist.
     await expect(
-      call(
-        policiesRouter.set,
-        { scopeId: randomUUID(), sensitivity: "read", action: "allow" },
-        { context: org.context },
-      ),
+      call(policiesRouter.set, { scopeId: randomUUID(), maxMode: "ask" }, { context: org.context }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
@@ -239,34 +304,24 @@ integration("approval policies", () => {
       },
     });
 
-    // A personal-scope approval is a confirm step: the owner is the approver.
-    const confirmStep = await call(
+    const pinned = await call(
       policiesRouter.set,
-      {
-        scopeId: personal.id,
-        sensitivity: "write",
-        action: "require_approval",
-        allowRequesterApproval: true,
-      },
+      { scopeId: personal.id, maxMode: "ask" },
       { context: member.context },
     );
-    expect(confirmStep).toMatchObject({ approverRoles: [], allowRequesterApproval: true });
+    expect(pinned).toMatchObject({ maxMode: "ask", allowRequesterApproval: true });
 
     // Organization admins do not read personal-scope policies, and the same
     // member cannot touch a shared scope's.
     const shared = await call(scopesRouter.create, { name: "Shared" }, { context: org.context });
     await expect(
-      call(
-        policiesRouter.set,
-        { scopeId: shared.id, sensitivity: "write", action: "allow" },
-        { context: member.context },
-      ),
+      call(policiesRouter.set, { scopeId: shared.id, maxMode: "ask" }, { context: member.context }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     const asOwner = await call(policiesRouter.list, {}, { context: org.context });
     expect(asOwner.policies).toHaveLength(0);
     const asMember = await call(policiesRouter.list, {}, { context: member.context });
-    expect(asMember.policies.map(({ id }) => id)).toEqual([confirmStep.id]);
+    expect(asMember.policies.map(({ id }) => id)).toEqual([pinned.id]);
   });
 
   it("pins the snapshot at open, so a policy edited mid-run reaches the next session only", async () => {
@@ -285,7 +340,7 @@ integration("approval policies", () => {
     );
     await call(
       policiesRouter.set,
-      { scopeId: shared.id, sensitivity: "write", action: "allow" },
+      { scopeId: shared.id, maxMode: "full" },
       { context: org.context },
     );
 
@@ -294,14 +349,12 @@ integration("approval policies", () => {
       { surface: "slack", locationRef: "T1:C9" },
       { context: serviceContext(org.credential.secret) },
     );
-    expect(opened.policySnapshot.decisions.write).toMatchObject({
-      action: "allow",
-      source: { kind: "policy", scopeId: shared.id },
-    });
+    expect(opened.policySnapshot.rows).toHaveLength(1);
+    expect(opened.policySnapshot.rows[0]).toMatchObject({ scopeId: shared.id, maxMode: "full" });
 
     await call(
       policiesRouter.set,
-      { scopeId: shared.id, sensitivity: "write", action: "deny" },
+      { scopeId: shared.id, maxMode: "ask" },
       { context: org.context },
     );
 
@@ -310,16 +363,16 @@ integration("approval policies", () => {
       select: { policySnapshot: true, snapshotHash: true },
     });
     const snapshot = persisted.policySnapshot as {
-      decisions: { write: { action: string } };
+      rows: { maxMode: string }[];
     };
-    expect(snapshot.decisions.write.action).toBe("allow");
+    expect(snapshot.rows[0]?.maxMode).toBe("full");
 
     const reopened = await call(
       sessionsRouter.open,
       { surface: "slack", locationRef: "T1:C9" },
       { context: serviceContext(org.credential.secret) },
     );
-    expect(reopened.policySnapshot.decisions.write.action).toBe("deny");
+    expect(reopened.policySnapshot.rows[0]?.maxMode).toBe("ask");
     expect(reopened.snapshotHash).not.toBe(persisted.snapshotHash);
   });
 });

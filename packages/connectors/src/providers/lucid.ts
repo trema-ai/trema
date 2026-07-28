@@ -4,6 +4,7 @@ import type { ProviderDefInput } from "#connectors/schema.js";
 // so this provider uses the production REST API for documents and folders.
 export const lucidProvider = {
   key: "lucid",
+  trusted: true,
   displayName: "Lucid",
   description: "Search, create, organize, and share Lucid documents and folders over the REST API.",
   logoUrl: "/connector-logos/lucid.svg",
@@ -38,7 +39,6 @@ export const lucidProvider = {
       method: "GET",
       path: "/v1/users/me/profile",
       paramsSchema: { type: "object", properties: {} },
-      sensitivity: "read",
     },
     {
       name: "search_documents",
@@ -54,7 +54,6 @@ export const lucidProvider = {
           pageToken: { type: "string" },
         },
       },
-      sensitivity: "read",
     },
     {
       name: "get_document",
@@ -66,7 +65,6 @@ export const lucidProvider = {
         properties: { id: { type: "string" }, format: { type: "string" } },
         required: ["id"],
       },
-      sensitivity: "read",
     },
     {
       name: "get_document_content",
@@ -74,7 +72,6 @@ export const lucidProvider = {
       method: "GET",
       path: "/v1/documents/{id}/contents",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "read",
     },
     {
       name: "create_document",
@@ -91,7 +88,6 @@ export const lucidProvider = {
         },
         required: ["title", "product"],
       },
-      sensitivity: "write",
     },
     {
       name: "update_document",
@@ -108,7 +104,6 @@ export const lucidProvider = {
         },
         required: ["id"],
       },
-      sensitivity: "write",
     },
     {
       name: "list_root_folder_contents",
@@ -119,7 +114,6 @@ export const lucidProvider = {
         type: "object",
         properties: { pageSize: { type: "integer" }, pageToken: { type: "string" } },
       },
-      sensitivity: "read",
     },
     {
       name: "create_folder",
@@ -136,7 +130,6 @@ export const lucidProvider = {
         },
         required: ["name", "type"],
       },
-      sensitivity: "write",
     },
     {
       name: "get_folder",
@@ -144,7 +137,6 @@ export const lucidProvider = {
       method: "GET",
       path: "/v1/folders/{id}",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "read",
     },
     {
       name: "trash_document",
@@ -152,7 +144,6 @@ export const lucidProvider = {
       method: "DELETE",
       path: "/v1/documents/{id}",
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      sensitivity: "destructive",
     },
   ],
   memberConnectable: true,
