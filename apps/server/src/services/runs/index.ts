@@ -32,6 +32,13 @@ export {
   HatchetEngine,
   RUN_TASK_NAME,
 } from "./hatchet.js";
+export type { ThreadHistoryOptions, ThreadRunLog } from "./history.js";
+export {
+  DEFAULT_THREAD_HISTORY_RUNS,
+  deriveRunMessages,
+  deriveThreadMessages,
+  readThreadMessages,
+} from "./history.js";
 export type { ConfiguredModel, ResolveConfiguredModelOptions } from "./models.js";
 export { ModelConfigurationError, resolveConfiguredModel } from "./models.js";
 export type { SessionRunPlanOptions } from "./plan.js";
