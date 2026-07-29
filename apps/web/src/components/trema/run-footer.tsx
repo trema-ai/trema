@@ -14,6 +14,8 @@ type RunFooterProps = {
   /** When the run's last event landed; omitted while the run is live. */
   endedAt?: string;
   live?: boolean;
+  /** A live run parked on a human decision does not keep a working timer. */
+  waitingForDecision?: boolean;
   /** The stop control, rendered beside the working indicator while live. */
   stop?: React.ReactNode;
   /** Assistant prose copied from this run; omitted when the run produced none. */
@@ -45,11 +47,12 @@ function RunFooter({
   startedAt,
   endedAt,
   live = false,
+  waitingForDecision = false,
   stop,
   copyText,
   className,
 }: RunFooterProps) {
-  const elapsed = useElapsed(startedAt, live);
+  const elapsed = useElapsed(startedAt, live && !waitingForDecision);
 
   if (live) {
     return (
@@ -57,9 +60,9 @@ function RunFooter({
         data-slot="run-footer"
         className={cn("flex items-center gap-1.5 text-meta text-muted-foreground", className)}
       >
-        <StatusDot tone="run" />
+        <StatusDot tone={waitingForDecision ? "wait" : "run"} />
         <Link to={`/runs/${runId}`} className="hover:text-foreground hover:underline">
-          Working for {elapsed}
+          {waitingForDecision ? "Paused · Waiting for your decision" : `Working for ${elapsed}`}
         </Link>
         {stop}
       </div>

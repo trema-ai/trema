@@ -43,4 +43,23 @@ describe("RunFooter", () => {
 
     expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
   });
+
+  it("shows a waiting state without a working timer while paused", () => {
+    render(
+      <MemoryRouter>
+        <RunFooter
+          runId="run-1"
+          startedAt={new Date(Date.now() - 33_000).toISOString()}
+          live
+          waitingForDecision
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Paused · Waiting for your decision")).toBeTruthy();
+    expect(screen.queryByText(/Working for/)).toBeNull();
+    expect(document.querySelector('[data-slot="status-dot"]')?.getAttribute("data-tone")).toBe(
+      "wait",
+    );
+  });
 });

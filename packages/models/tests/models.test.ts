@@ -467,6 +467,36 @@ describe("SDK full-stream golden transcripts", () => {
     expectValid(actual.events);
   });
 
+  it("carries connector identity into the tool-start event", async () => {
+    const connectorLookup: ToolDef = {
+      ...lookup,
+      name: "linear_list_issues",
+      kind: "connector",
+      connector: {
+        key: "linear",
+        displayName: "Linear",
+        logoUrl: "/connector-logos/linear.svg",
+      },
+    };
+    const actual = await collect(
+      [
+        {
+          type: "tool-call",
+          toolCallId: "call-linear",
+          toolName: connectorLookup.name,
+          input: {},
+        },
+        finish("tool-calls"),
+      ],
+      { tools: [connectorLookup] },
+    );
+
+    expect(actual.events[0]).toMatchObject({
+      type: "tool-start",
+      connector: connectorLookup.connector,
+    });
+  });
+
   it("keeps parallel tool streams distinct and interleaved", async () => {
     const actual = await collect(
       [

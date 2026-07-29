@@ -195,6 +195,7 @@ export function RunBlock({
             startedAt={run.createdAt}
             {...(meta.lastAt === undefined || hasChain ? {} : { endedAt: meta.lastAt })}
             live={!settled}
+            waitingForDecision={projection.status === "paused"}
             {...(settled && copyText ? { copyText } : {})}
             {...(settled
               ? {

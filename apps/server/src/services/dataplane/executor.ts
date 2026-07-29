@@ -154,7 +154,7 @@ function connectorInvocation(call: ToolCall, definition: ToolDef): ConnectorInvo
   return {
     toolKey: definition.key,
     args,
-    reason: `Use ${definition.title} for the current request.`,
+    reason: `Allow ${definition.title} for this request?`,
     legacyEnvelope: false,
   };
 }
