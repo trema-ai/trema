@@ -65,14 +65,6 @@ export function RunBlock({
   const settled =
     isTerminalRunState(run.state) || phase === "static" || isTerminalProjection(projection.status);
 
-  const steeringTexts = useMemo(
-    () =>
-      projection.segments.flatMap((segment) =>
-        segment.parts.flatMap((part) => (part.kind === "steering" ? [part.text] : [])),
-      ),
-    [projection],
-  );
-
   // The opening message IS the first steering event on the log (the loop
   // drains the trigger there — history.ts derives it by the same rule), and
   // this screen already renders it as the user bubble. Suppress that one part
@@ -94,6 +86,17 @@ export function RunBlock({
     );
     return { ...projection, segments };
   }, [projection, run.openingMessage]);
+
+  // Counted from the display projection, not the raw one: the thread's
+  // pending-steer reconciliation matches against these, and the opening
+  // part — a steer only to the log — must not count as one landing.
+  const steeringTexts = useMemo(
+    () =>
+      displayProjection.segments.flatMap((segment) =>
+        segment.parts.flatMap((part) => (part.kind === "steering" ? [part.text] : [])),
+      ),
+    [displayProjection],
+  );
 
   const lastFacts = useRef<RunBlockFacts | undefined>(undefined);
   useEffect(() => {

@@ -57,8 +57,13 @@ interface PendingSteer extends PendingSendBase {
   kind: "steering";
   /** The run the steer targeted, when the view knew one at send time. */
   runId: string | undefined;
-  /** Steering parts already on that run's projection when the 2xx landed. */
-  baseline: number;
+  /**
+   * Steering parts already on that run's projection when the 2xx landed.
+   * Null when the projection had not reported yet — resolved to the first
+   * observed count, since a send-time zero would count historical steers
+   * with the same text as this one landing.
+   */
+  baseline: number | null;
 }
 
 interface PendingFollowUp extends PendingSendBase {
@@ -181,15 +186,34 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
   const lastRunState = lastRun?.state;
   useEffect(() => {
     setPendingSends((previous) => {
-      const next = previous.filter((entry, index) => {
+      // A baseline captured before the run's projection reported resolves to
+      // the first observed count. That snapshot may already include the
+      // steer's own part, in which case the note lingers until the settle
+      // rule below clears it — the safe direction; a zero would instead let
+      // historical same-text parts (the opening included) drop the note
+      // before its part folded.
+      let rebaselined = false;
+      const resolved = previous.map((entry) => {
+        if (entry.kind !== "steering" || entry.baseline !== null) return entry;
+        const targetId = entry.runId ?? lastRunId;
+        if (targetId === undefined) return entry;
+        const observed = facts[targetId];
+        if (observed === undefined) return entry;
+        rebaselined = true;
+        return { ...entry, baseline: observed.steeringTexts.length };
+      });
+      const next = resolved.filter((entry, index) => {
         if (entry.kind !== "steering") return true;
         const targetId = entry.runId ?? lastRunId;
         if (targetId === undefined) return true;
         // The part landed: beyond the send-time baseline, one projection
-        // occurrence of the text per pending steer, oldest first.
+        // occurrence of the text per pending steer, oldest first. A still-
+        // null baseline means no facts, so nothing to count against.
         const texts = facts[targetId]?.steeringTexts ?? [];
-        const landed = texts.slice(entry.baseline).filter((text) => text === entry.text).length;
-        const earlier = previous.filter(
+        const landed = texts
+          .slice(entry.baseline ?? 0)
+          .filter((text) => text === entry.text).length;
+        const earlier = resolved.filter(
           (other, position) =>
             position < index &&
             other.kind === "steering" &&
@@ -209,7 +233,7 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
           !lastRunQuery.data.queuedInput.some((item) => item.id === entry.id)
         );
       });
-      return next.length === previous.length ? previous : next;
+      return !rebaselined && next.length === previous.length ? previous : next;
     });
   }, [facts, lastRunId, lastRunState, lastRunQuery.data, lastRunQuery.dataUpdatedAt]);
 
@@ -302,9 +326,11 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
           } else if (result.outcome === "steered") {
             // The target run and its current steering count anchor the
             // reconciliation: the steer's own part is the one that shows up
-            // past this baseline.
+            // past this baseline. An unreported projection leaves it null
+            // for the first facts observation to resolve.
             const runId = activeRunId;
-            const baseline = runId === undefined ? 0 : (facts[runId]?.steeringTexts.length ?? 0);
+            const baseline =
+              runId === undefined ? null : (facts[runId]?.steeringTexts.length ?? null);
             setPendingSends((previous) => [
               ...previous,
               { id: intentId, kind: "steering", runId, baseline, text, queuedAt },
