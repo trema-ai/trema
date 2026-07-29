@@ -7,6 +7,7 @@ import type {
   ToolExecutionOptions,
   ToolExecutionResult,
   ToolExecutor,
+  ToolPreparationResult,
 } from "#harness/ports/index.js";
 
 /** Calls, definitions, executor, and hooks for one assistant-ordered tool batch. */
@@ -180,7 +181,55 @@ async function prepareCalls(input: ToolBatchInput): Promise<PreparedBatch> {
       continue;
     }
 
-    prepared.push({ original, call: decision.call ?? original, definition });
+    const call = decision.call ?? original;
+    let executionDecision: ToolPreparationResult = { action: "execute" };
+    if (input.executor.prepare !== undefined) {
+      try {
+        executionDecision = await input.executor.prepare(
+          call,
+          definition,
+          input.executionOptions?.[original.callId],
+        );
+      } catch (error) {
+        const message = `tool preparation failed: ${errorMessage(error)}`;
+        const event = { type: "error" as const, message, recoverable: true };
+        events.push(event);
+        await input.onEvent?.(event);
+        prepared.push({
+          original,
+          call,
+          definition,
+          immediateResult: errorResult(original, message),
+        });
+        continue;
+      }
+    }
+    if (executionDecision.action === "elicit") {
+      return {
+        calls: prepared,
+        events,
+        pendingElicitation: executionDecision.event,
+        pendingToolCall: {
+          callId: original.callId,
+          elicitationId: executionDecision.event.elicitationId,
+        },
+      };
+    }
+    if (executionDecision.action === "block") {
+      prepared.push({
+        original,
+        call,
+        definition,
+        immediateResult: blockedResult(
+          original,
+          executionDecision.summary,
+          executionDecision.output,
+        ),
+      });
+      continue;
+    }
+
+    prepared.push({ original, call: executionDecision.call ?? call, definition });
   }
 
   return { calls: prepared, events };
@@ -249,6 +298,9 @@ export function toToolResultMessage(result: ToolExecutionResult): TranscriptMess
     blocks:
       typeof result.output === "string" ? [{ type: "text", text: result.output }] : result.output,
     status: result.status,
+    ...(result.activatedToolKeys === undefined
+      ? {}
+      : { activatedToolKeys: result.activatedToolKeys }),
   };
 }
 
@@ -268,6 +320,16 @@ function errorResult(call: ToolCall, summary: string): ToolExecutionResult {
     status: "error",
     summary,
     output: summary,
+  };
+}
+
+function blockedResult(call: ToolCall, summary: string, output: unknown): ToolExecutionResult {
+  if (output === undefined) return errorResult(call, summary);
+  return {
+    callId: call.callId,
+    status: "error",
+    summary,
+    output: typeof output === "string" ? output : JSON.stringify(output),
   };
 }
 

@@ -6,6 +6,7 @@ import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { log } from "#server/lib/logger/index.js";
 import { type IntentCaller, serviceOrSessionAuthed } from "#server/rpc/builders.js";
+import { listOfferedModels, type ModelChainEntry } from "#server/services/model-providers/index.js";
 import {
   ContextCapabilityUnavailableError,
   createRunServices,
@@ -55,6 +56,23 @@ const messageIntentSchema = z
   .object({
     type: z.literal("message").describe("Says something to the agent on the thread."),
     text: z.string().trim().min(1).describe("What the message says."),
+    model: z
+      .object({
+        providerName: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("The provider selected for a run this message starts."),
+        modelId: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("The provider-specific model selected for a run this message starts."),
+      })
+      .optional()
+      .describe(
+        "The offered model to use if this message starts a run. Omit it to follow the organization's turns default; an active run ignores it.",
+      ),
   })
   .describe("A message for the thread. An active run absorbs it; otherwise a new run starts.");
 
@@ -428,11 +446,31 @@ const submit = serviceOrSessionAuthed
       try {
         return await startRun({
           services,
+          validateModel: async (model: ModelChainEntry) => {
+            const offered = await listOfferedModels(context.db, caller.org.id, {
+              ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+                ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+                : {}),
+            });
+            if (
+              !offered.some(
+                (candidate) =>
+                  candidate.providerName === model.providerName &&
+                  candidate.modelId === model.modelId,
+              )
+            ) {
+              throw new ORPCError("BAD_REQUEST", {
+                message: `Model is not offered: ${model.providerName}/${model.modelId}`,
+                data: { code: "model_not_offered" },
+              });
+            }
+          },
           input: {
             intentId: input.intentId,
             ...origin,
             message: { role: "user", blocks: [{ type: "text", text: input.intent.text }] },
             author,
+            ...(input.intent.model === undefined ? {} : { model: input.intent.model }),
             ...(input.threadRef === undefined ? {} : { threadRef: input.threadRef }),
           },
         });

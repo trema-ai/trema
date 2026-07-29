@@ -52,4 +52,5 @@ export type {
   ToolExecutionOptions,
   ToolExecutionResult,
   ToolExecutor,
+  ToolPreparationResult,
 } from "./tool-executor.js";

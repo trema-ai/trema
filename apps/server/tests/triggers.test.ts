@@ -102,6 +102,20 @@ integration("triggers", () => {
     return createRunServices({ db, env, orgId, engine });
   }
 
+  async function offerModel(orgId: string) {
+    await db.modelProvider.create({
+      data: {
+        orgId,
+        name: "picker",
+        label: "Picker Provider",
+        protocol: "openai_compatible",
+        baseUrl: "https://models.example.test/v1",
+        credentialMode: "none",
+        catalogJson: [{ id: "chat-model", label: "Chat Model", offered: true }],
+      },
+    });
+  }
+
   describe("POST /intents", () => {
     it("starts a run and reports where the message landed", async () => {
       const { serviceContext } = await setup();
@@ -123,6 +137,54 @@ integration("triggers", () => {
       const queued = await db.runQueuedInput.findMany({ where: { runId: run.id } });
       expect(queued).toHaveLength(1);
       expect(queued[0]?.kind).toBe("steering");
+    });
+
+    it("accepts an offered model and persists it on the run", async () => {
+      const { serviceContext, org } = await setup();
+      await offerModel(org.id);
+
+      const accepted = await call(
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: {
+            type: "message",
+            text: "Check the deploy.",
+            model: { providerName: "picker", modelId: "chat-model" },
+          },
+          intentId: "key-model",
+        },
+        { context: serviceContext },
+      );
+
+      expect(
+        await db.agentRun.findUniqueOrThrow({
+          where: { id: accepted.runId! },
+          select: { modelProviderName: true, modelModelId: true },
+        }),
+      ).toEqual({ modelProviderName: "picker", modelModelId: "chat-model" });
+    });
+
+    it("rejects a model that is not offered when the message starts a run", async () => {
+      const { serviceContext, org } = await setup();
+      await offerModel(org.id);
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          {
+            locationRef: "ops",
+            intent: {
+              type: "message",
+              text: "Check the deploy.",
+              model: { providerName: "picker", modelId: "hidden-model" },
+            },
+            intentId: "key-model",
+          },
+          { context: serviceContext },
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /not offered/ });
+      expect(await db.agentRun.count()).toBe(0);
     });
 
     it("answers a repeated intent id with the run the first call made", async () => {
@@ -176,6 +238,87 @@ integration("triggers", () => {
       expect(second).toEqual({ outcome: "steered", runId: first.runId, threadRef: "api:ops" });
       expect(await db.agentRun.count()).toBe(1);
       expect(await db.runQueuedInput.count({ where: { runId: first.runId } })).toBe(2);
+    });
+
+    it("keeps a live run's model fixed and carries a valid late choice forward", async () => {
+      const { serviceContext, org, engine, owner } = await setup();
+      await offerModel(org.id);
+      const first = await call(
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: { type: "message", text: "Check the deploy." },
+          intentId: "key-1",
+        },
+        { context: serviceContext },
+      );
+      const services = servicesFor(org.id, engine);
+      await services.store.drainSteering(first.runId!);
+
+      const steered = await call(
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          intent: {
+            type: "message",
+            text: "Use the picker next.",
+            model: { providerName: "picker", modelId: "chat-model" },
+          },
+          intentId: "key-2",
+        },
+        { context: serviceContext },
+      );
+      expect(steered.outcome).toBe("steered");
+      expect(
+        await db.agentRun.findUniqueOrThrow({
+          where: { id: first.runId! },
+          select: { modelProviderName: true, modelModelId: true },
+        }),
+      ).toEqual({ modelProviderName: null, modelModelId: null });
+
+      await services.lifecycle.start(first.runId!);
+      await services.lifecycle.finish({
+        runId: first.runId!,
+        outcome: "completed",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0,
+        },
+      });
+      const followUp = await db.runQueuedInput.findUniqueOrThrow({
+        where: { id: "key-2" },
+      });
+      expect(followUp).toMatchObject({
+        kind: "follow_up",
+        modelProviderName: "picker",
+        modelModelId: "chat-model",
+      });
+
+      const next = await startRun({
+        services,
+        input: {
+          intentId: "key-3",
+          trigger: "api",
+          surface: "api",
+          locationRef: "ops",
+          threadRef: "api:ops",
+          message: {
+            role: "user",
+            blocks: [{ type: "text", text: "Start the next run." }],
+          },
+          author: { principalId: owner.id, displayName: owner.displayName },
+        },
+      });
+      expect(
+        await db.agentRun.findUniqueOrThrow({
+          where: { id: next.runId! },
+          select: { modelProviderName: true, modelModelId: true },
+        }),
+      ).toEqual({ modelProviderName: "picker", modelModelId: "chat-model" });
     });
 
     it("reclaims an intent id whose claiming call died before routing", async () => {

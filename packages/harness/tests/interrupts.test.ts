@@ -122,7 +122,7 @@ describe("interrupts", () => {
     ).toBe("resolved");
     expect(session.calls).toContainEqual({
       method: "resolveApproval",
-      args: ["session-1", "approval-1", "approved", "run"],
+      args: ["session-1", "approval-1", "approved", "run", by],
     });
     expect(enqueueResume).toHaveBeenCalledOnce();
     expect((await fixture.store.listEvents("run-1")).map(({ event }) => event.type)).toEqual([

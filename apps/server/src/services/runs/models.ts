@@ -2,7 +2,13 @@ import type { ModelPort, ModelRef } from "@trema/harness";
 import { createSdkModelPort } from "@trema/models";
 
 import type { Database } from "#server/lib/db/index.js";
-import { resolveEndpoints, resolveRoleChain } from "#server/services/model-providers/index.js";
+import { log } from "#server/lib/logger/index.js";
+import {
+  type ModelChainEntry,
+  providerCatalog,
+  resolveEndpoints,
+  resolveRoleChain,
+} from "#server/services/model-providers/index.js";
 
 /** A deployment with no configured model endpoint cannot run the loop. */
 export class ModelConfigurationError extends Error {
@@ -21,6 +27,8 @@ export interface ConfiguredModel {
 /** How the run path reaches stored credentials. */
 export interface ResolveConfiguredModelOptions {
   masterKey?: string;
+  /** A model pinned when the run was dispatched. */
+  model?: ModelChainEntry;
 }
 
 /**
@@ -41,6 +49,34 @@ export async function resolveConfiguredModel(
     throw new ModelConfigurationError(
       "No model provider is configured for this organization; add one before executing runs",
     );
+  }
+
+  if (options.model !== undefined) {
+    const provider = await db.modelProvider.findUnique({
+      where: { orgId_name: { orgId, name: options.model.providerName } },
+    });
+    let modelExists = false;
+    if (provider !== null) {
+      try {
+        modelExists = providerCatalog(provider).some(
+          (entry) => entry.id === options.model?.modelId,
+        );
+      } catch {
+        modelExists = false;
+      }
+    }
+    const usable =
+      endpoints[options.model.providerName] !== undefined && provider !== null && modelExists;
+    if (usable) {
+      return {
+        modelPort: createSdkModelPort({ endpoints }),
+        model: { id: options.model.modelId, provider: options.model.providerName },
+      };
+    }
+    log.warn("Stored run model is unavailable; using the turns default", {
+      providerName: options.model.providerName,
+      modelId: options.model.modelId,
+    });
   }
 
   const chain = await resolveRoleChain(db, orgId, "turns");

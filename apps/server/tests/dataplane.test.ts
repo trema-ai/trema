@@ -170,6 +170,7 @@ integration("data plane", () => {
       "get_item",
       "save_memory",
       "search_context",
+      "search_tools",
       "update_memory",
       "use_connector",
     ]);

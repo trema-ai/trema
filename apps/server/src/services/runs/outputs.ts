@@ -29,13 +29,20 @@ function hasFullOutput(result: ToolExecutionResult): boolean {
  * empty output, a bare refusal) stays unaddressed: there is nothing to expand.
  */
 export function withToolOutputRefs(executor: ToolExecutor): ToolExecutor {
-  return {
+  const wrapped: ToolExecutor = {
     async execute(call, definition, options) {
       const result = await executor.execute(call, definition, options);
       if (result.outputRef !== undefined || !hasFullOutput(result)) return result;
       return { ...result, outputRef: result.callId };
     },
   };
+  if (executor.prepare !== undefined) {
+    wrapped.prepare = (call, definition, options) => executor.prepare!(call, definition, options);
+  }
+  if (executor.resolveTools !== undefined) {
+    wrapped.resolveTools = (keys) => executor.resolveTools!(keys);
+  }
+  return wrapped;
 }
 
 /**

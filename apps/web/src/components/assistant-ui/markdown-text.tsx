@@ -8,6 +8,7 @@ import { memo } from "react";
 import remarkGfm from "remark-gfm";
 
 import { CopyButton } from "#web/components/trema/copy-button.tsx";
+import { markdownProseComponents } from "#web/components/trema/markdown.tsx";
 import { cn } from "#web/lib/utils.ts";
 
 /*
@@ -44,65 +45,7 @@ function Code({ className, ...props }: React.ComponentPropsWithoutRef<"code">) {
 }
 
 const markdownComponents = {
-  h1: ({ className, ...props }: React.ComponentPropsWithoutRef<"h1">) => (
-    <h1
-      className={cn("mt-5 mb-2 text-[17px] leading-snug font-semibold first:mt-0", className)}
-      {...props}
-    />
-  ),
-  h2: ({ className, ...props }: React.ComponentPropsWithoutRef<"h2">) => (
-    <h2
-      className={cn("mt-5 mb-2 text-[16px] leading-snug font-semibold first:mt-0", className)}
-      {...props}
-    />
-  ),
-  h3: ({ className, ...props }: React.ComponentPropsWithoutRef<"h3">) => (
-    <h3
-      className={cn("mt-4 mb-1.5 text-[15px] leading-snug font-semibold first:mt-0", className)}
-      {...props}
-    />
-  ),
-  h4: ({ className, ...props }: React.ComponentPropsWithoutRef<"h4">) => (
-    <h4 className={cn("mt-4 mb-1.5 text-chat font-semibold first:mt-0", className)} {...props} />
-  ),
-  p: ({ className, ...props }: React.ComponentPropsWithoutRef<"p">) => (
-    <p className={cn("my-3 text-chat first:mt-0 last:mb-0", className)} {...props} />
-  ),
-  a: ({ className, ...props }: React.ComponentPropsWithoutRef<"a">) => (
-    <a className={cn("text-moss underline-offset-2 hover:underline", className)} {...props} />
-  ),
-  ul: ({ className, ...props }: React.ComponentPropsWithoutRef<"ul">) => (
-    <ul className={cn("my-3 list-disc pl-6 text-chat", className)} {...props} />
-  ),
-  ol: ({ className, ...props }: React.ComponentPropsWithoutRef<"ol">) => (
-    <ol className={cn("my-3 list-decimal pl-6 text-chat", className)} {...props} />
-  ),
-  li: ({ className, ...props }: React.ComponentPropsWithoutRef<"li">) => (
-    <li className={cn("my-1", className)} {...props} />
-  ),
-  blockquote: ({ className, ...props }: React.ComponentPropsWithoutRef<"blockquote">) => (
-    <blockquote
-      className={cn("my-3 border-l-2 pl-4 text-muted-foreground", className)}
-      {...props}
-    />
-  ),
-  hr: ({ className, ...props }: React.ComponentPropsWithoutRef<"hr">) => (
-    <hr className={cn("my-5 border-border", className)} {...props} />
-  ),
-  table: ({ className, ...props }: React.ComponentPropsWithoutRef<"table">) => (
-    <div className="my-3 overflow-x-auto">
-      <table className={cn("w-full border-collapse text-chat", className)} {...props} />
-    </div>
-  ),
-  th: ({ className, ...props }: React.ComponentPropsWithoutRef<"th">) => (
-    <th
-      className={cn("border bg-muted px-3 py-1.5 text-left font-semibold", className)}
-      {...props}
-    />
-  ),
-  td: ({ className, ...props }: React.ComponentPropsWithoutRef<"td">) => (
-    <td className={cn("border px-3 py-1.5", className)} {...props} />
-  ),
+  ...markdownProseComponents,
   pre: ({ className, ...props }: React.ComponentPropsWithoutRef<"pre">) => (
     <pre
       className={cn("overflow-x-auto rounded-b-md bg-muted p-3 font-mono text-log", className)}

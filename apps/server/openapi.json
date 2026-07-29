@@ -5105,6 +5105,26 @@
                             "type": "string",
                             "minLength": 1,
                             "description": "What the message says."
+                          },
+                          "model": {
+                            "type": "object",
+                            "properties": {
+                              "providerName": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "The provider selected for a run this message starts."
+                              },
+                              "modelId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "The provider-specific model selected for a run this message starts."
+                              }
+                            },
+                            "required": [
+                              "providerName",
+                              "modelId"
+                            ],
+                            "description": "The offered model to use if this message starts a run. Omit it to follow the organization's turns default; an active run ignores it."
                           }
                         },
                         "required": [
@@ -8368,6 +8388,68 @@
                     "models"
                   ],
                   "description": "What the search index holds, and what a reindex would change."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/models/offered": {
+      "get": {
+        "operationId": "modelProviders.models.offered",
+        "summary": "List offered models",
+        "description": "List the organization's picker models whose provider currently resolves. The response contains catalog display data only, never credentials or provider transport settings.",
+        "tags": [
+          "Model providers"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "providerName": {
+                        "type": "string",
+                        "description": "The provider's stable name."
+                      },
+                      "modelId": {
+                        "type": "string",
+                        "description": "The model id the provider expects."
+                      },
+                      "label": {
+                        "type": "string",
+                        "description": "The model name shown in the picker."
+                      },
+                      "contextWindow": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "exclusiveMinimum": 0,
+                        "description": "The model's context window in tokens, when the catalog reports it."
+                      },
+                      "default": {
+                        "type": "boolean",
+                        "description": "Whether this is the organization's turns default — the model a message without a choice runs on. At most one entry carries it."
+                      }
+                    },
+                    "required": [
+                      "providerName",
+                      "modelId",
+                      "label"
+                    ],
+                    "description": "One currently usable model the organization offers to members."
+                  },
+                  "description": "The models available in the chat picker."
                 }
               }
             }

@@ -365,10 +365,10 @@ model Scope {
 
 /// A context session: the handshake a harness opens before it reads context or
 /// calls tools. Distinct from `Session`, which is a browser sign-in session.
-/// The snapshot columns are pinned at open, so control-plane edits never alter
-/// a running session.
+/// Standing context and policy are pinned at open. Connector discovery remains
+/// live and is not stored on the session.
 model ContextSession {
-  id                   String      @id @default(uuid(7))
+  id                   String       @id @default(uuid(7))
   orgId                String
   scopeId              String
   surface              String
@@ -379,7 +379,7 @@ model ContextSession {
   /// to the policy ceiling per call; this is the choice, never the outcome.
   approvalMode         ApprovalMode @default(ask)
   /// Scope IDs in resolution order, widest first.
-  scopeChain           String[]    @default([])
+  scopeChain           String[]     @default([])
   actingPrincipalId    String
   requesterPrincipalId String?
   /// The raw surface id of a requester with no identity link.
@@ -387,16 +387,16 @@ model ContextSession {
   standing             Json
   policySnapshot       Json
   snapshotHash         String
-  tokenHash            String      @unique
+  tokenHash            String       @unique
   expiresAt            DateTime
   closedAt             DateTime?
   usage                Json?
-  createdAt            DateTime    @default(now())
-  updatedAt            DateTime    @updatedAt
-  org                  Org         @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  scope                Scope       @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
-  actingPrincipal      Principal   @relation("ContextSessionActor", fields: [orgId, actingPrincipalId], references: [orgId, id], onDelete: Restrict)
-  requesterPrincipal   Principal?  @relation("ContextSessionRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Restrict)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  org                  Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope                Scope        @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  actingPrincipal      Principal    @relation("ContextSessionActor", fields: [orgId, actingPrincipalId], references: [orgId, id], onDelete: Restrict)
+  requesterPrincipal   Principal?   @relation("ContextSessionRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Restrict)
   agentRuns            AgentRun[]
   approvals            Approval[]
   toolGrants           ToolGrant[]
@@ -492,29 +492,30 @@ model MessageSearchDoc {
 }
 
 model Item {
-  id              String         @id @default(uuid(7))
-  orgId           String
-  scopeId         String
-  kind            ItemKind
-  title           String
-  body            Json
-  status          ItemStatus
-  disclosure      ItemDisclosure
-  createdById     String
-  sourceSessionId String?
-  confirmedById   String?
-  updatedById     String?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  lastUsedAt      DateTime?
-  version         Int            @default(1)
-  org             Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  scope           Scope          @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
-  createdBy       Principal      @relation("ItemCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
-  confirmedBy     Principal?     @relation("ItemConfirmer", fields: [orgId, confirmedById], references: [orgId, id], onDelete: Restrict)
-  updatedBy       Principal?     @relation("ItemUpdater", fields: [orgId, updatedById], references: [orgId, id], onDelete: Restrict)
-  versions        ItemVersion[]
-  searchDoc       ItemSearchDoc?
+  id                      String                   @id @default(uuid(7))
+  orgId                   String
+  scopeId                 String
+  kind                    ItemKind
+  title                   String
+  body                    Json
+  status                  ItemStatus
+  disclosure              ItemDisclosure
+  createdById             String
+  sourceSessionId         String?
+  confirmedById           String?
+  updatedById             String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  lastUsedAt              DateTime?
+  version                 Int                      @default(1)
+  org                     Org                      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope                   Scope                    @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
+  createdBy               Principal                @relation("ItemCreator", fields: [orgId, createdById], references: [orgId, id], onDelete: Restrict)
+  confirmedBy             Principal?               @relation("ItemConfirmer", fields: [orgId, confirmedById], references: [orgId, id], onDelete: Restrict)
+  updatedBy               Principal?               @relation("ItemUpdater", fields: [orgId, updatedById], references: [orgId, id], onDelete: Restrict)
+  versions                ItemVersion[]
+  searchDoc               ItemSearchDoc?
+  connectorToolSearchDocs ConnectorToolSearchDoc[]
 
   @@unique([orgId, id])
   @@index([orgId, scopeId])
@@ -567,6 +568,26 @@ model ItemSearchDoc {
   item           Item                     @relation(fields: [orgId, itemId], references: [orgId, id], onDelete: Cascade)
 
   @@id([orgId, itemId])
+  @@index([tsv], type: Gin)
+}
+
+/// Search projection for one enabled connector operation. The installation
+/// remains the source of truth for schemas, status, scope, and execution.
+model ConnectorToolSearchDoc {
+  orgId              String
+  installationItemId String
+  providerKey        String
+  toolName           String
+  toolKey            String
+  title              String
+  content            String
+  tsv                Unsupported("tsvector")?
+  embedding          Unsupported("vector")?
+  embeddingModel     String?
+  installation       Item                     @relation(fields: [orgId, installationItemId], references: [orgId, id], onDelete: Cascade)
+
+  @@id([orgId, installationItemId, toolName])
+  @@index([orgId, providerKey])
   @@index([tsv], type: Gin)
 }
 
@@ -943,44 +964,48 @@ model ConnectorProviderSettings {
 /// One agent run: the unit the workflow engine schedules and the harness owns.
 /// The engine carries nothing but this row's id, so the record is here.
 model AgentRun {
-  id            String           @id
-  orgId         String
+  id                String           @id
+  orgId             String
   /// The conversation the run serializes against. One run per thread at a time.
-  threadRef     String
-  state         RunState
-  trigger       RunTrigger
-  turnCount     Int              @default(0)
+  threadRef         String
+  state             RunState
+  trigger           RunTrigger
+  turnCount         Int              @default(0)
   /// The highest event sequence number handed out for this run. An
   /// `UPDATE ... RETURNING` on this column allocates `seq` inside the same
   /// transaction as the event insert, which keeps the sequence dense.
-  lastEventSeq  Int              @default(0)
-  sessionId     String?
-  retryOfRunId  String?
+  lastEventSeq      Int              @default(0)
+  sessionId         String?
+  retryOfRunId      String?
   /// One-based attempt number across a retry chain.
-  retryAttempt  Int?
-  usage         Json?
-  error         String?
+  retryAttempt      Int?
+  usage             Json?
+  error             String?
   /// Tool names a principal approved for the remainder of this run.
-  runGrants     String[]         @default([])
+  runGrants         String[]         @default([])
   /// Narrows the session's resolved tools for this run. It can never widen them.
-  toolAllowlist String[]         @default([])
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  org           Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  toolAllowlist     String[]         @default([])
+  /// The provider explicitly selected for this run. Null follows the turns role.
+  modelProviderName String?
+  /// The provider-specific model explicitly selected for this run.
+  modelModelId      String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  org               Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
   /// NoAction, not SetNull: SET NULL on a compound key would null `orgId` too,
   /// and run visibility is pinned to the session's grant snapshot, so the
   /// session row must outlive its runs. NO ACTION checks at end of statement,
   /// which lets an org delete cascade both sides while refusing any delete
   /// that would leave a surviving run without its session.
-  session       ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: NoAction)
-  retryOf       AgentRun?        @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
-  retries       AgentRun[]       @relation("AgentRunRetry")
-  turns         Turn[]
-  events        RunEvent[]
-  queuedInputs  RunQueuedInput[]
-  elicitations  RunElicitation[]
-  stop          RunStop?
-  firings       ScheduleFiring[]
+  session           ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: NoAction)
+  retryOf           AgentRun?        @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
+  retries           AgentRun[]       @relation("AgentRunRetry")
+  turns             Turn[]
+  events            RunEvent[]
+  queuedInputs      RunQueuedInput[]
+  elicitations      RunElicitation[]
+  stop              RunStop?
+  firings           ScheduleFiring[]
 
   @@unique([orgId, id])
   @@index([orgId, threadRef, createdAt])
@@ -1037,18 +1062,22 @@ model RunEvent {
 /// Input waiting for a turn boundary. Steering waits on a named run;
 /// a follow-up waits on the thread and starts the next run.
 model RunQueuedInput {
-  id        String       @id
-  orgId     String
-  kind      RunInputKind
-  runId     String?
-  threadRef String
-  message   Json
-  author    Json
+  id                String       @id
+  orgId             String
+  kind              RunInputKind
+  runId             String?
+  threadRef         String
+  message           Json
+  author            Json
+  /// The provider selected for the run this input eventually starts.
+  modelProviderName String?
+  /// The provider-specific model selected for the run this input eventually starts.
+  modelModelId      String?
   /// Drain order. Timestamps alone tie under concurrent enqueues.
-  position  Int          @default(autoincrement())
-  createdAt DateTime     @default(now())
-  org       Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run       AgentRun?    @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+  position          Int          @default(autoincrement())
+  createdAt         DateTime     @default(now())
+  org               Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run               AgentRun?    @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
   @@index([orgId, runId, position])
   @@index([orgId, threadRef, position])

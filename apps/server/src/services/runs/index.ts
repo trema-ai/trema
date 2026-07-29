@@ -13,6 +13,7 @@ import { InterruptManager, RunLifecycle, ThreadDispatchLock } from "@trema/harne
 
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
+import type { DataPlaneSession } from "#server/services/dataplane/index.js";
 import { createRunCapture } from "#server/services/runs/capture.js";
 import { ServerContextSession } from "#server/services/runs/context.js";
 import { createRunDriver, type RunDriver } from "#server/services/runs/driver.js";
@@ -113,6 +114,8 @@ export interface RunServicesOptions {
   /** Required to execute runs. The API process only creates and routes them. */
   resolveModel?: () => Promise<ConfiguredModel>;
   toolExecutor?: ToolExecutor;
+  /** Builds a connector-capable executor from the pinned session each run opens. */
+  toolExecutorForSession?: (session: DataPlaneSession) => ToolExecutor;
   context?: ContextSession;
   clock?: Clock;
   createId?: () => string;
@@ -189,6 +192,7 @@ export function createRunServices(options: RunServicesOptions): RunServices {
 
   if (options.resolveModel !== undefined) {
     const resolveModel = options.resolveModel;
+    const toolExecutorForSession = options.toolExecutorForSession;
     driver = createRunDriver({
       store,
       lifecycle,
@@ -202,6 +206,12 @@ export function createRunServices(options: RunServicesOptions): RunServices {
         resolveModel,
         maxTurns: options.env.TREMA_RUN_MAX_TURNS,
         elicitationTtlMs: options.env.TREMA_ELICITATION_TTL_MS,
+        ...(toolExecutorForSession === undefined
+          ? {}
+          : {
+              toolExecutorForSession: (session) =>
+                withToolOutputRefs(toolExecutorForSession(session)),
+            }),
       }),
     });
   }

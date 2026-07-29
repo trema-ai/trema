@@ -36,10 +36,14 @@ export type ToolKind = "read" | "edit" | "search" | "execute" | "fetch" | "conne
 
 /** Model-facing definition and execution policy for a tool. */
 export interface ToolDef {
+  /** Stable execution identity. The provider-facing name may be normalized or shortened. */
+  key?: string;
   name: string;
   title: string;
   description: string;
   schema: unknown;
+  /** Optional result schema retained for adapters and tool discovery. */
+  outputSchema?: unknown;
   kind: ToolKind;
   /** Runs the whole containing batch sequentially when set to `sequential`; all other batches run in parallel. */
   execution?: "parallel" | "sequential";

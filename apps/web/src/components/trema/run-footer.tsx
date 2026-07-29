@@ -2,6 +2,7 @@ import type * as React from "react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 
+import { CopyButton } from "#web/components/trema/copy-button.tsx";
 import { StatusDot } from "#web/components/trema/status-dot.tsx";
 import { formatDuration } from "#web/lib/run-timeline.ts";
 import { cn } from "#web/lib/utils.ts";
@@ -15,11 +16,13 @@ type RunFooterProps = {
   live?: boolean;
   /** The stop control, rendered beside the working indicator while live. */
   stop?: React.ReactNode;
+  /** Assistant prose copied from this run; omitted when the run produced none. */
+  copyText?: string;
   className?: string;
 };
 
 /** Elapsed time since `from`, ticking once a second while `active`. */
-function useElapsed(from: string, active: boolean): string {
+export function useElapsed(from: string, active: boolean): string {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
@@ -37,7 +40,15 @@ function useElapsed(from: string, active: boolean): string {
  * is the working indicator with live elapsed time, with the stop control
  * riding beside it exactly as long as there is something to stop.
  */
-function RunFooter({ runId, startedAt, endedAt, live = false, stop, className }: RunFooterProps) {
+function RunFooter({
+  runId,
+  startedAt,
+  endedAt,
+  live = false,
+  stop,
+  copyText,
+  className,
+}: RunFooterProps) {
   const elapsed = useElapsed(startedAt, live);
 
   if (live) {
@@ -63,10 +74,14 @@ function RunFooter({ runId, startedAt, endedAt, live = false, stop, className }:
       : undefined;
 
   return (
-    <div data-slot="run-footer" className={cn("text-meta text-muted-foreground", className)}>
+    <div
+      data-slot="run-footer"
+      className={cn("flex items-center gap-1 text-meta text-muted-foreground", className)}
+    >
       <Link to={`/runs/${runId}`} className="hover:text-foreground hover:underline">
         {workedFor === undefined ? "View run" : `Worked for ${workedFor}`}
       </Link>
+      {copyText ? <CopyButton value={copyText} className="-my-1 size-7" /> : null}
     </div>
   );
 }

@@ -49,6 +49,19 @@ Which model a run uses is control-plane data, not deployment configuration. Prov
 
 A connector tool call executes on the server, never in the model. The server resolves the installation and decrypts the stored credential at the moment of use. The server attaches the credential to the outbound request and redacts it from results and logs. The model and the API caller only ever see the call's result. How credentials are stored and protected is covered in [Credential security](/credential-security).
 
+The MCP adapter publishes the static context tools to external harnesses. An
+in-process run starts with the same context tools. It searches the current
+authorized connector catalog when it needs an external capability.
+
+Connector operations have a lexical and semantic search projection. Search
+filters the projection through the session's scope before ranking results.
+Matching operations join a bounded working set as typed, provider-prefixed
+tools.
+
+Tool-result checkpoints store the active tool keys. The run resolves those
+keys against the live catalog before each model turn. Retries preserve the
+working set order without preserving stale schemas or authority.
+
 ## One API for every client
 
 The web app holds no privileged surface. The REST handler under `/api/v1` and the transport under `/rpc` are two mounts of one procedure router: same handlers, same authorization, different wire formats. A capability exists on both or on neither, so anything the web app does, a script can do with a service credential. The OpenAPI document is generated from that router at startup and served at `/api/v1/spec.json`.

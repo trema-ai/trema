@@ -332,11 +332,40 @@ integration("acceptance", () => {
       },
     });
 
+    // Connector changes affect new sessions. Open a fresh pinned snapshot
+    // before asking the connector proxy to expose the new installation.
+    await client.close();
+    const connectorOpenResponse = await app.fetch(
+      new Request(`${origin}/api/v1/sessions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${credential.secret}`,
+        },
+        body: JSON.stringify({ surface: "slack", locationRef: "T9:C9" }),
+      }),
+    );
+    expect(connectorOpenResponse.status).toBe(200);
+    const connectorSession = (await connectorOpenResponse.json()) as {
+      sessionToken: string;
+    };
+    const connectorClient = new Client({
+      name: "acceptance-connector-harness",
+      version: "1.0.0",
+    });
+    const connectorTransport = new StreamableHTTPClientTransport(new URL(`${origin}/api/v1/mcp`), {
+      requestInit: {
+        headers: { authorization: `Bearer ${connectorSession.sessionToken}` },
+      },
+      fetch: async (url, init) => app.fetch(new Request(url, init)),
+    });
+    await connectorClient.connect(connectorTransport as Parameters<Client["connect"]>[0]);
+
     // Drafting mail changes something in a connected system, so the call stops
     // at the gate: an approval id comes back as a result, and nothing left the
     // deployment.
     const draftArgs = { message: { raw: "RnJlZXplIG5vdGljZQ" } };
-    const gated = (await client.callTool({
+    const gated = (await connectorClient.callTool({
       name: "use_connector",
       arguments: {
         toolKey: "google_workspace:create_draft",
@@ -369,7 +398,7 @@ integration("acceptance", () => {
 
     // Calling again with the id and the same arguments runs it, once, with the
     // organization's credential attached on this side of the boundary.
-    const ran = (await client.callTool({
+    const ran = (await connectorClient.callTool({
       name: "use_connector",
       arguments: {
         toolKey: "google_workspace:create_draft",
@@ -393,7 +422,7 @@ integration("acceptance", () => {
       result: { body: { requestAuthorization: "[REDACTED]" } },
     });
 
-    await client.close();
+    await connectorClient.close();
 
     // The run's usage lands on the session, and the whole exchange is in the
     // audit stream.

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
-
+import { ChatBubble } from "#web/components/trema/chat-bubble.tsx";
 import { ErrorItem } from "#web/components/trema/error-item.tsx";
-import { RunFooter } from "#web/components/trema/run-footer.tsx";
+import { RunFooter, useElapsed } from "#web/components/trema/run-footer.tsx";
 import type { RunState } from "#web/components/trema/run-state-badge.tsx";
 import { SegmentDivider } from "#web/components/trema/segment-divider.tsx";
 import { UnknownEventsLine } from "#web/components/trema/unknown-events-line.tsx";
@@ -11,8 +11,12 @@ import {
   isTerminalRunState,
   type PrincipalLike,
 } from "#web/lib/run-timeline.ts";
-import { StopControl } from "#web/pages/runs/controls.tsx";
-import { ProjectionSegments } from "#web/pages/runs/timeline.tsx";
+import {
+  ProjectionSegments,
+  projectionChainStreaming,
+  projectionHasChain,
+  projectionStreamingChainStartedAt,
+} from "#web/pages/runs/timeline.tsx";
 
 /** One run on the thread, as the thread-runs read (or a placeholder) has it. */
 export interface ThreadRun {
@@ -21,6 +25,8 @@ export interface ThreadRun {
   trigger: string;
   createdAt: string;
   openingMessage: { author: PrincipalLike; text: string } | null;
+  /** The opening send's intent id — placeholder runs only; reads omit it. */
+  openingIntentId?: string;
 }
 
 /** What a run block's tail knows that the thread screen acts on. */
@@ -111,56 +117,97 @@ export function RunBlock({
   const hasErrorPart = projection.segments.some((segment) =>
     segment.parts.some((part) => part.kind === "error"),
   );
+  const lastPart = displayProjection.segments.at(-1)?.parts.at(-1);
+  const thinking =
+    phase === "live" &&
+    !settled &&
+    (lastPart === undefined ||
+      lastPart.kind === "steering" ||
+      (lastPart.kind === "text" && lastPart.status === "done"));
+
+  // Machinery chains derive their settled duration from their own part-event
+  // range. A run without a chain keeps the run-level duration on the footer.
+  const hasChain = projectionHasChain(displayProjection);
+  const copyText = useMemo(
+    () =>
+      displayProjection.segments
+        .flatMap((segment) =>
+          segment.parts.flatMap((part) => (part.kind === "text" ? [part.markdown] : [])),
+        )
+        .filter((text) => text.length > 0)
+        .join("\n\n"),
+    [displayProjection],
+  );
+
+  // While a chain is streaming, its trigger is the run's one live line: it
+  // carries a timer anchored to that burst's first event and the footer stays
+  // silent until the run settles. Stopping lives on the composer.
+  const chainStreaming = !settled && projectionChainStreaming(displayProjection);
+  const chainStartedAt =
+    projectionStreamingChainStartedAt(displayProjection, meta) ?? run.createdAt;
+  const elapsed = useElapsed(chainStartedAt, chainStreaming);
 
   return (
-    <div data-slot="run-block" className="space-y-3">
-      {run.openingMessage !== null && (
-        <div className="flex w-full justify-end">
-          <div
-            data-slot="chat-bubble"
-            className="max-w-[80%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5"
-          >
-            <p className="text-chat break-words whitespace-pre-wrap">{run.openingMessage.text}</p>
-          </div>
-        </div>
-      )}
-      {phase === "error" && (
-        <ErrorItem
-          title="Could not load this run"
-          message={stream.error ?? "The event read failed."}
-        />
-      )}
-      {phase === "loading" && projection.segments.length === 0 && (
-        <div className="h-5 w-1/3 animate-pulse rounded-sm bg-muted/40" />
-      )}
-      <ProjectionSegments
-        runId={run.id}
-        runCreatedAt={run.createdAt}
-        projection={displayProjection}
-        meta={meta}
-        resolvable={!settled}
-        expandOutputs={false}
-      />
-      {/* A stop is a recorded decision, not a failure: it reads as a quiet
-          boundary. A failed run without an error part in its log still states
-          the failure — the run view carries the full record. */}
-      {cancelled && <SegmentDivider reason="stopped" />}
-      {failed && !hasErrorPart && (
-        <ErrorItem title="Run failed" message="The run ended in an error. See the run view." />
-      )}
-      {phase !== "error" && (
-        <RunFooter
+    <div
+      data-slot="run-block"
+      className="group/run animate-in space-y-6 fade-in slide-in-from-bottom-1 duration-150 motion-reduce:animate-none"
+    >
+      {run.openingMessage !== null && <ChatBubble>{run.openingMessage.text}</ChatBubble>}
+      <div className="space-y-3">
+        {phase === "error" && (
+          <ErrorItem
+            title="Could not load this run"
+            message={stream.error ?? "The event read failed."}
+          />
+        )}
+        {phase === "loading" && projection.segments.length === 0 && (
+          <div className="h-5 w-1/3 animate-pulse rounded-sm bg-muted/40" />
+        )}
+        <ProjectionSegments
           runId={run.id}
-          startedAt={run.createdAt}
-          {...(meta.lastAt === undefined ? {} : { endedAt: meta.lastAt })}
-          live={!settled}
-          // Stop rides the working indicator: the control exists exactly as
-          // long as there is something to stop, and vanishes when the
-          // cancelled terminal arrives on the tail.
-          {...(settled ? {} : { stop: <StopControl runId={run.id} /> })}
+          runCreatedAt={run.createdAt}
+          projection={displayProjection}
+          meta={meta}
+          resolvable={!settled}
+          expandOutputs={false}
+          collapseChain
+          partVocabulary="chat"
+          {...(chainStreaming ? { chainWorkingFor: elapsed } : {})}
         />
-      )}
-      <UnknownEventsLine count={projection.unknownEvents + stream.serverMalformed} />
+        {thinking && (
+          <span
+            data-slot="chat-thinking"
+            className="inline-block py-1.5 text-sm leading-none text-muted-foreground shimmer motion-reduce:animate-none"
+          >
+            Thinking
+          </span>
+        )}
+        {/* A stop is a recorded decision, not a failure: it reads as a quiet
+            boundary. A failed run without an error part in its log still states
+            the failure — the run view carries the full record. */}
+        {cancelled && <SegmentDivider reason="stopped" />}
+        {failed && !hasErrorPart && (
+          <ErrorItem title="Run failed" message="The run ended in an error. See the run view." />
+        )}
+        {phase !== "error" && !chainStreaming && !thinking && (
+          <RunFooter
+            runId={run.id}
+            startedAt={run.createdAt}
+            {...(meta.lastAt === undefined || hasChain
+              ? {}
+              : { endedAt: meta.lastAt })}
+            live={!settled}
+            {...(settled && copyText ? { copyText } : {})}
+            {...(settled
+              ? {
+                  className:
+                    "pointer-events-none opacity-0 transition-opacity duration-150 group-hover/run:pointer-events-auto group-hover/run:opacity-100 group-focus-within/run:pointer-events-auto group-focus-within/run:opacity-100",
+                }
+              : {})}
+          />
+        )}
+        <UnknownEventsLine count={projection.unknownEvents + stream.serverMalformed} />
+      </div>
     </div>
   );
 }

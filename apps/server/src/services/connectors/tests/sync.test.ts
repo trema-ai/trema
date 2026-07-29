@@ -5,16 +5,30 @@ import { mapMcpTool, mergeSyncedTools } from "#server/services/connectors/sync.j
 const connectionId = "00000000-0000-4000-8000-000000000001";
 
 describe("MCP tool mapping", () => {
-  it("maps name, description, and annotations to the stored shape verbatim", () => {
+  it("maps schemas and descriptive metadata to the stored shape verbatim", () => {
     expect(
       mapMcpTool({
         name: "read_page",
+        title: "Read page",
         description: "Read a page",
+        inputSchema: {
+          type: "object",
+          properties: { pageId: { type: "string" } },
+          required: ["pageId"],
+        },
+        outputSchema: { type: "object" },
         annotations: { readOnlyHint: true },
       }),
     ).toEqual({
       name: "read_page",
+      title: "Read page",
       description: "Read a page",
+      inputSchema: {
+        type: "object",
+        properties: { pageId: { type: "string" } },
+        required: ["pageId"],
+      },
+      outputSchema: { type: "object" },
       annotations: { readOnlyHint: true },
     });
   });

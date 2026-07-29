@@ -12,8 +12,11 @@ import { Fragment } from "react";
 
 import { ActivityCard, type ActivityState } from "#web/components/trema/activity-card.tsx";
 import { ApprovalCard } from "#web/components/trema/approval-card.tsx";
+import { ChainOfThought } from "#web/components/trema/chain-of-thought.tsx";
+import { ChatBubble } from "#web/components/trema/chat-bubble.tsx";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { ErrorItem } from "#web/components/trema/error-item.tsx";
+import { Markdown } from "#web/components/trema/markdown.tsx";
 import { OutputViewer } from "#web/components/trema/output-viewer.tsx";
 import { ReasoningBlock } from "#web/components/trema/reasoning-block.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
@@ -29,6 +32,9 @@ import {
 import type { RunStreamSnapshot } from "#web/hooks/use-run-stream.ts";
 import { orpc } from "#web/lib/api.ts";
 import {
+  formatDuration,
+  isTerminalProjection,
+  partsTiming,
   type PrincipalLike,
   parkDetail,
   principalLabel,
@@ -125,9 +131,8 @@ export function RunTimeline({
 /**
  * The folded segments with their boundary dividers — the rendering the run
  * view and the chat thread share, so a run can never read differently on the
- * two screens. `expandOutputs` is the one divergence the specs draw: output
- * expansion stays on the run view (web 06), so the chat renders activity
- * without the lazy output fetch and links to the run view for the rest.
+ * two screens. The chat opts into collapsing machinery chunks and suppressing
+ * output expansion; the run view keeps the flat, complete record.
  */
 export function ProjectionSegments({
   runId,
@@ -136,6 +141,9 @@ export function ProjectionSegments({
   meta,
   resolvable,
   expandOutputs = true,
+  collapseChain = false,
+  partVocabulary = "run",
+  chainWorkingFor,
 }: {
   runId: string;
   runCreatedAt: string;
@@ -143,6 +151,10 @@ export function ProjectionSegments({
   meta: TimelineMeta;
   resolvable: boolean;
   expandOutputs?: boolean;
+  collapseChain?: boolean;
+  partVocabulary?: "run" | "chat";
+  /** The active chain's ticking elapsed time. */
+  chainWorkingFor?: string;
 }) {
   // Boundary times live beside the fold, one record per closed segment in
   // order; pairing them up front keeps the render pass free of counters.
@@ -159,26 +171,70 @@ export function ProjectionSegments({
 
   return (
     <>
-      {projection.segments.map((segment) => {
+      {projection.segments.map((segment, segmentIndex) => {
         const detail = dividerDetail.get(segment.index);
+        const chunks = chunkParts(segment.parts, collapseChain);
         return (
           <Fragment key={segment.index}>
-            {chunkParts(segment.parts).map((chunk) =>
-              chunk.kind === "machinery" ? (
-                <div key={chunk.key} className="space-y-0.5">
-                  {chunk.parts.map((part) => (
-                    <TimelinePart
-                      key={`${part.kind}:${part.id}`}
-                      runId={runId}
-                      runCreatedAt={runCreatedAt}
-                      part={part}
-                      meta={meta}
-                      resolvable={resolvable}
-                      expandOutputs={expandOutputs}
-                    />
-                  ))}
-                </div>
-              ) : (
+            {chunks.map((chunk, chunkIndex) => {
+              if (chunk.kind === "machinery") {
+                if (collapseChain) {
+                  const streaming =
+                    resolvable &&
+                    !isTerminalProjection(projection.status) &&
+                    segmentIndex === projection.segments.length - 1 &&
+                    chunkIndex === chunks.length - 1;
+                  const timing = partsTiming(projection, meta, chunk.parts);
+                  const from = timing === undefined ? Number.NaN : Date.parse(timing.firstAt);
+                  const to = timing === undefined ? Number.NaN : Date.parse(timing.lastAt);
+                  const workedFor =
+                    Number.isFinite(from) && Number.isFinite(to) && to >= from
+                      ? formatDuration(to - from)
+                      : undefined;
+                  return (
+                  <ChainOfThought
+                    key={chunk.key}
+                    streaming={streaming}
+                    {...(workedFor === undefined ? {} : { workedFor })}
+                    {...(!streaming || chainWorkingFor === undefined
+                      ? {}
+                      : { workingFor: chainWorkingFor })}
+                  >
+                    {chunk.parts.map((part) => (
+                      <TimelinePart
+                        key={`${part.kind}:${part.id}`}
+                        runId={runId}
+                        runCreatedAt={runCreatedAt}
+                        part={part}
+                        meta={meta}
+                        resolvable={resolvable}
+                        expandOutputs={expandOutputs}
+                        projectionLive={!isTerminalProjection(projection.status)}
+                        partVocabulary={partVocabulary}
+                      />
+                    ))}
+                  </ChainOfThought>
+                  );
+                }
+                return (
+                  <div key={chunk.key} className="space-y-0.5">
+                    {chunk.parts.map((part) => (
+                      <TimelinePart
+                        key={`${part.kind}:${part.id}`}
+                        runId={runId}
+                        runCreatedAt={runCreatedAt}
+                        part={part}
+                        meta={meta}
+                        resolvable={resolvable}
+                        expandOutputs={expandOutputs}
+                        projectionLive={!isTerminalProjection(projection.status)}
+                        partVocabulary={partVocabulary}
+                      />
+                    ))}
+                  </div>
+                );
+              }
+              return (
                 <TimelinePart
                   key={`${chunk.part.kind}:${chunk.part.id}`}
                   runId={runId}
@@ -187,9 +243,11 @@ export function ProjectionSegments({
                   meta={meta}
                   resolvable={resolvable}
                   expandOutputs={expandOutputs}
+                  projectionLive={!isTerminalProjection(projection.status)}
+                  partVocabulary={partVocabulary}
                 />
-              ),
-            )}
+              );
+            })}
             {segment.end !== undefined && (
               <SegmentDivider
                 reason={segment.end.reason}
@@ -213,7 +271,7 @@ type PartChunk =
   | { kind: "prose"; part: Part; key: string }
   | { kind: "machinery"; parts: Part[]; key: string };
 
-function chunkParts(parts: readonly Part[]): PartChunk[] {
+function chunkParts(parts: readonly Part[], errorsAtConversationLevel = false): PartChunk[] {
   const machinery = new Set<Part["kind"]>([
     "activity",
     "reasoning",
@@ -225,7 +283,9 @@ function chunkParts(parts: readonly Part[]): PartChunk[] {
   // card at conversation level until its resolution arrives on the tail,
   // then collapses into a history line inside the machinery group.
   const isMachinery = (part: Part) =>
-    machinery.has(part.kind) && !(part.kind === "elicitation" && part.resolution === undefined);
+    machinery.has(part.kind) &&
+    !(errorsAtConversationLevel && part.kind === "error") &&
+    !(part.kind === "elicitation" && part.resolution === undefined);
   const chunks: PartChunk[] = [];
   for (const part of parts) {
     const last = chunks[chunks.length - 1];
@@ -240,6 +300,41 @@ function chunkParts(parts: readonly Part[]): PartChunk[] {
   return chunks;
 }
 
+/**
+ * Whether the collapsed-chain rendering would produce at least one chain —
+ * the same chunking rule `collapseChain` renders with. The chat uses it to
+ * decide which line carries the worked-for duration: a chain when one
+ * exists, the footer otherwise.
+ */
+export function projectionHasChain(projection: Projection): boolean {
+  return projection.segments.some((segment) =>
+    chunkParts(segment.parts, true).some((chunk) => chunk.kind === "machinery"),
+  );
+}
+
+/**
+ * Whether the streaming chain is the projection's live edge — the same rule
+ * the collapsed rendering uses to put "Working" on a chain trigger. The chat
+ * uses it to hand the live line to the chain and silence the footer's copy.
+ */
+export function projectionChainStreaming(projection: Projection): boolean {
+  const lastSegment = projection.segments.at(-1);
+  if (lastSegment === undefined) return false;
+  return chunkParts(lastSegment.parts, true).at(-1)?.kind === "machinery";
+}
+
+/** Timestamp at which the machinery burst currently on the live edge began. */
+export function projectionStreamingChainStartedAt(
+  projection: Projection,
+  meta: TimelineMeta,
+): string | undefined {
+  const lastSegment = projection.segments.at(-1);
+  if (lastSegment === undefined) return undefined;
+  const lastChunk = chunkParts(lastSegment.parts, true).at(-1);
+  if (lastChunk?.kind !== "machinery") return undefined;
+  return partsTiming(projection, meta, lastChunk.parts)?.firstAt;
+}
+
 function TimelinePart({
   runId,
   runCreatedAt,
@@ -247,6 +342,8 @@ function TimelinePart({
   meta,
   resolvable,
   expandOutputs,
+  projectionLive,
+  partVocabulary,
 }: {
   runId: string;
   runCreatedAt: string;
@@ -254,27 +351,29 @@ function TimelinePart({
   meta: TimelineMeta;
   resolvable: boolean;
   expandOutputs: boolean;
+  projectionLive: boolean;
+  partVocabulary: "run" | "chat";
 }) {
   switch (part.kind) {
     case "text":
-      return (
-        <div
-          data-slot="text-part"
-          className="text-chat leading-relaxed break-words whitespace-pre-wrap"
-        >
-          {part.markdown}
-        </div>
-      );
+      return <Markdown className="text-chat leading-relaxed">{part.markdown}</Markdown>;
     case "reasoning":
       return (
-        <ReasoningBlock redacted={part.redacted === true}>
+        <ReasoningBlock
+          redacted={part.redacted === true}
+          streaming={part.status === "streaming" && projectionLive}
+        >
           <span className="whitespace-pre-wrap">{part.text}</span>
         </ReasoningBlock>
       );
     case "activity":
       return <ActivityView runId={runId} part={part} expandOutputs={expandOutputs} />;
     case "steering":
-      return <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />;
+      return partVocabulary === "chat" ? (
+        <ChatBubble part="steering">{part.text}</ChatBubble>
+      ) : (
+        <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />
+      );
     case "elicitation":
       return <ElicitationView part={part} resolvable={resolvable} />;
     case "error":

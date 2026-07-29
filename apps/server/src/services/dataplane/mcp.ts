@@ -11,23 +11,31 @@ import type {
   McpClientFactory,
   PlatformAppDirectory,
 } from "#server/services/connectors/index.js";
+import { searchConnectorTools } from "#server/services/connectors/tool-search.js";
 import { describeConnectorFailure, useConnector } from "#server/services/dataplane/connector.js";
 import {
   type DataPlaneSession,
   DataPlaneToolError,
   getContextItem,
-  SEARCH_CONTEXT_DEFAULT_LIMIT,
-  SEARCH_CONTEXT_MAX_LIMIT,
   searchContext,
+  toDataPlaneSession,
 } from "#server/services/dataplane/index.js";
 import { saveMemory, updateMemory } from "#server/services/dataplane/memory.js";
 import {
-  FETCH_TRANSCRIPT_DEFAULT_WINDOW,
-  FETCH_TRANSCRIPT_MAX_WINDOW,
-  fetchTranscript,
-} from "#server/services/dataplane/transcript.js";
+  fetchTranscriptInputSchema,
+  getItemInputSchema,
+  itemKindSchema,
+  saveMemoryInputSchema,
+  searchContextInputSchema,
+  searchToolsInputSchema,
+  USE_CONNECTOR_DESCRIPTION,
+  USE_CONNECTOR_TITLE,
+  USE_CONNECTOR_TOOL_NAME,
+  updateMemoryInputSchema,
+  useConnectorInputSchema,
+} from "#server/services/dataplane/tools.js";
+import { fetchTranscript } from "#server/services/dataplane/transcript.js";
 import { ItemValidationError, memoryTypes } from "#server/services/items/index.js";
-import type { PolicyRow } from "#server/services/policies/index.js";
 import {
   authenticateSession,
   isSessionExpired,
@@ -36,10 +44,6 @@ import {
 
 export const DATA_PLANE_SERVER_NAME = "trema-context";
 export const DATA_PLANE_SERVER_VERSION = "1.0.0";
-
-const itemKindSchema = z
-  .enum(["memory", "skill", "instruction", "connector", "conversation"])
-  .describe("The item kind.");
 
 const searchResultSchema = z
   .object({
@@ -159,20 +163,7 @@ export function createDataPlaneServer(
       title: "Search context",
       description:
         "Search the organization's active context for items relevant to a question. Returns titles and short excerpts, never full bodies — call `get_item` with an id to read one.",
-      inputSchema: {
-        query: z.string().min(1).describe("What to look for, in plain words."),
-        kinds: z
-          .array(itemKindSchema)
-          .optional()
-          .describe("Restrict the search to these item kinds. Omit it to search all kinds."),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(SEARCH_CONTEXT_MAX_LIMIT)
-          .optional()
-          .describe(`How many matches to return. Defaults to ${SEARCH_CONTEXT_DEFAULT_LIMIT}.`),
-      },
+      inputSchema: searchContextInputSchema,
       outputSchema: { results: z.array(searchResultSchema) },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -194,9 +185,7 @@ export function createDataPlaneServer(
       title: "Get item",
       description:
         "Read one context item in full, by id. The id comes from `search_context`. Reading an item records that this run used it.",
-      inputSchema: {
-        id: z.string().min(1).describe("The item ID, as returned by `search_context`."),
-      },
+      inputSchema: getItemInputSchema,
       outputSchema: {
         id: z.string().describe("The item ID."),
         kind: itemKindSchema,
@@ -234,15 +223,7 @@ export function createDataPlaneServer(
       title: "Save memory",
       description:
         "Remember something for later runs. A `fact` or a `preference` takes effect at once; a `rule` or a `procedure` is proposed and waits for a person to confirm it. The memory is saved at this session's scope. When it restates a memory that is already there, it replaces it and the reply names what it superseded.",
-      inputSchema: {
-        type: z
-          .enum(memoryTypes)
-          .describe(
-            "fact: something true about the world. preference: how someone likes work done. rule: guidance to follow every time. procedure: the steps for a recurring task.",
-          ),
-        title: z.string().min(1).describe("A short name for the memory, in plain words."),
-        content: z.string().min(1).describe("The memory itself, written to be read months later."),
-      },
+      inputSchema: saveMemoryInputSchema,
       outputSchema: {
         id: z.string().describe("The memory's item ID."),
         type: z.enum(memoryTypes).describe("The memory type, as given."),
@@ -286,10 +267,7 @@ export function createDataPlaneServer(
       title: "Update memory",
       description:
         "Rewrite a memory that is now wrong or out of date. The memory keeps its type and title, and the earlier wording stays in its history. Only memories saved at this session's own scope can be rewritten, and only facts and preferences — a confirmed rule or procedure needs a person.",
-      inputSchema: {
-        id: z.string().min(1).describe("The memory's item ID, from `search_context`."),
-        content: z.string().min(1).describe("What the memory should say now, in full."),
-      },
+      inputSchema: updateMemoryInputSchema,
       outputSchema: {
         id: z.string().describe("The memory's item ID."),
         type: z.enum(memoryTypes).describe("The memory type. An update never changes it."),
@@ -321,24 +299,7 @@ export function createDataPlaneServer(
       title: "Fetch transcript",
       description:
         "Read part of a captured conversation, word for word. Use it when a summary is not enough — the exact wording, an error string, or what came just before or after a message. The window is bounded: ask for a place in the thread and read around it, then ask again to move.",
-      inputSchema: {
-        conversationId: z.string().min(1).describe("The conversation's ID."),
-        aroundSeq: z
-          .number()
-          .int()
-          .min(1)
-          .optional()
-          .describe(
-            "Centre the window on this message number, with about half the window before it. Omit it to read the end of the thread.",
-          ),
-        window: z
-          .number()
-          .int()
-          .min(1)
-          .max(FETCH_TRANSCRIPT_MAX_WINDOW)
-          .optional()
-          .describe(`How many messages to return. Defaults to ${FETCH_TRANSCRIPT_DEFAULT_WINDOW}.`),
-      },
+      inputSchema: fetchTranscriptInputSchema,
       outputSchema: {
         conversationId: z.string().describe("The conversation's ID."),
         surface: z.string().describe("The surface the conversation happened on."),
@@ -426,38 +387,49 @@ export function createDataPlaneServer(
   );
 
   server.registerTool(
-    "use_connector",
+    "search_tools",
     {
-      title: "Use connector",
+      title: "Search connector tools",
       description:
-        "Do something in a connected system — read from it, or change something in it. The call runs here, with this organization's credential; you never see the credential and never call the system directly. Read the `status` of the reply: `executed` carries the system's answer, `approval_required` means stop and let a person decide — once approved, call again with the same arguments and the approvalId.",
-      inputSchema: {
-        toolKey: z
-          .string()
-          .min(3)
-          .describe(
-            "The tool to run, written `connector:tool` — for example `github:create_issue`.",
-          ),
-        args: z
-          .record(z.string(), z.unknown())
-          .default({})
-          .describe("The tool's arguments, exactly as that tool defines them."),
-        // Never invented on the server: the person deciding is owed the run's
-        // own account of what it is about to do, in its own words.
-        reason: z
-          .string()
-          .min(1)
-          .describe(
-            "One line saying what this call does and why, written for the person who may have to approve it.",
-          ),
-        approvalId: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "The id from an earlier `approval_required` reply, once a person has approved it. Send the same arguments — a changed call needs its own approval.",
-          ),
+        "Search current authorized connected-system operations with lexical and semantic ranking. Returns tool keys and input schemas for use with `use_connector`.",
+      inputSchema: searchToolsInputSchema,
+      outputSchema: {
+        tools: z.array(
+          z.object({
+            key: z.string(),
+            name: z.string(),
+            title: z.string(),
+            description: z.string(),
+            inputSchema: z.record(z.string(), z.unknown()),
+          }),
+        ),
       },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) =>
+      runTool("search_tools", async () => {
+        const tools = await searchConnectorTools(db, session, input, embedding);
+        const structuredContent = {
+          tools: tools.map(({ key, name, title, description, schema }) => ({
+            key: key!,
+            name,
+            title,
+            description,
+            inputSchema: schema as Record<string, unknown>,
+          })),
+        };
+        return { content: textResult(structuredContent), structuredContent };
+      }),
+  );
+
+  server.registerTool(
+    USE_CONNECTOR_TOOL_NAME,
+    {
+      title: USE_CONNECTOR_TITLE,
+      description: USE_CONNECTOR_DESCRIPTION,
+      // Shared with session resolution, which renders the same shape for the
+      // model port — one definition, two transports.
+      inputSchema: useConnectorInputSchema,
       outputSchema: {
         status: z
           .enum(["executed", "approval_required"])
@@ -551,18 +523,7 @@ async function resolveSession(
     });
     // Projected rather than passed whole: the tools enforce against these
     // fields, and a field they must not read is a field they cannot see.
-    return {
-      id: session.id,
-      orgId: session.orgId,
-      scopeId: session.scopeId,
-      scopeKind: session.scope.kind,
-      scopeChain: session.scopeChain,
-      actingPrincipalId: session.actingPrincipalId,
-      requesterPrincipalId: session.requesterPrincipalId,
-      requesterExternalRef: session.requesterExternalRef,
-      approvalMode: session.approvalMode,
-      policyRows: (session.policySnapshot as { rows?: PolicyRow[] } | null)?.rows ?? [],
-    };
+    return toDataPlaneSession(session);
   } catch (error) {
     if (error instanceof SessionAuthenticationError) {
       log.warn("Data-plane session token rejected");

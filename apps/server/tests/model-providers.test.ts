@@ -13,6 +13,7 @@ import { modelProvidersRouter } from "#server/rpc/model-providers.js";
 import { orgRouter } from "#server/rpc/org.js";
 import { resolveEmbedder } from "#server/services/embeddings/index.js";
 import {
+  putDefaults,
   putProvider,
   resolveEndpoints,
   resolveRoleModel,
@@ -92,6 +93,35 @@ integration("model provider registry", () => {
     return { ...membership, context };
   }
 
+  async function addMember(orgId: string) {
+    const email = `${randomUUID()}@example.com`;
+    const response = await auth.api.signUpEmail({
+      body: { name: "Registry Member", email, password: "integration-password" },
+      asResponse: true,
+    });
+    const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+    if (!cookie) throw new Error("Sign-up did not return a session cookie");
+    const user = await db.user.findUniqueOrThrow({ where: { email } });
+    const scope = await db.scope.findFirstOrThrow({ where: { orgId, kind: "org" } });
+    const principal = await db.principal.create({
+      data: {
+        orgId,
+        kind: "human",
+        authId: user.id,
+        displayName: "Registry Member",
+        email,
+      },
+    });
+    await db.grant.create({
+      data: { orgId, scopeId: scope.id, principalId: principal.id, role: "member" },
+    });
+    await db.session.updateMany({
+      where: { userId: user.id },
+      data: { activeOrgId: orgId },
+    });
+    return { db, auth, env, headers: new Headers({ cookie }) };
+  }
+
   const openAiCompatible = {
     protocol: "openai_compatible",
     baseUrl: "https://models.example.test/v1",
@@ -164,6 +194,72 @@ integration("model provider registry", () => {
       baseUrl: "https://moved.example.test/v1",
       apiKey: "the-secret",
     });
+  });
+
+  it("lists only offered catalog data through the member-safe read", async () => {
+    const org = await createOrg();
+    const memberContext = await addMember(org.org.id);
+    await db.modelProvider.create({
+      data: {
+        orgId: org.org.id,
+        name: "picker",
+        label: "Picker Provider",
+        protocol: "openai_compatible",
+        baseUrl: "https://models.example.test/v1",
+        credentialMode: "none",
+        headersJson: { "x-internal": "private-header" },
+        catalogJson: [
+          { id: "shown", label: "Shown Model", offered: true, contextWindow: 128_000 },
+          { id: "hidden", label: "Hidden Model" },
+        ],
+      },
+    });
+
+    await expect(
+      call(modelProvidersRouter.providers.list, {}, { context: memberContext }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const listed = await call(
+      modelProvidersRouter.models.offered,
+      {},
+      {
+        context: memberContext,
+      },
+    );
+
+    expect(listed).toEqual([
+      {
+        providerName: "picker",
+        modelId: "shown",
+        label: "Shown Model",
+        contextWindow: 128_000,
+      },
+    ]);
+    expect(JSON.stringify(listed)).not.toContain("private-header");
+    expect(JSON.stringify(listed)).not.toContain("models.example.test");
+    expect(JSON.stringify(listed)).not.toContain("hidden");
+  });
+
+  it("falls back to the turns chain when a stored model is stale", async () => {
+    const org = await createOrg();
+    await putProvider(db, {
+      orgId: org.org.id,
+      name: "primary",
+      protocol: "openai_compatible",
+      baseUrl: "https://models.example.test/v1",
+      credentialMode: "none",
+      catalog: [{ id: "default-model", offered: true }],
+    });
+    await putDefaults(db, {
+      orgId: org.org.id,
+      role: "turns",
+      chain: [{ providerName: "primary", modelId: "default-model" }],
+    });
+
+    const resolved = await resolveConfiguredModel(db, org.org.id, {
+      model: { providerName: "primary", modelId: "removed-model" },
+    });
+
+    expect(resolved.model).toEqual({ provider: "primary", id: "default-model" });
   });
 
   it("refuses a provider that cannot authenticate and one with an unusable base URL", async () => {

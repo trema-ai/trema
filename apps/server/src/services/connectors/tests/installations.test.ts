@@ -140,7 +140,7 @@ describe("resolveInstallationTools", () => {
     ).toEqual([{ name: "get_issue", description: manifestTool.description }]);
   });
 
-  it("keeps synced descriptions and annotations verbatim as classifier signal", () => {
+  it("keeps synced schemas, descriptions, and annotations verbatim", () => {
     expect(
       resolveInstallationTools(notion, {
         catalogKey: "notion",
@@ -150,6 +150,11 @@ describe("resolveInstallationTools", () => {
           {
             name: "delete_page",
             description: "Delete a page",
+            inputSchema: {
+              type: "object",
+              properties: { pageId: { type: "string" } },
+              required: ["pageId"],
+            },
             annotations: { destructiveHint: true },
           },
         ],
@@ -158,6 +163,11 @@ describe("resolveInstallationTools", () => {
       {
         name: "delete_page",
         description: "Delete a page",
+        inputSchema: {
+          type: "object",
+          properties: { pageId: { type: "string" } },
+          required: ["pageId"],
+        },
         annotations: { destructiveHint: true },
       },
     ]);

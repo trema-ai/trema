@@ -27,7 +27,12 @@ export interface LoopInput {
   model: ModelRef;
   standing: SessionStanding;
   threadMessages: TranscriptMessage[];
+  /** Definitions available on the first model turn. */
   tools: ToolDef[];
+  /** Live tool keys available before discovery, such as an explicit run tool list. */
+  activeToolKeys?: string[];
+  /** Maximum live connector keys retained in the model-facing working set. */
+  maxActiveToolKeys?: number;
   modelPort: ModelPort;
   store: RunStore;
   toolExecutor: ToolExecutor;
@@ -47,6 +52,9 @@ export interface LoopInput {
  * @defaultValue 50
  */
 export const DEFAULT_MAX_TURNS = 50;
+
+/** Default bound for the model-facing live connector working set. */
+export const DEFAULT_MAX_ACTIVE_TOOL_KEYS = 12;
 
 /** Terminal loop result for a completed, failed, or cancelled run. */
 export interface FinishedLoopResult {
@@ -80,7 +88,15 @@ export type LoopResult = FinishedLoopResult | PausedLoopResult;
 export async function runLoop(input: LoopInput): Promise<LoopResult> {
   const committed = await input.store.listTurns(input.runId);
   const messages = assembleCommittedMessages(input.threadMessages, committed);
-  await resumePendingTurn(input, committed, messages);
+  const maxActiveToolKeys = input.maxActiveToolKeys ?? DEFAULT_MAX_ACTIVE_TOOL_KEYS;
+  let activeToolKeys = replayToolActivations(
+    input.activeToolKeys ?? [],
+    committed,
+    maxActiveToolKeys,
+  );
+  let activeTools = await resolveActiveTools(input, activeToolKeys);
+  const resumedActivations = await resumePendingTurn(input, committed, messages, activeTools);
+  activeToolKeys = activateToolKeys(activeToolKeys, resumedActivations, maxActiveToolKeys);
   const instructions = assembleInstructions(input.standing);
   let usage = sumUsage(committed.map(({ usage: turnUsage }) => turnUsage));
   let turn = committed.length;
@@ -102,12 +118,13 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
         text: messageText(message),
       }));
       await appendEvents(input, steeringEvents);
+      activeTools = await resolveActiveTools(input, activeToolKeys);
 
       const baseline = {
         model: input.model,
         instructions,
         messages: [...messages],
-        tools: [...input.tools],
+        tools: [...activeTools],
         turn,
       };
       let prepared = baseline;
@@ -223,6 +240,11 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
             : { afterToolCall: input.hooks.afterToolCall }),
         });
         toolResults = batch.messages;
+        activeToolKeys = activateToolKeys(
+          activeToolKeys,
+          batch.results.flatMap(({ activatedToolKeys }) => activatedToolKeys ?? []),
+          maxActiveToolKeys,
+        );
         pause = batch.pendingElicitation ?? pause;
         pendingToolCall = batch.pendingToolCall;
       }
@@ -318,10 +340,11 @@ async function resumePendingTurn(
   input: LoopInput,
   turns: TurnRecord[],
   messages: TranscriptMessage[],
-): Promise<void> {
+  activeTools: ToolDef[],
+): Promise<string[]> {
   const pendingTurn = turns.at(-1);
   const pending = pendingTurn?.pendingToolCall;
-  if (pendingTurn === undefined || pending === undefined) return;
+  if (pendingTurn === undefined || pending === undefined) return [];
   const elicitation = await input.store.getElicitation(pending.elicitationId);
   if (elicitation?.resolution === undefined) {
     throw new Error(`pending elicitation is unresolved: ${pending.elicitationId}`);
@@ -346,6 +369,7 @@ async function resumePendingTurn(
   if (pendingIndex < 0) throw new Error(`pending tool call is missing: ${pending.callId}`);
   const remaining = calls.slice(pendingIndex);
   const resumed: TranscriptMessage[] = [];
+  const activatedToolKeys: string[] = [];
 
   if (elicitation.resolution.decision === "denied") {
     const deniedBy = elicitation.resolution.by.displayName ?? elicitation.resolution.by.principalId;
@@ -377,7 +401,7 @@ async function resumePendingTurn(
     const approvalId = elicitation.event.reference?.approvalId;
     const batch = await executeToolBatch({
       calls: remaining,
-      tools: input.tools,
+      tools: activeTools,
       executor: input.toolExecutor,
       ...(approvalId === undefined
         ? {}
@@ -401,11 +425,50 @@ async function resumePendingTurn(
       throw new Error("a resumed tool batch cannot park before the next model boundary");
     }
     resumed.push(...batch.messages);
+    activatedToolKeys.push(...batch.results.flatMap(({ activatedToolKeys: keys }) => keys ?? []));
   }
 
   const toolResults = [...pendingTurn.toolResults, ...resumed];
   await input.store.completePendingTurn(input.runId, pendingTurn.index, toolResults);
   messages.push(...resumed);
+  return activatedToolKeys;
+}
+
+function replayToolActivations(
+  initialKeys: string[],
+  turns: TurnRecord[],
+  limit: number,
+): string[] {
+  let active = [...initialKeys];
+  for (const message of turns.flatMap(({ toolResults }) => toolResults)) {
+    active = activateToolKeys(active, message.activatedToolKeys ?? [], limit);
+  }
+  return active;
+}
+
+function activateToolKeys(activeKeys: string[], keys: readonly string[], limit: number): string[] {
+  const activated = [...activeKeys];
+  for (const key of keys) {
+    const prior = activated.indexOf(key);
+    if (prior >= 0) activated.splice(prior, 1);
+    activated.push(key);
+  }
+  return activated.slice(-Math.max(0, Math.trunc(limit)));
+}
+
+async function resolveActiveTools(input: LoopInput, keys: readonly string[]): Promise<ToolDef[]> {
+  if (keys.length === 0 || input.toolExecutor.resolveTools === undefined) return [...input.tools];
+  try {
+    const resolved = await input.toolExecutor.resolveTools(keys);
+    return [...input.tools, ...resolved];
+  } catch (error) {
+    await input.store.appendEvent(input.runId, {
+      type: "error",
+      message: `live tool resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+      recoverable: true,
+    });
+    return [...input.tools];
+  }
 }
 
 async function commit(

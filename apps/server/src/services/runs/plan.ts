@@ -1,6 +1,12 @@
-import type { RunRecord, ToolDef } from "@trema/harness";
+import type { RunRecord, ToolDef, ToolExecutor } from "@trema/harness";
 
 import type { Database } from "#server/lib/db/index.js";
+import { type DataPlaneSession, toDataPlaneSession } from "#server/services/dataplane/index.js";
+import {
+  modelSessionToolDefs,
+  resolveConnectorToolDefs,
+  sessionToolDefs,
+} from "#server/services/dataplane/tools.js";
 import { toSessionStanding } from "#server/services/runs/context.js";
 import { type RunExecutionPlan, RunNotStartableError } from "#server/services/runs/driver.js";
 import { readThreadMessages } from "#server/services/runs/history.js";
@@ -41,15 +47,16 @@ export interface SessionRunPlanOptions {
   /** Milliseconds a blocking elicitation stays resolvable. */
   elicitationTtlMs?: number;
   now?: () => Date;
+  /** Builds the executor that resolves live tools under this session's authority. */
+  toolExecutorForSession?: (session: DataPlaneSession) => ToolExecutor;
 }
 
 /**
- * Reads one execution's context from the run's pinned session.
+ * Reads one execution's context and authority from the run's session.
  *
- * The snapshot was fixed when the session opened, so a control-plane edit never
- * changes what a running or resuming run sees. An expired token is renewed
- * rather than reopened, which is what lets a run parked for days resume against
- * the same snapshot.
+ * Standing context and policy were fixed when the session opened. Connector
+ * discovery and schemas remain live. An expired token is renewed rather than
+ * reopened, so a parked run keeps its context and policy authority.
  */
 export function createSessionRunPlan(
   options: SessionRunPlanOptions,
@@ -68,6 +75,7 @@ export function createSessionRunPlan(
       }),
       options.db.contextSession.findFirst({
         where: { orgId: options.orgId, id: run.sessionId },
+        include: { scope: { select: { kind: true } } },
       }),
     ]);
     if (session === null) {
@@ -95,16 +103,27 @@ export function createSessionRunPlan(
       ...(options.threadHistoryRuns === undefined ? {} : { limit: options.threadHistoryRuns }),
     });
 
-    // Connector tool definitions join the session when the connector proxy
-    // reaches the data plane; the allowlist narrows whatever it resolves.
-    const sessionTools: ToolDef[] = [];
+    const dataPlaneSession = toDataPlaneSession(session);
+    const initialTools = modelSessionToolDefs(sessionToolDefs());
+    const allowlist = row?.toolAllowlist ?? [];
+    const tools = allowlist.length === 0 ? initialTools : narrowTools(initialTools, allowlist);
+    const activeToolKeys =
+      allowlist.length === 0
+        ? []
+        : (await resolveConnectorToolDefs(options.db, dataPlaneSession))
+            .filter(({ name }) => allowlist.includes(name))
+            .flatMap(({ key }) => (key === undefined ? [] : [key]));
 
     return {
       model: configured.model,
       modelPort: configured.modelPort,
       standing: toSessionStanding(session.standing),
-      tools: narrowTools(sessionTools, row?.toolAllowlist ?? []),
+      tools,
+      activeToolKeys,
       threadMessages,
+      ...(options.toolExecutorForSession === undefined
+        ? {}
+        : { toolExecutor: options.toolExecutorForSession(dataPlaneSession) }),
       ...(options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }),
       ...(options.elicitationTtlMs === undefined
         ? {}

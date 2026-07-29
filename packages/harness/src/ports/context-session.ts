@@ -1,4 +1,5 @@
 import type { ToolDef, TranscriptMessage, Usage } from "#harness/core/index.js";
+import type { PrincipalRef } from "#harness/events/index.js";
 
 /** Instructions, rules, and available skills fixed for a context session. */
 export interface SessionStanding {
@@ -92,6 +93,7 @@ export interface ContextSession {
     approvalId: string,
     decision: "approved" | "denied",
     scope: "once" | "run" | "always",
+    by: PrincipalRef,
   ): Promise<void>;
   /** Proposes persistent policy for a tool after an `always` resolution. */
   proposePolicyEdit(sessionId: string, toolKey: string): Promise<void>;

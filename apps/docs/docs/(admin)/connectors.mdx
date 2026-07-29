@@ -66,7 +66,12 @@ Turning a tool off removes it outright. Bounding how freely the enabled tools ru
 
 ## Sync MCP tools
 
-An MCP installation copies its tool list from the provider's server when it is created. To pick up changes, choose **Sync tools now** on the binding; the result reports added, removed, and changed tools. A removed tool drops out of the enabled list, and with an explicit tool selection, new tools stay off until you turn them on.
+An MCP installation copies its tool list from the provider's server when it is
+created. The copy includes each input schema and optional output schema.
+
+To pick up changes, choose **Sync tools now** on the binding. The result reports
+added, removed, and changed tools. Removed tools leave the enabled list. New
+tools stay off when the installation uses an explicit selection.
 
 A synced tool keeps the server's own MCP annotations verbatim. They gate nothing—the delegated-mode classifier reads them as untrusted signal; see [Approval policies](/approval-policies).
 
@@ -94,4 +99,24 @@ Deleting an OAuth app registration removes the stored client secret with it; new
 
 ## How tools reach the agent
 
-The server proxies every connector tool call. It resolves the installation for the session's scopes, decrypts the credential at the moment of use, and injects it into the provider request. The model never sees a token, and credential material is redacted from results; see [Credential security](/credential-security).
+An in-process run starts without connector operations in its model request. The
+agent calls `search_tools` to find a capability in the current authorized
+catalog. Search combines literal text matches with semantic matches when the
+organization configures an embedding model.
+
+The best five matches become typed tools on the next turn. The run retains a
+maximum of 12 active tool keys. Trema resolves those keys before each turn.
+Connector installation, configuration, synchronization, and removal changes
+therefore apply to open sessions.
+
+An explicit run tool list exposes its selected operations immediately. External
+MCP clients use `search_tools` and call `use_connector` with a returned key.
+
+The run harness pauses an exact call when approval is required. It resumes the
+stored call after approval if the operation remains available. The model does
+not repeat the call or handle an approval ID.
+
+The server proxies every connector call. It resolves the installation for the
+session's scopes and decrypts the credential on use. It injects the credential
+into the provider request and redacts it from results. The model never sees a
+token. See [Credential security](/credential-security).

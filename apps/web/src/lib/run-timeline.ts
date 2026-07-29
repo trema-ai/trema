@@ -1,4 +1,10 @@
-import { advance, type FoldInput, type Projection, type RunStatus } from "@trema/projection";
+import {
+  advance,
+  type FoldInput,
+  type Part,
+  type Projection,
+  type RunStatus,
+} from "@trema/projection";
 
 /**
  * Pure logic behind the run view's timeline: SSE frame parsing, terminal-state
@@ -82,10 +88,70 @@ export interface TimelineMeta {
   boundaries: PauseBoundary[];
   /** `at` of each steering event, keyed by its seq. */
   steeringAt: Record<number, string>;
+  /** First and latest content-event times for each projected part occurrence. */
+  partTimes: Record<string, PartTiming>;
 }
 
 export function emptyTimelineMeta(): TimelineMeta {
-  return { lastSeq: 0, awaitingResume: false, boundaries: [], steeringAt: {} };
+  return {
+    lastSeq: 0,
+    awaitingResume: false,
+    boundaries: [],
+    steeringAt: {},
+    partTimes: {},
+  };
+}
+
+/** Event-time range for one projected part occurrence. */
+export interface PartTiming {
+  firstAt: string;
+  lastAt: string;
+}
+
+function projectionParts(projection: Projection): Array<{ key: string; part: Part }> {
+  const occurrences = new Map<string, number>();
+  return projection.segments.flatMap((segment) =>
+    segment.parts.map((part) => {
+      const identity = `${part.kind}:${part.id}`;
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      return { key: `${identity}:${occurrence}`, part };
+    }),
+  );
+}
+
+/**
+ * Event-time range spanning selected projected parts.
+ *
+ * Part occurrence keys, rather than raw provider ids, keep repeated `text-0`
+ * and `reasoning-0` blocks independent across model requests.
+ */
+export function partsTiming(
+  projection: Projection,
+  meta: TimelineMeta,
+  selected: readonly Part[],
+): PartTiming | undefined {
+  const wanted = new Set(selected);
+  let first = Number.POSITIVE_INFINITY;
+  let last = Number.NEGATIVE_INFINITY;
+  let firstAt: string | undefined;
+  let lastAt: string | undefined;
+  for (const { key, part } of projectionParts(projection)) {
+    if (!wanted.has(part)) continue;
+    const timing = meta.partTimes[key];
+    if (timing === undefined) continue;
+    const from = Date.parse(timing.firstAt);
+    const to = Date.parse(timing.lastAt);
+    if (Number.isFinite(from) && from < first) {
+      first = from;
+      firstAt = timing.firstAt;
+    }
+    if (Number.isFinite(to) && to > last) {
+      last = to;
+      lastAt = timing.lastAt;
+    }
+  }
+  return firstAt === undefined || lastAt === undefined ? undefined : { firstAt, lastAt };
 }
 
 function eventType(event: unknown): string | undefined {
@@ -122,7 +188,12 @@ export function advanceTimeline(
   let draft: TimelineMeta | undefined;
   for (const input of inputs) {
     if (input.seq <= (draft ?? meta).lastSeq) continue;
-    draft ??= { ...meta, boundaries: [...meta.boundaries], steeringAt: { ...meta.steeringAt } };
+    draft ??= {
+      ...meta,
+      boundaries: [...meta.boundaries],
+      steeringAt: { ...meta.steeringAt },
+      partTimes: { ...meta.partTimes },
+    };
     draft.lastSeq = input.seq;
     if (draft.awaitingResume) {
       const position = draft.boundaries.length - 1;
@@ -132,6 +203,9 @@ export function advanceTimeline(
     }
     const closedBefore = closedSegments(nextProjection).length;
     const unknownBefore = nextProjection.unknownEvents;
+    const previousParts = new Map(
+      projectionParts(nextProjection).map(({ key, part }) => [key, part] as const),
+    );
     nextProjection = advance(nextProjection, [input]);
     // The worked-until time tracks folded events only: an event the fold
     // skipped (unknown type, malformed payload) advances the cursor, never
@@ -148,6 +222,25 @@ export function advanceTimeline(
     // Timestamp capture only: if the fold skipped a malformed steering event,
     // no part carries this seq and the entry is simply never read.
     if (eventType(input.event) === "steering") draft.steeringAt[input.seq] = input.at;
+
+    // Lifecycle events can settle many open parts at once; they do not extend
+    // the duration of every earlier machinery burst. Content events do: the
+    // immutable fold gives changed parts new references, which lets this
+    // sidecar observe exactly which projected occurrences the event touched.
+    const type = eventType(input.event);
+    if (
+      type !== undefined &&
+      !["run-started", "run-finished", "turn-started", "turn-finished", "segment-end"].includes(
+        type,
+      )
+    ) {
+      for (const { key, part } of projectionParts(nextProjection)) {
+        if (previousParts.get(key) === part) continue;
+        const existing = draft.partTimes[key];
+        draft.partTimes[key] =
+          existing === undefined ? { firstAt: input.at, lastAt: input.at } : { ...existing, lastAt: input.at };
+      }
+    }
   }
   return { projection: nextProjection, meta: draft ?? meta };
 }

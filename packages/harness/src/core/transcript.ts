@@ -44,6 +44,13 @@ export interface TranscriptMessage {
   toolCallId?: string;
   /** Outcome of a tool result message. */
   status?: "ok" | "error" | "denied";
+  /**
+   * Stable definitions made available by this tool result.
+   *
+   * This is harness metadata, not model content. Persisting it with the result
+   * lets a retried or resumed loop reconstruct the same active key order.
+   */
+  activatedToolKeys?: string[];
   /** Opaque provider echo data only. */
   providerMeta?: unknown;
 }

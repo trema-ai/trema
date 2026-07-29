@@ -138,7 +138,13 @@ export class InterruptManager {
     if (approvalId !== undefined) {
       if (run.sessionId === undefined) throw new Error(`approval run has no session: ${run.id}`);
       if (input.decision === "answered") throw new Error("approval requires approve or deny");
-      await this.#options.context.resolveApproval(run.sessionId, approvalId, input.decision, scope);
+      await this.#options.context.resolveApproval(
+        run.sessionId,
+        approvalId,
+        input.decision,
+        scope,
+        input.by,
+      );
     } else if (!(await this.#options.isParticipant(run, input.by))) {
       throw new Error(`principal is not a thread participant: ${input.by.principalId}`);
     }

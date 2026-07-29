@@ -144,7 +144,10 @@ function serializeOpenedSession(result: OpenSessionResult) {
       usedTokens: standing.usedTokens,
       overflowItemIds: standing.overflowItemIds,
     },
-    tools: result.tools,
+    // Tool definitions are JSON by construction — the `schema` field is a
+    // rendered JSON schema — so the cast only bridges the harness type to the
+    // wire type the output schema validates.
+    tools: result.tools as unknown as z.infer<typeof sessionSchema>["tools"],
     policySnapshot: result.policySnapshot,
     snapshotHash: session.snapshotHash,
     actingPrincipalId: session.actingPrincipalId,
