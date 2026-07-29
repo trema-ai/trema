@@ -116,7 +116,10 @@ export function RunBlock({
     <div data-slot="run-block" className="space-y-3">
       {run.openingMessage !== null && (
         <div className="flex w-full justify-end">
-          <div className="max-w-[80%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5">
+          <div
+            data-slot="chat-bubble"
+            className="max-w-[80%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5"
+          >
             <p className="text-chat break-words whitespace-pre-wrap">{run.openingMessage.text}</p>
           </div>
         </div>

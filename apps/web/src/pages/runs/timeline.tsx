@@ -258,7 +258,10 @@ function TimelinePart({
   switch (part.kind) {
     case "text":
       return (
-        <div className="text-chat leading-relaxed break-words whitespace-pre-wrap">
+        <div
+          data-slot="text-part"
+          className="text-chat leading-relaxed break-words whitespace-pre-wrap"
+        >
           {part.markdown}
         </div>
       );
