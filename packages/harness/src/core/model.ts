@@ -45,6 +45,12 @@ export interface ToolDef {
   /** Optional result schema retained for adapters and tool discovery. */
   outputSchema?: unknown;
   kind: ToolKind;
+  /** Provider identity for a first-class connector tool. */
+  connector?: {
+    key: string;
+    displayName: string;
+    logoUrl?: string;
+  };
   /** Runs the whole containing batch sequentially when set to `sequential`; all other batches run in parallel. */
   execution?: "parallel" | "sequential";
 }

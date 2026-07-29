@@ -231,6 +231,40 @@ const failedRun: FixtureLog = {
   ]),
 };
 
+/** The approval state whose decision language and paused treatment are user-facing. */
+const approvalGate: FixtureLog = {
+  name: "approval gate",
+  runId: "run-parity-approval",
+  events: log([
+    { type: "run-started", trigger: "message" },
+    {
+      type: "tool-start",
+      callId: "call-linear",
+      name: "linear_list_issues_647622f0",
+      title: "List issues",
+      kind: "connector",
+      connector: {
+        key: "linear",
+        displayName: "Linear",
+        logoUrl: "/connector-logos/linear.svg",
+      },
+    },
+    {
+      type: "elicitation",
+      elicitationId: "elicit-approval",
+      kind: "approval",
+      prompt: "Use List issues for the current request.",
+      reference: { callId: "call-linear" },
+      options: [
+        { id: "approve", label: "Approve" },
+        { id: "deny", label: "Deny", style: "danger" },
+      ],
+      blocking: true,
+    },
+    { type: "segment-end", reason: "paused" },
+  ]),
+};
+
 const cases: ParityCase[] = [
   {
     fixture: openingText,
@@ -274,7 +308,14 @@ const cases: ParityCase[] = [
     state: "awaiting_approval",
     phase: "live",
     opening: null,
-    mustRender: ["activity-card", "approval-card", "segment-divider"],
+    mustRender: ["activity-card", "approval-card"],
+  },
+  {
+    fixture: approvalGate,
+    state: "awaiting_approval",
+    phase: "live",
+    opening: null,
+    mustRender: ["approval-card"],
   },
   {
     fixture: cancelledRun,
@@ -496,5 +537,33 @@ describe("chat / run view golden parity", () => {
     ].map((trigger) => trigger.textContent?.trim());
 
     expect(labels).toEqual(["Worked for 3s", "Worked for 6s"]);
+  });
+
+  it("presents a paused approval as one clear decision state", () => {
+    const parityCase = cases.find((candidate) => candidate.fixture === approvalGate);
+    if (parityCase === undefined) throw new Error("approval gate case missing");
+    const { runView, chat } = renderBoth(parityCase);
+
+    for (const container of [runView.container, chat.container]) {
+      const card = container.querySelector('[data-slot="approval-card"]');
+      expect(card?.textContent).toContain("Permission required");
+      expect(card?.textContent).toContain("Allow List issues for this request?");
+      expect(card?.querySelector('button[data-variant="default"]')?.textContent).toBe("Allow");
+      expect(card?.querySelector('button[data-variant="outline"]')?.textContent).toBe(
+        "Don’t allow",
+      );
+      expect(container.querySelector('[data-slot="segment-divider"]')).toBeNull();
+    }
+
+    expect(chat.container.querySelector('[data-slot="run-footer"]')?.textContent).toContain(
+      "Paused · Waiting for your decision",
+    );
+    expect(chat.container.querySelector('[data-slot="approval-card"]')?.textContent).toContain(
+      "Linear",
+    );
+    expect(
+      chat.container.querySelector('[data-slot="approval-card"] img')?.getAttribute("src"),
+    ).toBe("/connector-logos/linear.svg");
+    expect(chat.container.textContent).not.toContain("Working for");
   });
 });

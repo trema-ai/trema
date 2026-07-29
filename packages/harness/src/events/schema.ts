@@ -71,6 +71,13 @@ const ToolStartEventSchema = z.object({
   name: z.string(),
   title: z.string(),
   kind: z.enum(["read", "edit", "search", "execute", "fetch", "connector", "other"]),
+  connector: z
+    .object({
+      key: z.string(),
+      displayName: z.string(),
+      logoUrl: z.string().optional(),
+    })
+    .optional(),
 });
 const ToolInputDeltaEventSchema = z.object({
   type: z.literal("tool-input-delta"),
