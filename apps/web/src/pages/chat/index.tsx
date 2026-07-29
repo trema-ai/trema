@@ -47,12 +47,25 @@ export function ChatPage() {
 }
 
 /** A send the 2xx certified but the reads have not caught up with yet. */
-interface PendingSend {
+interface PendingSendBase {
   id: string;
-  kind: "steering" | "follow_up";
   text: string;
   queuedAt: string;
 }
+
+interface PendingSteer extends PendingSendBase {
+  kind: "steering";
+  /** The run the steer targeted, when the view knew one at send time. */
+  runId: string | undefined;
+  /** Steering parts already on that run's projection when the 2xx landed. */
+  baseline: number;
+}
+
+interface PendingFollowUp extends PendingSendBase {
+  kind: "follow_up";
+}
+
+type PendingSend = PendingSteer | PendingFollowUp;
 
 function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean }) {
   const navigate = useNavigate();
@@ -123,21 +136,28 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
     setStopping(false);
     void queryClient.invalidateQueries({ queryKey: orpc.runs.listByThread.key() });
     void queryClient.invalidateQueries({ queryKey: orpc.conversations.list.key() });
+    // The settled run's read is refetched too: undrained input surviving the
+    // run is server data this screen keeps rendering.
+    void queryClient.invalidateQueries({ queryKey: orpc.runs.get.key() });
   }, [activeRunId, queryClient]);
 
   // ----- pending input: queuedInput on the run read plus fresh 2xx sends ---
-  const activeRunQuery = useQuery(
+  // The read follows the thread's last run whether or not it is still
+  // active: input a settled run never drained stays visible from server
+  // data, never invisible.
+  const lastRunId = lastRun?.id;
+  const lastRunQuery = useQuery(
     orpc.runs.get.queryOptions({
-      input: { id: activeRunId ?? "" },
-      enabled: activeRunId !== undefined,
+      input: { id: lastRunId ?? "" },
+      enabled: lastRunId !== undefined,
     }),
   );
   const queuedInput = useMemo<QueuedInputItem[]>(
     () =>
-      activeRunId !== undefined && activeRunQuery.data?.access === "full"
-        ? activeRunQuery.data.queuedInput
+      lastRunId !== undefined && lastRunQuery.data?.access === "full"
+        ? lastRunQuery.data.queuedInput
         : [],
-    [activeRunId, activeRunQuery.data],
+    [lastRunId, lastRunQuery.data],
   );
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
 
@@ -152,33 +172,77 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
     previousSteeringRef.current = steeringCount;
   }, [steeringCount, queryClient]);
 
-  // A local pending entry ends when a run read newer than it no longer lists
-  // the id: the steer drained (its steering event carries it from here on).
+  // A local pending steer ends only once its note is visible somewhere
+  // else: when its steering part shows on the target run's folded
+  // projection, or — after the run settled and a fresh full read confirmed
+  // the queue no longer carries it — when the server record is all there is
+  // to show. A bare timestamp race never drops one: dropped-but-not-yet-
+  // folded is exactly the flicker the acknowledgement rules forbid.
+  const lastRunState = lastRun?.state;
   useEffect(() => {
-    if (activeRunId === undefined || activeRunQuery.data === undefined) return;
-    const readAt = activeRunQuery.dataUpdatedAt;
-    const listed = new Set(queuedInput.map((item) => item.id));
-    setPendingSends((previous) =>
-      previous.filter(
-        (entry) =>
-          entry.kind !== "steering" || listed.has(entry.id) || Date.parse(entry.queuedAt) > readAt,
-      ),
-    );
-  }, [activeRunId, activeRunQuery.data, activeRunQuery.dataUpdatedAt, queuedInput]);
+    setPendingSends((previous) => {
+      const next = previous.filter((entry, index) => {
+        if (entry.kind !== "steering") return true;
+        const targetId = entry.runId ?? lastRunId;
+        if (targetId === undefined) return true;
+        // The part landed: beyond the send-time baseline, one projection
+        // occurrence of the text per pending steer, oldest first.
+        const texts = facts[targetId]?.steeringTexts ?? [];
+        const landed = texts.slice(entry.baseline).filter((text) => text === entry.text).length;
+        const earlier = previous.filter(
+          (other, position) =>
+            position < index &&
+            other.kind === "steering" &&
+            (other.runId ?? lastRunId) === targetId &&
+            other.text === entry.text,
+        ).length;
+        if (landed > earlier) return false;
+        // The run settled with the steer neither folded (above) nor queued
+        // on a read fresher than the send: whatever the server says is the
+        // whole record now. A settled run's log is complete, so a drained
+        // steer would have matched — reaching here means it is gone.
+        if (targetId !== lastRunId || lastRunQuery.data?.access !== "full") return true;
+        const settled = facts[targetId]?.settled ?? isTerminalRunState(lastRunState);
+        return !(
+          settled &&
+          lastRunQuery.dataUpdatedAt > Date.parse(entry.queuedAt) &&
+          !lastRunQuery.data.queuedInput.some((item) => item.id === entry.id)
+        );
+      });
+      return next.length === previous.length ? previous : next;
+    });
+  }, [facts, lastRunId, lastRunState, lastRunQuery.data, lastRunQuery.dataUpdatedAt]);
 
-  // A pending follow-up ends when the run it started appears on the thread.
+  // A pending follow-up ends when the run that drained it appears on the
+  // thread. Each new run drains exactly one queued message, so a run may
+  // consume at most one pending entry — oldest matching first — and a
+  // second identical-text follow-up stays visible until its own run lands.
+  const consumedRunsRef = useRef(new Set<string>());
   useEffect(() => {
     if (serverRuns === undefined) return;
-    setPendingSends((previous) =>
-      previous.filter(
-        (entry) =>
-          entry.kind !== "follow_up" ||
-          !serverRuns.some(
-            (run) => run.createdAt >= entry.queuedAt && run.openingMessage?.text === entry.text,
-          ),
-      ),
-    );
-  }, [serverRuns]);
+    setPendingSends((previous) => {
+      if (!previous.some((entry) => entry.kind === "follow_up")) return previous;
+      const consumed = consumedRunsRef.current;
+      const remaining = [...previous];
+      let changed = false;
+      for (const run of serverRuns) {
+        const opening = run.openingMessage;
+        if (opening === null || consumed.has(run.id)) continue;
+        if (opening.author.principalId !== principal.id) continue;
+        const index = remaining.findIndex(
+          (entry) =>
+            entry.kind === "follow_up" &&
+            run.createdAt >= entry.queuedAt &&
+            entry.text === opening.text,
+        );
+        if (index === -1) continue;
+        consumed.add(run.id);
+        remaining.splice(index, 1);
+        changed = true;
+      }
+      return changed ? remaining : previous;
+    });
+  }, [serverRuns, principal.id]);
 
   const pendingDisplay = useMemo<QueuedInputItem[]>(() => {
     const listed = new Set(queuedInput.map((item) => item.id));
@@ -224,7 +288,9 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
           const queuedAt = new Date().toISOString();
           if (result.outcome === "started" && result.runId !== null) {
             // The 2xx certifies a durable run: render it now, from view
-            // state, until the thread-runs read lists it.
+            // state, until the thread-runs read lists it. Its opening
+            // message is this send, so it can never drain a follow-up.
+            consumedRunsRef.current.add(result.runId);
             recordStartedRun(threadRef, {
               id: result.runId,
               state: "queued",
@@ -233,9 +299,22 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
               openingMessage: { author, text },
             });
             if (isNew) void navigate(`/chat/${threadRef}`);
-          } else if (result.outcome === "steered" || result.outcome === "follow-up") {
-            const kind = result.outcome === "steered" ? "steering" : "follow_up";
-            setPendingSends((previous) => [...previous, { id: intentId, kind, text, queuedAt }]);
+          } else if (result.outcome === "steered") {
+            // The target run and its current steering count anchor the
+            // reconciliation: the steer's own part is the one that shows up
+            // past this baseline.
+            const runId = activeRunId;
+            const baseline = runId === undefined ? 0 : (facts[runId]?.steeringTexts.length ?? 0);
+            setPendingSends((previous) => [
+              ...previous,
+              { id: intentId, kind: "steering", runId, baseline, text, queuedAt },
+            ]);
+            void queryClient.invalidateQueries({ queryKey: orpc.runs.get.key() });
+          } else if (result.outcome === "follow-up") {
+            setPendingSends((previous) => [
+              ...previous,
+              { id: intentId, kind: "follow_up", text, queuedAt },
+            ]);
             void queryClient.invalidateQueries({ queryKey: orpc.runs.get.key() });
           } else {
             // A duplicate is a retried post: the original outcome is already

@@ -105,13 +105,13 @@ export function RunTimeline({
       {queuedInput.map((item) => (
         <QueuedInputNote key={item.id} item={item} />
       ))}
-      {phase === "live" && (
+      {phase === "live" && !settled && (
         <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
           <StatusDot tone="run" />
           Live
           {/* Stop rides the live indication: the control exists exactly as
-              long as there is something to stop, and vanishes when the
-              cancelled terminal ends the tail. */}
+              long as there is something to stop — the run read reporting a
+              terminal ends it even while the tail is still open. */}
           <span className="ml-1">
             <StopControl runId={runId} />
           </span>

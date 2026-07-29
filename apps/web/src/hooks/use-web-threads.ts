@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import type { ThreadSummary } from "#web/components/trema/app-sidebar.tsx";
 import { orpc } from "#web/lib/api.ts";
@@ -15,6 +15,9 @@ import {
  * list under the pointer (the opencode stability rule, pragmatically).
  */
 const ACTIVITY_STABILITY_MS = 60_000;
+
+/** While any thread sits inside the window, the ordering re-evaluates on this cadence. */
+const STABILITY_TICK_MS = 20_000;
 
 /** How long a title can get before the tooltip carries the rest. */
 const TITLE_LIMIT = 80;
@@ -62,10 +65,10 @@ export function useWebThreads(): ThreadSummary[] {
     if (rows !== undefined) pruneDraftThreads(rows.map((row) => row.threadRef));
   }, [rows]);
 
-  return useMemo(() => {
+  const merged = useMemo<OrderableThread[]>(() => {
     const listed = rows ?? [];
     const known = new Set(listed.map((row) => row.threadRef));
-    const merged: OrderableThread[] = [
+    return [
       ...viewState.drafts
         .filter((draft) => !known.has(draft.threadRef))
         .map((draft) => ({
@@ -81,6 +84,27 @@ export function useWebThreads(): ThreadSummary[] {
         lastActivityAt: row.lastActivityAt,
       })),
     ];
-    return orderThreads(merged, Date.now());
   }, [rows, viewState.drafts]);
+
+  // The window is a clock fact, so a thread inside it must leave on its own,
+  // not on the next unrelated rerender: a tick re-sorts while at least one
+  // thread is inside the window, and no timer runs when none is.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const current = Date.now();
+    // Catch the frozen clock up first when a change lands after a quiet
+    // stretch; the rerun then decides whether a timer is needed at all.
+    if (current - now > STABILITY_TICK_MS) {
+      setNow(current);
+      return;
+    }
+    const anyInside = merged.some(
+      (thread) => current - Date.parse(thread.lastActivityAt) < ACTIVITY_STABILITY_MS,
+    );
+    if (!anyInside) return;
+    const timer = setInterval(() => setNow(Date.now()), STABILITY_TICK_MS);
+    return () => clearInterval(timer);
+  }, [merged, now]);
+
+  return useMemo(() => orderThreads(merged, now), [merged, now]);
 }

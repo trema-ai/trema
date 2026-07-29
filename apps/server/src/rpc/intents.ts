@@ -9,6 +9,7 @@ import { type IntentCaller, serviceOrSessionAuthed } from "#server/rpc/builders.
 import {
   ContextCapabilityUnavailableError,
   createRunServices,
+  IntentMismatchError,
   IntentOptionError,
   IntentStateError,
   IntentTargetError,
@@ -158,8 +159,16 @@ function assertTargetAgrees(
   }
 }
 
+/** Maps a mismatched intent-id reuse to its structured conflict. */
+function throwIfIntentMismatch(error: unknown): void {
+  if (error instanceof IntentMismatchError) {
+    throw new ORPCError("CONFLICT", { message: error.message, data: { code: error.code } });
+  }
+}
+
 /** Maps session-resolution failures to the structured errors surfaces get. */
 function throwSessionError(error: unknown): never {
+  throwIfIntentMismatch(error);
   if (error instanceof SessionResolutionError) {
     // An unbound location is the same structured error a surface would get;
     // `personal_scopes_disabled` is the product moment web 06 renders in
@@ -180,6 +189,7 @@ function throwSessionError(error: unknown): never {
 
 /** Maps target-intent failures to the structured errors the spec describes. */
 function throwIntentError(error: unknown): never {
+  throwIfIntentMismatch(error);
   if (error instanceof IntentTargetError) {
     throw new ORPCError("NOT_FOUND", { message: error.message, data: { code: error.code } });
   }
@@ -224,7 +234,45 @@ async function requireActionableRun(
   }
 }
 
-/** Resolves the run a session-authenticated target intent must be allowed to touch. */
+/**
+ * A browser session's message lands only on the caller's own web threads.
+ *
+ * Dispatch finds a thread's active run by `threadRef` alone, so without this
+ * check a member who knows another member's thread reference could steer that
+ * member's run or graft messages onto their thread. Ownership is deterministic
+ * lookup, never judgment: every session or captured conversation already on
+ * the thread must sit on the caller's own web location. A fresh reference is
+ * fine — the run it starts is what claims it. The refusal is NOT_FOUND,
+ * byte-identical to a thread that does not exist, so probing confirms nothing.
+ */
+async function requireOwnWebThread(
+  db: Database,
+  caller: IntentCaller,
+  threadRef: string,
+): Promise<void> {
+  const own = { surface: "web", locationRef: caller.principal.id };
+  const [foreignSession, foreignConversation] = await Promise.all([
+    db.contextSession.findFirst({
+      where: { orgId: caller.org.id, threadRef, NOT: own },
+      select: { id: true },
+    }),
+    db.conversation.findFirst({
+      where: { orgId: caller.org.id, threadRef, NOT: own },
+      select: { id: true },
+    }),
+  ]);
+  if (foreignSession !== null || foreignConversation !== null) {
+    throw new ORPCError("NOT_FOUND", { message: "Thread not found" });
+  }
+}
+
+/**
+ * Resolves the run a session-authenticated target intent must be allowed to
+ * touch. Check-then-act, like every mutating route (items' `itemScoped`,
+ * schedules' `requireManageableSchedule`): access revoked between this check
+ * and the write it guards is an accepted window, not one this route closes
+ * alone.
+ */
 async function authorizeTarget(
   db: Database,
   caller: IntentCaller,
@@ -270,7 +318,9 @@ const submit = serviceOrSessionAuthed
           .string()
           .trim()
           .min(1)
-          .describe("Retry the same call with the same id to reach the same effect exactly once."),
+          .describe(
+            "Retry the same call with the same id to reach the same effect exactly once. Reusing an id for a different intent or target is refused as a conflict.",
+          ),
         locationRef: z
           .string()
           .trim()
@@ -293,7 +343,7 @@ const submit = serviceOrSessionAuthed
           .min(1)
           .optional()
           .describe(
-            "The thread a message joins. It defaults to the surface and location; a non-message intent takes its thread from its target.",
+            "The thread a message joins. It defaults to the surface and location; a non-message intent takes its thread from its target. A browser session names only its own web threads — another member's thread reads as missing.",
           ),
         target: targetSchema.optional(),
         intent: intentSchema,
@@ -372,6 +422,9 @@ const submit = serviceOrSessionAuthed
                 ? { requester: { principalId: caller.principal.id } }
                 : {}),
             };
+      if (caller.mode === "session" && input.threadRef !== undefined) {
+        await requireOwnWebThread(context.db, caller, input.threadRef);
+      }
       try {
         return await startRun({
           services,

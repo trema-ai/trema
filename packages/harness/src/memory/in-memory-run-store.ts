@@ -7,13 +7,18 @@ import type {
   CommitTurnResult,
   ElicitationRecord,
   ElicitationResolution,
+  IntentClaimMeta,
   QueuedInput,
+  RecordStopResult,
   RunRecord,
   RunStore,
   RunTransitionInput,
   StopRecord,
   TurnRecord,
 } from "#harness/ports/index.js";
+
+/** Run states a stop can still reach; terminal states refuse the fact. */
+const ACTIVE_RUN_STATES: RunState[] = ["queued", "running", "awaiting_approval", "awaiting_input"];
 
 /** In-memory reference implementation of the complete `RunStore` contract. */
 export class InMemoryRunStore implements RunStore {
@@ -23,7 +28,7 @@ export class InMemoryRunStore implements RunStore {
   readonly #events = new Map<string, RunEvent[]>();
   readonly #steering = new Map<string, QueuedInput[]>();
   readonly #followUps = new Map<string, QueuedInput[]>();
-  readonly #intents = new Set<string>();
+  readonly #intents = new Map<string, IntentClaimMeta | undefined>();
   readonly #stops = new Map<string, StopRecord>();
   readonly #elicitations = new Map<string, ElicitationRecord>();
 
@@ -48,11 +53,7 @@ export class InMemoryRunStore implements RunStore {
 
   async findActiveRun(threadRef: string): Promise<RunRecord | undefined> {
     const active = [...this.#runs.values()]
-      .filter(
-        (run) =>
-          run.threadRef === threadRef &&
-          ["queued", "running", "awaiting_approval", "awaiting_input"].includes(run.state),
-      )
+      .filter((run) => run.threadRef === threadRef && ACTIVE_RUN_STATES.includes(run.state))
       .at(-1);
     return active === undefined ? undefined : { ...active };
   }
@@ -180,14 +181,17 @@ export class InMemoryRunStore implements RunStore {
     return [...queue];
   }
 
-  async recordIntent(intentId: string): Promise<"recorded" | "duplicate"> {
+  async recordIntent(intentId: string, meta?: IntentClaimMeta): Promise<"recorded" | "duplicate"> {
     if (this.#intents.has(intentId)) return "duplicate";
-    this.#intents.add(intentId);
+    this.#intents.set(intentId, meta);
     return "recorded";
   }
 
-  async recordStop(stop: StopRecord): Promise<void> {
+  async recordStop(stop: StopRecord): Promise<RecordStopResult> {
+    const run = this.#requireRun(stop.runId);
+    if (!ACTIVE_RUN_STATES.includes(run.state)) return "run-not-active";
     if (!this.#stops.has(stop.runId)) this.#stops.set(stop.runId, stop);
+    return "recorded";
   }
 
   async getStop(runId: string): Promise<StopRecord | undefined> {

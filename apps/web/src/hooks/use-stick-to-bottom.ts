@@ -28,14 +28,22 @@ export function useStickToBottom(): {
   const selfScrollRef = useRef(false);
   const [away, setAway] = useState(false);
 
+  // Flags the pin only when the assignment actually moved the position: an
+  // unmoved scrollTop fires no scroll event, and a flag with no event to
+  // clear it would swallow the reader's next real scroll.
+  const pinToBottom = useCallback((viewport: HTMLDivElement) => {
+    const before = viewport.scrollTop;
+    viewport.scrollTop = viewport.scrollHeight;
+    if (viewport.scrollTop !== before) selfScrollRef.current = true;
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     const viewport = viewportRef.current;
     if (viewport === null) return;
     followRef.current = true;
-    selfScrollRef.current = true;
-    viewport.scrollTop = viewport.scrollHeight;
+    pinToBottom(viewport);
     setAway(false);
-  }, []);
+  }, [pinToBottom]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -58,8 +66,7 @@ export function useStickToBottom(): {
     // it only moves the jump affordance's threshold.
     const observer = new ResizeObserver(() => {
       if (followRef.current) {
-        selfScrollRef.current = true;
-        viewport.scrollTop = viewport.scrollHeight;
+        pinToBottom(viewport);
       } else {
         setAway(gap() > Math.max(FAR_BOTTOM_PX, viewport.clientHeight));
       }
@@ -70,7 +77,7 @@ export function useStickToBottom(): {
       viewport.removeEventListener("scroll", onScroll);
       observer.disconnect();
     };
-  }, []);
+  }, [pinToBottom]);
 
   return { viewportRef, contentRef, away, scrollToBottom };
 }

@@ -124,7 +124,6 @@ export function advanceTimeline(
     if (input.seq <= (draft ?? meta).lastSeq) continue;
     draft ??= { ...meta, boundaries: [...meta.boundaries], steeringAt: { ...meta.steeringAt } };
     draft.lastSeq = input.seq;
-    draft.lastAt = input.at;
     if (draft.awaitingResume) {
       const position = draft.boundaries.length - 1;
       const last = draft.boundaries[position];
@@ -132,7 +131,12 @@ export function advanceTimeline(
       draft.awaitingResume = false;
     }
     const closedBefore = closedSegments(nextProjection).length;
+    const unknownBefore = nextProjection.unknownEvents;
     nextProjection = advance(nextProjection, [input]);
+    // The worked-until time tracks folded events only: an event the fold
+    // skipped (unknown type, malformed payload) advances the cursor, never
+    // the clock.
+    if (nextProjection.unknownEvents === unknownBefore) draft.lastAt = input.at;
     const closed = closedSegments(nextProjection);
     for (let position = closedBefore; position < closed.length; position += 1) {
       draft.boundaries.push({

@@ -1,5 +1,6 @@
 import type {
   DispatchIntent,
+  DispatchResult,
   ElicitationRecord,
   MessageIntent,
   PrincipalRef,
@@ -114,7 +115,7 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
       });
     },
     stop: async (intent) => {
-      await services.lifecycle.stop(intent.intentId, intent.runId, intent.by);
+      await requireStopped(services, intent);
     },
     retry: async (intent) =>
       services.lifecycle.retry({ runId: intent.runId, execute: services.enqueue }),
@@ -122,6 +123,25 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
       await services.lifecycle.feedback(intent.runId, intent.value);
     },
   });
+}
+
+/**
+ * Stops through the lifecycle, surfacing a lost race as the state error. The
+ * store rechecks the run's state atomically with the stop record, so a run
+ * that reached terminal between validation and here gains no stop fact and
+ * the caller hears `run_not_active`, never a false `stopped`.
+ */
+async function requireStopped(
+  services: RunServices,
+  intent: { intentId: string; runId: string; by: PrincipalRef },
+): Promise<void> {
+  const result = await services.lifecycle.stop(intent.intentId, intent.runId, intent.by);
+  if (result === "run-not-active") {
+    throw new IntentStateError(
+      "run_not_active",
+      "Run reached a terminal state before the stop landed",
+    );
+  }
 }
 
 /**
@@ -157,7 +177,12 @@ async function dispatchRun(
   });
 
   if (result.outcome === "duplicate") {
-    const claim = await claimForDuplicate(services, input.intentId, reclaimStale);
+    const claim = await claimForDuplicate(
+      services,
+      input.intentId,
+      MESSAGE_FINGERPRINT,
+      reclaimStale,
+    );
     if (claim.kind === "reclaimed") {
       log.warn("Reclaimed a stale run request", { threadRef });
       return dispatchRun({ services, input }, false);
@@ -181,20 +206,56 @@ async function dispatchRun(
 
 type DuplicateClaim = { kind: "duplicate"; runId: string | null } | { kind: "reclaimed" };
 
+/** What the current call asks, checked against what a claim was made for. */
+interface ClaimFingerprint {
+  kind: string;
+  targetId?: string;
+}
+
+/** The fingerprint the message dispatch claims an id under. */
+const MESSAGE_FINGERPRINT: ClaimFingerprint = { kind: "message" };
+
+/** The fingerprint a target intent claims an id under, mirroring dispatch. */
+function targetFingerprint(intent: TargetIntent): ClaimFingerprint {
+  if (intent.type === "resolve") return { kind: "resolve", targetId: intent.elicitationId };
+  return { kind: intent.type, targetId: intent.runId };
+}
+
+/**
+ * Refuses a reuse of an id whose claim was made for a different intent or
+ * target: answering `duplicate` would silently swallow the new action.
+ * Claims recorded before fingerprints existed (`kind` null) pass unchecked.
+ * @throws {IntentMismatchError} When the stored fingerprint differs.
+ */
+function assertClaimMatches(
+  stored: { kind: string | null; targetId: string | null },
+  expected: ClaimFingerprint,
+  intentId: string,
+): void {
+  if (stored.kind === null) return;
+  if (stored.kind === expected.kind && (stored.targetId ?? undefined) === expected.targetId) {
+    return;
+  }
+  throw new IntentMismatchError(`Intent id '${intentId}' was already used for a different intent`);
+}
+
 /**
  * Reads a duplicate's original claim, releasing one whose claiming call died
  * between claiming the key and recording where it routed. The guards on
  * `runId` and `createdAt` keep a concurrent routing's fresh claim untouched.
+ * @throws {IntentMismatchError} When the claim was made by a different intent.
  */
 async function claimForDuplicate(
   services: RunServices,
   intentId: string,
+  expected: ClaimFingerprint,
   reclaimStale: boolean,
 ): Promise<DuplicateClaim> {
   const claimed = await services.db.runIntent.findUnique({
     where: { orgId_id: { orgId: services.orgId, id: intentId } },
-    select: { runId: true, createdAt: true },
+    select: { runId: true, createdAt: true, kind: true, targetId: true },
   });
+  if (claimed !== null) assertClaimMatches(claimed, expected, intentId);
   if (
     reclaimStale &&
     claimed !== null &&
@@ -273,6 +334,20 @@ export class IntentOptionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "IntentOptionError";
+  }
+}
+
+/**
+ * The intent id was already claimed by a different kind of intent or target.
+ * Answering `duplicate` would silently swallow the new action, so a
+ * mismatched reuse is a conflict the caller must hear.
+ */
+export class IntentMismatchError extends Error {
+  readonly code = "intent_mismatch";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "IntentMismatchError";
   }
 }
 
@@ -384,7 +459,7 @@ function buildTargetDispatcher(
       });
     },
     stop: async (intent) => {
-      await services.lifecycle.stop(intent.intentId, intent.runId, intent.by);
+      await requireStopped(services, intent);
     },
     retry: async (intent) =>
       services.lifecycle.retry({ runId: intent.runId, execute: services.enqueue }),
@@ -420,6 +495,7 @@ const TARGET_OUTCOMES = {
  * @throws {IntentTargetError} When the named run or elicitation does not exist.
  * @throws {IntentStateError} When the target's state does not admit the intent.
  * @throws {IntentOptionError} When the elicitation does not offer the option.
+ * @throws {IntentMismatchError} When the id was claimed by a different intent.
  */
 export async function submitTargetIntent(
   options: SubmitTargetIntentOptions,
@@ -427,15 +503,64 @@ export async function submitTargetIntent(
   return dispatchTargetIntent(options, true);
 }
 
+/**
+ * Answers a replay whose first call already recorded where it routed. The
+ * claim, not the target's current state, is the truth a duplicate reads back:
+ * a stopped run is terminal, and its stop's replay must still say `duplicate`,
+ * never `run_not_active`. In-flight and stale claims return nothing and fall
+ * through to dispatch, whose own claim check and reclaim handle them.
+ * @throws {IntentMismatchError} When the claim was made by a different intent.
+ */
+async function routedDuplicate(
+  services: RunServices,
+  input: SubmitTargetIntentInput,
+): Promise<TargetIntentResult | undefined> {
+  const claimed = await services.db.runIntent.findUnique({
+    where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
+    select: { runId: true, kind: true, targetId: true },
+  });
+  if (claimed === null) return undefined;
+  assertClaimMatches(claimed, targetFingerprint(input.intent), input.intentId);
+  if (claimed.runId === null) return undefined;
+  const run = await services.store.getRun(claimed.runId);
+  if (run === undefined) return undefined;
+  log.info("Intent was a duplicate", { threadRef: run.threadRef, runId: run.id });
+  return { outcome: "duplicate", runId: run.id, threadRef: run.threadRef };
+}
+
 async function dispatchTargetIntent(
   { services, input }: SubmitTargetIntentOptions,
   reclaimStale: boolean,
 ): Promise<TargetIntentResult> {
+  // The idempotency claim is consulted before state validation, so an
+  // at-least-once retry of a completed intent replays its routing instead of
+  // tripping over the state its own success left behind.
+  const routed = await routedDuplicate(services, input);
+  if (routed !== undefined) return routed;
+
   const target = await resolveTarget(services, input);
-  const result = await buildTargetDispatcher(services, input).dispatch(target);
+  let result: DispatchResult;
+  try {
+    result = await buildTargetDispatcher(services, input).dispatch(target);
+  } catch (error) {
+    // A state refusal raised under the claim — the stop that lost its race —
+    // releases the fresh claim, keeping the id as retryable as one refused
+    // before claiming. The `runId: null` guard spares any routed claim.
+    if (error instanceof IntentStateError) {
+      await services.db.runIntent.deleteMany({
+        where: { orgId: services.orgId, id: input.intentId, runId: null },
+      });
+    }
+    throw error;
+  }
 
   if (result.outcome === "duplicate") {
-    const claim = await claimForDuplicate(services, input.intentId, reclaimStale);
+    const claim = await claimForDuplicate(
+      services,
+      input.intentId,
+      targetFingerprint(input.intent),
+      reclaimStale,
+    );
     if (claim.kind === "reclaimed") {
       log.warn("Reclaimed a stale intent claim", { threadRef: target.threadRef });
       return dispatchTargetIntent({ services, input }, false);

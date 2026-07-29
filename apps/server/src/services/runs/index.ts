@@ -74,6 +74,7 @@ export type {
   TargetIntentResult,
 } from "./trigger.js";
 export {
+  IntentMismatchError,
   IntentOptionError,
   IntentStateError,
   IntentTargetError,

@@ -252,6 +252,63 @@ integration("triggers", () => {
       expect(session.scope).toMatchObject({ kind: "personal", ownerId: owner.id });
     });
 
+    it("keeps the caller's own web thread writable across messages", async () => {
+      const { sessionContext } = await setup();
+
+      const first = await call(
+        intentsRouter.submit,
+        { intentId: "web-1", threadRef: "chat-1", intent: { type: "message", text: "Plan." } },
+        { context: sessionContext },
+      );
+      const second = await call(
+        intentsRouter.submit,
+        { intentId: "web-2", threadRef: "chat-1", intent: { type: "message", text: "More." } },
+        { context: sessionContext },
+      );
+
+      expect(second).toEqual({ outcome: "steered", runId: first.runId, threadRef: "chat-1" });
+    });
+
+    it("hides another member's thread from a session message", async () => {
+      const { sessionContext, engine, org } = await setup();
+      // Another member's active run on their own web thread: the write path
+      // must refuse exactly like the reads — nothing there.
+      const member = await db.principal.create({
+        data: { orgId: org.id, kind: "human", displayName: "Someone Else" },
+      });
+      const started = await startRun({
+        services: servicesFor(org.id, engine),
+        input: {
+          intentId: "member-1",
+          trigger: "message",
+          surface: "web",
+          locationRef: member.id,
+          requester: { principalId: member.id },
+          message: { role: "user", blocks: [{ type: "text", text: "Private errand." }] },
+          author: { principalId: member.id, displayName: member.displayName },
+          threadRef: "member-chat",
+        },
+      });
+
+      await expect(
+        call(
+          intentsRouter.submit,
+          {
+            intentId: "web-1",
+            threadRef: "member-chat",
+            intent: { type: "message", text: "Steer their run." },
+          },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      // The member's run absorbed nothing: only its own opening message is
+      // queued, and no second run appeared on the thread.
+      expect(await db.runQueuedInput.count({ where: { runId: started.runId! } })).toBe(1);
+      expect(await db.agentRun.count({ where: { orgId: org.id, threadRef: "member-chat" } })).toBe(
+        1,
+      );
+    });
+
     it("refuses a session body that names a surface or location", async () => {
       const { sessionContext } = await setup();
 
@@ -337,6 +394,87 @@ integration("triggers", () => {
         { context: sessionContext },
       );
       expect(repeated).toEqual({ outcome: "duplicate", runId, threadRef: "api:ops" });
+    });
+
+    it("answers a replayed stop as duplicate after the run reached terminal state", async () => {
+      const { serviceContext, sessionContext } = await setup();
+      const runId = await startedRun(serviceContext);
+      const stopped = await call(
+        intentsRouter.submit,
+        { intentId: "stop-1", intent: { type: "stop", runId } },
+        { context: sessionContext },
+      );
+      expect(stopped.outcome).toBe("stopped");
+      // The worker finishes the cancellation; the run is now terminal.
+      await db.agentRun.update({ where: { id: runId }, data: { state: "cancelled" } });
+
+      // An at-least-once retry reads back the claim, not the state its own
+      // success left behind: `duplicate`, never `run_not_active`.
+      const replayed = await call(
+        intentsRouter.submit,
+        { intentId: "stop-1", intent: { type: "stop", runId } },
+        { context: sessionContext },
+      );
+      expect(replayed).toEqual({ outcome: "duplicate", runId, threadRef: "api:ops" });
+    });
+
+    it("refuses a reused intent id whose intent or target differs", async () => {
+      const { serviceContext, sessionContext } = await setup();
+      const runId = await startedRun(serviceContext);
+
+      // `key-1` claimed the message that started the run; a stop under the
+      // same id is a mismatched reuse, not a replay to answer.
+      await expect(
+        call(
+          intentsRouter.submit,
+          { intentId: "key-1", intent: { type: "stop", runId } },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT", data: { code: "intent_mismatch" } });
+      expect(await db.runStop.count({ where: { runId } })).toBe(0);
+
+      // Same kind, different target: the second run's stop cannot ride the
+      // first one's id.
+      const second = await call(
+        intentsRouter.submit,
+        {
+          locationRef: "ops",
+          threadRef: "ops-2",
+          intent: { type: "message", text: "Check the migration." },
+          intentId: "key-2",
+        },
+        { context: serviceContext },
+      );
+      await call(
+        intentsRouter.submit,
+        { intentId: "stop-1", intent: { type: "stop", runId } },
+        { context: sessionContext },
+      );
+      await expect(
+        call(
+          intentsRouter.submit,
+          { intentId: "stop-1", intent: { type: "stop", runId: second.runId! } },
+          { context: sessionContext },
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT", data: { code: "intent_mismatch" } });
+      expect(await db.runStop.count({ where: { runId: second.runId! } })).toBe(0);
+    });
+
+    it("records no stop fact on a run that reached terminal state first", async () => {
+      const { serviceContext, engine, org, owner } = await setup();
+      const runId = await startedRun(serviceContext);
+      await db.agentRun.update({ where: { id: runId }, data: { state: "completed" } });
+
+      // The route's pre-claim validation refuses this before dispatch; driving
+      // the lifecycle directly exercises the atomic recheck that covers a run
+      // finishing between that validation and the stop record.
+      const services = servicesFor(org.id, engine);
+      const result = await services.lifecycle.stop("stop-race", runId, {
+        principalId: owner.id,
+      });
+
+      expect(result).toBe("run-not-active");
+      expect(await db.runStop.count({ where: { runId } })).toBe(0);
     });
 
     it("rejects a target that disagrees with the intent's own reference", async () => {

@@ -4,8 +4,10 @@ import type {
   CommitTurnResult,
   ElicitationRecord,
   ElicitationResolution,
+  IntentClaimMeta,
   QueuedInput,
   RecordIntentResult,
+  RecordStopResult,
   ResolveElicitationResult,
   RunEvent,
   RunEventData,
@@ -430,9 +432,16 @@ export class PrismaRunStore implements RunStore {
     return this.#drain({ orgId: this.#orgId, kind: "follow_up", threadRef });
   }
 
-  async recordIntent(intentId: string): Promise<RecordIntentResult> {
+  async recordIntent(intentId: string, meta?: IntentClaimMeta): Promise<RecordIntentResult> {
     try {
-      await this.#db.runIntent.create({ data: { id: intentId, orgId: this.#orgId } });
+      await this.#db.runIntent.create({
+        data: {
+          id: intentId,
+          orgId: this.#orgId,
+          ...(meta === undefined ? {} : { kind: meta.kind }),
+          ...(meta?.targetId === undefined ? {} : { targetId: meta.targetId }),
+        },
+      });
       return "recorded";
     } catch (error) {
       if (isUniqueViolation(error)) return "duplicate";
@@ -440,21 +449,33 @@ export class PrismaRunStore implements RunStore {
     }
   }
 
-  async recordStop(stop: StopRecord): Promise<void> {
-    try {
-      await this.#db.runStop.create({
-        data: {
-          runId: stop.runId,
-          orgId: this.#orgId,
-          intentId: stop.intentId,
-          by: json(stop.by),
-          at: new Date(stop.at),
-        },
+  async recordStop(stop: StopRecord): Promise<RecordStopResult> {
+    return this.#db.$transaction(async (tx) => {
+      // The recheck shares the row lock with the insert: a run finishing
+      // concurrently commits its terminal state either before this lock (and
+      // the stop reports the loss) or after it (and the stop fact stands).
+      const [row] = await tx.$queryRaw<{ state: RunState }[]>`
+        SELECT "state" FROM "AgentRun"
+        WHERE "id" = ${stop.runId} AND "orgId" = ${this.#orgId}
+        FOR UPDATE`;
+      if (row === undefined) throw new Error(`unknown run: ${stop.runId}`);
+      if (!ACTIVE_RUN_STATES.includes(row.state)) return "run-not-active";
+      // The first stop fact wins; `skipDuplicates` keeps a second request
+      // from aborting the transaction.
+      await tx.runStop.createMany({
+        data: [
+          {
+            runId: stop.runId,
+            orgId: this.#orgId,
+            intentId: stop.intentId,
+            by: json(stop.by),
+            at: new Date(stop.at),
+          },
+        ],
+        skipDuplicates: true,
       });
-    } catch (error) {
-      // The first stop fact wins; a second request is not a failure.
-      if (!isUniqueViolation(error)) throw error;
-    }
+      return "recorded";
+    });
   }
 
   async getStop(runId: string): Promise<StopRecord | undefined> {
