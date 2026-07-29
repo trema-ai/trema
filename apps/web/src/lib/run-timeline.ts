@@ -37,8 +37,7 @@ export function projectionWaitingForDecision(projection: Projection): boolean {
   if (projection.status === "paused") return true;
   return projection.segments.some((segment) =>
     segment.parts.some(
-      (part) =>
-        part.kind === "elicitation" && part.blocking && part.resolution === undefined,
+      (part) => part.kind === "elicitation" && part.blocking && part.resolution === undefined,
     ),
   );
 }
