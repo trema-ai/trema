@@ -1,6 +1,6 @@
+import { envelope, log, principal, resolvedAt, usage } from "@trema/projection/testing";
 import { describe, expect, it } from "vitest";
 import { advance, fold } from "#projection/fold.js";
-import { envelope, log, principal, resolvedAt, usage } from "./fixtures.js";
 
 describe("fold tolerance", () => {
   it("counts and skips unknown event types", () => {

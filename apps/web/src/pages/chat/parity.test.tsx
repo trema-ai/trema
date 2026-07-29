@@ -1,10 +1,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, type RenderResult, render } from "@testing-library/react";
 import { type FoldInput, fold } from "@trema/projection";
+import {
+  at,
+  followUps,
+  gatedBatch,
+  kitchenSink,
+  log,
+  parkResume,
+  principal,
+  usage,
+} from "@trema/projection/testing";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import type { RunState } from "#web/components/trema/run-state-badge.tsx";
 import type { RunStreamPhase, RunStreamSnapshot } from "#web/hooks/use-run-stream.ts";
 import {
@@ -15,16 +24,6 @@ import {
 } from "#web/lib/run-timeline.ts";
 import { RunBlock } from "#web/pages/chat/run-block.tsx";
 import { RunTimeline } from "#web/pages/runs/timeline.tsx";
-import {
-  at,
-  followUps,
-  gatedBatch,
-  kitchenSink,
-  log,
-  parkResume,
-  principal,
-  usage,
-} from "../../../../../packages/projection/tests/fixtures.ts";
 
 /**
  * Golden parity: the chat thread and the canonical run view render the same

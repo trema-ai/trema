@@ -1,6 +1,6 @@
+import { fixtures } from "@trema/projection/testing";
 import { describe, expect, it } from "vitest";
 import { advance, fold } from "#projection/fold.js";
-import { fixtures } from "./fixtures.js";
 
 // The core requirement: the incremental path and the batch path agree at
 // every possible cursor, because a live tail is nothing but repeated advance.

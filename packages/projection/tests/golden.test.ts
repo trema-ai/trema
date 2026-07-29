@@ -1,6 +1,6 @@
+import { fixtures } from "@trema/projection/testing";
 import { describe, expect, it } from "vitest";
 import { fold } from "#projection/fold.js";
-import { fixtures } from "./fixtures.js";
 
 // The projection is the contract: every consumer folds through one code path,
 // so a chat/run-view discrepancy must be provably a renderer bug.
