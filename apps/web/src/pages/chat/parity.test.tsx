@@ -265,6 +265,36 @@ const approvalGate: FixtureLog = {
   ]),
 };
 
+/** A completed denial keeps the approval vocabulary in collapsed history. */
+const resolvedApproval: FixtureLog = {
+  name: "resolved approval",
+  runId: "run-parity-resolved-approval",
+  events: log([
+    { type: "run-started", trigger: "message" },
+    {
+      type: "elicitation",
+      elicitationId: "elicit-resolved-approval",
+      kind: "approval",
+      prompt: "Allow List issues for this request?",
+      options: [
+        { id: "approve", label: "Approve" },
+        { id: "deny", label: "Deny", style: "danger" },
+      ],
+      blocking: true,
+    },
+    { type: "segment-end", reason: "paused" },
+    {
+      type: "elicitation-resolved",
+      elicitationId: "elicit-resolved-approval",
+      optionId: "deny",
+      by: principal,
+      at,
+    },
+    { type: "run-started", trigger: "resume" },
+    { type: "run-finished", outcome: "completed", usage },
+  ]),
+};
+
 const cases: ParityCase[] = [
   {
     fixture: openingText,
@@ -316,6 +346,13 @@ const cases: ParityCase[] = [
     phase: "live",
     opening: null,
     mustRender: ["approval-card"],
+  },
+  {
+    fixture: resolvedApproval,
+    state: "completed",
+    phase: "static",
+    opening: null,
+    mustRender: ["elicitation-row", "segment-divider"],
   },
   {
     fixture: cancelledRun,
@@ -565,5 +602,48 @@ describe("chat / run view golden parity", () => {
       chat.container.querySelector('[data-slot="approval-card"] img')?.getAttribute("src"),
     ).toBe("/connector-logos/linear.svg");
     expect(chat.container.textContent).not.toContain("Working for");
+  });
+
+  it("presents a blocking elicitation as waiting before its segment boundary arrives", () => {
+    const parityCase: ParityCase = {
+      fixture: {
+        ...approvalGate,
+        name: "approval before pause boundary",
+        runId: "run-parity-approval-before-boundary",
+        events: approvalGate.events.slice(0, -1),
+      },
+      state: "awaiting_approval",
+      phase: "live",
+      opening: null,
+      mustRender: ["approval-card"],
+    };
+    const { runView, chat } = renderBoth(parityCase);
+    const snapshot = streams.get(parityCase.fixture.runId) as RunStreamSnapshot;
+
+    expect(snapshot.projection.status).not.toBe("paused");
+    expect(runView.container.textContent).toContain("Paused · Waiting for your decision");
+    expect(chat.container.querySelector('[data-slot="run-footer"]')?.textContent).toContain(
+      "Paused · Waiting for your decision",
+    );
+    expect(chat.container.textContent).not.toContain("Working for");
+  });
+
+  it("uses approval vocabulary in resolved history", () => {
+    const parityCase = cases.find((candidate) => candidate.fixture === resolvedApproval);
+    if (parityCase === undefined) throw new Error("resolved approval case missing");
+    const { runView, chat } = renderBoth(parityCase);
+    expandChatChains(chat.container);
+
+    for (const container of [runView.container, chat.container]) {
+      const row = container.querySelector('[data-slot="elicitation-row"]');
+      if (row === null) throw new Error("resolved approval row missing");
+      expect(row.textContent).toContain("Don’t allow by");
+      const trigger = row.querySelector("button");
+      if (trigger == null) throw new Error("resolved approval trigger missing");
+      fireEvent.click(trigger);
+      expect(row.textContent).toContain("Options: Allow · Don’t allow");
+      expect(row.textContent).not.toContain("Approve");
+      expect(row.textContent).not.toContain("Deny");
+    }
   });
 });

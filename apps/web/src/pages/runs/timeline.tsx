@@ -38,6 +38,7 @@ import {
   parkDetail,
   partsTiming,
   principalLabel,
+  projectionWaitingForDecision,
   steeringSeq,
   type TimelineMeta,
 } from "#web/lib/run-timeline.ts";
@@ -91,6 +92,7 @@ export function RunTimeline({
   }
 
   const unknownCount = projection.unknownEvents + snapshot.serverMalformed;
+  const waitingForDecision = projectionWaitingForDecision(projection);
 
   return (
     <div className="space-y-3">
@@ -113,8 +115,8 @@ export function RunTimeline({
       ))}
       {phase === "live" && !settled && (
         <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
-          <StatusDot tone={projection.status === "paused" ? "wait" : "run"} />
-          {projection.status === "paused" ? "Paused · Waiting for your decision" : "Live"}
+          <StatusDot tone={waitingForDecision ? "wait" : "run"} />
+          {waitingForDecision ? "Paused · Waiting for your decision" : "Live"}
           {/* Stop rides the live indication: the control exists exactly as
               long as there is something to stop — the run read reporting a
               terminal ends it even while the tail is still open. */}
@@ -609,8 +611,9 @@ function ElicitationView({
     return <LiveElicitation part={part} headline={headline} activity={activity} />;
   }
 
+  const options = cardOptions(part);
   const outcome =
-    part.options.find((option) => option.id === resolved.optionId)?.label ?? resolved.optionId;
+    options.find((option) => option.id === resolved.optionId)?.label ?? resolved.optionId;
   return (
     <Collapsible data-slot="elicitation-row">
       <CollapsibleTrigger className="group -mx-1.5 flex w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left hover:bg-muted/50">
@@ -628,7 +631,7 @@ function ElicitationView({
         <div className="mt-1 mb-1.5 ml-[5px] space-y-1.5 border-l pl-4 text-meta">
           <p>{part.prompt}</p>
           <p className="text-muted-foreground">
-            Options: {part.options.map((option) => option.label).join(" · ")}
+            Options: {options.map((option) => option.label).join(" · ")}
           </p>
           <p className="text-muted-foreground">
             {outcome} by {principalLabel(resolved.by)} · <RelativeTime date={resolved.at} />

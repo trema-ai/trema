@@ -30,6 +30,20 @@ export function isTerminalProjection(status: RunStatus): boolean {
 }
 
 /**
+ * A blocking, unresolved elicitation is already waiting on a person even
+ * before the following segment boundary reaches a live event tail.
+ */
+export function projectionWaitingForDecision(projection: Projection): boolean {
+  if (projection.status === "paused") return true;
+  return projection.segments.some((segment) =>
+    segment.parts.some(
+      (part) =>
+        part.kind === "elicitation" && part.blocking && part.resolution === undefined,
+    ),
+  );
+}
+
+/**
  * Parses one SSE data frame into a fold input. The stream carries the same
  * `{seq, at, event}` envelope as the paged read; anything else is unusable
  * and reads as null (the caller counts it, never throws).
