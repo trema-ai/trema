@@ -320,8 +320,7 @@ integration("chat acceptance", () => {
     const decoder = new TextDecoder();
     let buffer = "";
     const frames: FoldInput[] = [];
-    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
-      buffer += decoder.decode(chunk.value, { stream: true });
+    const parseFrames = () => {
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
         const data = buffer
@@ -334,7 +333,31 @@ integration("chat acceptance", () => {
         boundary = buffer.indexOf("\n\n");
         if (data) frames.push(JSON.parse(data) as FoldInput);
       }
+    };
+    // The route closes on terminal events; the deadline is the backstop so a
+    // stream that never closes fails this test instead of hanging the runner.
+    let expired = false;
+    const deadline = setTimeout(() => {
+      expired = true;
+      void reader.cancel();
+    }, 10_000);
+    try {
+      // A final read may carry bytes alongside `done`, and the decoder can
+      // hold a partial code point until its flush — drain both before parsing
+      // whatever the buffer still holds.
+      for (let chunk = await reader.read(); ; chunk = await reader.read()) {
+        if (chunk.value !== undefined) {
+          buffer += decoder.decode(chunk.value, { stream: true });
+          parseFrames();
+        }
+        if (chunk.done) break;
+      }
+    } finally {
+      clearTimeout(deadline);
     }
+    if (expired) throw new Error("SSE stream did not close within the deadline");
+    buffer += decoder.decode();
+    parseFrames();
     return frames;
   }
 
