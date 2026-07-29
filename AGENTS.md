@@ -82,17 +82,26 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
 
 - `mise run dev` brings up the full dev stack: it creates
   `apps/server/.env` from the example on first run, starts the Postgres
-  container, applies migrations, and runs the server and the web app in
-  watch mode. The web app proxies `/api` and `/rpc` to the server, so
-  develop against `http://localhost:5173`.
+  and Hatchet containers, applies migrations, and runs the server, the
+  run worker, and the web app in watch mode. The web app proxies `/api`
+  and `/rpc` to the server, so develop against `http://localhost:5173`.
+- Runs need the workflow engine, so `hatchet:up` starts a hatchet-lite
+  container (dashboard on `http://localhost:8888`, gRPC on `7077`) and
+  writes a tenant token into `apps/server/.env` the first time. Without
+  that token the server still serves context and warns that run
+  scheduling is off. The token dies with the container's volumes, which
+  is why `dev:clean` clears it again.
 - The pieces are also individual tasks: `mise run db:up`,
-  `mise run db:migrate`, `mise run dev:server`, `mise run dev:web`.
+  `mise run db:migrate`, `mise run hatchet:up`, `mise run dev:server`,
+  `mise run dev:worker`, `mise run dev:web`.
 - Parallel worktrees just work: `scripts/dev-env.sh` (sourced by mise's
   `[env]`) assigns each worktree a stable slot that offsets every dev
-  port (server `3000+slot`, web `5173+slot`, Postgres `5432+slot`) and
-  gives linked worktrees their own compose project, so each one gets an
-  isolated Postgres container and volume. The main checkout is slot 0
-  (the default ports); linked worktrees hash their path into slots 1-99.
+  port (server `3000+slot`, web `5173+slot`, Postgres `5432+slot`,
+  Hatchet gRPC `7077+slot`, Hatchet dashboard `8888+slot`) and gives
+  linked worktrees their own compose project, so each one gets an
+  isolated Postgres and Hatchet with their own volumes. The main
+  checkout is slot 0 (the default ports); linked worktrees hash their
+  path into slots 1-99.
   `env:init` bakes the slot's ports into that worktree's
   `apps/server/.env`, so run `mise run dev` — not bare `pnpm dev` — the
   first time. If two worktrees ever hash to the same slot, pin one with
@@ -100,7 +109,7 @@ the parent workspace's `CLAUDE.md` and `wiki/`; these rules are repo-specific.
   changing a slot).
 - Docker resources outlive `git worktree remove`: run
   `mise run dev:clean` in a worktree before deleting it to remove its
-  Postgres container, network, and data volume.
+  containers, network, and data volumes.
 
 ## Verification
 
