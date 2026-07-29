@@ -491,9 +491,9 @@ describe("chat / run view golden parity", () => {
         }}
       />,
     );
-    const labels = [...view.container.querySelectorAll('[data-slot="chain-of-thought-trigger"]')].map(
-      (trigger) => trigger.textContent?.trim(),
-    );
+    const labels = [
+      ...view.container.querySelectorAll('[data-slot="chain-of-thought-trigger"]'),
+    ].map((trigger) => trigger.textContent?.trim());
 
     expect(labels).toEqual(["Worked for 3s", "Worked for 6s"]);
   });

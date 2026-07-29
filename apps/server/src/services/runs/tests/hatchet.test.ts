@@ -1,10 +1,7 @@
 import type { HatchetClient } from "@hatchet-dev/typescript-sdk/v1/index.js";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  DEFAULT_RUN_EXECUTION_TIMEOUT,
-  defineRunTask,
-} from "#server/services/runs/hatchet.js";
+import { DEFAULT_RUN_EXECUTION_TIMEOUT, defineRunTask } from "#server/services/runs/hatchet.js";
 
 describe("run task", () => {
   it("overrides Hatchet's one-minute default for long model runs", () => {

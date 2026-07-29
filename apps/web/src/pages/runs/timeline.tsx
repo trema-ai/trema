@@ -192,28 +192,28 @@ export function ProjectionSegments({
                       ? formatDuration(to - from)
                       : undefined;
                   return (
-                  <ChainOfThought
-                    key={chunk.key}
-                    streaming={streaming}
-                    {...(workedFor === undefined ? {} : { workedFor })}
-                    {...(!streaming || chainWorkingFor === undefined
-                      ? {}
-                      : { workingFor: chainWorkingFor })}
-                  >
-                    {chunk.parts.map((part) => (
-                      <TimelinePart
-                        key={`${part.kind}:${part.id}`}
-                        runId={runId}
-                        runCreatedAt={runCreatedAt}
-                        part={part}
-                        meta={meta}
-                        resolvable={resolvable}
-                        expandOutputs={expandOutputs}
-                        projectionLive={!isTerminalProjection(projection.status)}
-                        partVocabulary={partVocabulary}
-                      />
-                    ))}
-                  </ChainOfThought>
+                    <ChainOfThought
+                      key={chunk.key}
+                      streaming={streaming}
+                      {...(workedFor === undefined ? {} : { workedFor })}
+                      {...(!streaming || chainWorkingFor === undefined
+                        ? {}
+                        : { workingFor: chainWorkingFor })}
+                    >
+                      {chunk.parts.map((part) => (
+                        <TimelinePart
+                          key={`${part.kind}:${part.id}`}
+                          runId={runId}
+                          runCreatedAt={runCreatedAt}
+                          part={part}
+                          meta={meta}
+                          resolvable={resolvable}
+                          expandOutputs={expandOutputs}
+                          projectionLive={!isTerminalProjection(projection.status)}
+                          partVocabulary={partVocabulary}
+                        />
+                      ))}
+                    </ChainOfThought>
                   );
                 }
                 return (

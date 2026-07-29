@@ -193,9 +193,7 @@ export function RunBlock({
           <RunFooter
             runId={run.id}
             startedAt={run.createdAt}
-            {...(meta.lastAt === undefined || hasChain
-              ? {}
-              : { endedAt: meta.lastAt })}
+            {...(meta.lastAt === undefined || hasChain ? {} : { endedAt: meta.lastAt })}
             live={!settled}
             {...(settled && copyText ? { copyText } : {})}
             {...(settled

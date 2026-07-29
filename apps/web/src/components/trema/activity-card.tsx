@@ -98,7 +98,12 @@ function ActivityCard({
           )}
           {notes !== undefined && <p className="text-meta text-muted-foreground">{notes}</p>}
           {resultSummary !== undefined && (
-            <p className={cn("text-meta", (state === "denied" || state === "error") && "text-destructive")}>
+            <p
+              className={cn(
+                "text-meta",
+                (state === "denied" || state === "error") && "text-destructive",
+              )}
+            >
               {resultSummary}
             </p>
           )}

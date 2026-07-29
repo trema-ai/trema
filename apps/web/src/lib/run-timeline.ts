@@ -238,7 +238,9 @@ export function advanceTimeline(
         if (previousParts.get(key) === part) continue;
         const existing = draft.partTimes[key];
         draft.partTimes[key] =
-          existing === undefined ? { firstAt: input.at, lastAt: input.at } : { ...existing, lastAt: input.at };
+          existing === undefined
+            ? { firstAt: input.at, lastAt: input.at }
+            : { ...existing, lastAt: input.at };
       }
     }
   }
