@@ -5045,7 +5045,7 @@
       "post": {
         "operationId": "intents.submit",
         "summary": "Submit an intent",
-        "description": "Enter an intent into the thread's dispatch, exactly as a chat surface would. A message lands on the thread: an active run absorbs it, otherwise a new run starts. The response reports where the intent landed and never waits for execution: observe progress through the run's event stream.",
+        "description": "The one write seam for conversational input, under either auth mode. A service credential names any bound location; a browser session posts to its own web location, stamped server-side. A message lands on the thread: an active run absorbs it, otherwise a new run starts. A resolve decides a blocking elicitation, a stop cancels an active run, a retry re-runs a failed one, and feedback is recorded as an audit fact. The response reports the durably recorded classification and never waits for execution: observe progress through the run's event stream.",
         "tags": [
           "Intents"
         ],
@@ -5059,23 +5059,38 @@
                   "intentId": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Retry the same call with the same id to reach the same run exactly once."
+                    "description": "Retry the same call with the same id to reach the same effect exactly once. Reusing an id for a different intent or target is refused as a conflict."
                   },
                   "locationRef": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The surface-specific location identifier. It must be bound to a scope."
+                    "description": "The surface-specific location identifier, bound to a scope. Service-mode messages require it; a browser session posts to its own web location and must not send it."
                   },
                   "surface": {
                     "type": "string",
                     "minLength": 1,
-                    "default": "api",
-                    "description": "The integration surface the location belongs to."
+                    "description": "The integration surface the location belongs to. Service mode only; defaults to `api`. A browser session is always the `web` surface."
                   },
                   "threadRef": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The thread to join. It defaults to the surface and location."
+                    "description": "The thread a message joins. It defaults to the surface and location; a non-message intent takes its thread from its target. A browser session names only its own web threads — another member's thread reads as missing."
+                  },
+                  "target": {
+                    "type": "object",
+                    "properties": {
+                      "runId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The run a stop, retry, or feedback intent addresses."
+                      },
+                      "elicitationId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The elicitation a resolve intent addresses."
+                      }
+                    },
+                    "description": "What a non-message intent addresses. Optional: the intent carries the same reference, and the two must agree when both are present."
                   },
                   "intent": {
                     "anyOf": [
@@ -5096,7 +5111,103 @@
                           "type",
                           "text"
                         ],
-                        "description": "A message for the thread."
+                        "description": "A message for the thread. An active run absorbs it; otherwise a new run starts."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "const": "resolve",
+                            "description": "Decides a blocking elicitation."
+                          },
+                          "elicitationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The elicitation being decided."
+                          },
+                          "optionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The chosen option, one the elicitation offers. The decision and its scope derive from the option; approvals enforce approver policy where the decision lands."
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "elicitationId",
+                          "optionId"
+                        ],
+                        "description": "A decision on a blocking elicitation — what resumes a parked run."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "const": "stop",
+                            "description": "Cancels the run."
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The active run to stop."
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "runId"
+                        ],
+                        "description": "A request to stop an active run. The stop fact is recorded first; the `run-finished` event on the stream is the acknowledgement."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "const": "retry",
+                            "description": "Re-runs failed work."
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The failed or stale run to retry."
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "runId"
+                        ],
+                        "description": "A new run for a failed or stale one, on the same thread."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "const": "feedback",
+                            "description": "Thumbs on a run."
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The run the feedback is about."
+                          },
+                          "verdict": {
+                            "enum": [
+                              "up",
+                              "down"
+                            ],
+                            "type": "string",
+                            "description": "Thumbs up or thumbs down."
+                          },
+                          "comment": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Optional words to go with it."
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "runId",
+                          "verdict"
+                        ],
+                        "description": "Feedback on a run, recorded as an audit fact. The run itself is untouched."
                       }
                     ],
                     "description": "What the caller is doing."
@@ -5104,7 +5215,6 @@
                 },
                 "required": [
                   "intentId",
-                  "locationRef",
                   "intent"
                 ],
                 "description": "Where the intent goes and what it asks for."
@@ -5136,10 +5246,14 @@
                         "started",
                         "steered",
                         "follow-up",
+                        "resolved",
+                        "stopped",
+                        "retried",
+                        "recorded",
                         "duplicate"
                       ],
                       "type": "string",
-                      "description": "`started` created a run, `steered` added the message to the active run, `follow-up` queued it behind a run that is finishing, `duplicate` repeated a used id."
+                      "description": "`started` created a run, `steered` added the message to the active run, `follow-up` queued it behind a run that is finishing, `resolved` recorded the elicitation decision, `stopped` recorded the stop, `retried` created the retry run, `recorded` filed the feedback, `duplicate` repeated a used id."
                     },
                     "threadRef": {
                       "type": "string",
@@ -5160,6 +5274,9 @@
         "security": [
           {
             "serviceCredential": []
+          },
+          {
+            "sessionCookie": []
           }
         ]
       }

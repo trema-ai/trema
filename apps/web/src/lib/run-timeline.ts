@@ -74,6 +74,8 @@ export interface PauseBoundary {
 export interface TimelineMeta {
   /** Highest seq folded into this meta, mirroring the projection's cursor. */
   lastSeq: number;
+  /** `at` of the last event folded — the run's worked-until time. */
+  lastAt?: string;
   /** Whether the next event is the one that ends the last boundary's park. */
   awaitingResume: boolean;
   /** One entry per closed segment, in order. */
@@ -129,7 +131,12 @@ export function advanceTimeline(
       draft.awaitingResume = false;
     }
     const closedBefore = closedSegments(nextProjection).length;
+    const unknownBefore = nextProjection.unknownEvents;
     nextProjection = advance(nextProjection, [input]);
+    // The worked-until time tracks folded events only: an event the fold
+    // skipped (unknown type, malformed payload) advances the cursor, never
+    // the clock.
+    if (nextProjection.unknownEvents === unknownBefore) draft.lastAt = input.at;
     const closed = closedSegments(nextProjection);
     for (let position = closedBefore; position < closed.length; position += 1) {
       draft.boundaries.push({

@@ -1062,6 +1062,11 @@ model RunIntent {
   orgId     String
   runId     String?
   outcome   String?
+  /// The intent kind the claim was made for. A reuse of the id with a
+  /// different kind or target is a mismatch to refuse, never a replay.
+  kind      String?
+  /// The run or elicitation the claimed intent addressed, when it had one.
+  targetId  String?
   createdAt DateTime @default(now())
   org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
 

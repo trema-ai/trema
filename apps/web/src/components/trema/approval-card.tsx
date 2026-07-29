@@ -1,4 +1,4 @@
-import { CircleCheck, CircleX, Clock } from "lucide-react";
+import { CircleCheck, CircleX, Clock, Loader2Icon } from "lucide-react";
 
 import { type ApprovalModeValue, ModeBadge } from "#web/components/trema/mode-badge.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
@@ -36,6 +36,14 @@ type ApprovalCardProps = {
   expiresAt?: Date | string;
   resolution?: ApprovalResolution;
   onResolve?: (optionId: string) => void;
+  /**
+   * The option whose decision is in flight: its button shows a spinner and
+   * the whole group disables. The caller keeps this set until the resolution
+   * event arrives — the card never flips to resolved from a response.
+   */
+  pendingOptionId?: string;
+  /** A failed submit, stated inline below the options, which stay live. */
+  error?: string;
   /**
    * Renders the option buttons disabled with this line explaining why —
    * for surfaces that show a pending decision they cannot yet take.
@@ -81,6 +89,8 @@ function ApprovalCard({
   expiresAt,
   resolution,
   onResolve,
+  pendingOptionId,
+  error,
   disabledReason,
   className,
 }: ApprovalCardProps) {
@@ -127,13 +137,14 @@ function ApprovalCard({
                 key={option.id}
                 type="button"
                 size="sm"
-                disabled={disabledReason !== undefined}
+                disabled={disabledReason !== undefined || pendingOptionId !== undefined}
                 variant={option.variant === "primary" ? "default" : "outline"}
                 className={cn(
                   option.variant === "destructive" && "text-destructive hover:text-destructive",
                 )}
                 onClick={() => onResolve?.(option.id)}
               >
+                {pendingOptionId === option.id && <Loader2Icon className="animate-spin" />}
                 {option.label}
               </Button>
             ))}
@@ -149,6 +160,10 @@ function ApprovalCard({
 
       {resolution === undefined && disabledReason !== undefined && (
         <p className="mt-2 text-meta text-muted-foreground">{disabledReason}</p>
+      )}
+
+      {resolution === undefined && error !== undefined && (
+        <p className="mt-2 text-meta text-destructive">{error}</p>
       )}
 
       {/* Provenance footer: who asked, where to dig. Absent when the

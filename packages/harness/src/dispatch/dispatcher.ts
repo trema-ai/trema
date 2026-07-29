@@ -1,6 +1,6 @@
 import type { TranscriptMessage } from "#harness/core/index.js";
 import type { PrincipalRef } from "#harness/events/index.js";
-import type { QueuedInput, RunRecord, RunStore } from "#harness/ports/index.js";
+import type { IntentClaimMeta, QueuedInput, RunRecord, RunStore } from "#harness/ports/index.js";
 import type { ThreadDispatchLock } from "./dispatch-lock.js";
 
 interface IntentBase {
@@ -101,7 +101,9 @@ export class InputDispatcher {
    */
   async dispatch(intent: DispatchIntent): Promise<DispatchResult> {
     return this.#options.lock.run(intent.threadRef, async () => {
-      if ((await this.#options.store.recordIntent(intent.intentId)) === "duplicate") {
+      if (
+        (await this.#options.store.recordIntent(intent.intentId, claimMeta(intent))) === "duplicate"
+      ) {
         return { outcome: "duplicate" };
       }
 
@@ -137,6 +139,15 @@ export class InputDispatcher {
       return { outcome: "new-run", run: await this.#options.createRun(intent) };
     });
   }
+}
+
+/** The claim's fingerprint: what a later reuse of the id is checked against. */
+function claimMeta(intent: DispatchIntent): IntentClaimMeta {
+  if (intent.type === "resolve") return { kind: "resolve", targetId: intent.elicitationId };
+  if (intent.type === "stop" || intent.type === "retry" || intent.type === "feedback") {
+    return { kind: intent.type, targetId: intent.runId };
+  }
+  return { kind: intent.type };
 }
 
 function queuedInput(intent: MessageIntent): QueuedInput {

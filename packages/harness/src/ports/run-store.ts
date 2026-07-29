@@ -113,6 +113,18 @@ export interface RunTransitionInput {
 
 /** Result of atomically claiming an intent identifier. */
 export type RecordIntentResult = "recorded" | "duplicate";
+/** Result of recording a stop fact with its atomic active-state recheck. */
+export type RecordStopResult = "recorded" | "run-not-active";
+
+/**
+ * What an intent claim was made for. A duplicate whose kind or target differs
+ * from the claim is a mismatched reuse of the id, never a replay to answer.
+ */
+export interface IntentClaimMeta {
+  kind: string;
+  /** The run or elicitation the intent addressed, when it had one. */
+  targetId?: string;
+}
 /** Result of the first or a later elicitation resolution attempt. */
 export type ResolveElicitationResult = "resolved" | "already-resolved";
 
@@ -156,10 +168,18 @@ export interface RunStore {
   enqueueFollowUp(threadRef: string, input: QueuedInput): Promise<void>;
   /** Removes and returns follow-ups queued for one thread. */
   drainFollowUps(threadRef: string): Promise<QueuedInput[]>;
-  /** Atomically claims an intent identifier; only one concurrent caller receives `recorded`. */
-  recordIntent(intentId: string): Promise<RecordIntentResult>;
-  /** Records the first stop fact for a run without replacing it. */
-  recordStop(stop: StopRecord): Promise<void>;
+  /**
+   * Atomically claims an intent identifier; only one concurrent caller
+   * receives `recorded`. The claim keeps `meta` so a later call reusing the
+   * id can be checked against what the id was claimed for.
+   */
+  recordIntent(intentId: string, meta?: IntentClaimMeta): Promise<RecordIntentResult>;
+  /**
+   * Records the first stop fact for a run without replacing it. The run's
+   * state is rechecked atomically with the record: a run that already reached
+   * a terminal state reports `run-not-active` and gains no stop fact.
+   */
+  recordStop(stop: StopRecord): Promise<RecordStopResult>;
   /** Returns the recorded stop fact, if any. */
   getStop(runId: string): Promise<StopRecord | undefined>;
   /** Returns an elicitation and its resolution, if present. */

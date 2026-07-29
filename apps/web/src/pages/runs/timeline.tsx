@@ -4,6 +4,7 @@ import type {
   DataPart,
   ElicitationPart,
   Part,
+  Projection,
   SteeringPart,
 } from "@trema/projection";
 import { ChevronRight, ScrollText } from "lucide-react";
@@ -34,6 +35,7 @@ import {
   steeringSeq,
   type TimelineMeta,
 } from "#web/lib/run-timeline.ts";
+import { StopControl, useResolveElicitation } from "#web/pages/runs/controls.tsx";
 
 /** One undrained steer or follow-up, as the run read reports it. */
 export interface QueuedInputItem {
@@ -50,13 +52,19 @@ export function RunTimeline({
   runCreatedAt,
   snapshot,
   queuedInput,
+  runSettled,
 }: {
   runId: string;
   runCreatedAt: string;
   snapshot: RunStreamSnapshot;
   queuedInput: QueuedInputItem[];
+  /** Whether the run read already reports a terminal state. */
+  runSettled: boolean;
 }) {
   const { projection, meta, phase } = snapshot;
+  // Either signal settles the run: the header read can be ahead of the tail
+  // (a stale run with no terminal event) and the tail ahead of the header.
+  const settled = runSettled || phase === "static";
 
   if (phase === "error") {
     return (
@@ -76,6 +84,66 @@ export function RunTimeline({
     );
   }
 
+  const unknownCount = projection.unknownEvents + snapshot.serverMalformed;
+
+  return (
+    <div className="space-y-3">
+      {projection.segments.length === 0 && (
+        <EmptyState
+          icon={ScrollText}
+          title="No events yet"
+          description="The run has not recorded anything so far."
+        />
+      )}
+      <ProjectionSegments
+        runId={runId}
+        runCreatedAt={runCreatedAt}
+        projection={projection}
+        meta={meta}
+        resolvable={!settled}
+      />
+      {queuedInput.map((item) => (
+        <QueuedInputNote key={item.id} item={item} />
+      ))}
+      {phase === "live" && !settled && (
+        <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
+          <StatusDot tone="run" />
+          Live
+          {/* Stop rides the live indication: the control exists exactly as
+              long as there is something to stop — the run read reporting a
+              terminal ends it even while the tail is still open. */}
+          <span className="ml-1">
+            <StopControl runId={runId} />
+          </span>
+        </div>
+      )}
+      <UnknownEventsLine count={unknownCount} />
+    </div>
+  );
+}
+
+/**
+ * The folded segments with their boundary dividers — the rendering the run
+ * view and the chat thread share, so a run can never read differently on the
+ * two screens. `expandOutputs` is the one divergence the specs draw: output
+ * expansion stays on the run view (web 06), so the chat renders activity
+ * without the lazy output fetch and links to the run view for the rest.
+ */
+export function ProjectionSegments({
+  runId,
+  runCreatedAt,
+  projection,
+  meta,
+  resolvable,
+  expandOutputs = true,
+}: {
+  runId: string;
+  runCreatedAt: string;
+  projection: Projection;
+  meta: TimelineMeta;
+  resolvable: boolean;
+  expandOutputs?: boolean;
+}) {
   // Boundary times live beside the fold, one record per closed segment in
   // order; pairing them up front keeps the render pass free of counters.
   const dividerDetail = new Map<number, string>();
@@ -89,17 +157,8 @@ export function RunTimeline({
     closed += 1;
   }
 
-  const unknownCount = projection.unknownEvents + snapshot.serverMalformed;
-
   return (
-    <div className="space-y-3">
-      {projection.segments.length === 0 && (
-        <EmptyState
-          icon={ScrollText}
-          title="No events yet"
-          description="The run has not recorded anything so far."
-        />
-      )}
+    <>
       {projection.segments.map((segment) => {
         const detail = dividerDetail.get(segment.index);
         return (
@@ -114,6 +173,8 @@ export function RunTimeline({
                       runCreatedAt={runCreatedAt}
                       part={part}
                       meta={meta}
+                      resolvable={resolvable}
+                      expandOutputs={expandOutputs}
                     />
                   ))}
                 </div>
@@ -124,6 +185,8 @@ export function RunTimeline({
                   runCreatedAt={runCreatedAt}
                   part={chunk.part}
                   meta={meta}
+                  resolvable={resolvable}
+                  expandOutputs={expandOutputs}
                 />
               ),
             )}
@@ -136,17 +199,7 @@ export function RunTimeline({
           </Fragment>
         );
       })}
-      {queuedInput.map((item) => (
-        <QueuedInputNote key={item.id} item={item} />
-      ))}
-      {phase === "live" && (
-        <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
-          <StatusDot tone="run" />
-          Live
-        </div>
-      )}
-      <UnknownEventsLine count={unknownCount} />
-    </div>
+    </>
   );
 }
 
@@ -192,16 +245,23 @@ function TimelinePart({
   runCreatedAt,
   part,
   meta,
+  resolvable,
+  expandOutputs,
 }: {
   runId: string;
   runCreatedAt: string;
   part: Part;
   meta: TimelineMeta;
+  resolvable: boolean;
+  expandOutputs: boolean;
 }) {
   switch (part.kind) {
     case "text":
       return (
-        <div className="text-chat leading-relaxed break-words whitespace-pre-wrap">
+        <div
+          data-slot="text-part"
+          className="text-chat leading-relaxed break-words whitespace-pre-wrap"
+        >
           {part.markdown}
         </div>
       );
@@ -212,11 +272,11 @@ function TimelinePart({
         </ReasoningBlock>
       );
     case "activity":
-      return <ActivityView runId={runId} part={part} />;
+      return <ActivityView runId={runId} part={part} expandOutputs={expandOutputs} />;
     case "steering":
       return <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />;
     case "elicitation":
-      return <ElicitationView part={part} />;
+      return <ElicitationView part={part} resolvable={resolvable} />;
     case "error":
       return (
         <ErrorItem
@@ -229,7 +289,15 @@ function TimelinePart({
   }
 }
 
-function ActivityView({ runId, part }: { runId: string; part: ActivityPart }) {
+function ActivityView({
+  runId,
+  part,
+  expandOutputs,
+}: {
+  runId: string;
+  part: ActivityPart;
+  expandOutputs: boolean;
+}) {
   const state: ActivityState | undefined =
     part.result !== undefined
       ? part.result.status === "ok"
@@ -238,7 +306,7 @@ function ActivityView({ runId, part }: { runId: string; part: ActivityPart }) {
       : part.status === "streaming"
         ? "running"
         : undefined;
-  const outputRef = part.result?.outputRef;
+  const outputRef = expandOutputs ? part.result?.outputRef : undefined;
   return (
     <ActivityCard
       title={part.title}
@@ -323,32 +391,41 @@ function SteeringView({
   );
 }
 
+/** The card's option shapes from the part's recorded options. */
+function cardOptions(part: ElicitationPart) {
+  return part.options.map((option) => ({
+    id: option.id,
+    label: option.label,
+    variant:
+      option.style === "primary"
+        ? ("primary" as const)
+        : option.style === "danger"
+          ? ("destructive" as const)
+          : ("secondary" as const),
+  }));
+}
+
 /**
  * A live elicitation is the run's open question: it renders as a full card
- * until the resolution arrives on the tail (never optimistically), then
- * collapses into a one-line history row. Resolve controls arrive with web
- * intents (phase 4); until then the card states why its options cannot act.
+ * with live resolve options until the resolution arrives on the tail (never
+ * optimistically), then collapses into a one-line history row. On a settled
+ * run an unresolved elicitation can no longer act, so its options render
+ * disabled with the reason stated: the pending decision itself is content.
  */
-function ElicitationView({ part }: { part: ElicitationPart }) {
+function ElicitationView({ part, resolvable }: { part: ElicitationPart; resolvable: boolean }) {
   const resolved = part.resolution;
   if (resolved === undefined) {
-    return (
-      <ApprovalCard
-        headline={part.prompt}
-        kind={part.elicitationKind}
-        options={part.options.map((option) => ({
-          id: option.id,
-          label: option.label,
-          variant:
-            option.style === "primary"
-              ? ("primary" as const)
-              : option.style === "danger"
-                ? ("destructive" as const)
-                : ("secondary" as const),
-        }))}
-        disabledReason="Resolving from the web is not yet available."
-      />
-    );
+    if (!resolvable) {
+      return (
+        <ApprovalCard
+          headline={part.prompt}
+          kind={part.elicitationKind}
+          options={cardOptions(part)}
+          disabledReason="The run ended before this was decided."
+        />
+      );
+    }
+    return <LiveElicitation part={part} />;
   }
 
   const outcome =
@@ -382,6 +459,26 @@ function ElicitationView({ part }: { part: ElicitationPart }) {
 }
 
 /**
+ * A pending elicitation the viewer can act on. The pressed option shows a
+ * spinner and the group disables; the card flips to its resolved rendering
+ * only when `elicitation-resolved` arrives on the tail and sets the part's
+ * resolution in place.
+ */
+function LiveElicitation({ part }: { part: ElicitationPart }) {
+  const { resolve, pendingOptionId, error } = useResolveElicitation(part.elicitationId);
+  return (
+    <ApprovalCard
+      headline={part.prompt}
+      kind={part.elicitationKind}
+      options={cardOptions(part)}
+      onResolve={resolve}
+      {...(pendingOptionId === undefined ? {} : { pendingOptionId })}
+      {...(error === undefined ? {} : { error })}
+    />
+  );
+}
+
+/**
  * The escape hatch for `data` parts: a collapsed raw-JSON block labeled with
  * the part's name. Adapter noise (a payload of null) renders as nothing.
  */
@@ -403,7 +500,7 @@ function DataPartView({ part }: { part: DataPart }) {
 }
 
 /** A message waiting for a turn boundary, rendered where it will land. */
-function QueuedInputNote({ item }: { item: QueuedInputItem }) {
+export function QueuedInputNote({ item }: { item: QueuedInputItem }) {
   return (
     <div className="rounded-md border border-dashed px-3 py-2">
       <div className="flex items-center gap-2 text-meta text-muted-foreground">

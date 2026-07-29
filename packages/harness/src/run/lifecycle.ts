@@ -2,7 +2,13 @@ import type { TranscriptMessage, Trigger, Usage } from "#harness/core/index.js";
 import type { ThreadDispatchLock } from "#harness/dispatch/index.js";
 import type { PrincipalRef } from "#harness/events/index.js";
 import type { LoopResult } from "#harness/loop/index.js";
-import type { ContextSession, Engine, RunRecord, RunStore } from "#harness/ports/index.js";
+import type {
+  ContextSession,
+  Engine,
+  RecordStopResult,
+  RunRecord,
+  RunStore,
+} from "#harness/ports/index.js";
 
 /** Metadata and optional execution task for a new run. */
 export interface CreateRunInput {
@@ -197,15 +203,21 @@ export class RunLifecycle {
     return result;
   }
 
-  /** Records a stop intent before aborting active execution. */
-  async stop(intentId: string, runId: string, by: PrincipalRef): Promise<void> {
-    await this.#options.store.recordStop({
+  /**
+   * Records a stop intent before aborting active execution. The store checks
+   * that the run is still active atomically with the record, so
+   * `run-not-active` means the run reached a terminal state first and no stop
+   * fact was written.
+   */
+  async stop(intentId: string, runId: string, by: PrincipalRef): Promise<RecordStopResult> {
+    const result = await this.#options.store.recordStop({
       intentId,
       runId,
       by,
       at: this.#options.now(),
     });
-    this.#aborts.get(runId)?.abort();
+    if (result === "recorded") this.#aborts.get(runId)?.abort();
+    return result;
   }
 
   /**

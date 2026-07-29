@@ -1,4 +1,12 @@
-import type { MessageIntent, PrincipalRef, RunRecord, TranscriptMessage } from "@trema/harness";
+import type {
+  DispatchIntent,
+  DispatchResult,
+  ElicitationRecord,
+  MessageIntent,
+  PrincipalRef,
+  RunRecord,
+  TranscriptMessage,
+} from "@trema/harness";
 import { InputDispatcher } from "@trema/harness";
 
 import { log } from "#server/lib/logger/index.js";
@@ -107,7 +115,7 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
       });
     },
     stop: async (intent) => {
-      await services.lifecycle.stop(intent.intentId, intent.runId, intent.by);
+      await requireStopped(services, intent);
     },
     retry: async (intent) =>
       services.lifecycle.retry({ runId: intent.runId, execute: services.enqueue }),
@@ -115,6 +123,25 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
       await services.lifecycle.feedback(intent.runId, intent.value);
     },
   });
+}
+
+/**
+ * Stops through the lifecycle, surfacing a lost race as the state error. The
+ * store rechecks the run's state atomically with the stop record, so a run
+ * that reached terminal between validation and here gains no stop fact and
+ * the caller hears `run_not_active`, never a false `stopped`.
+ */
+async function requireStopped(
+  services: RunServices,
+  intent: { intentId: string; runId: string; by: PrincipalRef },
+): Promise<void> {
+  const result = await services.lifecycle.stop(intent.intentId, intent.runId, intent.by);
+  if (result === "run-not-active") {
+    throw new IntentStateError(
+      "run_not_active",
+      "Run reached a terminal state before the stop landed",
+    );
+  }
 }
 
 /**
@@ -150,34 +177,18 @@ async function dispatchRun(
   });
 
   if (result.outcome === "duplicate") {
-    const claimed = await services.db.runIntent.findUnique({
-      where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
-      select: { runId: true, createdAt: true },
-    });
-    if (
-      reclaimStale &&
-      claimed !== null &&
-      claimed.runId === null &&
-      Date.now() - claimed.createdAt.getTime() >= STALE_CLAIM_MS
-    ) {
-      // The claiming call died between claiming the key and routing the
-      // message. Release the claim and route again; the guards on `runId` and
-      // `createdAt` keep a concurrent routing's fresh claim untouched.
-      const released = await services.db.runIntent.deleteMany({
-        where: {
-          orgId: services.orgId,
-          id: input.intentId,
-          runId: null,
-          createdAt: claimed.createdAt,
-        },
-      });
-      if (released.count === 1) {
-        log.warn("Reclaimed a stale run request", { threadRef });
-        return dispatchRun({ services, input }, false);
-      }
+    const claim = await claimForDuplicate(
+      services,
+      input.intentId,
+      MESSAGE_FINGERPRINT,
+      reclaimStale,
+    );
+    if (claim.kind === "reclaimed") {
+      log.warn("Reclaimed a stale run request", { threadRef });
+      return dispatchRun({ services, input }, false);
     }
-    log.info("Run request was a duplicate", { threadRef, runId: claimed?.runId ?? null });
-    return { outcome: "duplicate", runId: claimed?.runId ?? null, threadRef };
+    log.info("Run request was a duplicate", { threadRef, runId: claim.runId });
+    return { outcome: "duplicate", runId: claim.runId, threadRef };
   }
   if (result.outcome !== "new-run" && result.outcome !== "steer") {
     throw new Error(`unexpected dispatch outcome for a message: ${result.outcome}`);
@@ -191,4 +202,382 @@ async function dispatchRun(
   });
   log.info("Run request accepted", { threadRef, runId, outcome, trigger: input.trigger });
   return { outcome, runId, threadRef };
+}
+
+type DuplicateClaim = { kind: "duplicate"; runId: string | null } | { kind: "reclaimed" };
+
+/** What the current call asks, checked against what a claim was made for. */
+interface ClaimFingerprint {
+  kind: string;
+  targetId?: string;
+}
+
+/** The fingerprint the message dispatch claims an id under. */
+const MESSAGE_FINGERPRINT: ClaimFingerprint = { kind: "message" };
+
+/** The fingerprint a target intent claims an id under, mirroring dispatch. */
+function targetFingerprint(intent: TargetIntent): ClaimFingerprint {
+  if (intent.type === "resolve") return { kind: "resolve", targetId: intent.elicitationId };
+  return { kind: intent.type, targetId: intent.runId };
+}
+
+/**
+ * Refuses a reuse of an id whose claim was made for a different intent or
+ * target: answering `duplicate` would silently swallow the new action.
+ * Claims recorded before fingerprints existed (`kind` null) pass unchecked.
+ * @throws {IntentMismatchError} When the stored fingerprint differs.
+ */
+function assertClaimMatches(
+  stored: { kind: string | null; targetId: string | null },
+  expected: ClaimFingerprint,
+  intentId: string,
+): void {
+  if (stored.kind === null) return;
+  if (stored.kind === expected.kind && (stored.targetId ?? undefined) === expected.targetId) {
+    return;
+  }
+  throw new IntentMismatchError(`Intent id '${intentId}' was already used for a different intent`);
+}
+
+/**
+ * Reads a duplicate's original claim, releasing one whose claiming call died
+ * between claiming the key and recording where it routed. The guards on
+ * `runId` and `createdAt` keep a concurrent routing's fresh claim untouched.
+ * @throws {IntentMismatchError} When the claim was made by a different intent.
+ */
+async function claimForDuplicate(
+  services: RunServices,
+  intentId: string,
+  expected: ClaimFingerprint,
+  reclaimStale: boolean,
+): Promise<DuplicateClaim> {
+  const claimed = await services.db.runIntent.findUnique({
+    where: { orgId_id: { orgId: services.orgId, id: intentId } },
+    select: { runId: true, createdAt: true, kind: true, targetId: true },
+  });
+  if (claimed !== null) assertClaimMatches(claimed, expected, intentId);
+  if (
+    reclaimStale &&
+    claimed !== null &&
+    claimed.runId === null &&
+    Date.now() - claimed.createdAt.getTime() >= STALE_CLAIM_MS
+  ) {
+    const released = await services.db.runIntent.deleteMany({
+      where: { orgId: services.orgId, id: intentId, runId: null, createdAt: claimed.createdAt },
+    });
+    if (released.count === 1) return { kind: "reclaimed" };
+  }
+  return { kind: "duplicate", runId: claimed?.runId ?? null };
+}
+
+/** The elicitation decision, stop, retry, or feedback a caller aims at existing work. */
+export type TargetIntent =
+  | { type: "resolve"; elicitationId: string; optionId: string }
+  | { type: "stop"; runId: string }
+  | { type: "retry"; runId: string }
+  | { type: "feedback"; runId: string; verdict: "up" | "down"; comment?: string };
+
+/** One decision or lifecycle request aimed at a run or elicitation. */
+export interface SubmitTargetIntentInput {
+  /** Idempotency: at-least-once callers, exactly-once effects. */
+  intentId: string;
+  /** Who acted. Recorded on the stop fact, the resolution, or the audit row. */
+  by: PrincipalRef;
+  intent: TargetIntent;
+}
+
+/**
+ * Where the intent landed. Each outcome names the fact durably recorded before
+ * the caller heard it: the resolution row, the stop fact, the retry run, or
+ * the feedback audit entry. Execution is observed on the run's event stream,
+ * never here.
+ */
+export interface TargetIntentResult {
+  outcome: "resolved" | "stopped" | "retried" | "recorded" | "duplicate";
+  /** For `retried`, the new run; otherwise the run the intent addressed. */
+  runId: string | null;
+  threadRef: string;
+}
+
+/** Services plus the request they act on. */
+export interface SubmitTargetIntentOptions {
+  services: RunServices;
+  input: SubmitTargetIntentInput;
+}
+
+/** The run or elicitation a target intent names does not exist in this organization. */
+export class IntentTargetError extends Error {
+  constructor(
+    readonly code: "run_not_found" | "elicitation_not_found",
+    message: string,
+  ) {
+    super(message);
+    this.name = "IntentTargetError";
+  }
+}
+
+/** The target exists but its state does not admit the intent. */
+export class IntentStateError extends Error {
+  constructor(
+    readonly code: "run_not_active" | "run_not_retryable" | "elicitation_resolved",
+    message: string,
+  ) {
+    super(message);
+    this.name = "IntentStateError";
+  }
+}
+
+/** The intent names an option the elicitation does not offer. */
+export class IntentOptionError extends Error {
+  readonly code = "unknown_option";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "IntentOptionError";
+  }
+}
+
+/**
+ * The intent id was already claimed by a different kind of intent or target.
+ * Answering `duplicate` would silently swallow the new action, so a
+ * mismatched reuse is a conflict the caller must hear.
+ */
+export class IntentMismatchError extends Error {
+  readonly code = "intent_mismatch";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "IntentMismatchError";
+  }
+}
+
+/** Run states a stop can still reach: execution pending, live, or parked. */
+const STOPPABLE_RUN_STATES: RunRecord["state"][] = [
+  "queued",
+  "running",
+  "awaiting_approval",
+  "awaiting_input",
+];
+
+/** Run states a retry can follow, mirroring the lifecycle's own guard. */
+const RETRYABLE_RUN_STATES: RunRecord["state"][] = ["failed", "stale"];
+
+/**
+ * The decision derives from the elicitation and the chosen option, never from
+ * the caller: the wire intent carries only the option id (interface 03).
+ * Approvals and confirmations gate a pending call — the deny option refuses
+ * it, every other option lets it proceed — while choice and form elicitations
+ * are answered with the option itself.
+ */
+function deriveDecision(
+  event: ElicitationRecord["event"],
+  option: ElicitationRecord["event"]["options"][number],
+): "approved" | "denied" | "answered" {
+  if (event.kind === "choice" || event.kind === "form") return "answered";
+  return option.id === "deny" || option.style === "danger" ? "denied" : "approved";
+}
+
+type TargetDispatchIntent = Exclude<DispatchIntent, MessageIntent>;
+
+/**
+ * Loads and validates the addressed run or elicitation, and shapes the
+ * dispatch intent. Validation runs before the intent id is claimed, so a
+ * refused call can retry with the same id once the caller fixes it.
+ */
+async function resolveTarget(
+  services: RunServices,
+  input: SubmitTargetIntentInput,
+): Promise<TargetDispatchIntent> {
+  const { intentId, by, intent } = input;
+  if (intent.type === "resolve") {
+    const record = await services.store.getElicitation(intent.elicitationId);
+    if (record === undefined) {
+      throw new IntentTargetError("elicitation_not_found", "Elicitation not found");
+    }
+    if (record.resolution !== undefined) {
+      throw new IntentStateError("elicitation_resolved", "Elicitation is already resolved");
+    }
+    const option = record.event.options.find((candidate) => candidate.id === intent.optionId);
+    if (option === undefined) {
+      throw new IntentOptionError(`Elicitation offers no option '${intent.optionId}'`);
+    }
+    const run = await services.store.getRun(record.runId);
+    if (run === undefined) {
+      // The schema keeps an elicitation's run from going away underneath it;
+      // deny by default if it somehow did.
+      throw new IntentTargetError("run_not_found", "Run not found");
+    }
+    return {
+      type: "resolve",
+      intentId,
+      threadRef: run.threadRef,
+      runId: run.id,
+      elicitationId: intent.elicitationId,
+      optionId: intent.optionId,
+      decision: deriveDecision(record.event, option),
+      scope: option.scope ?? "once",
+      by,
+    };
+  }
+
+  const run = await services.store.getRun(intent.runId);
+  if (run === undefined) throw new IntentTargetError("run_not_found", "Run not found");
+  if (intent.type === "stop" && !STOPPABLE_RUN_STATES.includes(run.state)) {
+    throw new IntentStateError("run_not_active", `Run is ${run.state}; only an active run stops`);
+  }
+  if (intent.type === "retry" && !RETRYABLE_RUN_STATES.includes(run.state)) {
+    throw new IntentStateError(
+      "run_not_retryable",
+      `Run is ${run.state}; only a failed or stale run retries`,
+    );
+  }
+  const base = { intentId, threadRef: run.threadRef, runId: run.id, by };
+  if (intent.type === "stop") return { type: "stop", ...base };
+  if (intent.type === "retry") return { type: "retry", ...base };
+  return { type: "feedback", ...base, value: intent.verdict };
+}
+
+function buildTargetDispatcher(
+  services: RunServices,
+  input: SubmitTargetIntentInput,
+): InputDispatcher {
+  return new InputDispatcher({
+    store: services.store,
+    lock: services.lock,
+    // Dispatch routes a target intent by its type alone; only a message can
+    // reach run creation, and none is ever handed to this dispatcher.
+    createRun: async () => {
+      throw new Error("a target intent cannot create a run");
+    },
+    resolve: async (intent) => {
+      await services.interrupts.resolve({
+        elicitationId: intent.elicitationId,
+        optionId: intent.optionId,
+        decision: intent.decision,
+        by: intent.by,
+        ...(intent.scope === undefined ? {} : { scope: intent.scope }),
+      });
+    },
+    stop: async (intent) => {
+      await requireStopped(services, intent);
+    },
+    retry: async (intent) =>
+      services.lifecycle.retry({ runId: intent.runId, execute: services.enqueue }),
+    // Feedback is an audit fact in v1: recorded with attribution, mutating no
+    // run. Relaying it into the context app arrives with the data plane.
+    feedback: async (intent) => {
+      const comment = input.intent.type === "feedback" ? input.intent.comment : undefined;
+      await services.db.auditLog.create({
+        data: {
+          orgId: services.orgId,
+          actorPrincipalId: intent.by.principalId,
+          action: "run.feedback",
+          subject: intent.runId,
+          payload: { verdict: intent.value, ...(comment === undefined ? {} : { comment }) },
+        },
+      });
+    },
+  });
+}
+
+const TARGET_OUTCOMES = {
+  resolve: "resolved",
+  stop: "stopped",
+  retry: "retried",
+  feedback: "recorded",
+} as const;
+
+/**
+ * Routes a decision, stop, retry, or feedback through the same idempotent
+ * dispatch messages use. The named machinery does the work — the interrupt
+ * manager for resolutions, the run lifecycle for stops and retries — and the
+ * result reports the durably recorded fact, never execution.
+ * @throws {IntentTargetError} When the named run or elicitation does not exist.
+ * @throws {IntentStateError} When the target's state does not admit the intent.
+ * @throws {IntentOptionError} When the elicitation does not offer the option.
+ * @throws {IntentMismatchError} When the id was claimed by a different intent.
+ */
+export async function submitTargetIntent(
+  options: SubmitTargetIntentOptions,
+): Promise<TargetIntentResult> {
+  return dispatchTargetIntent(options, true);
+}
+
+/**
+ * Answers a replay whose first call already recorded where it routed. The
+ * claim, not the target's current state, is the truth a duplicate reads back:
+ * a stopped run is terminal, and its stop's replay must still say `duplicate`,
+ * never `run_not_active`. In-flight and stale claims return nothing and fall
+ * through to dispatch, whose own claim check and reclaim handle them.
+ * @throws {IntentMismatchError} When the claim was made by a different intent.
+ */
+async function routedDuplicate(
+  services: RunServices,
+  input: SubmitTargetIntentInput,
+): Promise<TargetIntentResult | undefined> {
+  const claimed = await services.db.runIntent.findUnique({
+    where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
+    select: { runId: true, kind: true, targetId: true },
+  });
+  if (claimed === null) return undefined;
+  assertClaimMatches(claimed, targetFingerprint(input.intent), input.intentId);
+  if (claimed.runId === null) return undefined;
+  const run = await services.store.getRun(claimed.runId);
+  if (run === undefined) return undefined;
+  log.info("Intent was a duplicate", { threadRef: run.threadRef, runId: run.id });
+  return { outcome: "duplicate", runId: run.id, threadRef: run.threadRef };
+}
+
+async function dispatchTargetIntent(
+  { services, input }: SubmitTargetIntentOptions,
+  reclaimStale: boolean,
+): Promise<TargetIntentResult> {
+  // The idempotency claim is consulted before state validation, so an
+  // at-least-once retry of a completed intent replays its routing instead of
+  // tripping over the state its own success left behind.
+  const routed = await routedDuplicate(services, input);
+  if (routed !== undefined) return routed;
+
+  const target = await resolveTarget(services, input);
+  let result: DispatchResult;
+  try {
+    result = await buildTargetDispatcher(services, input).dispatch(target);
+  } catch (error) {
+    // A state refusal raised under the claim — the stop that lost its race —
+    // releases the fresh claim, keeping the id as retryable as one refused
+    // before claiming. The `runId: null` guard spares any routed claim.
+    if (error instanceof IntentStateError) {
+      await services.db.runIntent.deleteMany({
+        where: { orgId: services.orgId, id: input.intentId, runId: null },
+      });
+    }
+    throw error;
+  }
+
+  if (result.outcome === "duplicate") {
+    const claim = await claimForDuplicate(
+      services,
+      input.intentId,
+      targetFingerprint(input.intent),
+      reclaimStale,
+    );
+    if (claim.kind === "reclaimed") {
+      log.warn("Reclaimed a stale intent claim", { threadRef: target.threadRef });
+      return dispatchTargetIntent({ services, input }, false);
+    }
+    log.info("Intent was a duplicate", { threadRef: target.threadRef, runId: claim.runId });
+    return { outcome: "duplicate", runId: claim.runId, threadRef: target.threadRef };
+  }
+  if (result.outcome === "new-run" || result.outcome === "steer") {
+    throw new Error(`unexpected dispatch outcome for a ${target.type}: ${result.outcome}`);
+  }
+
+  const outcome = TARGET_OUTCOMES[result.outcome];
+  const runId = result.outcome === "retry" ? result.run.id : result.runId;
+  await services.db.runIntent.update({
+    where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
+    data: { runId, outcome },
+  });
+  log.info("Intent accepted", { threadRef: target.threadRef, runId, outcome });
+  return { outcome, runId, threadRef: target.threadRef };
 }

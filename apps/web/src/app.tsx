@@ -5,12 +5,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import { AdminSettingsPage, SettingsLayout } from "#web/components/trema/settings-layout.tsx";
 import { Toaster } from "#web/components/ui/sonner.tsx";
 import { authClient, orpc } from "#web/lib/api.ts";
-import {
-  AuthenticatedAppShell,
-  AuthenticatedProvider,
-  HomePage,
-  Loading,
-} from "#web/pages/home.tsx";
+import { AuthenticatedAppShell, AuthenticatedProvider, Loading } from "#web/pages/home.tsx";
 
 // Every page below gets its own chunk, fetched when its route is first
 // visited. Imported statically they built one 1.3 MB file, most of which a
@@ -27,6 +22,9 @@ const AutomationsPage = lazy(() =>
 );
 const BootstrapPage = lazy(() =>
   import("#web/pages/bootstrap.tsx").then((m) => ({ default: m.BootstrapPage })),
+);
+const ChatPage = lazy(() =>
+  import("#web/pages/chat/index.tsx").then((m) => ({ default: m.ChatPage })),
 );
 const CustomizePage = lazy(() =>
   import("#web/pages/customize/index.tsx").then((m) => ({ default: m.CustomizePage })),
@@ -171,7 +169,9 @@ function AppRoutes() {
           element={settings(<SettingsModelProviderPage />, true)}
         />
         <Route path="/settings/*" element={settings(<Navigate to="/settings/profile" replace />)} />
-        <Route path="/" element={shell(<HomePage />)} />
+        {/* The chat is the main view: `/` is a new chat, each thread a URL. */}
+        <Route path="/" element={shell(<ChatPage />)} />
+        <Route path="/chat/:threadRef" element={shell(<ChatPage />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>

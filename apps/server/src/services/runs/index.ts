@@ -64,8 +64,23 @@ export type { SessionRunPlanOptions } from "./plan.js";
 export { createSessionRunPlan, narrowTools } from "./plan.js";
 export type { PrismaRunStoreOptions } from "./store.js";
 export { PrismaRunStore } from "./store.js";
-export type { StartRunInput, StartRunOptions, StartRunResult } from "./trigger.js";
-export { startRun } from "./trigger.js";
+export type {
+  StartRunInput,
+  StartRunOptions,
+  StartRunResult,
+  SubmitTargetIntentInput,
+  SubmitTargetIntentOptions,
+  TargetIntent,
+  TargetIntentResult,
+} from "./trigger.js";
+export {
+  IntentMismatchError,
+  IntentOptionError,
+  IntentStateError,
+  IntentTargetError,
+  startRun,
+  submitTargetIntent,
+} from "./trigger.js";
 
 /**
  * One dispatch lock per process.

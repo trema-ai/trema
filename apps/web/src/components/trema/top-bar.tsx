@@ -15,7 +15,7 @@ import { Separator } from "#web/components/ui/separator.tsx";
 import { SidebarTrigger } from "#web/components/ui/sidebar.tsx";
 
 const pageNames: Record<string, string> = {
-  "/": "Runs",
+  "/": "New chat",
   "/scopes": "Scopes",
   "/gallery": "Gallery",
 };
@@ -23,7 +23,8 @@ const pageNames: Record<string, string> = {
 /* Slim bar above the content: sidebar toggle, breadcrumb, and actions. */
 function TopBar({ orgName }: { orgName: string }) {
   const location = useLocation();
-  const pageName = pageNames[location.pathname] ?? "Runs";
+  const pageName =
+    pageNames[location.pathname] ?? (location.pathname.startsWith("/chat/") ? "Chat" : "Runs");
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
       <SidebarTrigger className="-ml-1" />
