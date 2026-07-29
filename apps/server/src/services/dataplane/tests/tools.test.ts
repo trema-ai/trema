@@ -82,6 +82,11 @@ describe("data-plane tool registry", () => {
     expect(tools[0]).toMatchObject({
       key: "notion:search_pages",
       kind: "connector",
+      connector: {
+        key: "notion",
+        displayName: "Notion",
+        logoUrl: "/connector-logos/notion.svg",
+      },
       description: "Search workspace pages",
       schema: {
         type: "object",

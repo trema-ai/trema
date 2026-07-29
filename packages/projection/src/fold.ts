@@ -154,6 +154,16 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
     }
 
     case "tool-start": {
+      const connector =
+        event.connector === undefined
+          ? undefined
+          : {
+              key: event.connector.key,
+              displayName: event.connector.displayName,
+              ...(event.connector.logoUrl === undefined
+                ? {}
+                : { logoUrl: event.connector.logoUrl }),
+            };
       const part = draft.mutableByKey("activity", event.callId);
       if (part === undefined) {
         draft.appendPart({
@@ -164,6 +174,7 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
           name: event.name,
           title: event.title,
           toolKind: event.kind,
+          ...(connector === undefined ? {} : { connector }),
           notes: [],
         });
       } else {
@@ -172,6 +183,7 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
         part.name = event.name;
         part.title = event.title;
         part.toolKind = event.kind;
+        if (connector !== undefined) part.connector = connector;
         part.status = "streaming";
       }
       break;
@@ -206,6 +218,19 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
     }
 
     case "elicitation": {
+      const reference =
+        event.reference === undefined
+          ? undefined
+          : {
+              ...(event.reference.callId === undefined ? {} : { callId: event.reference.callId }),
+              ...(event.reference.approvalId === undefined
+                ? {}
+                : { approvalId: event.reference.approvalId }),
+              ...(event.reference.itemId === undefined ? {} : { itemId: event.reference.itemId }),
+              ...(event.reference.automationId === undefined
+                ? {}
+                : { automationId: event.reference.automationId }),
+            };
       const part = draft.mutableByKey("elicitation", event.elicitationId);
       if (part === undefined) {
         draft.appendPart({
@@ -214,12 +239,14 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
           elicitationId: event.elicitationId,
           elicitationKind: event.kind,
           prompt: event.prompt,
+          ...(reference === undefined ? {} : { reference }),
           options: event.options,
           blocking: event.blocking,
         });
       } else {
         part.elicitationKind = event.kind;
         part.prompt = event.prompt;
+        if (reference !== undefined) part.reference = reference;
         part.options = event.options;
         part.blocking = event.blocking;
       }

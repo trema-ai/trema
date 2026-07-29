@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RunFooter } from "#web/components/trema/run-footer.tsx";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("RunFooter", () => {
   it("copies settled assistant prose", () => {
@@ -42,5 +45,44 @@ describe("RunFooter", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+  });
+
+  it("shows a waiting state without a working timer while paused", () => {
+    render(
+      <MemoryRouter>
+        <RunFooter
+          runId="run-1"
+          startedAt={new Date(Date.now() - 33_000).toISOString()}
+          live
+          waitingForDecision
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Paused · Waiting for your decision")).toBeTruthy();
+    expect(screen.queryByText(/Working for/)).toBeNull();
+    expect(document.querySelector('[data-slot="status-dot"]')?.getAttribute("data-tone")).toBe(
+      "wait",
+    );
+  });
+
+  it("refreshes elapsed time immediately when work resumes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-07-29T12:00:30Z");
+    const startedAt = "2026-07-29T12:00:00Z";
+    const { rerender } = render(
+      <MemoryRouter>
+        <RunFooter runId="run-1" startedAt={startedAt} live waitingForDecision />
+      </MemoryRouter>,
+    );
+
+    vi.setSystemTime("2026-07-29T12:02:00Z");
+    rerender(
+      <MemoryRouter>
+        <RunFooter runId="run-1" startedAt={startedAt} live />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Working for 2m")).toBeTruthy();
   });
 });

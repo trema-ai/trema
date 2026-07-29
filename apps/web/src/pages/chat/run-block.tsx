@@ -10,6 +10,7 @@ import {
   isTerminalProjection,
   isTerminalRunState,
   type PrincipalLike,
+  projectionWaitingForDecision,
 } from "#web/lib/run-timeline.ts";
 import {
   ProjectionSegments,
@@ -146,6 +147,7 @@ export function RunBlock({
   const chainStartedAt =
     projectionStreamingChainStartedAt(displayProjection, meta) ?? run.createdAt;
   const elapsed = useElapsed(chainStartedAt, chainStreaming);
+  const waitingForDecision = projectionWaitingForDecision(displayProjection);
 
   return (
     <div
@@ -195,6 +197,7 @@ export function RunBlock({
             startedAt={run.createdAt}
             {...(meta.lastAt === undefined || hasChain ? {} : { endedAt: meta.lastAt })}
             live={!settled}
+            waitingForDecision={waitingForDecision}
             {...(settled && copyText ? { copyText } : {})}
             {...(settled
               ? {

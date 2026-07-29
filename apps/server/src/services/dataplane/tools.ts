@@ -270,6 +270,11 @@ export function connectorToolDef(
     schema: connectorSchema(provider, tool),
     ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
     kind: "connector",
+    connector: {
+      key: provider.key,
+      displayName: provider.displayName,
+      ...(provider.logoUrl === undefined ? {} : { logoUrl: provider.logoUrl }),
+    },
     ...(tool.annotations?.destructiveHint ? { execution: "sequential" } : {}),
   };
 }
