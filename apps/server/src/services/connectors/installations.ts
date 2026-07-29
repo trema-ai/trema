@@ -19,10 +19,40 @@ export const toolAnnotationsSchema = z
   })
   .strict();
 
+export const MAX_SYNCED_CONNECTOR_TOOLS = 256;
+export const MAX_CONNECTOR_TOOL_SCHEMA_BYTES = 64 * 1024;
+export const MAX_CONNECTOR_TOOL_SCHEMA_DEPTH = 32;
+
+function schemaDepth(value: unknown, seen = new WeakSet<object>()): number {
+  if (typeof value !== "object" || value === null) return 0;
+  if (seen.has(value)) return MAX_CONNECTOR_TOOL_SCHEMA_DEPTH + 1;
+  seen.add(value);
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return 1 + Math.max(0, ...children.map((child) => schemaDepth(child, seen)));
+}
+
+const boundedJsonSchema = z.record(z.string(), z.unknown()).superRefine((schema, context) => {
+  if (JSON.stringify(schema).length > MAX_CONNECTOR_TOOL_SCHEMA_BYTES) {
+    context.addIssue({
+      code: "custom",
+      message: `Tool schema exceeds ${MAX_CONNECTOR_TOOL_SCHEMA_BYTES} bytes`,
+    });
+  }
+  if (schemaDepth(schema) > MAX_CONNECTOR_TOOL_SCHEMA_DEPTH) {
+    context.addIssue({
+      code: "custom",
+      message: `Tool schema exceeds depth ${MAX_CONNECTOR_TOOL_SCHEMA_DEPTH}`,
+    });
+  }
+});
+
 export const syncedToolSchema = z
   .object({
     name: z.string().trim().min(1),
+    title: z.string().trim().min(1).optional(),
     description: z.string().trim().min(1).optional(),
+    inputSchema: boundedJsonSchema.optional(),
+    outputSchema: boundedJsonSchema.optional(),
     annotations: toolAnnotationsSchema.optional(),
   })
   .strict();
@@ -39,6 +69,7 @@ const installationBodyShape = z
     ]),
     syncedTools: z
       .array(syncedToolSchema)
+      .max(MAX_SYNCED_CONNECTOR_TOOLS)
       .refine((tools) => new Set(tools.map(({ name }) => name)).size === tools.length, {
         message: "syncedTools cannot contain duplicate tool names",
       })
@@ -219,7 +250,7 @@ export async function archiveConnectorInstallation(
   db: Database,
   input: ArchiveConnectorInstallationInput,
 ) {
-  return db.$transaction(async (transaction) => {
+  const result = await db.$transaction(async (transaction) => {
     const existing = await transaction.item.findFirst({
       where: {
         id: input.installationItemId,
@@ -261,6 +292,14 @@ export async function archiveConnectorInstallation(
     });
     return { installation };
   });
+  const { indexConnectorInstallationToolsSafely } = await import(
+    "#server/services/connectors/tool-search.js"
+  );
+  await indexConnectorInstallationToolsSafely(db, {
+    orgId: input.orgId,
+    installationItemId: input.installationItemId,
+  });
+  return result;
 }
 
 export interface CreateConnectorInstallationInput extends EmbeddingOptions {
@@ -404,6 +443,16 @@ export async function createConnectorInstallation(
     connectionId: body.connectionId,
   });
   await indexItemSafely(db, installation, input);
+  const { indexConnectorInstallationToolsSafely } = await import(
+    "#server/services/connectors/tool-search.js"
+  );
+  await indexConnectorInstallationToolsSafely(db, {
+    orgId: input.orgId,
+    installationItemId: installation.id,
+    ...(input.embedder ? { embedder: input.embedder } : {}),
+    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+    catalog,
+  });
   if (provider.transport.type === "mcp") {
     const { syncConnectorInstallation } = await import("#server/services/connectors/sync.js");
     const sync = syncConnectorInstallation(db, {
@@ -527,5 +576,15 @@ export async function updateConnectorInstallation(
     return installation;
   });
   await indexItemSafely(db, updated, input);
+  const { indexConnectorInstallationToolsSafely } = await import(
+    "#server/services/connectors/tool-search.js"
+  );
+  await indexConnectorInstallationToolsSafely(db, {
+    orgId: input.orgId,
+    installationItemId: updated.id,
+    ...(input.embedder ? { embedder: input.embedder } : {}),
+    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+    catalog,
+  });
   return updated;
 }

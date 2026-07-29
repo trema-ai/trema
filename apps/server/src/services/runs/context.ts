@@ -1,6 +1,7 @@
 import type {
   ContextSession,
   OpenSessionRequest,
+  PrincipalRef,
   SessionSnapshot,
   SessionStanding,
   TranscriptMessage,
@@ -8,6 +9,12 @@ import type {
 } from "@trema/harness";
 
 import type { Database } from "#server/lib/db/index.js";
+import {
+  ApprovalValidationError,
+  approveApproval,
+  denyApproval,
+  requireApproval,
+} from "#server/services/approvals/index.js";
 import { closeSession, openSession, renewSession } from "#server/services/sessions/index.js";
 
 /**
@@ -120,12 +127,36 @@ export class ServerContextSession implements ContextSession {
     unavailable("fetch-transcript");
   }
 
-  async resolveApproval(): Promise<never> {
-    unavailable("resolve-approval");
+  async resolveApproval(
+    sessionId: string,
+    approvalId: string,
+    decision: "approved" | "denied",
+    scope: "once" | "run" | "always",
+    by: PrincipalRef,
+  ): Promise<void> {
+    const approval = await requireApproval(this.#db, this.#orgId, approvalId);
+    if (approval.sessionId !== sessionId) {
+      throw new ApprovalValidationError("Approval belongs to a different session");
+    }
+    if (decision === "approved") {
+      await approveApproval(this.#db, {
+        orgId: this.#orgId,
+        approvalId,
+        approverPrincipalId: by.principalId,
+        grantScope: scope,
+      });
+    } else {
+      await denyApproval(this.#db, {
+        orgId: this.#orgId,
+        approvalId,
+        approverPrincipalId: by.principalId,
+      });
+    }
   }
 
-  async proposePolicyEdit(): Promise<never> {
-    unavailable("propose-policy-edit");
+  async proposePolicyEdit(): Promise<void> {
+    // `approveApproval(..., grantScope: "always")` already records the durable
+    // standing ToolGrant atomically with the decision in this deployment.
   }
 
   async reportFeedback(): Promise<never> {

@@ -11,6 +11,13 @@ import { log } from "#server/lib/logger/index.js";
 export const RUN_TASK_NAME = "trema-run";
 
 /**
+ * Model turns and connector calls routinely take longer than Hatchet's
+ * one-minute default. Keep infrastructure retries for genuinely abandoned
+ * executions instead of redelivering a healthy run while it is still writing.
+ */
+export const DEFAULT_RUN_EXECUTION_TIMEOUT: Duration = "30m";
+
+/**
  * Everything the engine carries for a run.
  *
  * Only the id and the scheduling key travel: the driver loads every value a
@@ -74,9 +81,7 @@ export function defineRunTask(
       limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN,
     },
     retries: options.retries ?? 3,
-    ...(options.executionTimeout === undefined
-      ? {}
-      : { executionTimeout: options.executionTimeout }),
+    executionTimeout: options.executionTimeout ?? DEFAULT_RUN_EXECUTION_TIMEOUT,
     ...(options.scheduleTimeout === undefined ? {} : { scheduleTimeout: options.scheduleTimeout }),
     fn: async (input: RunTaskInput): Promise<RunTaskOutput> => execute(input.runId),
   });

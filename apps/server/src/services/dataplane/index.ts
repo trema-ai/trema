@@ -1,4 +1,11 @@
-import type { ApprovalMode, Item, ItemKind, ScopeKind } from "#server/generated/prisma/client.js";
+import type {
+  ApprovalMode,
+  ContextSession,
+  Item,
+  ItemKind,
+  Scope,
+  ScopeKind,
+} from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
@@ -37,6 +44,31 @@ export interface DataPlaneSession {
   approvalMode: ApprovalMode;
   /** The policy rows pinned at session open. The gate resolves against these. */
   policyRows: PolicyRow[];
+}
+
+/**
+ * Projects a stored session into the authority connector and context tools use.
+ *
+ * Both the MCP mount and the in-process run planner open the same pinned row,
+ * then pass only these fields across the data-plane boundary. Keeping the
+ * projection here prevents the two execution surfaces from interpreting the
+ * snapshot differently.
+ */
+export function toDataPlaneSession(
+  session: ContextSession & { scope: Pick<Scope, "kind"> },
+): DataPlaneSession {
+  return {
+    id: session.id,
+    orgId: session.orgId,
+    scopeId: session.scopeId,
+    scopeKind: session.scope.kind,
+    scopeChain: session.scopeChain,
+    actingPrincipalId: session.actingPrincipalId,
+    requesterPrincipalId: session.requesterPrincipalId,
+    requesterExternalRef: session.requesterExternalRef,
+    approvalMode: session.approvalMode,
+    policyRows: (session.policySnapshot as { rows?: PolicyRow[] } | null)?.rows ?? [],
+  };
 }
 
 /**

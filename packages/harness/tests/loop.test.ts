@@ -148,6 +148,151 @@ describe("runLoop", () => {
     ]);
   });
 
+  it("loads live typed tools after discovery and retains their keys", async () => {
+    const fixture = await setup([
+      {
+        events: [],
+        result: result("I will find the right tool", "toolUse", [
+          { callId: "search-1", name: "search_tools", input: { query: "create issue" } },
+        ]),
+      },
+      {
+        events: [],
+        result: result("I will create it", "toolUse", [
+          { callId: "connector-1", name: "github_create_issue", input: { title: "Bug" } },
+        ]),
+      },
+      { events: [], result: result("done") },
+    ]);
+    fixture.execute.mockImplementation(async (call: ToolCall) => ({
+      callId: call.callId,
+      status: "ok",
+      summary: `${call.name} completed`,
+      output: "{}",
+      ...(call.name === "search_tools" ? { activatedToolKeys: ["github:create_issue"] } : {}),
+    }));
+    const input = loopInput(fixture);
+    input.tools = [
+      {
+        key: "context:search_tools",
+        name: "search_tools",
+        title: "Search tools",
+        description: "Find a tool",
+        schema: {},
+        kind: "search",
+      },
+    ];
+    const connectorTool = {
+      key: "github:create_issue",
+      name: "github_create_issue",
+      title: "Create issue",
+      description: "Create an issue",
+      schema: { type: "object" },
+      kind: "connector" as const,
+    };
+    fixture.executor.resolveTools = async (keys) =>
+      keys.includes(connectorTool.key) ? [connectorTool] : [];
+
+    await runLoop(input);
+
+    expect(fixture.model.turnRequests.map(({ tools }) => tools.map(({ name }) => name))).toEqual([
+      ["search_tools"],
+      ["search_tools", "github_create_issue"],
+      ["search_tools", "github_create_issue"],
+    ]);
+    expect(fixture.execute.mock.calls.map(([call]) => call.name)).toEqual([
+      "search_tools",
+      "github_create_issue",
+    ]);
+  });
+
+  it("reconstructs active keys from committed tool results", async () => {
+    const fixture = await setup([{ events: [], result: result("resumed") }]);
+    await fixture.store.commitTurn({
+      turn: {
+        runId: "run-1",
+        index: 0,
+        model: { id: "test/model" },
+        message: {
+          role: "assistant",
+          blocks: [
+            {
+              type: "toolCall",
+              callId: "search-1",
+              name: "search_tools",
+              input: { query: "create issue" },
+            },
+          ],
+        },
+        toolResults: [
+          {
+            role: "toolResult",
+            toolCallId: "search-1",
+            status: "ok",
+            blocks: [{ type: "text", text: "{}" }],
+            activatedToolKeys: ["github:create_issue"],
+          },
+        ],
+        stopReason: "toolUse",
+        usage,
+      },
+    });
+    const input = loopInput(fixture);
+    const connectorTool = {
+      key: "github:create_issue",
+      name: "github_create_issue",
+      title: "Create issue",
+      description: "Create an issue",
+      schema: {},
+      kind: "connector" as const,
+    };
+    fixture.executor.resolveTools = async (keys) =>
+      keys.includes(connectorTool.key) ? [connectorTool] : [];
+
+    await runLoop(input);
+
+    expect(fixture.model.turnRequests[0]?.tools.map(({ name }) => name)).toEqual([
+      "lookup",
+      "github_create_issue",
+    ]);
+  });
+
+  it("bounds the active live-tool working set", async () => {
+    const keys = Array.from({ length: 13 }, (_, index) => `connector:tool_${index}`);
+    const fixture = await setup([
+      {
+        events: [],
+        result: result("discover", "toolUse", [{ callId: "search-1", name: "lookup", input: {} }]),
+      },
+      { events: [], result: result("done") },
+    ]);
+    fixture.execute.mockResolvedValue({
+      callId: "search-1",
+      status: "ok",
+      summary: "found",
+      output: "{}",
+      activatedToolKeys: keys,
+    });
+    const input = loopInput(fixture);
+    const connectorTools = keys.map((key, index) => ({
+      key,
+      name: `tool_${index}`,
+      title: `Tool ${index}`,
+      description: `Tool ${index}`,
+      schema: {},
+      kind: "connector" as const,
+    }));
+    fixture.executor.resolveTools = async (activeKeys) =>
+      connectorTools.filter(({ key }) => activeKeys.includes(key));
+
+    await runLoop(input);
+
+    expect(fixture.model.turnRequests[1]?.tools.map(({ name }) => name)).toEqual([
+      "lookup",
+      ...Array.from({ length: 12 }, (_, index) => `tool_${index + 1}`),
+    ]);
+  });
+
   it("never executes tool calls from a length-truncated turn", async () => {
     const toolCall = { callId: "call-1", name: "lookup", input: { partial: "{" } };
     const fixture = await setup([

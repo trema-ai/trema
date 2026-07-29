@@ -192,6 +192,57 @@ describe("settle-before-close", () => {
   });
 });
 
+describe("provider-scoped block ids", () => {
+  it("keeps repeated text and reasoning ids in event order across model requests", () => {
+    const projection = fold(
+      "run-1",
+      log([
+        { type: "reasoning-start", blockId: "reasoning-0" },
+        { type: "reasoning-delta", blockId: "reasoning-0", delta: "first thought" },
+        { type: "reasoning-end", blockId: "reasoning-0" },
+        { type: "text-start", blockId: "text-0" },
+        { type: "text-delta", blockId: "text-0", delta: "I will check." },
+        { type: "text-end", blockId: "text-0" },
+        {
+          type: "tool-start",
+          callId: "call-1",
+          name: "lookup",
+          title: "Lookup",
+          kind: "search",
+        },
+        {
+          type: "tool-result",
+          callId: "call-1",
+          status: "ok",
+          summary: "Found it",
+        },
+        { type: "reasoning-start", blockId: "reasoning-0" },
+        { type: "reasoning-delta", blockId: "reasoning-0", delta: "second thought" },
+        { type: "reasoning-end", blockId: "reasoning-0" },
+        { type: "text-start", blockId: "text-0" },
+        { type: "text-delta", blockId: "text-0", delta: "Here is the answer." },
+        { type: "text-end", blockId: "text-0" },
+      ]),
+    );
+
+    expect(
+      projection.segments[0]?.parts.map((part) =>
+        part.kind === "text"
+          ? `${part.kind}:${part.markdown}`
+          : part.kind === "reasoning"
+            ? `${part.kind}:${part.text}`
+            : part.kind,
+      ),
+    ).toStrictEqual([
+      "reasoning:first thought",
+      "text:I will check.",
+      "activity",
+      "reasoning:second thought",
+      "text:Here is the answer.",
+    ]);
+  });
+});
+
 describe("segments and resolutions", () => {
   it("mutates an elicitation in a prior, closed segment without reopening it", () => {
     const parked = fold(

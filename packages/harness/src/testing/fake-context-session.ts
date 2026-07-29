@@ -101,8 +101,9 @@ export class FakeContextSession implements ContextSession {
     approvalId: string,
     decision: "approved" | "denied",
     scope: "once" | "run" | "always",
+    by: { principalId: string; displayName?: string },
   ): Promise<void> {
-    this.#record("resolveApproval", sessionId, approvalId, decision, scope);
+    this.#record("resolveApproval", sessionId, approvalId, decision, scope, by);
   }
 
   async proposePolicyEdit(sessionId: string, toolKey: string): Promise<void> {

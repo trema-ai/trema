@@ -1,5 +1,5 @@
 import { ArrowUp, Loader2Icon, Square } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef } from "react";
 
 import { Button } from "#web/components/ui/button.tsx";
 import { cn } from "#web/lib/utils.ts";
@@ -21,6 +21,8 @@ type ChatComposerProps = {
   placeholder?: string;
   autoFocus?: boolean;
   className?: string;
+  /** Optional controls in the action row, immediately left of send/stop. */
+  actions?: ReactNode;
 };
 
 /**
@@ -37,11 +39,42 @@ function ChatComposer({
   onStop,
   stopping = false,
   error,
-  placeholder = "Send a message…",
+  placeholder = "Ask anything",
   autoFocus = false,
   className,
+  actions,
 }: ChatComposerProps) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Start typing anywhere outside a text field and the keystroke flows into
+  // the composer. Focusing during keydown lets that same character land in it.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.isComposing) return;
+      if (event.key.length !== 1) return;
+
+      const input = inputRef.current;
+      if (!input) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      if (active === input) return;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.tagName === "SELECT" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+
+      input.focus();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Auto-grow: the textarea tracks its content up to the max height. The
   // frame-after pass repeats the measurement once layout has fully settled —
@@ -53,7 +86,7 @@ function ChatComposer({
       const input = inputRef.current;
       if (input === null) return;
       input.style.height = "auto";
-      input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+      input.style.height = `${Math.min(input.scrollHeight, 128)}px`;
     };
     resize();
     const frame = requestAnimationFrame(resize);
@@ -66,7 +99,7 @@ function ChatComposer({
   return (
     <div data-slot="chat-composer" className={cn("flex w-full flex-col", className)}>
       {error !== undefined && <p className="mb-2 text-meta text-destructive">{error}</p>}
-      <div className="flex w-full flex-col gap-2 rounded-3xl border border-border/60 bg-[color-mix(in_oklab,var(--muted)_30%,var(--card))] p-2 transition-colors focus-within:border-border">
+      <div className="flex w-full flex-col gap-2 rounded-md border border-border/70 bg-card p-2 shadow-xs">
         <textarea
           ref={inputRef}
           value={value}
@@ -84,9 +117,10 @@ function ChatComposer({
           autoFocus={autoFocus}
           enterKeyHint="send"
           aria-label="Message input"
-          className="max-h-40 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-chat outline-none placeholder:text-muted-foreground"
+          className="max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none placeholder:text-muted-foreground/80"
         />
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-1">
+          {actions}
           {showStop ? (
             <Button
               type="button"
@@ -99,7 +133,7 @@ function ChatComposer({
               {stopping ? (
                 <Loader2Icon className="size-4 animate-spin" />
               ) : (
-                <Square className="size-3 fill-current" />
+                <Square className="size-3.5 fill-current" />
               )}
             </Button>
           ) : (
@@ -111,7 +145,7 @@ function ChatComposer({
               onClick={onSend}
               className="size-7 rounded-full"
             >
-              <ArrowUp className="size-4" />
+              <ArrowUp className="size-4.5" />
             </Button>
           )}
         </div>

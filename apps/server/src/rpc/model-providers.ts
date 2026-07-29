@@ -5,7 +5,7 @@ import {
   CredentialDecryptionError,
   CredentialEncryptionConfigError,
 } from "#server/lib/crypto/index.js";
-import { requireCapability } from "#server/rpc/builders.js";
+import { orgScoped, requireCapability } from "#server/rpc/builders.js";
 import {
   importProviderCatalog,
   refreshProviderCatalog,
@@ -15,6 +15,7 @@ import {
   deleteProvider,
   getProvider,
   listDefaults,
+  listOfferedModels,
   listProviders,
   ModelProviderAlreadyExistsError,
   ModelProviderNotFoundError,
@@ -52,6 +53,26 @@ const catalogEntrySchema = z.object({
     .describe("Whether this model is offered in the model picker. Omitted means it is not."),
   contextWindow: z.number().int().positive().optional().describe("Context window, in tokens."),
 });
+
+const offeredModelSchema = z
+  .object({
+    providerName: z.string().describe("The provider's stable name."),
+    modelId: z.string().describe("The model id the provider expects."),
+    label: z.string().describe("The model name shown in the picker."),
+    contextWindow: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("The model's context window in tokens, when the catalog reports it."),
+    default: z
+      .boolean()
+      .optional()
+      .describe(
+        "Whether this is the organization's turns default — the model a message without a choice runs on. At most one entry carries it.",
+      ),
+  })
+  .describe("One currently usable model the organization offers to members.");
 
 const settingsSchema = z
   .object({
@@ -151,6 +172,24 @@ function throwModelProviderError(error: unknown): never {
 function renderProvider(provider: Awaited<ReturnType<typeof getProvider>>) {
   return { ...provider, updatedAt: provider.updatedAt.toISOString() };
 }
+
+const offered = orgScoped
+  .route({
+    method: "GET",
+    path: "/models/offered",
+    summary: "List offered models",
+    description:
+      "List the organization's picker models whose provider currently resolves. The response contains catalog display data only, never credentials or provider transport settings.",
+    tags: ["Model providers"],
+  })
+  .output(z.array(offeredModelSchema).describe("The models available in the chat picker."))
+  .handler(async ({ context }) =>
+    listOfferedModels(context.db, context.org.id, {
+      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+        : {}),
+    }),
+  );
 
 const list = requireCapability("manage_models")
   .route({
@@ -591,6 +630,7 @@ const refreshCatalog = requireCapability("manage_models")
   });
 
 export const modelProvidersRouter = {
+  models: { offered },
   providers: { list, get, create, put, delete: remove, probe, remoteModels, refreshCatalog },
   defaults: { list: listRoleDefaults, put: putRoleDefault, delete: removeRoleDefault },
   presets: { list: listProviderPresets },

@@ -82,12 +82,12 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
       break;
 
     case "text-start": {
-      const part = draft.mutableByKey("text", event.blockId);
-      if (part === undefined) {
-        draft.appendPart({ kind: "text", id: event.blockId, status: "streaming", markdown: "" });
-      } else {
-        part.status = "streaming";
-      }
+      // Provider block ids are scoped to one provider request, not to the
+      // whole run. A later turn can therefore start another `text-0`; that is
+      // a new part at this event position, not a continuation of the earlier
+      // answer. Deltas and the end event still target the newest matching
+      // part via `mutableByKey`.
+      draft.appendPart({ kind: "text", id: event.blockId, status: "streaming", markdown: "" });
       break;
     }
     case "text-delta": {
@@ -117,12 +117,12 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
     }
 
     case "reasoning-start": {
-      const part = draft.mutableByKey("reasoning", event.blockId);
-      if (part === undefined) {
-        draft.appendPart({ kind: "reasoning", id: event.blockId, status: "streaming", text: "" });
-      } else {
-        part.status = "streaming";
-      }
+      draft.appendPart({
+        kind: "reasoning",
+        id: event.blockId,
+        status: "streaming",
+        text: "",
+      });
       break;
     }
     case "reasoning-delta": {

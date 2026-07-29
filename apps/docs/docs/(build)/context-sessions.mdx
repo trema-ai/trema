@@ -36,9 +36,25 @@ The response carries the session and everything the harness injects into the mod
 | `scopeChain` | The scopes the session reads, widest first. Writes land at the last one. |
 | `standing` | The instructions, standing memories, and skill index to inject into every turn, cut to a token budget. |
 | `policySnapshot` | The policy rows pinned for the session's whole life. The connector gate resolves each call against them. |
+| `tools` | The static context tools available to the harness. Connector operations are discovered live. |
 | `snapshotHash` | A stable identifier for the resolved snapshot. Two sessions resolving the same context share it. |
 
-The `tools` array is empty in the current release. If the call answers 404 with the code `location_unbound`, bind the location to a scope and retry. A 403 with `identity_unlinked` means the requesting user is not linked to a person.
+An in-process run starts with six context tools and no connector operations.
+The `search_tools` tool searches the current authorized connector catalog. It
+combines lexical and semantic ranking. Search remains lexical when the
+organization has no embedding model.
+
+The best five matches become typed tools on the next model turn. The run keeps
+at most 12 active tool keys. It resolves those keys before every turn, so a
+sync, installation, or removal takes effect without reopening the session.
+
+The run records active tool keys with its tool results. A retry or approval
+resume restores the key list, then resolves the current definitions. A pending
+call fails if its operation was removed while it waited.
+
+If the call returns `location_unbound`, bind the location to a scope and retry.
+An `identity_unlinked` response means the requesting user is not linked to a
+person.
 
 ## Renew and close
 
@@ -124,6 +140,15 @@ Every tool is scoped to the session's scope chain, so there is nothing to filter
 | `save_memory` | Saves a memory with a `type`, `title`, and `content` at the session's scope. A restated memory replaces the old one, and the reply names what it superseded. |
 | `update_memory` | Rewrites a memory's `content` in place. The type and title stay, and the earlier wording stays in the item's history. |
 | `fetch_transcript` | Reads a bounded window of a captured conversation, centered on `aroundSeq` or ending the thread when omitted. |
-| `use_connector` | Executes one connector tool by `toolKey`, with the credential attached server-side. A reply with status `approval_required` names a pending approval; once a person approves it, the same call with that `approvalId` executes. |
+| `search_tools` | Searches current authorized connector operations with lexical and semantic ranking. An in-process run enables the matches as typed tools. |
+| `use_connector` | Executes a connector operation by `toolKey` for an external MCP client. |
 
 The memory writes follow the writer policy. A `fact` or `preference` takes effect at once; a `rule` or `procedure` lands proposed and waits for a person to confirm it. Rewriting is narrower still: only facts and preferences saved at the session's own scope, because a confirmed rule or procedure needs a person.
+
+Trema's run harness handles approvals outside the model-facing tool schema. It
+parks the original call and resumes that call after a decision. The model does
+not receive an approval ID.
+
+An external MCP client manages its own pause. The `use_connector` response has
+an `approval_required` status and an approval ID. Call the tool again with the
+same arguments after approval.

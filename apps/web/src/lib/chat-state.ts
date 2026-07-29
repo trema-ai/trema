@@ -28,6 +28,12 @@ export interface PlaceholderRun {
   trigger: "message";
   createdAt: string;
   openingMessage: { author: PrincipalLike; text: string };
+  /**
+   * The intent id of the send that started the run. The opening message sits
+   * in the run's queued input under this id until the first turn drains it,
+   * and the thread must not render that row beside the opening bubble.
+   */
+  openingIntentId: string;
 }
 
 interface ChatViewState {

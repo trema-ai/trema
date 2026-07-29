@@ -9,6 +9,8 @@
  */
 
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "tw-shimmer";
 
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";

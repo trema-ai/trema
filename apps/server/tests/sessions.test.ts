@@ -145,12 +145,15 @@ integration("context sessions", () => {
     expect(opened.sessionToken).toMatch(/^trema_ses_/);
     expect(opened.policySnapshot.version).toBe(2);
     expect(opened.policySnapshot.rows).toEqual([]);
-    expect(opened.tools).toEqual([]);
+    // The handshake publishes only the static data-plane surface. Connector
+    // discovery reads the live catalog after the session opens.
+    expect(opened.tools.map((tool) => (tool as { name: string }).name)).toContain("use_connector");
 
     const persisted = await db.contextSession.findUniqueOrThrow({
       where: { id: opened.sessionId },
     });
     expect(persisted.tokenHash).toBe(hashSessionToken(opened.sessionToken));
+    expect(persisted).not.toHaveProperty("tools");
     expect(JSON.stringify(persisted)).not.toContain(opened.sessionToken);
     expect(persisted.threadRef).toBe("1700000000.0001");
     expect(persisted.expiresAt.getTime() - persisted.createdAt.getTime()).toBeGreaterThan(

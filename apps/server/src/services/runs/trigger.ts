@@ -10,6 +10,7 @@ import type {
 import { InputDispatcher } from "@trema/harness";
 
 import { log } from "#server/lib/logger/index.js";
+import type { ModelChainEntry } from "#server/services/model-providers/index.js";
 import type { RunServices } from "#server/services/runs/index.js";
 
 /** Where a run comes from, beyond the message itself. */
@@ -35,6 +36,8 @@ export interface StartRunInput extends RunOrigin {
   threadRef?: string;
   message: TranscriptMessage;
   author: PrincipalRef;
+  /** The picker choice to pin when this message creates a run. */
+  model?: ModelChainEntry;
 }
 
 /**
@@ -57,14 +60,44 @@ export interface StartRunResult {
 export interface StartRunOptions {
   services: RunServices;
   input: StartRunInput;
+  /** Checked under the dispatch lock, and only when the message creates a run. */
+  validateModel?: (model: ModelChainEntry) => Promise<void>;
 }
 
 function threadRefFor(input: StartRunInput): string {
   return input.threadRef ?? `${input.surface}:${input.locationRef}`;
 }
 
-function buildDispatcher(services: RunServices, input: StartRunInput): InputDispatcher {
+function buildDispatcher(
+  services: RunServices,
+  input: StartRunInput,
+  validateModel: StartRunOptions["validateModel"],
+): InputDispatcher {
   const createRun = async (intent: MessageIntent): Promise<RunRecord> => {
+    if (input.model !== undefined && validateModel !== undefined) {
+      try {
+        await validateModel(input.model);
+      } catch (error) {
+        // Dispatch claims the id before it classifies the message. A rejected
+        // picker value is not an accepted intent, so release that fresh claim
+        // while the thread lock still excludes every competing use of the id.
+        await services.db.runIntent.deleteMany({
+          where: { orgId: services.orgId, id: intent.intentId, runId: null },
+        });
+        throw error;
+      }
+    }
+    const waiting = await services.db.runQueuedInput.findFirst({
+      where: { orgId: services.orgId, kind: "follow_up", threadRef: intent.threadRef },
+      orderBy: { position: "asc" },
+      select: { modelProviderName: true, modelModelId: true },
+    });
+    const model =
+      waiting === null
+        ? input.model
+        : waiting.modelProviderName === null || waiting.modelModelId === null
+          ? undefined
+          : { providerName: waiting.modelProviderName, modelId: waiting.modelModelId };
     const snapshot = await services.context.open({
       surface: input.surface,
       locationRef: input.locationRef,
@@ -78,6 +111,15 @@ function buildDispatcher(services: RunServices, input: StartRunInput): InputDisp
       trigger: input.trigger,
       sessionId: snapshot.sessionId,
     });
+    if (model !== undefined) {
+      await services.db.agentRun.update({
+        where: { id: run.id },
+        data: {
+          modelProviderName: model.providerName,
+          modelModelId: model.modelId,
+        },
+      });
+    }
     // Recorded as soon as the run exists, so a crash later in routing still
     // leaves the claim answerable instead of permanently null.
     await services.db.runIntent.updateMany({
@@ -158,16 +200,16 @@ const STALE_CLAIM_MS = 60_000;
  * The result reports where the message landed and nothing about execution: a
  * caller observes progress through the run's event stream.
  */
-export async function startRun({ services, input }: StartRunOptions): Promise<StartRunResult> {
-  return dispatchRun({ services, input }, true);
+export async function startRun(options: StartRunOptions): Promise<StartRunResult> {
+  return dispatchRun(options, true);
 }
 
 async function dispatchRun(
-  { services, input }: StartRunOptions,
+  { services, input, validateModel }: StartRunOptions,
   reclaimStale: boolean,
 ): Promise<StartRunResult> {
   const threadRef = threadRefFor(input);
-  const dispatcher = buildDispatcher(services, input);
+  const dispatcher = buildDispatcher(services, input, validateModel);
   const result = await dispatcher.dispatch({
     type: "message",
     intentId: input.intentId,
@@ -185,7 +227,10 @@ async function dispatchRun(
     );
     if (claim.kind === "reclaimed") {
       log.warn("Reclaimed a stale run request", { threadRef });
-      return dispatchRun({ services, input }, false);
+      return dispatchRun(
+        { services, input, ...(validateModel === undefined ? {} : { validateModel }) },
+        false,
+      );
     }
     log.info("Run request was a duplicate", { threadRef, runId: claim.runId });
     return { outcome: "duplicate", runId: claim.runId, threadRef };
@@ -196,6 +241,15 @@ async function dispatchRun(
 
   const outcome = result.outcome === "new-run" ? "started" : "steered";
   const runId = result.outcome === "new-run" ? result.run.id : result.runId;
+  if (result.outcome === "steer" && input.model !== undefined) {
+    await services.db.runQueuedInput.updateMany({
+      where: { orgId: services.orgId, id: input.intentId, runId },
+      data: {
+        modelProviderName: input.model.providerName,
+        modelModelId: input.model.modelId,
+      },
+    });
+  }
   await services.db.runIntent.update({
     where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
     data: { runId, outcome },

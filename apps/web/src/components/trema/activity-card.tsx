@@ -51,7 +51,7 @@ function ActivityCard({
             className={cn(
               "truncate text-meta group-data-[state=open]:hidden",
               // A refusal marks itself: the denial text carries the color.
-              state === "denied" && "text-destructive",
+              (state === "denied" || state === "error") && "text-destructive",
             )}
           >
             {resultSummary}
@@ -61,11 +61,10 @@ function ActivityCard({
       {(state === "running" || state === "error") && (
         <span
           className={cn(
-            "flex shrink-0 items-center gap-1.5 pl-2 text-meta",
+            "flex shrink-0 items-center text-meta",
             state === "running" ? "text-muted-foreground" : "text-destructive",
           )}
         >
-          {state}
           <StatusDot tone={state === "running" ? "run" : "destructive"} />
         </span>
       )}
@@ -99,7 +98,12 @@ function ActivityCard({
           )}
           {notes !== undefined && <p className="text-meta text-muted-foreground">{notes}</p>}
           {resultSummary !== undefined && (
-            <p className={cn("text-meta", state === "denied" && "text-destructive")}>
+            <p
+              className={cn(
+                "text-meta",
+                (state === "denied" || state === "error") && "text-destructive",
+              )}
+            >
               {resultSummary}
             </p>
           )}

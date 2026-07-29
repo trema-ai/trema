@@ -3,6 +3,7 @@ import { HatchetClient, type Worker } from "@hatchet-dev/typescript-sdk/v1/index
 import { createPrismaClient, type Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { configureLogger, log } from "#server/lib/logger/index.js";
+import { createDataPlaneToolExecutor } from "#server/services/dataplane/executor.js";
 import {
   createRunServices,
   defineRunTask,
@@ -41,7 +42,10 @@ async function executeDeliveredRun(
   engineFor: (orgId: string) => HatchetEngine,
   runId: string,
 ): Promise<RunDriverResult> {
-  const row = await db.agentRun.findUnique({ where: { id: runId }, select: { orgId: true } });
+  const row = await db.agentRun.findUnique({
+    where: { id: runId },
+    select: { orgId: true, modelProviderName: true, modelModelId: true },
+  });
   if (row === null) {
     log.warn("Run execution skipped", { runId, reason: "unknown_run" });
     return { status: "unknown" };
@@ -57,7 +61,25 @@ async function executeDeliveredRun(
     resolveModel: () =>
       resolveConfiguredModel(db, row.orgId, {
         ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
+        ...(row.modelProviderName === null || row.modelModelId === null
+          ? {}
+          : {
+              model: {
+                providerName: row.modelProviderName,
+                modelId: row.modelModelId,
+              },
+            }),
       }),
+    toolExecutorForSession: (session) =>
+      createDataPlaneToolExecutor(
+        {
+          db,
+          ...(env.TREMA_CREDENTIAL_MASTER_KEY
+            ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY }
+            : {}),
+        },
+        session,
+      ),
   });
   if (services.driver === undefined) {
     throw new Error("The worker composed no run driver");

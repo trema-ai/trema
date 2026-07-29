@@ -3,8 +3,10 @@ import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import { ChatBubble } from "#web/components/trema/chat-bubble.tsx";
 import { ChatComposer } from "#web/components/trema/chat-composer.tsx";
 import { ErrorItem } from "#web/components/trema/error-item.tsx";
+import { type ModelOption, ModelSelector } from "#web/components/trema/model-selector.tsx";
 import { PersonalScopesNotice } from "#web/components/trema/personal-scopes-notice.tsx";
 import { Button } from "#web/components/ui/button.tsx";
 import { useStickToBottom } from "#web/hooks/use-stick-to-bottom.ts";
@@ -16,11 +18,20 @@ import {
   subscribeChatViewState,
 } from "#web/lib/chat-state.ts";
 import { intentErrorCode, messageFrom, submitIntent } from "#web/lib/intents.ts";
+import {
+  type ModelSelection,
+  modelSelectionSnapshot,
+  modelSelectionValue,
+  resolveModelSelection,
+  setModelSelection,
+  subscribeModelSelection,
+} from "#web/lib/model-selection.ts";
 import { isTerminalRunState, type PrincipalLike } from "#web/lib/run-timeline.ts";
 import { ulid } from "#web/lib/ulid.ts";
+import { cn } from "#web/lib/utils.ts";
 import { RunBlock, type RunBlockFacts, type ThreadRun } from "#web/pages/chat/run-block.tsx";
 import { useAuthenticatedSession, useViewerRole } from "#web/pages/home.tsx";
-import { type QueuedInputItem, QueuedInputNote } from "#web/pages/runs/timeline.tsx";
+import type { QueuedInputItem } from "#web/pages/runs/timeline.tsx";
 
 /**
  * The chat surface: `/` is a new chat — a client-minted threadRef and
@@ -91,7 +102,20 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
   const placeholders = viewState.runs[threadRef];
   const serverRuns = runsQuery.data?.runs;
   const runs: ThreadRun[] = useMemo(() => {
-    const listed: ThreadRun[] = serverRuns ?? [];
+    const byId = new Map((placeholders ?? []).map((run) => [run.id, run]));
+    // The server row owns a listed run, but until the first turn drains the
+    // opening into the log its derived openingMessage is null — the
+    // placeholder backfills it (and the intent id that suppresses the
+    // still-queued opening row) so the bubble never flickers away.
+    const listed: ThreadRun[] = (serverRuns ?? []).map((run) => {
+      const placeholder = byId.get(run.id);
+      if (placeholder === undefined || run.openingMessage !== null) return run;
+      return {
+        ...run,
+        openingMessage: placeholder.openingMessage,
+        openingIntentId: placeholder.openingIntentId,
+      };
+    });
     const known = new Set(listed.map((run) => run.id));
     const extra = (placeholders ?? []).filter((run) => !known.has(run.id));
     return [...listed, ...extra].sort((a, b) =>
@@ -101,13 +125,14 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
     );
   }, [serverRuns, placeholders]);
 
-  // A placeholder is provisional: once the thread-runs read lists the run,
-  // the server read owns it.
+  // A placeholder is provisional: once the thread-runs read lists the run
+  // with its opening derived from the log, the server read owns it whole.
+  // Until then the placeholder stays — it is what backfills the opening.
   useEffect(() => {
     if (serverRuns !== undefined && serverRuns.length > 0) {
       prunePlaceholderRuns(
         threadRef,
-        serverRuns.map((run) => run.id),
+        serverRuns.flatMap((run) => (run.openingMessage === null ? [] : [run.id])),
       );
     }
   }, [threadRef, serverRuns]);
@@ -157,12 +182,22 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
       enabled: lastRunId !== undefined,
     }),
   );
+  // The opening message sits in the run's queued input under its send's
+  // intent id until the first turn drains it. The thread already renders it
+  // as the opening bubble, so that one row never renders as queued too.
+  const openingIntentIds = useMemo(
+    () =>
+      new Set(
+        runs.flatMap((run) => (run.openingIntentId === undefined ? [] : [run.openingIntentId])),
+      ),
+    [runs],
+  );
   const queuedInput = useMemo<QueuedInputItem[]>(
     () =>
       lastRunId !== undefined && lastRunQuery.data?.access === "full"
-        ? lastRunQuery.data.queuedInput
+        ? lastRunQuery.data.queuedInput.filter((row) => !openingIntentIds.has(row.id))
         : [],
-    [lastRunId, lastRunQuery.data],
+    [lastRunId, lastRunQuery.data, openingIntentIds],
   );
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
 
@@ -290,12 +325,46 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
   const policy = useQuery(orpc.scopes.personalPolicy.queryOptions({ input: {} }));
   const personalOff = personalDisabled || policy.data?.enabled === false;
 
+  const offeredModels = useQuery(orpc.modelProviders.models.offered.queryOptions({ input: {} }));
+  const storedModel = useSyncExternalStore(
+    subscribeModelSelection,
+    modelSelectionSnapshot,
+    modelSelectionSnapshot,
+  );
+  // There is no "Default" row: the org's turns default is just the entry
+  // pre-selected until the member picks another (first entry when the read
+  // marks none). What the picker shows is exactly what the run gets.
+  const stored = resolveModelSelection(storedModel, offeredModels.data ?? []);
+  const selectedModel =
+    stored ??
+    offeredModels.data?.find((model) => model.default === true) ??
+    offeredModels.data?.[0];
+  useEffect(() => {
+    if (storedModel !== undefined && offeredModels.isSuccess && stored === undefined) {
+      setModelSelection(undefined);
+    }
+  }, [offeredModels.isSuccess, stored, storedModel]);
+
+  const modelOptions = useMemo<ModelOption[]>(
+    () =>
+      (offeredModels.data ?? []).map((model) => ({
+        id: modelSelectionValue(model),
+        name: model.label,
+        keywords: [model.providerName, model.modelId],
+      })),
+    [offeredModels.data],
+  );
+
   const sendMutation = useMutation({
-    mutationFn: (input: { intentId: string; text: string }) =>
+    mutationFn: (input: { intentId: string; text: string; model?: ModelSelection }) =>
       rpcClient.intents.submit({
         intentId: input.intentId,
         threadRef,
-        intent: { type: "message", text: input.text },
+        intent: {
+          type: "message",
+          text: input.text,
+          ...(input.model === undefined ? {} : { model: input.model }),
+        },
       }),
   });
 
@@ -306,7 +375,18 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
     setDraft("");
     setSendError(undefined);
     sendMutation.mutate(
-      { intentId, text },
+      {
+        intentId,
+        text,
+        ...(selectedModel === undefined
+          ? {}
+          : {
+              model: {
+                providerName: selectedModel.providerName,
+                modelId: selectedModel.modelId,
+              },
+            }),
+      },
       {
         onSuccess: (result) => {
           const queuedAt = new Date().toISOString();
@@ -321,6 +401,7 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
               trigger: "message",
               createdAt: queuedAt,
               openingMessage: { author, text },
+              openingIntentId: intentId,
             });
             if (isNew) void navigate(`/chat/${threadRef}`);
           } else if (result.outcome === "steered") {
@@ -384,13 +465,47 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
   const isEmpty = runs.length === 0 && pendingDisplay.length === 0;
   // A new chat's runs query is disabled, which TanStack reports as pending.
   const loadingRuns = !isNew && runsQuery.isPending;
+  const docked = !isEmpty || loadingRuns;
+  const composer = personalOff ? (
+    <PersonalScopesNotice canManage={role === "owner" || role === "admin"} />
+  ) : (
+    <ChatComposer
+      value={draft}
+      onValueChange={setDraft}
+      onSend={handleSend}
+      onStop={activeRunId === undefined ? undefined : () => stopMutation.mutate(activeRunId)}
+      stopping={stopping}
+      error={sendError}
+      autoFocus
+      actions={
+        offeredModels.isSuccess && offeredModels.data.length > 0 ? (
+          <ModelSelector
+            models={modelOptions}
+            value={selectedModel === undefined ? "" : modelSelectionValue(selectedModel)}
+            onValueChange={(value) => {
+              const next = offeredModels.data.find((model) => modelSelectionValue(model) === value);
+              if (next !== undefined) {
+                setModelSelection({
+                  providerName: next.providerName,
+                  modelId: next.modelId,
+                });
+              }
+            }}
+          />
+        ) : null
+      }
+    />
+  );
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-card">
       <div ref={viewportRef} className="relative flex flex-1 flex-col overflow-y-auto">
         <div
           ref={contentRef}
-          className="mx-auto flex w-full max-w-[740px] flex-1 flex-col gap-5 px-4 pt-8 pb-4"
+          className={cn(
+            "mx-auto flex w-full max-w-3xl flex-1 flex-col gap-y-6 px-4 pt-8 pb-4",
+            docked ? "mb-14" : "justify-center",
+          )}
         >
           {runsQuery.error !== null && (
             <ErrorItem title="Could not load this chat" message={runsQuery.error.message} />
@@ -403,46 +518,37 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
             </div>
           )}
           {isEmpty && !loadingRuns && runsQuery.error === null && (
-            <div className="flex flex-1 items-center justify-center">
-              <p className="text-chat text-muted-foreground">How can I help?</p>
-            </div>
+            <h1 className="animate-in text-center text-2xl font-semibold fade-in slide-in-from-bottom-1 duration-200 motion-reduce:animate-none">
+              How can I help you today?
+            </h1>
           )}
           {runs.map((run) => (
             <RunBlock key={run.id} run={run} onFacts={handleFacts} />
           ))}
           {pendingDisplay.map((item) => (
-            <QueuedInputNote key={item.id} item={item} />
+            <ChatBubble key={item.id} queued>
+              {item.text}
+            </ChatBubble>
           ))}
+          {!docked && composer}
         </div>
-        <div className="sticky bottom-0 z-10 mx-auto w-full max-w-[740px] bg-card px-4 pb-4">
-          <div className="relative">
-            {away && (
-              <Button
-                size="icon-sm"
-                aria-label="Jump to latest"
-                onClick={scrollToBottom}
-                className="absolute -top-11 left-1/2 size-8 -translate-x-1/2 rounded-full border bg-card text-muted-foreground shadow-overlay hover:bg-muted"
-              >
-                <ArrowDown className="size-4" />
-              </Button>
-            )}
-            {personalOff ? (
-              <PersonalScopesNotice canManage={role === "owner" || role === "admin"} />
-            ) : (
-              <ChatComposer
-                value={draft}
-                onValueChange={setDraft}
-                onSend={handleSend}
-                onStop={
-                  activeRunId === undefined ? undefined : () => stopMutation.mutate(activeRunId)
-                }
-                stopping={stopping}
-                error={sendError}
-                autoFocus
-              />
-            )}
+        {docked && (
+          <div className="sticky z-10 mx-auto w-full max-w-3xl rounded-md bg-card bottom-5">
+            <div className="relative">
+              {away && (
+                <Button
+                  size="icon-sm"
+                  aria-label="Jump to latest"
+                  onClick={scrollToBottom}
+                  className="absolute -top-11 left-1/2 size-8 -translate-x-1/2 rounded-full border bg-card text-muted-foreground shadow-overlay hover:bg-muted"
+                >
+                  <ArrowDown className="size-4" />
+                </Button>
+              )}
+              {composer}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

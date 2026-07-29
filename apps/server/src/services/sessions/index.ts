@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
+import type { ToolDef } from "@trema/harness";
+
 import type {
   ApprovalMode,
   ContextSession,
@@ -11,6 +13,7 @@ import type {
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { type ResolveLocationInput, resolveLocation } from "#server/services/bindings/index.js";
+import { sessionToolDefs } from "#server/services/dataplane/tools.js";
 import { type PolicySnapshot, resolvePolicySnapshot } from "#server/services/policies/index.js";
 import {
   type AssembledStanding,
@@ -121,7 +124,7 @@ export interface OpenSessionResult {
   scopeChain: Scope[];
   standing: AssembledStanding;
   policySnapshot: PolicySnapshot;
-  tools: never[];
+  tools: ToolDef[];
 }
 
 interface ResolvedRequester {
@@ -330,7 +333,6 @@ export function hashSnapshot(input: {
   scopeChain: readonly string[];
   standing: AssembledStanding;
   policySnapshot: PolicySnapshot;
-  tools: readonly unknown[];
 }): string {
   const canonical = JSON.stringify({
     mode: input.mode,
@@ -339,7 +341,6 @@ export function hashSnapshot(input: {
     items: input.standing.included,
     skillIndex: input.standing.standing.skillIndex,
     policySnapshot: input.policySnapshot,
-    tools: input.tools,
   });
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -370,15 +371,12 @@ export async function openSession(
     scopeId: scope.id,
     scopeChain: scopeChainIds,
   });
-  // Connector tool definitions join the session when the connector proxy
-  // reaches the data plane.
-  const tools: never[] = [];
+  const tools = sessionToolDefs();
   const snapshotHash = hashSnapshot({
     mode,
     scopeChain: scopeChainIds,
     standing,
     policySnapshot,
-    tools,
   });
 
   const sessionToken = mintSessionToken();

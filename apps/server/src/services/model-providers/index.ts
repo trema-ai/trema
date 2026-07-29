@@ -32,6 +32,14 @@ export interface ModelChainEntry {
   modelId: string;
 }
 
+/** One catalog model safe to offer to every member of the organization. */
+export interface OfferedModel extends ModelChainEntry {
+  label: string;
+  contextWindow?: number;
+  /** Whether this entry is the organization's resolved `turns` default. */
+  default?: boolean;
+}
+
 const chainSchema = z.array(
   z.object({
     providerName: z.string().trim().min(1),
@@ -911,6 +919,53 @@ export async function resolveEndpoints(
     }
   }
   return endpoints;
+}
+
+/**
+ * Lists picker models from providers that can currently become endpoints.
+ *
+ * Endpoint resolution is only an availability check. Returned rows contain
+ * catalog display data and stable ids, never transport settings or credentials.
+ */
+export async function listOfferedModels(
+  db: Database,
+  orgId: string,
+  options: ResolveEndpointsOptions = {},
+): Promise<OfferedModel[]> {
+  const endpoints = await resolveEndpoints(db, orgId, options);
+  const providerNames = Object.keys(endpoints);
+  if (providerNames.length === 0) return [];
+
+  const providers = await db.modelProvider.findMany({
+    where: { orgId, name: { in: providerNames } },
+    orderBy: { name: "asc" },
+  });
+  // The same walk the run path takes: the default the picker pre-selects is
+  // the model a send with no choice would use.
+  const chain = await resolveRoleChain(db, orgId, "turns");
+  const turnsDefault = chain.find((entry) => endpoints[entry.providerName] !== undefined);
+  return providers.flatMap((provider) => {
+    try {
+      return providerCatalog(provider)
+        .filter((model) => model.offered === true)
+        .map((model) => ({
+          providerName: provider.name,
+          modelId: model.id,
+          label: model.label ?? model.id,
+          ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+          ...(turnsDefault !== undefined &&
+          turnsDefault.providerName === provider.name &&
+          turnsDefault.modelId === model.id
+            ? { default: true }
+            : {}),
+        }));
+    } catch {
+      log.warn("Offered models skipped for an unusable catalog", {
+        providerName: provider.name,
+      });
+      return [];
+    }
+  });
 }
 
 /** The role's ordered chain as stored, or an empty chain when the role has no row. */

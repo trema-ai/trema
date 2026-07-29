@@ -84,7 +84,11 @@ type QueuedInputRow = {
   id: string;
   message: Prisma.JsonValue;
   author: Prisma.JsonValue;
+  modelProviderName: string | null;
+  modelModelId: string | null;
 };
+
+type QueuedInputWithModel = QueuedInput & { model?: { providerName: string; modelId: string } };
 
 type ElicitationRow = {
   id: string;
@@ -155,11 +159,14 @@ function toRunEvent(row: RunEventRow): RunEvent {
   };
 }
 
-function toQueuedInput(row: QueuedInputRow): QueuedInput {
+function toQueuedInput(row: QueuedInputRow): QueuedInputWithModel {
   return {
     id: row.id,
     message: row.message as unknown as TranscriptMessage,
     author: row.author as unknown as QueuedInput["author"],
+    ...(row.modelProviderName === null || row.modelModelId === null
+      ? {}
+      : { model: { providerName: row.modelProviderName, modelId: row.modelModelId } }),
   };
 }
 
@@ -416,6 +423,7 @@ export class PrismaRunStore implements RunStore {
   }
 
   async enqueueFollowUp(threadRef: string, input: QueuedInput): Promise<void> {
+    const model = (input as QueuedInputWithModel).model;
     await this.#db.runQueuedInput.create({
       data: {
         id: input.id,
@@ -424,6 +432,12 @@ export class PrismaRunStore implements RunStore {
         threadRef,
         message: json(input.message),
         author: json(input.author),
+        ...(model === undefined
+          ? {}
+          : {
+              modelProviderName: model.providerName,
+              modelModelId: model.modelId,
+            }),
       },
     });
   }
@@ -681,7 +695,8 @@ export class PrismaRunStore implements RunStore {
       DELETE FROM "RunQueuedInput" AS q
       USING claimed
       WHERE q."id" = claimed."id"
-      RETURNING q."id", q."message", q."author", q."position"`;
+      RETURNING q."id", q."message", q."author",
+        q."modelProviderName", q."modelModelId", q."position"`;
     return rows.sort((a, b) => a.position - b.position).map(toQueuedInput);
   }
 }

@@ -20,7 +20,10 @@ const defaultCatalog = loadProviderCatalog();
 
 export interface McpListedTool {
   name: string;
+  title?: string | undefined;
   description?: string | undefined;
+  inputSchema?: Record<string, unknown> | undefined;
+  outputSchema?: Record<string, unknown> | undefined;
   annotations?:
     | {
         readOnlyHint?: boolean | undefined;
@@ -44,7 +47,10 @@ export function mapMcpTool(tool: McpListedTool): SyncedTool {
   };
   return {
     name: tool.name,
+    ...(tool.title ? { title: tool.title } : {}),
     ...(tool.description ? { description: tool.description } : {}),
+    ...(tool.inputSchema ? { inputSchema: tool.inputSchema } : {}),
+    ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
     ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
   };
 }
@@ -118,22 +124,27 @@ export const createStreamableHttpMcpClient: McpClientFactory = async (input) => 
     listTools: async (params) => {
       const result = await client.listTools(params);
       return {
-        tools: result.tools.map(({ name, description, annotations }) => ({
-          name,
-          ...(description ? { description } : {}),
-          ...(annotations
-            ? {
-                annotations: {
-                  ...(annotations.readOnlyHint !== undefined
-                    ? { readOnlyHint: annotations.readOnlyHint }
-                    : {}),
-                  ...(annotations.destructiveHint !== undefined
-                    ? { destructiveHint: annotations.destructiveHint }
-                    : {}),
-                },
-              }
-            : {}),
-        })),
+        tools: result.tools.map(
+          ({ name, title, description, inputSchema, outputSchema, annotations }) => ({
+            name,
+            ...(title ? { title } : {}),
+            ...(description ? { description } : {}),
+            ...(inputSchema ? { inputSchema: inputSchema as Record<string, unknown> } : {}),
+            ...(outputSchema ? { outputSchema: outputSchema as Record<string, unknown> } : {}),
+            ...(annotations
+              ? {
+                  annotations: {
+                    ...(annotations.readOnlyHint !== undefined
+                      ? { readOnlyHint: annotations.readOnlyHint }
+                      : {}),
+                    ...(annotations.destructiveHint !== undefined
+                      ? { destructiveHint: annotations.destructiveHint }
+                      : {}),
+                  },
+                }
+              : {}),
+          }),
+        ),
         ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
       };
     },
@@ -319,6 +330,15 @@ export async function syncConnectorInstallation(
       addedCount: result.report.added.length,
       removedCount: result.report.removed.length,
       changedCount: result.report.changed.length,
+    });
+    const { indexConnectorInstallationToolsSafely } = await import(
+      "#server/services/connectors/tool-search.js"
+    );
+    await indexConnectorInstallationToolsSafely(db, {
+      orgId: input.orgId,
+      installationItemId: result.installation.id,
+      ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+      catalog,
     });
     return result;
   } catch (error) {

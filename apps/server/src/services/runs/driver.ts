@@ -45,7 +45,10 @@ export interface RunExecutionPlan {
    */
   modelPort: ModelPort;
   standing: SessionStanding;
+  /** Definitions available on the first model turn. */
   tools: ToolDef[];
+  /** Live connector keys exposed immediately by an explicit run tool list. */
+  activeToolKeys?: string[];
   /** Messages already on the thread before this run's first turn. */
   threadMessages: TranscriptMessage[];
   thinking?: ThinkingLevel;
@@ -53,6 +56,8 @@ export interface RunExecutionPlan {
   /** Standard date-time string after which a blocking elicitation expires. */
   elicitationExpiresAt?: string;
   hooks?: HarnessHooks;
+  /** Executor closed over this run's pinned session, when the plan provides one. */
+  toolExecutor?: ToolExecutor;
 }
 
 /** A run that cannot start. The failure is recorded on the run, not thrown at the engine. */
@@ -169,9 +174,10 @@ export function createRunDriver(options: RunDriverOptions): RunDriver {
             standing: plan.standing,
             threadMessages: plan.threadMessages,
             tools: plan.tools,
+            ...(plan.activeToolKeys === undefined ? {} : { activeToolKeys: plan.activeToolKeys }),
             modelPort: plan.modelPort,
             store: options.store,
-            toolExecutor: options.toolExecutor,
+            toolExecutor: plan.toolExecutor ?? options.toolExecutor,
             abort,
             ...(plan.thinking === undefined ? {} : { thinking: plan.thinking }),
             ...(plan.maxTurns === undefined ? {} : { maxTurns: plan.maxTurns }),

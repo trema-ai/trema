@@ -57,6 +57,8 @@ export interface UseConnectorInput {
   reason: string;
   /** The approval a person granted for this exact call, on the second attempt. */
   approvalId?: string;
+  /** Resolve the gate without touching the provider. Used by the run harness preflight. */
+  authorizeOnly?: boolean;
   /**
    * The delegated-mode classifier, when one is configured. Absent, `delegated`
    * is unavailable and the gate degrades those sessions to `ask` — the safe
@@ -72,6 +74,11 @@ export interface UseConnectorInput {
 }
 
 export type UseConnectorResult =
+  | {
+      status: "authorized";
+      toolKey: string;
+      mode: ApprovalMode;
+    }
   | {
       status: "executed";
       toolKey: string;
@@ -316,7 +323,6 @@ export async function useConnector(
         `'${RESERVED_NAMESPACE}' names this app's own operations, not a connector`,
       );
     }
-
     const engineInput = {
       orgId: session.orgId,
       scopeChain: session.scopeChain,
@@ -376,12 +382,14 @@ export async function useConnector(
           "The approved call changed underneath its approval — ask again",
         );
       }
-      await claimApprovalExecution(db, {
-        orgId: session.orgId,
-        approvalId,
-        args,
-        ...(input.now ? { now: input.now } : {}),
-      });
+      if (!input.authorizeOnly) {
+        await claimApprovalExecution(db, {
+          orgId: session.orgId,
+          approvalId,
+          args,
+          ...(input.now ? { now: input.now } : {}),
+        });
+      }
       authority = "approval_claimed";
     } else if (mode === "full") {
       authority = "mode_full";
@@ -466,6 +474,10 @@ export async function useConnector(
         message:
           "A person has to approve this call. Say so and stop here; once it is approved, call again with the same arguments and this approvalId.",
       };
+    }
+
+    if (input.authorizeOnly) {
+      return { status: "authorized", toolKey, mode };
     }
 
     const result = await executeConnectorTool(db, { ...engineInput, resolved, authority });
