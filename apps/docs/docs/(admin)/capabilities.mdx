@@ -1,0 +1,60 @@
+---
+title: Capabilities
+description: Configure web search and web fetch, choose provider order, and control the native tools available to the agent.
+---
+
+A capability gives the agent a stable, Trema-owned tool whose backend an administrator can replace. Capabilities differ from [connectors](/connectors): a connector publishes provider-specific operations, while a capability keeps one tool contract across providers.
+
+Managing capabilities requires the `manage_capabilities` permission, held by owners and admins.
+
+## Configure web search
+
+Web search supports Brave Search and Tavily. Each provider needs its own API key.
+
+1. Open **Settings → Capabilities**.
+2. Choose **Configure** beside a search provider.
+3. Enter its API key and save.
+4. Under **Routing**, select the primary provider and an optional fallback.
+5. Save the route.
+
+The first configured provider enables web search automatically. A configured fallback runs only when the primary request fails. It does not merge, rerank, or supplement successful results.
+
+The agent receives one `search_web` tool regardless of provider. The tool accepts a query, an optional result limit up to 20, and an optional day, week, month, or year recency filter. Results use one shape: title, URL, snippet, and an optional publication time.
+
+Replacing a key overwrites its encrypted value. Trema never returns a saved key. Removing a provider deletes its key and removes the provider from the route; removing the final provider disables web search.
+
+## Enable web fetch
+
+Web fetch uses Trema's built-in fetcher and needs no provider account.
+
+1. Open **Settings → Capabilities**.
+2. Turn on **Web fetch**.
+3. Set the timeout, maximum response bytes, and maximum returned characters.
+4. Save.
+
+The agent receives the `fetch_url` tool while the route is enabled. It reads public HTTP and HTTPS pages as text and accepts HTML, XHTML, plain text, and JSON.
+
+The fetcher sends no cookies or connector credentials. It refuses URL credentials, private and reserved network addresses, unsupported content types, excessive redirects, and responses beyond the configured byte limit. It resolves and checks every redirect target before connecting.
+
+The default limits are 15 seconds, 1,000,000 response bytes, and 50,000 returned characters. The API accepts timeouts from 1 to 60 seconds, byte limits from 16,384 to 5,000,000, and character limits from 1,000 to 200,000.
+
+## Disable a capability
+
+Turn off its route and save. The tool disappears from new model turns and external MCP tool listings. Its provider configuration stays available for later use.
+
+## Configure through the API
+
+Drivers describe the adapters bundled with the deployment. Providers hold an adapter's settings and encrypted credential. Routes enable a capability and list its providers in resolution order.
+
+| Operation | Route |
+| --- | --- |
+| List bundled drivers | `GET /capability-drivers` |
+| List configured providers | `GET /capability-providers` |
+| Create or replace a provider | `PUT /capability-providers/{name}` |
+| Delete a provider | `DELETE /capability-providers/{name}` |
+| List enabled routes | `GET /capability-routes` |
+| Set or disable a route | `PUT /capability-routes/{capabilityKey}` |
+
+Set a route's `chain` to an empty array to disable it. Provider names in a route are ordered from primary to fallback and must serve that route's capability.
+
+See the [API reference](/api) for request and response schemas.

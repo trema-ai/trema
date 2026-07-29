@@ -6,6 +6,7 @@ export default defineMeta({
     "members-and-invites",
     "scopes-and-teams",
     "connectors",
+    "capabilities",
     "model-providers",
     "approval-policies",
     "schedules",

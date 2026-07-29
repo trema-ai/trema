@@ -48,6 +48,11 @@ const SettingsApprovalsPage = lazy(() =>
 const SettingsAuditPage = lazy(() =>
   import("#web/pages/settings/audit.tsx").then((m) => ({ default: m.SettingsAuditPage })),
 );
+const SettingsCapabilitiesPage = lazy(() =>
+  import("#web/pages/settings/capabilities.tsx").then((m) => ({
+    default: m.SettingsCapabilitiesPage,
+  })),
+);
 const SettingsConnectorDetailPage = lazy(() =>
   import("#web/pages/settings/connectors/detail.tsx").then((m) => ({
     default: m.SettingsConnectorDetailPage,
@@ -156,6 +161,10 @@ function AppRoutes() {
         <Route path="/settings/members" element={settings(<SettingsMembersPage />, true)} />
         <Route path="/settings/scopes" element={settings(<ScopesPage />, true)} />
         <Route path="/settings/connectors" element={settings(<SettingsConnectorsPage />, true)} />
+        <Route
+          path="/settings/capabilities"
+          element={settings(<SettingsCapabilitiesPage />, true)}
+        />
         <Route path="/settings/policies" element={settings(<SettingsPoliciesPage />, true)} />
         <Route path="/settings/approvals" element={settings(<SettingsApprovalsPage />, true)} />
         <Route path="/settings/models" element={settings(<SettingsModelsPage />, true)} />

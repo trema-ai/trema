@@ -36,10 +36,10 @@ The response carries the session and everything the harness injects into the mod
 | `scopeChain` | The scopes the session reads, widest first. Writes land at the last one. |
 | `standing` | The instructions, standing memories, and skill index to inject into every turn, cut to a token budget. |
 | `policySnapshot` | The policy rows pinned for the session's whole life. The connector gate resolves each call against them. |
-| `tools` | The static context tools available to the harness. Connector operations are discovered live. |
+| `tools` | The context tools and enabled native capability tools available to the harness. Connector operations are discovered live. |
 | `snapshotHash` | A stable identifier for the resolved snapshot. Two sessions resolving the same context share it. |
 
-An in-process run starts with six context tools and no connector operations.
+An in-process run starts with the context tools, any enabled native capability tools, and no connector operations.
 The `search_tools` tool searches the current authorized connector catalog. It
 combines lexical and semantic ranking. Search remains lexical when the
 organization has no embedding model.
@@ -142,6 +142,8 @@ Every tool is scoped to the session's scope chain, so there is nothing to filter
 | `fetch_transcript` | Reads a bounded window of a captured conversation, centered on `aroundSeq` or ending the thread when omitted. |
 | `search_tools` | Searches current authorized connector operations with lexical and semantic ranking. An in-process run enables the matches as typed tools. |
 | `use_connector` | Executes a connector operation by `toolKey` for an external MCP client. |
+| `search_web` | Searches the public web through the configured primary provider and optional fallback. Present only while web search is enabled. |
+| `fetch_url` | Reads a public HTTP or HTTPS page as bounded text. Present only while web fetch is enabled. |
 
 The memory writes follow the writer policy. A `fact` or `preference` takes effect at once; a `rule` or `procedure` lands proposed and waits for a person to confirm it. Rewriting is narrower still: only facts and preferences saved at the session's own scope, because a confirmed rule or procedure needs a person.
 

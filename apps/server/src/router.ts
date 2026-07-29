@@ -2,6 +2,7 @@ import { approvalsRouter } from "./rpc/approvals.js";
 import { auditRouter } from "./rpc/audit.js";
 import { bindingsRouter } from "./rpc/bindings.js";
 import { bootstrapRouter } from "./rpc/bootstrap.js";
+import { capabilitiesRouter } from "./rpc/capabilities.js";
 import { configRouter } from "./rpc/config.js";
 import { connectorsRouter } from "./rpc/connectors.js";
 import { conversationsRouter } from "./rpc/conversations.js";
@@ -22,6 +23,7 @@ import { systemRouter } from "./rpc/system.js";
 
 export const router = {
   bootstrap: bootstrapRouter,
+  capabilities: capabilitiesRouter,
   approvals: approvalsRouter,
   audit: auditRouter,
   bindings: bindingsRouter,

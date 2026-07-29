@@ -13,6 +13,14 @@ import {
 
 import type { Database } from "#server/lib/db/index.js";
 import type { ApprovalClassifier } from "#server/services/approvals/classifier.js";
+import {
+  fetchUrl,
+  fetchUrlInputSchema,
+  searchWeb,
+  searchWebInputSchema,
+  WebCapabilityError,
+  type WebCapabilityExecutionOptions,
+} from "#server/services/capabilities/web.js";
 import type {
   ConnectorFetch,
   McpClientFactory,
@@ -29,12 +37,14 @@ import {
 import { saveMemory, updateMemory } from "#server/services/dataplane/memory.js";
 import {
   FETCH_TRANSCRIPT_TOOL_NAME,
+  FETCH_URL_TOOL_NAME,
   fetchTranscriptInputSchema,
   GET_ITEM_TOOL_NAME,
   getItemInputSchema,
   resolveConnectorToolDefs,
   SAVE_MEMORY_TOOL_NAME,
   SEARCH_CONTEXT_TOOL_NAME,
+  SEARCH_WEB_TOOL_NAME,
   SEARCH_TOOLS_TOOL_NAME,
   saveMemoryInputSchema,
   searchContextInputSchema,
@@ -63,6 +73,8 @@ export interface DataPlaneToolExecutorDependencies {
   fetch?: ConnectorFetch;
   clientFactory?: McpClientFactory;
   embedder?: Embedder;
+  providerFetch?: typeof fetch;
+  publicPageFetch?: WebCapabilityExecutionOptions["publicPageFetch"];
   now?: Date;
 }
 
@@ -183,6 +195,7 @@ function describedFailure(error: unknown): { code: string; message: string } {
   const connector = describeConnectorFailure(error);
   if (connector !== undefined) return connector;
   if (error instanceof DataPlaneToolError) return { code: error.code, message: error.message };
+  if (error instanceof WebCapabilityError) return { code: error.code, message: error.message };
   if (error instanceof ItemValidationError) {
     return { code: "item_validation_failed", message: error.message };
   }
@@ -278,6 +291,31 @@ async function executeBuiltIn(
           ...embedding,
         });
         return result(call.callId, "ok", `Found ${results.length} context items`, { results });
+      }
+      case SEARCH_WEB_TOOL_NAME: {
+        const parsed = searchWebInputSchema.safeParse(call.input);
+        if (!parsed.success) break;
+        const searched = await searchWeb(dependencies.db, session, parsed.data, {
+          ...(dependencies.masterKey ? { masterKey: dependencies.masterKey } : {}),
+          ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
+        });
+        return result(
+          call.callId,
+          "ok",
+          `Found ${searched.results.length} web results`,
+          searched,
+        );
+      }
+      case FETCH_URL_TOOL_NAME: {
+        const parsed = fetchUrlInputSchema.safeParse(call.input);
+        if (!parsed.success) break;
+        const fetched = await fetchUrl(dependencies.db, session, parsed.data, {
+          ...(dependencies.masterKey ? { masterKey: dependencies.masterKey } : {}),
+          ...(dependencies.publicPageFetch
+            ? { publicPageFetch: dependencies.publicPageFetch }
+            : {}),
+        });
+        return result(call.callId, "ok", `Fetched ${fetched.title ?? fetched.url}`, fetched);
       }
       case GET_ITEM_TOOL_NAME: {
         const parsed = getItemInputSchema.safeParse(call.input);

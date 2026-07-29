@@ -6,6 +6,11 @@ import { z } from "zod";
 
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
+import type { CapabilityKey } from "#server/services/capabilities/index.js";
+import {
+  fetchUrlInputSchema,
+  searchWebInputSchema,
+} from "#server/services/capabilities/web.js";
 import {
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
@@ -28,6 +33,8 @@ export const UPDATE_MEMORY_TOOL_NAME = "update_memory";
 export const FETCH_TRANSCRIPT_TOOL_NAME = "fetch_transcript";
 export const SEARCH_TOOLS_TOOL_NAME = "search_tools";
 export const USE_CONNECTOR_TOOL_NAME = "use_connector";
+export const SEARCH_WEB_TOOL_NAME = "search_web";
+export const FETCH_URL_TOOL_NAME = "fetch_url";
 
 export const USE_CONNECTOR_TITLE = "Use connector";
 export const USE_CONNECTOR_DESCRIPTION =
@@ -114,7 +121,7 @@ export const useConnectorInputSchema = z.object(useConnectorInputShape).strict()
 export const useConnectorModelInputSchema = useConnectorInputSchema.omit({ approvalId: true });
 
 interface BuiltInToolSpec<Input extends z.ZodType = z.ZodType> {
-  key: `context:${string}`;
+  key: `context:${string}` | `capability:${string}`;
   name: string;
   title: string;
   description: string;
@@ -199,6 +206,29 @@ export const builtInToolSpecs = [
   },
 ] as const satisfies readonly BuiltInToolSpec[];
 
+const capabilityToolSpecs = [
+  {
+    key: "capability:web.search",
+    name: SEARCH_WEB_TOOL_NAME,
+    title: "Search the web",
+    description:
+      "Search the public web for current information. Returns ranked page titles, URLs, and bounded snippets. Use `fetch_url` to read a promising page.",
+    kind: "search",
+    inputSchema: searchWebInputSchema,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  {
+    key: "capability:web.fetch",
+    name: FETCH_URL_TOOL_NAME,
+    title: "Fetch URL",
+    description:
+      "Read one public HTTP or HTTPS page as text. Private-network addresses, oversized responses, and unsupported content types are refused.",
+    kind: "fetch",
+    inputSchema: fetchUrlInputSchema,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+] as const satisfies readonly BuiltInToolSpec[];
+
 function toToolDef(spec: BuiltInToolSpec): ToolDef {
   return {
     key: spec.key,
@@ -213,6 +243,14 @@ function toToolDef(spec: BuiltInToolSpec): ToolDef {
 /** The canonical built-in definitions used by sessions and the MCP adapter. */
 export function sessionToolDefs(): ToolDef[] {
   return builtInToolSpecs.map(toToolDef);
+}
+
+/** Native tools whose organization routes are currently enabled. */
+export function capabilityToolDefs(keys: readonly CapabilityKey[]): ToolDef[] {
+  const enabled = new Set(keys);
+  return capabilityToolSpecs
+    .filter((spec) => enabled.has(spec.key.slice("capability:".length) as CapabilityKey))
+    .map(toToolDef);
 }
 
 const MODEL_TOOL_NAME_LIMIT = 64;
@@ -355,6 +393,8 @@ export async function resolveConnectorToolDefs(
 /** Small built-in surface available on the first model turn. */
 export function modelSessionToolDefs(tools: readonly ToolDef[]): ToolDef[] {
   return tools.filter(
-    (tool) => tool.key?.startsWith("context:") && tool.name !== USE_CONNECTOR_TOOL_NAME,
+    (tool) =>
+      (tool.key?.startsWith("context:") || tool.key?.startsWith("capability:")) &&
+      tool.name !== USE_CONNECTOR_TOOL_NAME,
   );
 }
