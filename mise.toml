@@ -46,12 +46,85 @@ fi
 docker compose up -d --wait postgres
 '''
 
+[tasks."hatchet:up"]
+description = "Start the local Hatchet engine and put its tenant token in apps/server/.env"
+depends = ["env:init", "db:up"]
+# The engine is a dependency of run scheduling only: without a token the server
+# still serves context and says so in a warning. This task makes the local
+# stack whole — engine up, token minted once, connection settings written into
+# the same .env the server and worker read.
+run = '''
+env_file="apps/server/.env"
+# hatchet-lite keeps its state in its own database on this worktree's Postgres,
+# and the image does not create it.
+if ! docker compose exec -T postgres psql -U postgres -tAc \
+  "SELECT 1 FROM pg_database WHERE datname = 'hatchet'" | grep -q 1; then
+  docker compose exec -T postgres createdb -U postgres hatchet
+fi
+docker compose up -d hatchet
+
+if grep -q "^HATCHET_CLIENT_TOKEN=." "$env_file"; then
+  echo "Hatchet is up on http://localhost:${TREMA_HATCHET_PORT:-8888} (token already in $env_file)"
+  exit 0
+fi
+
+# The tenant hatchet-lite seeds on first boot. Minting is also the readiness
+# check: the admin binary only issues a token once the database is migrated.
+tenant="707d0855-80ab-4e1f-a156-f1c4546cbf52"
+echo "Waiting for Hatchet to issue a tenant token..."
+token=""
+i=0
+while [ "$i" -lt 60 ]; do
+  candidate="$(docker compose exec -T hatchet /hatchet-admin token create \
+    --config /config --tenant-id "$tenant" 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$candidate" in
+  ey*)
+    token="$candidate"
+    break
+    ;;
+  esac
+  i=$((i + 1))
+  sleep 2
+done
+if [ -z "$token" ]; then
+  echo "Hatchet did not issue a token. Check: docker compose logs hatchet" >&2
+  exit 1
+fi
+
+# The token carries the broadcast address, but the host and TLS strategy are
+# written out too so the settings are visible where every other one lives.
+# Rewriting strips any previous block first, so the file does not grow a stale
+# copy every time the stack is rebuilt.
+tmp="$(mktemp)"
+rest="$(grep -v -e "^# Hatchet, written by" -e "^HATCHET_CLIENT_TOKEN=" \
+  -e "^HATCHET_CLIENT_HOST_PORT=" -e "^HATCHET_CLIENT_TLS_STRATEGY=" "$env_file")"
+{
+  printf '%s\n\n' "$rest"
+  echo "# Hatchet, written by \`mise run hatchet:up\` for dev slot ${TREMA_DEV_SLOT:-0}."
+  echo "HATCHET_CLIENT_TOKEN=$token"
+  echo "HATCHET_CLIENT_HOST_PORT=localhost:${TREMA_HATCHET_GRPC_PORT:-7077}"
+  echo "HATCHET_CLIENT_TLS_STRATEGY=none"
+} > "$tmp"
+mv "$tmp" "$env_file"
+echo "Hatchet is up: dashboard http://localhost:${TREMA_HATCHET_PORT:-8888}, gRPC localhost:${TREMA_HATCHET_GRPC_PORT:-7077}"
+'''
+
 [tasks."dev:clean"]
-description = "Tear down this worktree's dev stack: Postgres container, network, and data volume"
+description = "Tear down this worktree's dev stack: containers, network, and data volumes"
 run = '''
 project="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
 echo "Removing compose project '$project' (dev slot ${TREMA_DEV_SLOT:-0}), including its database volume"
 docker compose down --volumes --remove-orphans
+# The Hatchet tenant went with the volumes, so its token is dead. Dropping it
+# keeps the next `mise run dev` from trying to reuse it.
+env_file="apps/server/.env"
+if [ -f "$env_file" ] && grep -q "^HATCHET_CLIENT_TOKEN=" "$env_file"; then
+  tmp="$(mktemp)"
+  printf '%s\n' "$(grep -v -e "^# Hatchet, written by" -e "^HATCHET_CLIENT_TOKEN=" \
+    -e "^HATCHET_CLIENT_HOST_PORT=" -e "^HATCHET_CLIENT_TLS_STRATEGY=" "$env_file")" > "$tmp"
+  mv "$tmp" "$env_file"
+  echo "Cleared the Hatchet connection settings from $env_file"
+fi
 echo "Done. apps/server/.env is kept; delete it too if you are re-slotting this worktree."
 '''
 
@@ -80,13 +153,18 @@ run = "pnpm --filter @trema/server exec tsx --conditions=development scripts/see
 
 [tasks."dev:server"]
 description = "Run the API server in watch mode"
-depends = ["db:migrate"]
+depends = ["db:migrate", "hatchet:up"]
 run = "pnpm --filter @trema/server dev"
+
+[tasks."dev:worker"]
+description = "Run the run worker in watch mode"
+depends = ["db:migrate", "hatchet:up"]
+run = "pnpm --filter @trema/server dev:worker"
 
 [tasks."dev:web"]
 description = "Run the web app dev server"
 run = "pnpm --filter @trema/web dev"
 
 [tasks.dev]
-description = "Start Postgres, apply migrations, and run the server and web app in watch mode"
-depends = ["dev:server", "dev:web"]
+description = "Start Postgres and Hatchet, apply migrations, and run the server, worker, and web app in watch mode"
+depends = ["dev:server", "dev:worker", "dev:web"]

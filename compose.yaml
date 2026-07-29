@@ -19,5 +19,44 @@ services:
       timeout: 5s
       retries: 5
 
+  hatchet:
+    # hatchet-lite is the API, engine, and dashboard in one container — the
+    # development-sized shape of the workflow engine the run worker takes
+    # delivery from. It keeps its state in the `hatchet` database of the
+    # Postgres above, which `mise run hatchet:up` creates.
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/hatchet?sslmode=disable
+      DATABASE_POSTGRES_HOST: postgres
+      DATABASE_POSTGRES_PORT: "5432"
+      DATABASE_POSTGRES_USERNAME: postgres
+      DATABASE_POSTGRES_PASSWORD: postgres
+      DATABASE_POSTGRES_DB_NAME: hatchet
+      # The V1 engine queues through Postgres, so the stack stays two
+      # containers — no message broker of its own.
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_AUTH_COOKIE_DOMAIN: localhost
+      SERVER_AUTH_COOKIE_INSECURE: "t"
+      SERVER_AUTH_SET_EMAIL_VERIFIED: "t"
+      SERVER_GRPC_BIND_ADDRESS: 0.0.0.0
+      SERVER_GRPC_PORT: "7077"
+      SERVER_GRPC_INSECURE: "t"
+      # The address the SDK is told to dial, baked into the tenant token, so it
+      # has to be the host-side port this worktree publishes.
+      SERVER_GRPC_BROADCAST_ADDRESS: localhost:${TREMA_HATCHET_GRPC_PORT:-7077}
+      SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: localhost:7077
+      SERVER_URL: http://localhost:${TREMA_HATCHET_PORT:-8888}
+      SERVER_DEFAULT_ENGINE_VERSION: V1
+    ports:
+      # Per-worktree, like Postgres: dashboard then gRPC.
+      - "${TREMA_HATCHET_PORT:-8888}:8888"
+      - "${TREMA_HATCHET_GRPC_PORT:-7077}:7077"
+    volumes:
+      - trema-hatchet-config:/config
+
 volumes:
   trema-postgres:
+  trema-hatchet-config:

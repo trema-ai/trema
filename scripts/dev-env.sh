@@ -3,9 +3,11 @@
 #
 # Each worktree gets a stable "slot" that offsets every dev port:
 #
-#   server    3000 + slot
-#   web       5173 + slot
-#   postgres  5432 + slot
+#   server         3000 + slot
+#   web            5173 + slot
+#   postgres       5432 + slot
+#   hatchet grpc   7077 + slot
+#   hatchet web    8888 + slot
 #
 # The main checkout is slot 0, which keeps the documented default ports and
 # the existing compose project (and therefore the existing database volume).
@@ -51,6 +53,8 @@ export TREMA_DEV_SLOT
 export TREMA_SERVER_PORT=$((3000 + TREMA_DEV_SLOT))
 export TREMA_WEB_PORT=$((5173 + TREMA_DEV_SLOT))
 export TREMA_DB_PORT=$((5432 + TREMA_DEV_SLOT))
+export TREMA_HATCHET_PORT=$((8888 + TREMA_DEV_SLOT))
+export TREMA_HATCHET_GRPC_PORT=$((7077 + TREMA_DEV_SLOT))
 
 # Override a compose project name a previous sourcing of this file set, but
 # never one the user chose themselves.
