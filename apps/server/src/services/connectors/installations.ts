@@ -74,6 +74,7 @@ const installationBodyShape = z
         message: "syncedTools cannot contain duplicate tool names",
       })
       .optional(),
+    syncPending: z.literal(true).optional(),
   })
   .strict();
 
@@ -98,8 +99,25 @@ export function createConnectorInstallationBodySchema(catalog: ProviderCatalog =
         message: "REST connector installations cannot contain syncedTools",
       });
     }
+    if (provider.transport.type === "rest" && body.syncPending !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["syncPending"],
+        message: "REST connector installations cannot be pending MCP sync",
+      });
+    }
+    if (body.syncPending && body.syncedTools !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["syncPending"],
+        message: "A pending MCP sync cannot expose synchronized tools",
+      });
+    }
 
-    if (Array.isArray(body.enabledTools)) {
+    if (
+      Array.isArray(body.enabledTools) &&
+      !(provider.transport.type === "mcp" && body.syncPending === true)
+    ) {
       const available = new Set(
         provider.transport.type === "rest"
           ? provider.toolManifest.map(({ name }) => name)
@@ -165,6 +183,30 @@ function parseBody(body: unknown, catalog: ProviderCatalog): ConnectorInstallati
 
 function jsonValue(body: ConnectorInstallationBody): Prisma.InputJsonValue {
   return body as Prisma.InputJsonValue;
+}
+
+function repointInstallationBody(
+  current: ConnectorInstallationBody,
+  connectionId: string,
+  provider: ProviderDef,
+  catalog: ProviderCatalog,
+): ConnectorInstallationBody {
+  const switchingMcpConnection =
+    provider.transport.type === "mcp" && current.connectionId !== connectionId;
+  return parseBody(
+    {
+      catalogKey: current.catalogKey,
+      connectionId,
+      enabledTools: current.enabledTools,
+      ...(switchingMcpConnection
+        ? { syncPending: true as const }
+        : {
+            ...(current.syncedTools !== undefined ? { syncedTools: current.syncedTools } : {}),
+            ...(current.syncPending ? { syncPending: current.syncPending } : {}),
+          }),
+    },
+    catalog,
+  );
 }
 
 export interface ListConnectorInstallationsInput {
@@ -454,7 +496,7 @@ export async function provisionConnectorInstallation(
   }
 
   const current = parseBody(existing.body, catalog);
-  const body = parseBody({ ...current, connectionId: input.connectionId }, catalog);
+  const body = repointInstallationBody(current, input.connectionId, provider, catalog);
   const changed = JSON.stringify(body) !== JSON.stringify(current);
   if (changed) {
     await transaction.itemVersion.create({
@@ -645,10 +687,13 @@ export async function updateConnectorInstallation(
         `Unknown connector provider: ${current.catalogKey}`,
       );
     }
+    const repointed =
+      input.connectionId !== undefined
+        ? repointInstallationBody(current, input.connectionId, provider, catalog)
+        : current;
     const body = parseBody(
       {
-        ...current,
-        ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
+        ...repointed,
         ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
       },
       catalog,

@@ -71,6 +71,24 @@ describe("MCP tool drift merge", () => {
     expect(merged.body.syncedTools?.map(({ name }) => name)).toEqual(["kept", "added"]);
   });
 
+  it("settles a pending connection switch without exposing stale tool metadata", () => {
+    const merged = mergeSyncedTools(
+      {
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: ["kept", "removed"],
+        syncPending: true,
+      },
+      freshTools,
+    );
+    expect(merged.body).toEqual({
+      catalogKey: "notion",
+      connectionId,
+      enabledTools: ["kept"],
+      syncedTools: freshTools,
+    });
+  });
+
   it("counts an annotations change as drift and stores the fresh annotations verbatim", () => {
     const merged = mergeSyncedTools(
       {

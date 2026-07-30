@@ -1163,6 +1163,74 @@ integration("connector connection flows", () => {
     ).rejects.toBeInstanceOf(ConnectorConnectionNotFoundError);
   });
 
+  it("preserves a static reconnect's existing scope bindings", async () => {
+    const org = await createOrg();
+    const shared = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Static Shared Scope" },
+    });
+    const okFetch = async () => new Response("{}", { status: 200 });
+    const organizationConnection = await call(
+      connectorsRouter.connect.createStatic,
+      {
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_organization_secret" },
+      },
+      { context: { ...org.context, connectorFetch: okFetch } },
+    );
+    const sharedConnection = await createStaticConnection(db, {
+      orgId: org.org.id,
+      ownerPrincipalId: org.agent.id,
+      providerKey: "stripe",
+      config: {},
+      credentials: { apiKey: "rk_shared_secret" },
+      masterKey,
+      fetch: okFetch,
+    });
+    await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: shared.id,
+      catalogKey: "stripe",
+      connectionId: sharedConnection.id,
+      masterKey,
+    });
+
+    await expect(
+      call(
+        connectorsRouter.connect.createStatic,
+        {
+          providerKey: "stripe",
+          config: {},
+          credentials: { apiKey: "rk_shared_reconnected_secret" },
+          reconnectConnectionId: sharedConnection.id,
+        },
+        { context: { ...org.context, connectorFetch: okFetch } },
+      ),
+    ).resolves.toMatchObject({ id: sharedConnection.id });
+
+    const installations = await db.item.findMany({
+      where: {
+        orgId: org.org.id,
+        kind: "connector",
+        status: { not: "archived" },
+      },
+      select: { scopeId: true, body: true },
+    });
+    expect(installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scopeId: org.orgScope.id,
+          body: expect.objectContaining({ connectionId: organizationConnection.id }),
+        }),
+        expect.objectContaining({
+          scopeId: shared.id,
+          body: expect.objectContaining({ connectionId: sharedConnection.id }),
+        }),
+      ]),
+    );
+  });
+
   it("consumes OAuth state once and rejects expired state", async () => {
     const org = await createOrg();
     const state = await start(org.org.id);

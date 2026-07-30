@@ -1253,10 +1253,33 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
       );
     }
     const connection = await storeConnection(transaction, connectionInput);
+    let targetScopeId = installationIntent.scopeId;
+    if (input.reconnectConnectionId) {
+      const existingInstallations = await transaction.item.findMany({
+        where: {
+          orgId: input.orgId,
+          kind: "connector",
+          status: { not: "archived" },
+        },
+        select: { scopeId: true, body: true },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      });
+      const existingBinding = existingInstallations.find((candidate) => {
+        const body = candidate.body;
+        return (
+          typeof body === "object" &&
+          body !== null &&
+          !Array.isArray(body) &&
+          body.catalogKey === input.providerKey &&
+          body.connectionId === input.reconnectConnectionId
+        );
+      });
+      if (existingBinding) targetScopeId = existingBinding.scopeId;
+    }
     const provisioned = await provisionConnectorInstallation(transaction, {
       orgId: input.orgId,
       actorPrincipalId: installationIntent.actorPrincipalId,
-      scopeId: installationIntent.scopeId,
+      scopeId: targetScopeId,
       catalogKey: input.providerKey,
       connectionId: connection.id,
       enabledTools: "all",

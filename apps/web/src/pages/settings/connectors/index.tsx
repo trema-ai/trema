@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cable, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -36,6 +36,7 @@ type ProviderRow = {
 
 export function SettingsConnectorsPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const catalog = useQuery(orpc.connectors.catalog.list.queryOptions({}));
   const connections = useQuery(orpc.connectors.connections.list.queryOptions({ input: {} }));
   const installations = useQuery(orpc.connectors.installations.list.queryOptions({ input: {} }));
@@ -154,8 +155,17 @@ export function SettingsConnectorsPage() {
           onOpenChange={(next) => {
             if (!next) setStaticProvider(undefined);
           }}
-          onConnected={() => {
+          onConnected={async () => {
             const key = staticProvider.key;
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: orpc.connectors.connections.list.key(),
+              }),
+              queryClient.invalidateQueries({
+                queryKey: orpc.connectors.installations.list.key(),
+              }),
+              queryClient.invalidateQueries({ queryKey: orpc.connectors.catalog.list.key() }),
+            ]);
             setStaticProvider(undefined);
             navigate(`/settings/connectors/${key}`);
           }}

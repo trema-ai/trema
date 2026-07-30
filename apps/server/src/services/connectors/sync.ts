@@ -77,7 +77,12 @@ export function mergeSyncedTools(
     body.enabledTools === "all" ? "all" : body.enabledTools.filter((name) => fresh.has(name));
 
   return {
-    body: { ...body, enabledTools, syncedTools: [...fresh.values()] },
+    body: {
+      catalogKey: body.catalogKey,
+      connectionId: body.connectionId,
+      enabledTools,
+      syncedTools: [...fresh.values()],
+    },
     report: { added, removed, changed },
   };
 }

@@ -539,6 +539,70 @@ integration("connector connections and installations", () => {
     expect(calls).toEqual(["Bearer bound-token"]);
   });
 
+  it("clears stale MCP tools while a switched connection awaits a successful sync", async () => {
+    const org = await createOrg();
+    const first = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    const second = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    const workingFactory: McpClientFactory = async () => ({
+      listTools: async () => ({
+        tools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
+      }),
+      close: async () => {},
+    });
+    const installation = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: org.orgScope.id,
+      catalogKey: "notion",
+      connectionId: first.id,
+      enabledTools: "all",
+      clientFactory: workingFactory,
+      masterKey,
+    });
+    await db.item.update({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      data: {
+        body: {
+          catalogKey: "notion",
+          connectionId: first.id,
+          enabledTools: ["read_page"],
+          syncedTools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
+        },
+      },
+    });
+    const failingFactory: McpClientFactory = async () => {
+      throw new Error("MCP unavailable");
+    };
+
+    await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: org.orgScope.id,
+      catalogKey: "notion",
+      connectionId: second.id,
+      clientFactory: failingFactory,
+      masterKey,
+    });
+
+    const switched = await db.item.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+    });
+    expect(switched.body).toEqual({
+      catalogKey: "notion",
+      connectionId: second.id,
+      enabledTools: ["read_page"],
+      syncPending: true,
+    });
+  });
+
   it("reads installations written before approval modes dropped sensitivity", async () => {
     const org = await createOrg();
     const bound = await connection({

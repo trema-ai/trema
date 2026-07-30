@@ -255,8 +255,8 @@ export function SettingsConnectorDetailPage() {
           setStaticOpen(next);
           if (!next) setReconnect(undefined);
         }}
-        onConnected={() => {
-          void invalidate();
+        onConnected={async () => {
+          await invalidate();
         }}
       />
       <ScopeBindingDialog

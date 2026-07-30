@@ -95,7 +95,7 @@ export function StaticConnectionDialog({
   reconnect?: ConnectorConnection | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConnected: (connectionId: string) => void;
+  onConnected: (connectionId: string) => void | Promise<void>;
 }) {
   const create = useMutation({
     mutationFn: (values: {
@@ -110,10 +110,10 @@ export function StaticConnectionDialog({
       };
       return rpcClient.connectors.connect.createStatic(input);
     },
-    onSuccess: ({ id }) => {
+    onSuccess: async ({ id }) => {
       toast.success(`${provider.displayName} ${reconnect ? "reconnected" : "connected"}`);
       onOpenChange(false);
-      onConnected(id);
+      await onConnected(id);
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
