@@ -350,6 +350,7 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
       (offeredModels.data ?? []).map((model) => ({
         id: modelSelectionValue(model),
         name: model.label,
+        provider: model.providerLabel,
         keywords: [model.providerName, model.modelId],
       })),
     [offeredModels.data],

@@ -25,6 +25,11 @@ import { StatusDot } from "#web/components/trema/status-dot.tsx";
 import { SteeringNote } from "#web/components/trema/steering-note.tsx";
 import { UnknownEventsLine } from "#web/components/trema/unknown-events-line.tsx";
 import {
+  parseWebSearchResults,
+  WebSearchActivity,
+  WebSearchResults,
+} from "#web/components/trema/web-search-activity.tsx";
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -434,7 +439,24 @@ function ActivityView({
       : part.status === "streaming"
         ? "running"
         : undefined;
-  const outputRef = expandOutputs ? part.result?.outputRef : undefined;
+  const outputRef =
+    expandOutputs || part.name === "search_web" ? part.result?.outputRef : undefined;
+
+  if (part.name === "search_web") {
+    return (
+      <WebSearchActivity
+        {...(part.input === undefined ? {} : { input: part.input })}
+        {...(part.notes.length === 0 ? {} : { notes: part.notes.join(" · ") })}
+        {...(part.result === undefined ? {} : { resultSummary: part.result.summary })}
+        {...(state === undefined ? {} : { state })}
+      >
+        {outputRef === undefined ? undefined : (
+          <LazyOutput runId={runId} outputRef={outputRef} kind="web-search" />
+        )}
+      </WebSearchActivity>
+    );
+  }
+
   return (
     <ActivityCard
       title={part.title}
@@ -452,7 +474,15 @@ function ActivityView({
 }
 
 /** Fetches the full output behind an `outputRef` when it first renders. */
-function LazyOutput({ runId, outputRef }: { runId: string; outputRef: string }) {
+function LazyOutput({
+  runId,
+  outputRef,
+  kind,
+}: {
+  runId: string;
+  outputRef: string;
+  kind?: "web-search";
+}) {
   const query = useQuery(
     orpc.runs.output.queryOptions({
       input: { id: runId, outputRef },
@@ -467,6 +497,13 @@ function LazyOutput({ runId, outputRef }: { runId: string; outputRef: string }) 
   }
   if (query.data.blocks.length === 0) {
     return <div className="text-meta text-muted-foreground">The output is empty.</div>;
+  }
+  if (kind === "web-search") {
+    const results = query.data.blocks.flatMap((block) => {
+      if (block.kind !== "text") return [];
+      return parseWebSearchResults(block.text) ?? [];
+    });
+    if (results.length > 0) return <WebSearchResults results={results} />;
   }
   return (
     <div className="space-y-2">

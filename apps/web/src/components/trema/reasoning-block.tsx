@@ -67,13 +67,13 @@ function ReasoningBlock({ redacted, streaming = false, children, className }: Re
         className="group/trigger flex origin-left items-center gap-2 py-1.5 text-muted-foreground transition-[color,scale] hover:text-foreground active:scale-[0.98]"
       >
         <span className="relative inline-block text-sm leading-none">
-          <span>Reasoning</span>
+          <span>Thought for a bit</span>
           {streaming && (
             <span
               aria-hidden
               className="pointer-events-none absolute inset-0 shimmer motion-reduce:animate-none"
             >
-              Reasoning
+              Thinking
             </span>
           )}
         </span>

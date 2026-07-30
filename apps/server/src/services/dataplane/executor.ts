@@ -297,7 +297,12 @@ async function executeBuiltIn(
           ...(dependencies.masterKey ? { masterKey: dependencies.masterKey } : {}),
           ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
         });
-        return result(call.callId, "ok", `Found ${searched.results.length} web results`, searched);
+        return result(
+          call.callId,
+          "ok",
+          `Found ${searched.results.length} web results · ${searched.provider}`,
+          searched,
+        );
       }
       case FETCH_URL_TOOL_NAME: {
         const parsed = fetchUrlInputSchema.safeParse(call.input);

@@ -57,6 +57,7 @@ const catalogEntrySchema = z.object({
 const offeredModelSchema = z
   .object({
     providerName: z.string().describe("The provider's stable name."),
+    providerLabel: z.string().describe("The provider name shown in the picker."),
     modelId: z.string().describe("The model id the provider expects."),
     label: z.string().describe("The model name shown in the picker."),
     contextWindow: z

@@ -120,6 +120,7 @@ describe("web capabilities", () => {
     );
 
     expect(searched).toEqual({
+      provider: "tavily",
       results: [
         {
           title: "Trema",
@@ -138,6 +139,163 @@ describe("web capabilities", () => {
           payload: expect.objectContaining({ providerName: "tavily", resultCount: 1 }),
         }),
       }),
+    );
+  });
+
+  it("normalizes Firecrawl, SearXNG, Exa, and Parallel search results", async () => {
+    const cases = [
+      {
+        driverKey: "firecrawl",
+        credential: "firecrawl-key",
+        settings: {},
+        response: {
+          success: true,
+          data: {
+            web: [
+              {
+                title: "Firecrawl result",
+                url: "https://example.com/firecrawl",
+                description: "Firecrawl snippet",
+              },
+            ],
+          },
+        },
+        expectedUrl: "https://api.firecrawl.dev/v2/search",
+        result: {
+          title: "Firecrawl result",
+          url: "https://example.com/firecrawl",
+          snippet: "Firecrawl snippet",
+        },
+      },
+      {
+        driverKey: "searxng",
+        settings: { baseUrl: "http://searxng.internal:8080" },
+        response: {
+          results: [
+            {
+              title: "SearXNG result",
+              url: "https://example.com/searxng",
+              content: "SearXNG snippet",
+              publishedDate: "2026-07-20",
+            },
+          ],
+        },
+        expectedUrl: "http://searxng.internal:8080/search",
+        result: {
+          title: "SearXNG result",
+          url: "https://example.com/searxng",
+          snippet: "SearXNG snippet",
+          publishedAt: "2026-07-20",
+        },
+      },
+      {
+        driverKey: "exa",
+        credential: "exa-key",
+        settings: {},
+        response: {
+          results: [
+            {
+              title: "Exa result",
+              url: "https://example.com/exa",
+              highlights: ["Exa snippet"],
+              publishedDate: "2026-07-21",
+            },
+          ],
+        },
+        expectedUrl: "https://api.exa.ai/search",
+        result: {
+          title: "Exa result",
+          url: "https://example.com/exa",
+          snippet: "Exa snippet",
+          publishedAt: "2026-07-21",
+        },
+      },
+      {
+        driverKey: "parallel",
+        credential: "parallel-key",
+        settings: {},
+        response: {
+          results: [
+            {
+              title: "Parallel result",
+              url: "https://example.com/parallel",
+              excerpts: ["Parallel snippet"],
+              publish_date: "2026-07-22",
+            },
+          ],
+        },
+        expectedUrl: "https://api.parallel.ai/v1/search",
+        result: {
+          title: "Parallel result",
+          url: "https://example.com/parallel",
+          snippet: "Parallel snippet",
+          publishedAt: "2026-07-22",
+        },
+      },
+    ] as const;
+
+    for (const example of cases) {
+      const db = fakeDb({ "web.search": ["provider"] }, [
+        provider(
+          "provider",
+          example.driverKey,
+          "credential" in example ? example.credential : undefined,
+          example.settings,
+        ),
+      ]);
+      const providerFetch = vi.fn(async (_input: string | URL | Request) =>
+        Response.json(example.response),
+      );
+
+      await expect(
+        searchWeb(
+          db,
+          session,
+          { query: "current web result", limit: 2, recency: "week" },
+          { masterKey, providerFetch: providerFetch as typeof fetch },
+        ),
+      ).resolves.toEqual({ provider: "provider", results: [example.result] });
+      expect(String(providerFetch.mock.calls[0]![0])).toContain(example.expectedUrl);
+    }
+  });
+
+  it("searches DDGS through the embedded library", async () => {
+    const db = fakeDb({ "web.search": ["ddgs"] }, [provider("ddgs", "ddgs")]);
+    const ddgsSearch = vi.fn(async () => ({
+      noResults: false,
+      vqd: "3-123-456",
+      results: [
+        {
+          hostname: "example.com",
+          url: "https://example.com/ddgs",
+          title: "DDGS result",
+          description: "DDGS snippet",
+          rawDescription: "DDGS snippet",
+          icon: "https://example.com/favicon.ico",
+        },
+      ],
+    }));
+
+    await expect(
+      searchWeb(
+        db,
+        session,
+        { query: "current web result", limit: 2, recency: "week" },
+        { masterKey, ddgsSearch },
+      ),
+    ).resolves.toEqual({
+      provider: "ddgs",
+      results: [
+        {
+          title: "DDGS result",
+          url: "https://example.com/ddgs",
+          snippet: "DDGS snippet",
+        },
+      ],
+    });
+    expect(ddgsSearch).toHaveBeenCalledWith(
+      "current web result",
+      expect.objectContaining({ safeSearch: -1, time: "w" }),
     );
   });
 
@@ -184,6 +342,134 @@ describe("web capabilities", () => {
           payload: expect.objectContaining({ providerName: "tavily" }),
         }),
       }),
+    );
+  });
+
+  it("normalizes Firecrawl, Exa, and Parallel extracts", async () => {
+    const cases = [
+      {
+        driverKey: "firecrawl",
+        credential: "firecrawl-key",
+        settings: {},
+        response: {
+          success: true,
+          data: {
+            markdown: "# Firecrawl content",
+            metadata: {
+              title: "Firecrawl page",
+              sourceURL: "https://example.com/article",
+            },
+          },
+        },
+        expectedUrl: "https://api.firecrawl.dev/v2/scrape",
+        result: {
+          url: "https://example.com/article",
+          title: "Firecrawl page",
+          contentType: "text/markdown",
+          text: "# Firecrawl content",
+          truncated: false,
+        },
+      },
+      {
+        driverKey: "exa",
+        credential: "exa-key",
+        settings: {},
+        response: {
+          results: [
+            {
+              title: "Exa page",
+              url: "https://example.com/article",
+              text: "Exa content",
+            },
+          ],
+        },
+        expectedUrl: "https://api.exa.ai/contents",
+        result: {
+          url: "https://example.com/article",
+          title: "Exa page",
+          contentType: "text/markdown",
+          text: "Exa content",
+          truncated: false,
+        },
+      },
+      {
+        driverKey: "parallel",
+        credential: "parallel-key",
+        settings: {},
+        response: {
+          results: [
+            {
+              title: "Parallel page",
+              url: "https://example.com/article",
+              excerpts: [],
+              full_content: "Parallel content",
+            },
+          ],
+        },
+        expectedUrl: "https://api.parallel.ai/v1/extract",
+        result: {
+          url: "https://example.com/article",
+          title: "Parallel page",
+          contentType: "text/markdown",
+          text: "Parallel content",
+          truncated: false,
+        },
+      },
+    ] as const;
+
+    for (const example of cases) {
+      const db = fakeDb({ "web.fetch": ["provider"] }, [
+        provider(
+          "provider",
+          example.driverKey,
+          "credential" in example ? example.credential : undefined,
+          example.settings,
+        ),
+      ]);
+      const providerFetch = vi.fn(async (_input: string | URL | Request) =>
+        Response.json(example.response),
+      );
+
+      await expect(
+        fetchUrl(
+          db,
+          session,
+          { url: "https://example.com/article" },
+          { masterKey, providerFetch: providerFetch as typeof fetch },
+        ),
+      ).resolves.toEqual(example.result);
+      expect(String(providerFetch.mock.calls[0]![0])).toContain(example.expectedUrl);
+    }
+  });
+
+  it("fetches and extracts a page through the embedded DDGS provider", async () => {
+    const db = fakeDb({ "web.fetch": ["ddgs"] }, [provider("ddgs", "ddgs")]);
+    const providerFetch = vi.fn(async () => {
+      const response = new Response(
+        "<html><head><title>DDGS page</title></head><body><main><h1>DDGS content</h1></main></body></html>",
+        { headers: { "Content-Type": "text/html" } },
+      );
+      Object.defineProperty(response, "url", { value: "https://example.com/article" });
+      return response;
+    });
+
+    await expect(
+      fetchUrl(
+        db,
+        session,
+        { url: "https://example.com/article" },
+        { masterKey, providerFetch: providerFetch as typeof fetch },
+      ),
+    ).resolves.toEqual({
+      url: "https://example.com/article",
+      title: "DDGS page",
+      contentType: "text/markdown",
+      text: "DDGS content",
+      truncated: false,
+    });
+    expect(providerFetch).toHaveBeenCalledWith(
+      new URL("https://example.com/article"),
+      expect.objectContaining({ redirect: "follow" }),
     );
   });
 

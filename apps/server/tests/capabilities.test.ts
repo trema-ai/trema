@@ -132,6 +132,33 @@ integration("capability registry", () => {
     ).resolves.toEqual([]);
   });
 
+  it("stores and routes a credential-free embedded provider", async () => {
+    const org = await createOrg();
+    const ddgs = await call(
+      capabilitiesRouter.providers.put,
+      {
+        name: "ddgs",
+        label: "DDGS",
+        driverKey: "ddgs",
+        settings: {},
+      },
+      { context: org.context },
+    );
+
+    expect(ddgs).toMatchObject({
+      hasCredential: false,
+      capabilities: ["web.search", "web.fetch"],
+      settings: {},
+    });
+    await expect(
+      call(
+        capabilitiesRouter.routes.put,
+        { capabilityKey: "web.fetch", chain: ["ddgs"] },
+        { context: org.context },
+      ),
+    ).resolves.toMatchObject({ chain: ["ddgs"] });
+  });
+
   it("refuses a provider on a route for the wrong capability", async () => {
     const org = await createOrg();
     await call(
