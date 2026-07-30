@@ -6,6 +6,14 @@ import { z } from "zod";
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { bindLogger, log } from "#server/lib/logger/index.js";
+import { type CapabilityKey, enabledCapabilityKeys } from "#server/services/capabilities/index.js";
+import {
+  fetchUrl,
+  fetchUrlInputSchema,
+  searchWeb,
+  searchWebInputSchema,
+  WebCapabilityError,
+} from "#server/services/capabilities/web.js";
 import type {
   ConnectorFetch,
   McpClientFactory,
@@ -62,6 +70,7 @@ export interface DataPlaneDependencies {
   connectorFetch?: ConnectorFetch;
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
+  providerFetch?: typeof fetch;
 }
 
 function textResult(payload: unknown): { type: "text"; text: string }[] {
@@ -108,6 +117,7 @@ async function runTool(
     const described = handling.describe?.(error);
     if (described) return codedToolError(described.code, described.message);
     if (error instanceof DataPlaneToolError) return toolError(error.message);
+    if (error instanceof WebCapabilityError) return codedToolError(error.code, error.message);
     // A body the service rejects is the caller's mistake as well, and its
     // message names the field to fix.
     if (error instanceof ItemValidationError) return toolError(error.message);
@@ -134,6 +144,7 @@ async function runTool(
 export function createDataPlaneServer(
   dependencies: DataPlaneDependencies,
   session: DataPlaneSession,
+  enabledCapabilities: readonly CapabilityKey[] = [],
 ): McpServer {
   const { db, env } = dependencies;
   const embedding = env.TREMA_CREDENTIAL_MASTER_KEY
@@ -178,6 +189,65 @@ export function createDataPlaneServer(
         return { content: textResult({ results }), structuredContent: { results } };
       }),
   );
+
+  if (enabledCapabilities.includes("web.search")) {
+    server.registerTool(
+      "search_web",
+      {
+        title: "Search the web",
+        description:
+          "Search the public web for current information. Returns ranked page titles, URLs, and bounded snippets. Use `fetch_url` to read a promising page.",
+        inputSchema: searchWebInputSchema,
+        outputSchema: {
+          results: z.array(
+            z.object({
+              title: z.string(),
+              url: z.url(),
+              snippet: z.string(),
+              publishedAt: z.string().optional(),
+            }),
+          ),
+        },
+        annotations: { readOnlyHint: true, openWorldHint: true },
+      },
+      async (input) =>
+        runTool("search_web", async () => {
+          const searched = await searchWeb(db, session, input, {
+            ...embedding,
+            ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
+          });
+          return { content: textResult(searched), structuredContent: { ...searched } };
+        }),
+    );
+  }
+
+  if (enabledCapabilities.includes("web.fetch")) {
+    server.registerTool(
+      "fetch_url",
+      {
+        title: "Fetch URL",
+        description:
+          "Extract one public HTTP or HTTPS page as bounded text through the configured provider.",
+        inputSchema: fetchUrlInputSchema,
+        outputSchema: {
+          url: z.url(),
+          title: z.string().optional(),
+          contentType: z.string(),
+          text: z.string(),
+          truncated: z.boolean(),
+        },
+        annotations: { readOnlyHint: true, openWorldHint: true },
+      },
+      async (input) =>
+        runTool("fetch_url", async () => {
+          const fetched = await fetchUrl(db, session, input, {
+            ...embedding,
+            ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
+          });
+          return { content: textResult(fetched), structuredContent: { ...fetched } };
+        }),
+    );
+  }
 
   server.registerTool(
     "get_item",
@@ -555,7 +625,8 @@ export async function handleDataPlaneRequest(
   const resolved = await resolveSession(dependencies.db, request);
   if (resolved instanceof Response) return resolved;
 
-  const server = createDataPlaneServer(dependencies, resolved);
+  const capabilities = await enabledCapabilityKeys(dependencies.db, resolved.orgId);
+  const server = createDataPlaneServer(dependencies, resolved, capabilities);
   // No session id generator: the transport stays stateless, because the
   // session token already identifies everything the call needs.
   const transport = new WebStandardStreamableHTTPServerTransport({

@@ -118,6 +118,11 @@ export function generateOpenApiDocument() {
           "Connector providers, installations, connections, and the proxied tool calls they serve.",
       },
       {
+        name: "Capabilities",
+        description:
+          "Native agent capabilities, their configured providers, and ordered backend routes.",
+      },
+      {
         name: "Model providers",
         description:
           "Model endpoints, their credentials and catalogs, and the role defaults that resolve to them.",

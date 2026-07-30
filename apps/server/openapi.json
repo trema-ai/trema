@@ -77,6 +77,10 @@
       "description": "Connector providers, installations, connections, and the proxied tool calls they serve."
     },
     {
+      "name": "Capabilities",
+      "description": "Native agent capabilities, their configured providers, and ordered backend routes."
+    },
+    {
       "name": "Model providers",
       "description": "Model endpoints, their credentials and catalogs, and the role defaults that resolve to them."
     },
@@ -215,6 +219,511 @@
                     "principal"
                   ],
                   "description": "The organization and owner principal created by bootstrap."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/capability-drivers": {
+      "get": {
+        "operationId": "capabilities.drivers.list",
+        "summary": "List capability drivers",
+        "description": "List the native capability adapters bundled with this deployment. The catalog contains no credentials.",
+        "tags": [
+          "Capabilities"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "enum": [
+                          "brave_search",
+                          "tavily_search",
+                          "firecrawl",
+                          "searxng",
+                          "ddgs",
+                          "exa",
+                          "parallel"
+                        ],
+                        "type": "string",
+                        "description": "The adapter's stable key."
+                      },
+                      "label": {
+                        "type": "string",
+                        "description": "The adapter name shown to administrators."
+                      },
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "web.search",
+                            "web.fetch"
+                          ],
+                          "type": "string"
+                        },
+                        "description": "The native capabilities this adapter provides."
+                      },
+                      "credentialRequired": {
+                        "type": "boolean",
+                        "description": "Whether the adapter needs a stored credential."
+                      },
+                      "defaultSettings": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {},
+                        "description": "The settings a new provider starts with."
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "label",
+                      "capabilities",
+                      "credentialRequired",
+                      "defaultSettings"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/capability-providers": {
+      "get": {
+        "operationId": "capabilities.providers.list",
+        "summary": "List capability providers",
+        "description": "List the organization's configured native capability backends. Credentials are reported as status only.",
+        "tags": [
+          "Capabilities"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "The stable name capability routes reference."
+                      },
+                      "label": {
+                        "type": "string",
+                        "description": "The provider name shown to administrators."
+                      },
+                      "driverKey": {
+                        "enum": [
+                          "brave_search",
+                          "tavily_search",
+                          "firecrawl",
+                          "searxng",
+                          "ddgs",
+                          "exa",
+                          "parallel"
+                        ],
+                        "type": "string"
+                      },
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "web.search",
+                            "web.fetch"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "hasCredential": {
+                        "type": "boolean",
+                        "description": "Whether a credential is stored. The credential itself is never returned."
+                      },
+                      "settings": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "updatedAt": {
+                        "type": "string",
+                        "description": "When the provider last changed. An ISO 8601 date-time."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "label",
+                      "driverKey",
+                      "capabilities",
+                      "hasCredential",
+                      "settings",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/capability-providers/{name}": {
+      "put": {
+        "operationId": "capabilities.providers.put",
+        "summary": "Create or update a capability provider",
+        "description": "Create or replace one native capability backend. Omit the credential to keep its stored value; send null to clear it.",
+        "tags": [
+          "Capabilities"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The provider's stable name."
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The provider's display name."
+                  },
+                  "driverKey": {
+                    "enum": [
+                      "brave_search",
+                      "tavily_search",
+                      "firecrawl",
+                      "searxng",
+                      "ddgs",
+                      "exa",
+                      "parallel"
+                    ],
+                    "type": "string"
+                  },
+                  "settings": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "credential": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The provider credential. It is encrypted and never returned. Omit it to keep the stored value; send null to clear it."
+                  }
+                },
+                "required": [
+                  "driverKey"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The stable name capability routes reference."
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "The provider name shown to administrators."
+                    },
+                    "driverKey": {
+                      "enum": [
+                        "brave_search",
+                        "tavily_search",
+                        "firecrawl",
+                        "searxng",
+                        "ddgs",
+                        "exa",
+                        "parallel"
+                      ],
+                      "type": "string"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "web.search",
+                          "web.fetch"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "hasCredential": {
+                      "type": "boolean",
+                      "description": "Whether a credential is stored. The credential itself is never returned."
+                    },
+                    "settings": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "description": "When the provider last changed. An ISO 8601 date-time."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "label",
+                    "driverKey",
+                    "capabilities",
+                    "hasCredential",
+                    "settings",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "capabilities.providers.remove",
+        "summary": "Delete a capability provider",
+        "description": "Delete one native capability backend and remove it from every route that references it.",
+        "tags": [
+          "Capabilities"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/capability-routes": {
+      "get": {
+        "operationId": "capabilities.routes.list",
+        "summary": "List capability routes",
+        "description": "List the organization's enabled native capabilities and their ordered provider chains.",
+        "tags": [
+          "Capabilities"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "capabilityKey": {
+                        "enum": [
+                          "web.search",
+                          "web.fetch"
+                        ],
+                        "type": "string"
+                      },
+                      "chain": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Provider names in resolution order. Later entries are fallbacks."
+                      },
+                      "updatedAt": {
+                        "type": "string",
+                        "description": "When the route last changed. An ISO 8601 date-time."
+                      }
+                    },
+                    "required": [
+                      "capabilityKey",
+                      "chain",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/capability-routes/{capabilityKey}": {
+      "put": {
+        "operationId": "capabilities.routes.put",
+        "summary": "Set a capability route",
+        "description": "Set a native capability's ordered provider chain. An empty chain disables the capability.",
+        "tags": [
+          "Capabilities"
+        ],
+        "parameters": [
+          {
+            "name": "capabilityKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "web.search",
+                "web.fetch"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chain": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": [
+                  "chain"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "capabilityKey": {
+                          "enum": [
+                            "web.search",
+                            "web.fetch"
+                          ],
+                          "type": "string"
+                        },
+                        "chain": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Provider names in resolution order. Later entries are fallbacks."
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "description": "When the route last changed. An ISO 8601 date-time."
+                        }
+                      },
+                      "required": [
+                        "capabilityKey",
+                        "chain",
+                        "updatedAt"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               }
             }
@@ -8252,6 +8761,10 @@
                         "type": "string",
                         "description": "The provider's stable name."
                       },
+                      "providerLabel": {
+                        "type": "string",
+                        "description": "The provider name shown in the picker."
+                      },
                       "modelId": {
                         "type": "string",
                         "description": "The model id the provider expects."
@@ -8274,6 +8787,7 @@
                     },
                     "required": [
                       "providerName",
+                      "providerLabel",
                       "modelId",
                       "label"
                     ],

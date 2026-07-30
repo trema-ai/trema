@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, ChevronDown, Plus } from "lucide-react";
+import { Boxes, Plus } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
+import { ModelSelector } from "#web/components/trema/model-selector.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import {
@@ -18,17 +19,8 @@ import {
   AlertDialogTitle,
 } from "#web/components/ui/alert-dialog.tsx";
 import { Button } from "#web/components/ui/button.tsx";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "#web/components/ui/command.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "#web/components/ui/popover.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
-import { fuzzyMatch } from "#web/lib/fuzzy.ts";
+import { modelSelectionValue } from "#web/lib/model-selection.ts";
 import { AvailableModelsRow } from "#web/pages/settings/models/catalog.tsx";
 import { CreateProviderDialog } from "#web/pages/settings/models/create-dialog.tsx";
 import { ProviderLogo } from "#web/pages/settings/models/provider-logo.tsx";
@@ -361,6 +353,7 @@ function RoleCard({
         ) : (
           <ModelCombobox
             label={role.label}
+            value={assigned}
             selected={selected}
             busy={save.isPending}
             choices={choices}
@@ -402,69 +395,47 @@ function RoleCard({
 
 function ModelCombobox({
   label,
+  value,
   selected,
   busy,
   choices,
   onPick,
 }: {
   label: string;
+  value?: ChainEntry | undefined;
   /** What the role resolves to today, or undefined while it is unassigned. */
   selected?: string | undefined;
   busy: boolean;
   choices: { provider: ModelProvider; entry: CatalogEntry }[];
   onPick: (entry: ChainEntry) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const models = choices.map(({ provider, entry }) => ({
+    id: modelSelectionValue({ providerName: provider.name, modelId: entry.id }),
+    name: modelDisplayName(entry),
+    provider: provider.label,
+    keywords: [entry.id, provider.label],
+  }));
+  const choicesByValue = new Map(
+    choices.map(({ provider, entry }) => [
+      modelSelectionValue({ providerName: provider.name, modelId: entry.id }),
+      { providerName: provider.name, modelId: entry.id },
+    ]),
+  );
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          aria-label={`Choose a model for ${label}`}
-          disabled={busy}
-          className="w-64 max-w-full justify-between font-normal"
-        >
-          <span className="truncate">{selected ?? "Choose a model"}</span>
-          <ChevronDown className="opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
-        <Command
-          // The same fuzzy matching as the catalog dialog, so "gpt4m" reaches
-          // "gpt-4o-mini" here too. cmdk drops items scoring zero and ranks
-          // the rest by score; a blank search keeps every item, since cmdk
-          // still filters on whitespace alone.
-          filter={(_value, search, keywords) =>
-            search.trim() === "" ? 1 : (fuzzyMatch(search, keywords ?? []) ?? 0)
-          }
-        >
-          <CommandInput placeholder="Search models…" />
-          <CommandList>
-            <CommandEmpty>No model matches.</CommandEmpty>
-            <CommandGroup>
-              {choices.map(({ provider, entry }) => (
-                <CommandItem
-                  key={`${provider.name} ${entry.id}`}
-                  value={`${provider.name} ${entry.id}`}
-                  keywords={[entry.id, modelDisplayName(entry), provider.label]}
-                  onSelect={() => {
-                    onPick({ providerName: provider.name, modelId: entry.id });
-                    setOpen(false);
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {modelDisplayName(entry)}
-                    <span className="text-muted-foreground"> on {provider.label}</span>
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <ModelSelector
+      models={models}
+      value={value === undefined ? "" : modelSelectionValue(value)}
+      {...(selected === undefined ? {} : { selectedLabel: selected })}
+      onValueChange={(next) => {
+        const choice = choicesByValue.get(next);
+        if (choice !== undefined) onPick(choice);
+      }}
+      ariaLabel={`Choose a model for ${label}`}
+      disabled={busy}
+      emptyMessage="No model matches."
+      placeholder="Choose a model"
+      variant="settings"
+    />
   );
 }

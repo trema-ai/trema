@@ -25,6 +25,11 @@ import { StatusDot } from "#web/components/trema/status-dot.tsx";
 import { SteeringNote } from "#web/components/trema/steering-note.tsx";
 import { UnknownEventsLine } from "#web/components/trema/unknown-events-line.tsx";
 import {
+  parseWebSearchResults,
+  WebSearchActivity,
+  WebSearchResults,
+} from "#web/components/trema/web-search-activity.tsx";
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -34,10 +39,11 @@ import { orpc } from "#web/lib/api.ts";
 import {
   formatDuration,
   isTerminalProjection,
-  partsTiming,
   type PrincipalLike,
   parkDetail,
+  partsTiming,
   principalLabel,
+  projectionWaitingForDecision,
   steeringSeq,
   type TimelineMeta,
 } from "#web/lib/run-timeline.ts";
@@ -91,6 +97,7 @@ export function RunTimeline({
   }
 
   const unknownCount = projection.unknownEvents + snapshot.serverMalformed;
+  const waitingForDecision = projectionWaitingForDecision(projection);
 
   return (
     <div className="space-y-3">
@@ -113,8 +120,8 @@ export function RunTimeline({
       ))}
       {phase === "live" && !settled && (
         <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
-          <StatusDot tone="run" />
-          Live
+          <StatusDot tone={waitingForDecision ? "wait" : "run"} />
+          {waitingForDecision ? "Paused · Waiting for your decision" : "Live"}
           {/* Stop rides the live indication: the control exists exactly as
               long as there is something to stop — the run read reporting a
               terminal ends it even while the tail is still open. */}
@@ -156,6 +163,13 @@ export function ProjectionSegments({
   /** The active chain's ticking elapsed time. */
   chainWorkingFor?: string;
 }) {
+  const activityByCallId = new Map<string, ActivityPart>();
+  for (const segment of projection.segments) {
+    for (const part of segment.parts) {
+      if (part.kind === "activity") activityByCallId.set(part.callId, part);
+    }
+  }
+
   // Boundary times live beside the fold, one record per closed segment in
   // order; pairing them up front keeps the render pass free of counters.
   const dividerDetail = new Map<number, string>();
@@ -211,6 +225,7 @@ export function ProjectionSegments({
                           expandOutputs={expandOutputs}
                           projectionLive={!isTerminalProjection(projection.status)}
                           partVocabulary={partVocabulary}
+                          activityByCallId={activityByCallId}
                         />
                       ))}
                     </ChainOfThought>
@@ -229,6 +244,7 @@ export function ProjectionSegments({
                         expandOutputs={expandOutputs}
                         projectionLive={!isTerminalProjection(projection.status)}
                         partVocabulary={partVocabulary}
+                        activityByCallId={activityByCallId}
                       />
                     ))}
                   </div>
@@ -245,15 +261,21 @@ export function ProjectionSegments({
                   expandOutputs={expandOutputs}
                   projectionLive={!isTerminalProjection(projection.status)}
                   partVocabulary={partVocabulary}
+                  activityByCallId={activityByCallId}
                 />
               );
             })}
-            {segment.end !== undefined && (
-              <SegmentDivider
-                reason={segment.end.reason}
-                {...(detail === undefined ? {} : { detail })}
-              />
-            )}
+            {segment.end !== undefined &&
+              !(
+                segment.end.reason === "paused" &&
+                projection.status === "paused" &&
+                segmentIndex === projection.segments.length - 1
+              ) && (
+                <SegmentDivider
+                  reason={segment.end.reason}
+                  {...(detail === undefined ? {} : { detail })}
+                />
+              )}
           </Fragment>
         );
       })}
@@ -344,6 +366,7 @@ function TimelinePart({
   expandOutputs,
   projectionLive,
   partVocabulary,
+  activityByCallId,
 }: {
   runId: string;
   runCreatedAt: string;
@@ -353,6 +376,7 @@ function TimelinePart({
   expandOutputs: boolean;
   projectionLive: boolean;
   partVocabulary: "run" | "chat";
+  activityByCallId: ReadonlyMap<string, ActivityPart>;
 }) {
   switch (part.kind) {
     case "text":
@@ -375,7 +399,17 @@ function TimelinePart({
         <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />
       );
     case "elicitation":
-      return <ElicitationView part={part} resolvable={resolvable} />;
+      return (
+        <ElicitationView
+          part={part}
+          resolvable={resolvable}
+          activity={
+            part.reference?.callId === undefined
+              ? undefined
+              : activityByCallId.get(part.reference.callId)
+          }
+        />
+      );
     case "error":
       return (
         <ErrorItem
@@ -405,7 +439,24 @@ function ActivityView({
       : part.status === "streaming"
         ? "running"
         : undefined;
-  const outputRef = expandOutputs ? part.result?.outputRef : undefined;
+  const outputRef =
+    expandOutputs || part.name === "search_web" ? part.result?.outputRef : undefined;
+
+  if (part.name === "search_web") {
+    return (
+      <WebSearchActivity
+        {...(part.input === undefined ? {} : { input: part.input })}
+        {...(part.notes.length === 0 ? {} : { notes: part.notes.join(" · ") })}
+        {...(part.result === undefined ? {} : { resultSummary: part.result.summary })}
+        {...(state === undefined ? {} : { state })}
+      >
+        {outputRef === undefined ? undefined : (
+          <LazyOutput runId={runId} outputRef={outputRef} kind="web-search" />
+        )}
+      </WebSearchActivity>
+    );
+  }
+
   return (
     <ActivityCard
       title={part.title}
@@ -423,7 +474,15 @@ function ActivityView({
 }
 
 /** Fetches the full output behind an `outputRef` when it first renders. */
-function LazyOutput({ runId, outputRef }: { runId: string; outputRef: string }) {
+function LazyOutput({
+  runId,
+  outputRef,
+  kind,
+}: {
+  runId: string;
+  outputRef: string;
+  kind?: "web-search";
+}) {
   const query = useQuery(
     orpc.runs.output.queryOptions({
       input: { id: runId, outputRef },
@@ -438,6 +497,13 @@ function LazyOutput({ runId, outputRef }: { runId: string; outputRef: string }) 
   }
   if (query.data.blocks.length === 0) {
     return <div className="text-meta text-muted-foreground">The output is empty.</div>;
+  }
+  if (kind === "web-search") {
+    const results = query.data.blocks.flatMap((block) => {
+      if (block.kind !== "text") return [];
+      return parseWebSearchResults(block.text) ?? [];
+    });
+    if (results.length > 0) return <WebSearchResults results={results} />;
   }
   return (
     <div className="space-y-2">
@@ -494,14 +560,54 @@ function SteeringView({
 function cardOptions(part: ElicitationPart) {
   return part.options.map((option) => ({
     id: option.id,
-    label: option.label,
+    label:
+      part.elicitationKind === "approval" && option.id === "approve"
+        ? "Allow"
+        : part.elicitationKind === "approval" && option.id === "deny"
+          ? "Don’t allow"
+          : option.label,
     variant:
-      option.style === "primary"
+      part.elicitationKind === "approval" && option.id === "approve"
         ? ("primary" as const)
-        : option.style === "danger"
-          ? ("destructive" as const)
-          : ("secondary" as const),
+        : part.elicitationKind === "approval" && option.id === "deny"
+          ? ("secondary" as const)
+          : option.style === "primary"
+            ? ("primary" as const)
+            : option.style === "danger"
+              ? ("destructive" as const)
+              : ("secondary" as const),
   }));
+}
+
+type ConnectorCatalogEntry = {
+  key: string;
+  displayName: string;
+  logoUrl?: string;
+};
+
+function connectorIdentity(
+  activity: ActivityPart | undefined,
+  catalog: readonly ConnectorCatalogEntry[],
+): { name: string; logoUrl?: string } | undefined {
+  if (activity?.connector !== undefined) {
+    return {
+      name: activity.connector.displayName,
+      ...(activity.connector.logoUrl === undefined ? {} : { logoUrl: activity.connector.logoUrl }),
+    };
+  }
+  if (activity?.toolKind !== "connector") return undefined;
+
+  // Events recorded before connector identity was added still carry the
+  // normalized model tool name. Match its longest catalog-key prefix so those
+  // pending approvals can receive the same branding after an upgrade.
+  const provider = [...catalog]
+    .sort((left, right) => right.key.length - left.key.length)
+    .find(({ key }) => activity.name.startsWith(`${key}_`));
+  if (provider === undefined) return undefined;
+  return {
+    name: provider.displayName,
+    ...(provider.logoUrl === undefined ? {} : { logoUrl: provider.logoUrl }),
+  };
 }
 
 /**
@@ -511,24 +617,40 @@ function cardOptions(part: ElicitationPart) {
  * run an unresolved elicitation can no longer act, so its options render
  * disabled with the reason stated: the pending decision itself is content.
  */
-function ElicitationView({ part, resolvable }: { part: ElicitationPart; resolvable: boolean }) {
+function ElicitationView({
+  part,
+  resolvable,
+  activity,
+}: {
+  part: ElicitationPart;
+  resolvable: boolean;
+  activity: ActivityPart | undefined;
+}) {
   const resolved = part.resolution;
+  const headline =
+    part.elicitationKind === "approval"
+      ? part.prompt.replace(
+          /^Use (.+) for the current request\.$/,
+          (_prompt, action: string) => `Allow ${action} for this request?`,
+        )
+      : part.prompt;
   if (resolved === undefined) {
     if (!resolvable) {
       return (
         <ApprovalCard
-          headline={part.prompt}
+          headline={headline}
           kind={part.elicitationKind}
           options={cardOptions(part)}
           disabledReason="The run ended before this was decided."
         />
       );
     }
-    return <LiveElicitation part={part} />;
+    return <LiveElicitation part={part} headline={headline} activity={activity} />;
   }
 
+  const options = cardOptions(part);
   const outcome =
-    part.options.find((option) => option.id === resolved.optionId)?.label ?? resolved.optionId;
+    options.find((option) => option.id === resolved.optionId)?.label ?? resolved.optionId;
   return (
     <Collapsible data-slot="elicitation-row">
       <CollapsibleTrigger className="group -mx-1.5 flex w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left hover:bg-muted/50">
@@ -546,7 +668,7 @@ function ElicitationView({ part, resolvable }: { part: ElicitationPart; resolvab
         <div className="mt-1 mb-1.5 ml-[5px] space-y-1.5 border-l pl-4 text-meta">
           <p>{part.prompt}</p>
           <p className="text-muted-foreground">
-            Options: {part.options.map((option) => option.label).join(" · ")}
+            Options: {options.map((option) => option.label).join(" · ")}
           </p>
           <p className="text-muted-foreground">
             {outcome} by {principalLabel(resolved.by)} · <RelativeTime date={resolved.at} />
@@ -563,12 +685,32 @@ function ElicitationView({ part, resolvable }: { part: ElicitationPart; resolvab
  * only when `elicitation-resolved` arrives on the tail and sets the part's
  * resolution in place.
  */
-function LiveElicitation({ part }: { part: ElicitationPart }) {
+function LiveElicitation({
+  part,
+  headline,
+  activity,
+}: {
+  part: ElicitationPart;
+  headline: string;
+  activity: ActivityPart | undefined;
+}) {
   const { resolve, pendingOptionId, error } = useResolveElicitation(part.elicitationId);
+  const needsConnectorLookup =
+    part.elicitationKind === "approval" &&
+    activity?.toolKind === "connector" &&
+    activity.connector === undefined;
+  const catalog = useQuery(
+    orpc.connectors.catalog.list.queryOptions({ enabled: needsConnectorLookup }),
+  );
+  const connector = connectorIdentity(
+    activity,
+    (catalog.data ?? []) as readonly ConnectorCatalogEntry[],
+  );
   return (
     <ApprovalCard
-      headline={part.prompt}
+      headline={headline}
       kind={part.elicitationKind}
+      {...(connector === undefined ? {} : { connector })}
       options={cardOptions(part)}
       onResolve={resolve}
       {...(pendingOptionId === undefined ? {} : { pendingOptionId })}

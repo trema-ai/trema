@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Database } from "#server/lib/db/index.js";
 import type { DataPlaneSession } from "#server/services/dataplane/index.js";
 import {
+  capabilityToolDefs,
   connectorModelToolName,
   resolveConnectorToolDefs,
   sessionToolDefs,
@@ -31,6 +32,15 @@ describe("data-plane tool registry", () => {
       "fetch_transcript",
       "search_tools",
       "use_connector",
+    ]);
+  });
+
+  it("publishes only the native capabilities whose routes are enabled", () => {
+    expect(capabilityToolDefs(["web.search"]).map(({ name }) => name)).toEqual(["search_web"]);
+    expect(capabilityToolDefs(["web.fetch"]).map(({ name }) => name)).toEqual(["fetch_url"]);
+    expect(capabilityToolDefs(["web.search", "web.fetch"]).map(({ name }) => name)).toEqual([
+      "search_web",
+      "fetch_url",
     ]);
   });
 
@@ -82,6 +92,11 @@ describe("data-plane tool registry", () => {
     expect(tools[0]).toMatchObject({
       key: "notion:search_pages",
       kind: "connector",
+      connector: {
+        key: "notion",
+        displayName: "Notion",
+        logoUrl: "/connector-logos/notion.svg",
+      },
       description: "Search workspace pages",
       schema: {
         type: "object",

@@ -19,11 +19,12 @@ function SettingsSection({ title, description, children }: SettingsSectionProps)
 type SettingRowProps = {
   label: string;
   description?: string;
+  icon?: ReactNode;
   control: ReactNode;
   orientation?: "row" | "stack";
 };
 
-function SettingRow({ label, description, control, orientation = "row" }: SettingRowProps) {
+function SettingRow({ label, description, icon, control, orientation = "row" }: SettingRowProps) {
   if (orientation === "stack") {
     return (
       <div data-slot="setting-row" className="px-4 py-3.5">
@@ -38,11 +39,14 @@ function SettingRow({ label, description, control, orientation = "row" }: Settin
 
   return (
     <div data-slot="setting-row" className="flex items-center justify-between gap-8 px-4 py-3.5">
-      <div className="min-w-0">
-        <div className="text-chrome font-medium">{label}</div>
-        {description ? (
-          <p className="mt-0.5 text-meta text-muted-foreground">{description}</p>
-        ) : null}
+      <div className="flex min-w-0 items-center gap-3">
+        {icon}
+        <div className="min-w-0">
+          <div className="text-chrome font-medium">{label}</div>
+          {description ? (
+            <p className="mt-0.5 text-meta text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
       </div>
       <div className="flex shrink-0 items-center">{control}</div>
     </div>

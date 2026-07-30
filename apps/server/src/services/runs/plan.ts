@@ -1,8 +1,10 @@
 import type { RunRecord, ToolDef, ToolExecutor } from "@trema/harness";
 
 import type { Database } from "#server/lib/db/index.js";
+import { enabledCapabilityKeys } from "#server/services/capabilities/index.js";
 import { type DataPlaneSession, toDataPlaneSession } from "#server/services/dataplane/index.js";
 import {
+  capabilityToolDefs,
   modelSessionToolDefs,
   resolveConnectorToolDefs,
   sessionToolDefs,
@@ -104,7 +106,11 @@ export function createSessionRunPlan(
     });
 
     const dataPlaneSession = toDataPlaneSession(session);
-    const initialTools = modelSessionToolDefs(sessionToolDefs());
+    const capabilityKeys = await enabledCapabilityKeys(options.db, session.orgId);
+    const initialTools = modelSessionToolDefs([
+      ...sessionToolDefs(),
+      ...capabilityToolDefs(capabilityKeys),
+    ]);
     const allowlist = row?.toolAllowlist ?? [];
     const tools = allowlist.length === 0 ? initialTools : narrowTools(initialTools, allowlist);
     const activeToolKeys =

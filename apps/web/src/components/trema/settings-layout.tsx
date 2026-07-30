@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   UserRound,
   UsersRound,
 } from "lucide-react";
@@ -46,6 +47,7 @@ const adminItems = [
   { label: "Members", href: "/settings/members", icon: UsersRound },
   { label: "Scopes", href: "/settings/scopes", icon: SlidersHorizontal },
   { label: "Connectors", href: "/settings/connectors", icon: Cable },
+  { label: "Capabilities", href: "/settings/capabilities", icon: Sparkles },
   { label: "Policies", href: "/settings/policies", icon: ShieldCheck },
   { label: "Approvals", href: "/settings/approvals", icon: Inbox },
   { label: "Models", href: "/settings/models", icon: Boxes },

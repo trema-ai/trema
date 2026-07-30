@@ -40,6 +40,11 @@ export interface ActivityPart {
   name: string;
   title: string;
   toolKind: ToolKind;
+  connector?: {
+    key: string;
+    displayName: string;
+    logoUrl?: string;
+  };
   /** Streamed input accumulation (`tool-input-delta`), replaced by `tool-input`. */
   input?: string;
   /** Bounded progress lines from `tool-note`. */
@@ -62,6 +67,12 @@ export interface ElicitationPart {
   elicitationId: string;
   elicitationKind: "approval" | "confirmation" | "choice" | "form";
   prompt: string;
+  reference?: {
+    callId?: string;
+    approvalId?: string;
+    itemId?: string;
+    automationId?: string;
+  };
   options: ElicitationOption[];
   blocking: boolean;
   resolution?: { optionId: string; by: PrincipalRef; at: string };

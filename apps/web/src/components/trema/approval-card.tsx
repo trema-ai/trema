@@ -1,4 +1,4 @@
-import { CircleCheck, CircleX, Clock, Loader2Icon } from "lucide-react";
+import { CircleCheck, CircleHelp, CircleX, Clock, Loader2Icon } from "lucide-react";
 
 import { type ApprovalModeValue, ModeBadge } from "#web/components/trema/mode-badge.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
@@ -27,6 +27,11 @@ type ApprovalCardProps = {
     /** Why a delegated-mode call paused, from the classifier. */
     escalationReason?: string;
     argsSummary: string;
+  };
+  /** Connector identity for a live approval, when the gated call supplies it. */
+  connector?: {
+    name: string;
+    logoUrl?: string;
   };
   /** Provenance for card surfaces; omit where the context already says it. */
   requestedBy?: string;
@@ -82,6 +87,7 @@ function ApprovalCard({
   headline,
   kind,
   action,
+  connector,
   requestedBy,
   prompt,
   options,
@@ -94,12 +100,45 @@ function ApprovalCard({
   disabledReason,
   className,
 }: ApprovalCardProps) {
+  const requestLabel =
+    kind === "approval"
+      ? "Permission required"
+      : kind === "confirmation"
+        ? "Confirmation required"
+        : "Input required";
+
   return (
     <div
       data-slot="approval-card"
       data-kind={kind}
       className={cn("rounded-md border bg-card p-4", className)}
     >
+      <div className="mb-2 flex items-center justify-between gap-3 text-meta font-medium text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <CircleHelp className="size-3.5" aria-hidden="true" />
+          <span>{requestLabel}</span>
+        </span>
+        {connector !== undefined && (
+          <span className="flex min-w-0 items-center gap-1.5 text-foreground">
+            {connector.logoUrl !== undefined ? (
+              <img
+                src={connector.logoUrl}
+                alt=""
+                className="size-5 shrink-0 rounded-sm border object-contain p-0.5"
+              />
+            ) : (
+              <span
+                className="grid size-5 shrink-0 place-items-center rounded-sm border bg-muted text-[10px]"
+                aria-hidden="true"
+              >
+                {connector.name.slice(0, 1)}
+              </span>
+            )}
+            <span className="truncate">{connector.name}</span>
+          </span>
+        )}
+      </div>
+
       {/* What is being asked, and why it paused — the two glance signals. */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 text-[15px] leading-snug font-semibold">{headline}</div>
@@ -127,7 +166,7 @@ function ApprovalCard({
       )}
 
       {/* The decision row: act, or see the outcome. Urgency sits beside it. */}
-      <div className="mt-4 flex items-center justify-between gap-3">
+      <div className="mt-3.5 flex items-center justify-between gap-3">
         {resolution !== undefined ? (
           <ResolutionLine resolution={resolution} />
         ) : (

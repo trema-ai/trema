@@ -25,3 +25,9 @@ Supabase
 Vercel
 Zapier
 Zendesk
+Tavily
+Firecrawl
+Exa
+APIs
+failover
+rerank

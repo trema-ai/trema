@@ -14,6 +14,8 @@ Terms are alphabetical, with the exact spelling the product and API use. For how
 | Audit log | The append-only record of control-plane actions: which principal did what, to which subject, and when. |
 | Binding | The mapping from a surface location to a scope. Sessions opened at that location resolve to the bound scope. |
 | Capability | A named permission, such as `manage_connectors`, that a role either holds or lacks. Authorization checks it against a fixed role table. |
+| Capability provider | One configured backend for a native tool capability, with validated settings and an optional encrypted credential. |
+| Capability route | The ordered provider chain that enables a native tool capability for an organization. |
 | Client registration | An organization's OAuth client for one connector provider, from a `platform`, `customer`, or `dynamic` source. |
 | Connector | An integration with an external provider whose tools the agent can call. Credentials stay server-side; the model never sees them. |
 | Connector connection | One stored credential for a provider, held by a principal and envelope-encrypted at rest. |

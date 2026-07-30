@@ -350,6 +350,7 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
       (offeredModels.data ?? []).map((model) => ({
         id: modelSelectionValue(model),
         name: model.label,
+        provider: model.providerLabel,
         keywords: [model.providerName, model.modelId],
       })),
     [offeredModels.data],
@@ -533,7 +534,7 @@ function ChatThread({ threadRef, isNew }: { threadRef: string; isNew: boolean })
           {!docked && composer}
         </div>
         {docked && (
-          <div className="sticky z-10 mx-auto w-full max-w-3xl rounded-md bg-card bottom-5">
+          <div className="sticky bottom-0 z-10 mx-auto w-full max-w-3xl bg-card px-4 pb-4">
             <div className="relative">
               {away && (
                 <Button

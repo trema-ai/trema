@@ -43,6 +43,7 @@ function toolStart(callId: string, name: string, tools: readonly ToolDef[]): Run
     name,
     title: definition?.title ?? name,
     kind: definition?.kind ?? "other",
+    ...(definition?.connector === undefined ? {} : { connector: definition.connector }),
   };
 }
 
