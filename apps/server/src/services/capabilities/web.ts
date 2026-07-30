@@ -458,33 +458,9 @@ export async function fetchUrl(
   const startedAt = performance.now();
   const failures: WebProviderError[] = [];
   for (const provider of providers) {
+    let fetched: WebFetchResponse;
     try {
-      const fetched = await callFetchProvider(
-        provider,
-        url,
-        options.providerFetch ?? globalThis.fetch,
-      );
-      await db.auditLog.create({
-        data: {
-          orgId: session.orgId,
-          actorPrincipalId: session.actingPrincipalId,
-          action: "dataplane.fetch_url",
-          subject: session.id,
-          payload: {
-            providerName: provider.name,
-            characters: fetched.text.length,
-            truncated: fetched.truncated,
-          },
-        },
-      });
-      log.info("Web page fetched", {
-        sessionId: session.id,
-        providerName: provider.name,
-        characters: fetched.text.length,
-        truncated: fetched.truncated,
-        durationMs: Math.round(performance.now() - startedAt),
-      });
-      return fetched;
+      fetched = await callFetchProvider(provider, url, options.providerFetch ?? globalThis.fetch);
     } catch (error) {
       const failure =
         error instanceof WebProviderError ? error : new WebProviderError(provider.name);
@@ -494,7 +470,29 @@ export async function fetchUrl(
         providerName: provider.name,
         ...(failure.status === undefined ? {} : { status: failure.status }),
       });
+      continue;
     }
+    await db.auditLog.create({
+      data: {
+        orgId: session.orgId,
+        actorPrincipalId: session.actingPrincipalId,
+        action: "dataplane.fetch_url",
+        subject: session.id,
+        payload: {
+          providerName: provider.name,
+          characters: fetched.text.length,
+          truncated: fetched.truncated,
+        },
+      },
+    });
+    log.info("Web page fetched", {
+      sessionId: session.id,
+      providerName: provider.name,
+      characters: fetched.text.length,
+      truncated: fetched.truncated,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    return fetched;
   }
   await db.auditLog.create({
     data: {

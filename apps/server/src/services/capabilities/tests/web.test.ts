@@ -186,4 +186,34 @@ describe("web capabilities", () => {
       }),
     );
   });
+
+  it("does not retry a successful extract when audit logging fails", async () => {
+    const db = fakeDb({ "web.fetch": ["primary", "fallback"] }, [
+      provider("primary", "tavily_search", "primary-key"),
+      provider("fallback", "tavily_search", "fallback-key"),
+    ]);
+    db.auditLog.create.mockRejectedValueOnce(new Error("audit unavailable"));
+    const providerFetch = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            url: "https://example.com/article",
+            raw_content: "Extracted once.",
+          },
+        ],
+        failed_results: [],
+      }),
+    );
+
+    await expect(
+      fetchUrl(
+        db,
+        session,
+        { url: "https://example.com/article" },
+        { masterKey, providerFetch: providerFetch as typeof fetch },
+      ),
+    ).rejects.toThrow("audit unavailable");
+
+    expect(providerFetch).toHaveBeenCalledTimes(1);
+  });
 });
