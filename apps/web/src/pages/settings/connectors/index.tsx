@@ -25,6 +25,7 @@ import {
   categoryLabel,
   providerLogo,
   type Registration,
+  type Scope,
 } from "#web/pages/settings/connectors/shared.tsx";
 
 type ProviderRow = {
@@ -40,6 +41,7 @@ export function SettingsConnectorsPage() {
   const catalog = useQuery(orpc.connectors.catalog.list.queryOptions({}));
   const connections = useQuery(orpc.connectors.connections.list.queryOptions({ input: {} }));
   const installations = useQuery(orpc.connectors.installations.list.queryOptions({ input: {} }));
+  const scopes = useQuery(orpc.scopes.list.queryOptions({ input: {} }));
   const registrations = useQuery(orpc.connectors.registrations.list.queryOptions({}));
   const meta = useQuery(orpc.connectors.meta.queryOptions({}));
   const [registrationProvider, setRegistrationProvider] = useState<CatalogProvider>();
@@ -47,6 +49,9 @@ export function SettingsConnectorsPage() {
   const providers = (catalog.data ?? []) as CatalogProvider[];
   const connectionRows = (connections.data ?? []) as ConnectorConnection[];
   const installationRows = (installations.data ?? []) as ConnectorInstallation[];
+  const scopeRows = ((scopes.data ?? []) as Scope[]).filter(
+    (scope) => scope.kind === "org" || scope.kind === "shared",
+  );
   const registrationRows = (registrations.data ?? []) as Registration[];
   const rows: ProviderRow[] = providers.map((provider) => {
     const providerConnections = connectionRows.filter(
@@ -68,11 +73,17 @@ export function SettingsConnectorsPage() {
     };
   });
   const error =
-    catalog.error ?? connections.error ?? installations.error ?? registrations.error ?? meta.error;
+    catalog.error ??
+    connections.error ??
+    installations.error ??
+    scopes.error ??
+    registrations.error ??
+    meta.error;
   const pending =
     catalog.isPending ||
     connections.isPending ||
     installations.isPending ||
+    scopes.isPending ||
     registrations.isPending ||
     meta.isPending;
 
@@ -151,6 +162,8 @@ export function SettingsConnectorsPage() {
       {staticProvider ? (
         <StaticConnectionDialog
           provider={staticProvider}
+          scopes={scopeRows}
+          defaultScopeId={scopeRows.find((scope) => scope.kind === "org")?.id}
           open
           onOpenChange={(next) => {
             if (!next) setStaticProvider(undefined);

@@ -87,22 +87,36 @@ function submittedFields(data: FormData, prefix: "config" | "credential"): Recor
 export function StaticConnectionDialog({
   provider,
   reconnect,
+  scopes,
+  defaultScopeId,
   open,
   onOpenChange,
   onConnected,
 }: {
   provider: CatalogProvider;
   reconnect?: ConnectorConnection | undefined;
+  scopes: Scope[];
+  defaultScopeId?: string | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected: (connectionId: string) => void | Promise<void>;
 }) {
+  const [targetScopeId, setTargetScopeId] = useState(
+    defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
+  );
+  useEffect(() => {
+    if (!open) return;
+    setTargetScopeId(
+      defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
+    );
+  }, [open, defaultScopeId, scopes]);
   const create = useMutation({
     mutationFn: (values: {
       config: Record<string, string>;
       credentials: Record<string, string>;
     }) => {
       const input = {
+        scopeId: targetScopeId,
         providerKey: provider.key,
         config: values.config,
         credentials: values.credentials,
@@ -140,6 +154,26 @@ export function StaticConnectionDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="my-5 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor={`static-target-${provider.key}`}>Available in</Label>
+              <Select value={targetScopeId} onValueChange={setTargetScopeId}>
+                <SelectTrigger id={`static-target-${provider.key}`} className="w-full">
+                  <SelectValue placeholder="Choose a scope" />
+                </SelectTrigger>
+                <SelectContent>
+                  {scopes.map((scope) => (
+                    <SelectItem key={scope.id} value={scope.id}>
+                      {scopeDisplayName(scope)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-meta text-muted-foreground">
+                {reconnect
+                  ? "Reconnect the account used by this scope."
+                  : "The connection will be installed in this scope."}
+              </p>
+            </div>
             {Object.entries(provider.configFields).map(([name, descriptor]) =>
               fieldInput(provider.key, name, descriptor, "config"),
             )}
@@ -151,7 +185,7 @@ export function StaticConnectionDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button disabled={create.isPending}>
+            <Button disabled={create.isPending || !targetScopeId}>
               {create.isPending ? "Verifying…" : "Connect"}
             </Button>
           </DialogFooter>

@@ -1253,7 +1253,7 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
       );
     }
     const connection = await storeConnection(transaction, connectionInput);
-    let targetScopeId = installationIntent.scopeId;
+    const targetScopeId = installationIntent.scopeId;
     if (input.reconnectConnectionId) {
       const existingInstallations = await transaction.item.findMany({
         where: {
@@ -1264,7 +1264,7 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
         select: { scopeId: true, body: true },
         orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
       });
-      const existingBinding = existingInstallations.find((candidate) => {
+      const existingBindings = existingInstallations.filter((candidate) => {
         const body = candidate.body;
         return (
           typeof body === "object" &&
@@ -1274,7 +1274,14 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
           body.connectionId === input.reconnectConnectionId
         );
       });
-      if (existingBinding) targetScopeId = existingBinding.scopeId;
+      const existingBinding = existingBindings.find(
+        (candidate) => candidate.scopeId === installationIntent.scopeId,
+      );
+      if (existingBindings.length > 0 && !existingBinding) {
+        throw new StaticCredentialValidationError(
+          "Static reconnect scope must already be bound to the connection",
+        );
+      }
     }
     const provisioned = await provisionConnectorInstallation(transaction, {
       orgId: input.orgId,

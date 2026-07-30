@@ -289,6 +289,9 @@ export async function syncConnectorInstallation(
       if (currentBody.catalogKey !== provider.key) {
         throw new ConnectorSyncTransportError("Connector provider changed during tool sync");
       }
+      if (currentBody.connectionId !== body.connectionId) {
+        throw new ConnectorSyncTransportError("Connector connection changed during tool sync");
+      }
       const merged = mergeSyncedTools(currentBody, freshTools);
       const validated = parsedBody(merged.body, catalog);
       const changed = JSON.stringify(validated) !== JSON.stringify(currentBody);

@@ -686,17 +686,20 @@ const startOAuth = requireCapability("manage_connectors", {
     }
   });
 
-const createStatic = requireCapability("manage_connectors")
+const createStatic = requireCapability("manage_connectors", {
+  scopeId: (input) => (input as { scopeId?: string }).scopeId,
+})
   .route({
     method: "POST",
     path: "/connector-connections/static",
     summary: "Create a static connector connection",
     description:
-      "Validate, verify, and encrypt an API-key or basic connection for the organization agent.",
+      "Validate, verify, and encrypt an API-key or basic connection, then install it in the selected organization or shared scope.",
     tags: ["Connectors"],
   })
   .input(
     z.object({
+      scopeId: z.uuid(),
       providerKey: z.string().trim().min(1),
       config: configSchema,
       credentials: z.record(z.string(), z.string()),
@@ -714,11 +717,19 @@ const createStatic = requireCapability("manage_connectors")
   .handler(async ({ context, input }) => {
     try {
       const ownerPrincipalId = await orgAgentPrincipalId(context.db, context.org.id);
-      const orgScope = await context.db.scope.findFirst({
-        where: { orgId: context.org.id, kind: "org" },
+      const targetScope = await context.db.scope.findFirst({
+        where: {
+          id: input.scopeId,
+          orgId: context.org.id,
+          kind: { in: ["org", "shared"] },
+        },
         select: { id: true },
       });
-      if (!orgScope) throw new ConnectorInstallationError("Organization scope not found");
+      if (!targetScope) {
+        throw new ConnectorInstallationError(
+          "Static connector connections require an organization or shared scope",
+        );
+      }
       const connection = await createStaticConnection(context.db, {
         orgId: context.org.id,
         ownerPrincipalId,
@@ -735,7 +746,7 @@ const createStatic = requireCapability("manage_connectors")
         ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
         installation: {
           actorPrincipalId: context.principal.id,
-          scopeId: orgScope.id,
+          scopeId: targetScope.id,
         },
       });
       return {

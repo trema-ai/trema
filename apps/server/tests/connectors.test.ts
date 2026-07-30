@@ -1044,6 +1044,7 @@ integration("connector connection flows", () => {
     const created = await call(
       connectorsRouter.connect.createStatic,
       {
+        scopeId: org.orgScope.id,
         providerKey: "stripe",
         config: {},
         credentials: { apiKey: "rk_test_secret" },
@@ -1102,6 +1103,7 @@ integration("connector connection flows", () => {
     await call(
       connectorsRouter.connect.createStatic,
       {
+        scopeId: org.orgScope.id,
         providerKey: "gamma",
         config: {},
         credentials: { apiKey: "sk-gamma-test-secret" },
@@ -1163,7 +1165,7 @@ integration("connector connection flows", () => {
     ).rejects.toBeInstanceOf(ConnectorConnectionNotFoundError);
   });
 
-  it("preserves a static reconnect's existing scope bindings", async () => {
+  it("targets fresh static connections and preserves reconnect scope bindings", async () => {
     const org = await createOrg();
     const shared = await db.scope.create({
       data: { orgId: org.org.id, kind: "shared", name: "Static Shared Scope" },
@@ -1172,34 +1174,29 @@ integration("connector connection flows", () => {
     const organizationConnection = await call(
       connectorsRouter.connect.createStatic,
       {
+        scopeId: org.orgScope.id,
         providerKey: "stripe",
         config: {},
         credentials: { apiKey: "rk_organization_secret" },
       },
       { context: { ...org.context, connectorFetch: okFetch } },
     );
-    const sharedConnection = await createStaticConnection(db, {
-      orgId: org.org.id,
-      ownerPrincipalId: org.agent.id,
-      providerKey: "stripe",
-      config: {},
-      credentials: { apiKey: "rk_shared_secret" },
-      masterKey,
-      fetch: okFetch,
-    });
-    await createConnectorInstallation(db, {
-      orgId: org.org.id,
-      actorPrincipalId: org.principal.id,
-      scopeId: shared.id,
-      catalogKey: "stripe",
-      connectionId: sharedConnection.id,
-      masterKey,
-    });
+    const sharedConnection = await call(
+      connectorsRouter.connect.createStatic,
+      {
+        scopeId: shared.id,
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_shared_secret" },
+      },
+      { context: { ...org.context, connectorFetch: okFetch } },
+    );
 
     await expect(
       call(
         connectorsRouter.connect.createStatic,
         {
+          scopeId: shared.id,
           providerKey: "stripe",
           config: {},
           credentials: { apiKey: "rk_shared_reconnected_secret" },

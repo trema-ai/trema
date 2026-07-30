@@ -190,6 +190,17 @@ export function SettingsConnectorDetailPage() {
     );
   }
   const oauth = provider.authMode === "oauth2_code" || provider.authMode === "mcp_oauth";
+  const reconnectScopeIds = new Set(
+    reconnect
+      ? installationRows
+          .filter((installation) => installation.connectionId === reconnect.id)
+          .map((installation) => installation.scopeId)
+      : [],
+  );
+  const staticScopeRows =
+    reconnectScopeIds.size > 0
+      ? scopeRows.filter((scope) => reconnectScopeIds.has(scope.id))
+      : scopeRows;
 
   return (
     <main className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
@@ -250,6 +261,13 @@ export function SettingsConnectorDetailPage() {
       <StaticConnectionDialog
         provider={provider}
         reconnect={reconnect}
+        scopes={staticScopeRows}
+        defaultScopeId={
+          reconnect
+            ? installationRows.find((installation) => installation.connectionId === reconnect.id)
+                ?.scopeId
+            : scopeRows.find((scope) => scope.kind === "org")?.id
+        }
         open={staticOpen}
         onOpenChange={(next) => {
           setStaticOpen(next);
