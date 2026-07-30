@@ -60,6 +60,9 @@ function fakeDb(toolAllowlist: string[]): Database {
         },
       ],
     },
+    capabilityRoute: {
+      findMany: async () => [],
+    },
   } as unknown as Database;
 }
 

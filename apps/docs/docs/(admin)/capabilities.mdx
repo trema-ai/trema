@@ -1,0 +1,64 @@
+---
+title: Capabilities
+description: Configure web search and web fetch, choose provider order, and control the native tools available to the agent.
+---
+
+A capability gives the agent a stable, Trema-owned tool whose backend an administrator can replace. Capabilities differ from [connectors](/connectors): a connector publishes provider-specific operations, while a capability keeps one tool contract across providers.
+
+Managing capabilities requires the `manage_capabilities` permission, held by owners and admins.
+
+## Configure web search
+
+Web search supports Brave Search and Tavily. Each provider needs its own API key.
+
+1. Open **Settings → Capabilities**.
+2. Select **Web Search**.
+3. Open a provider's actions menu.
+4. Select **Configure**.
+5. Enter its API key and save.
+
+The first configured provider becomes primary and enables web search. Configure another provider, then select **Make fallback** to add failover.
+
+Select **Make primary** to change the primary provider. The previous primary becomes the fallback. A fallback runs only when the primary request fails.
+It does not merge, rerank, or supplement successful results.
+
+The agent receives one `search_web` tool regardless of provider. The tool accepts a query, an optional result limit up to 20, and an optional day, week, month, or year recency filter. Results use one shape: title, URL, snippet, and an optional publication time.
+
+Replacing a key overwrites its encrypted value. Trema never returns a saved key. Removing a provider deletes its key and removes the provider from the route; removing the final provider disables web search.
+
+## Configure web fetch
+
+Web fetch uses the extraction API of a configured provider. Tavily currently provides web fetch.
+
+1. Open **Settings → Capabilities**.
+2. Select **Web Extract**.
+3. Open Tavily's actions menu.
+4. Select **Configure** if Tavily has no saved key.
+5. Select **Make primary** if Tavily is already configured for web search.
+
+The agent receives the `fetch_url` tool while the route is enabled. Tavily Extract returns the page as Markdown. Trema limits the result to 50,000 characters.
+
+One provider record can serve several capabilities. For example, one Tavily API key can appear in both the web search and web fetch routes.
+
+## Disable a capability
+
+Remove every provider assigned to the capability. The tool disappears from new model turns and external Model Context Protocol (MCP) tool listings.
+
+Removing a provider deletes its saved key and removes it from every capability it serves.
+
+## Configure through the API
+
+Drivers describe the adapters bundled with the deployment and list every capability they support. Providers hold an adapter's settings and encrypted credential. Routes enable a capability and list its providers in resolution order.
+
+| Operation | Route |
+| --- | --- |
+| List bundled drivers | `GET /capability-drivers` |
+| List configured providers | `GET /capability-providers` |
+| Create or replace a provider | `PUT /capability-providers/{name}` |
+| Delete a provider | `DELETE /capability-providers/{name}` |
+| List enabled routes | `GET /capability-routes` |
+| Set or disable a route | `PUT /capability-routes/{capabilityKey}` |
+
+Set a route's `chain` to an empty array to disable it. Provider names in a route are ordered from primary to fallback and must serve that route's capability.
+
+See the [API reference](/api) for request and response schemas.

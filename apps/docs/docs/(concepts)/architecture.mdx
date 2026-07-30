@@ -62,6 +62,14 @@ Tool-result checkpoints store the active tool keys. The run resolves those
 keys against the live catalog before each model turn. Retries preserve the
 working set order without preserving stale schemas or authority.
 
+## Native capabilities keep a stable contract
+
+A native capability exposes one Trema-owned tool contract independently of its backend. An organization configures provider records, then enables the capability with an ordered provider route. The route can change without changing model prompts or harness integrations.
+
+Web search uses this pattern for Brave Search and Tavily, including ordered failover. A provider can implement several contracts: Tavily also serves web fetch through its Extract API. Unlike connectors, capability routes belong to the organization and need no scope installation.
+
+Capability credentials stay server-side and encrypted. Each tool call uses the credential for the provider selected by its capability route.
+
 ## One API for every client
 
 The web app holds no privileged surface. The REST handler under `/api/v1` and the transport under `/rpc` are two mounts of one procedure router: same handlers, same authorization, different wire formats. A capability exists on both or on neither, so anything the web app does, a script can do with a service credential. The OpenAPI document is generated from that router at startup and served at `/api/v1/spec.json`.

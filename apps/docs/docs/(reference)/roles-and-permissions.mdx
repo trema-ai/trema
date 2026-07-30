@@ -13,7 +13,7 @@ The four roles nest strictly: each holds everything the previous one does.
 | --- | --- |
 | `viewer` | Reading. |
 | `member` | Creating and editing items, installing skills. |
-| `admin` | Managing connectors, scopes, policies, schedules, members, and model providers; reading the audit log. |
+| `admin` | Managing connectors, capabilities, scopes, policies, schedules, members, and model providers; reading the audit log. |
 | `owner` | Organization administration. |
 
 ## Capabilities
@@ -26,6 +26,7 @@ A call that fails a capability check answers with status 403 and a message namin
 | `write_items` | `member` | Creating, editing, activating, archiving, and restoring items. |
 | `install_skills` | `member` | Reserved for skill installation. No operation checks it in this release. |
 | `manage_connectors` | `admin` | Connector connections, installations, registrations, provider settings, tool execution, and service credentials. |
+| `manage_capabilities` | `admin` | Native capability providers, encrypted credentials, and provider routes. |
 | `manage_scopes` | `admin` | Shared scopes, surface bindings, and the personal-scope policy. |
 | `edit_policies` | `admin` | Setting and deleting approval policies. |
 | `manage_schedules` | `admin` | Creating, editing, and changing the status of schedules. |
@@ -146,6 +147,19 @@ The member routes carry no capability check: any active member, whatever their r
 
 - Ownership alone gates revocation: a member can always revoke their own connection, even after member access for the provider is turned off.
 - A member may install connectors only in their own personal scope; any other scope is refused.
+
+### Capabilities
+
+Every capability operation requires `manage_capabilities`, so the minimum role throughout this table is `admin`.
+
+| Operation | Route |
+| --- | --- |
+| List capability drivers | `GET /capability-drivers` |
+| List capability providers | `GET /capability-providers` |
+| Create or replace a capability provider | `PUT /capability-providers/{name}` |
+| Delete a capability provider | `DELETE /capability-providers/{name}` |
+| List capability routes | `GET /capability-routes` |
+| Set or disable a capability route | `PUT /capability-routes/{capabilityKey}` |
 
 ### Service credentials
 

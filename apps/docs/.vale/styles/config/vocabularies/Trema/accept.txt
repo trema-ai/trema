@@ -25,3 +25,6 @@ Supabase
 Vercel
 Zapier
 Zendesk
+Tavily
+failover
+rerank

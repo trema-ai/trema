@@ -265,6 +265,8 @@ model Org {
   connectorProviderSettings ConnectorProviderSettings[]
   modelProviders            ModelProvider[]
   modelDefaults             ModelDefault[]
+  capabilityProviders       CapabilityProvider[]
+  capabilityRoutes          CapabilityRoute[]
   contextSessions           ContextSession[]
   conversations             Conversation[]
   messages                  Message[]
@@ -646,6 +648,42 @@ model ModelDefault {
   org       Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, role])
+  @@index([orgId])
+}
+
+/// One configured backend for a native agent capability. The driver key picks
+/// a code-owned adapter; credentials remain encrypted and write-only.
+model CapabilityProvider {
+  id                   String   @id @default(uuid(7))
+  orgId                String
+  /// The stable key capability routes reference. Unique per organization.
+  name                 String
+  label                String
+  driverKey            String
+  settingsJson         Json?
+  credentialCiphertext String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  org                  Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, name])
+  @@index([orgId, driverKey])
+}
+
+/// The ordered backend chain for one native capability. No row means the
+/// capability is disabled. Resolution skips missing or unusable providers.
+model CapabilityRoute {
+  id            String   @id @default(uuid(7))
+  orgId         String
+  capabilityKey String
+  /// Ordered provider names. Stateless capabilities may try later entries
+  /// after an operational failure; each capability owns its exact semantics.
+  chainJson     Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  org           Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, capabilityKey])
   @@index([orgId])
 }
 
