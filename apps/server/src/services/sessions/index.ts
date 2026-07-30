@@ -14,10 +14,7 @@ import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { type ResolveLocationInput, resolveLocation } from "#server/services/bindings/index.js";
 import { enabledCapabilityKeys } from "#server/services/capabilities/index.js";
-import {
-  capabilityToolDefs,
-  sessionToolDefs,
-} from "#server/services/dataplane/tools.js";
+import { capabilityToolDefs, sessionToolDefs } from "#server/services/dataplane/tools.js";
 import { type PolicySnapshot, resolvePolicySnapshot } from "#server/services/policies/index.js";
 import {
   type AssembledStanding,
