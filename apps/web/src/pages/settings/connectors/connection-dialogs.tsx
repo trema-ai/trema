@@ -101,15 +101,19 @@ export function StaticConnectionDialog({
   onOpenChange: (open: boolean) => void;
   onConnected: (connectionId: string) => void | Promise<void>;
 }) {
-  const [targetScopeId, setTargetScopeId] = useState(
-    defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
-  );
+  const initialTargetScopeId =
+    defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "";
+  const targetScopeReset = JSON.stringify({
+    initialTargetScopeId,
+    availableScopeIds: scopes.map(({ id }) => id).sort(),
+  });
+  const [targetScopeId, setTargetScopeId] = useState(initialTargetScopeId);
   useEffect(() => {
     if (!open) return;
     setTargetScopeId(
-      defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
+      (JSON.parse(targetScopeReset) as { initialTargetScopeId: string }).initialTargetScopeId,
     );
-  }, [open, defaultScopeId, scopes]);
+  }, [open, targetScopeReset]);
   const create = useMutation({
     mutationFn: (values: {
       config: Record<string, string>;
@@ -215,17 +219,25 @@ export function OAuthConnectionDialog({
   const defaultScopes = reconnect?.providerScopes.length
     ? reconnect.providerScopes
     : provider.defaultScopes;
+  const defaultProviderScopes = JSON.stringify(defaultScopes);
   const [selectedScopes, setSelectedScopes] = useState<string[]>(defaultScopes);
-  const [targetScopeId, setTargetScopeId] = useState(
-    defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
-  );
+  const initialTargetScopeId =
+    defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "";
+  const targetScopeReset = JSON.stringify({
+    initialTargetScopeId,
+    availableScopeIds: scopes.map(({ id }) => id).sort(),
+  });
+  const [targetScopeId, setTargetScopeId] = useState(initialTargetScopeId);
   useEffect(() => {
     if (!open) return;
-    setSelectedScopes(defaultScopes);
+    setSelectedScopes(JSON.parse(defaultProviderScopes) as string[]);
+  }, [open, defaultProviderScopes]);
+  useEffect(() => {
+    if (!open) return;
     setTargetScopeId(
-      defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
+      (JSON.parse(targetScopeReset) as { initialTargetScopeId: string }).initialTargetScopeId,
     );
-  }, [open, defaultScopes, defaultScopeId, scopes]);
+  }, [open, targetScopeReset]);
   const start = useMutation({
     mutationFn: (config: Record<string, string>) => {
       const sharedInput = {

@@ -1238,18 +1238,37 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
   if (!installationIntent) return storeConnection(db, connectionInput);
 
   const committed = await db.$transaction(async (transaction) => {
-    const activeOwner = await transaction.principal.findFirst({
-      where: {
-        id: input.ownerPrincipalId,
-        orgId: input.orgId,
-        kind: "agent",
-        deactivatedAt: null,
-      },
-      select: { id: true },
-    });
+    const [activeOwner, actor] = await Promise.all([
+      transaction.principal.findFirst({
+        where: {
+          id: input.ownerPrincipalId,
+          orgId: input.orgId,
+          kind: "agent",
+          deactivatedAt: null,
+        },
+        select: { id: true },
+      }),
+      transaction.principal.findFirst({
+        where: {
+          id: installationIntent.actorPrincipalId,
+          orgId: input.orgId,
+          kind: "human",
+          deactivatedAt: null,
+        },
+        select: { id: true, orgId: true, kind: true },
+      }),
+    ]);
     if (!activeOwner) {
       throw new StaticCredentialValidationError(
         "Static connector credentials must be owned by the organization agent",
+      );
+    }
+    if (
+      !actor ||
+      !(await authorize(actor, "manage_connectors", installationIntent.scopeId, transaction))
+    ) {
+      throw new StaticCredentialValidationError(
+        "Static connector initiator is no longer authorized for the target scope",
       );
     }
     const connection = await storeConnection(transaction, connectionInput);

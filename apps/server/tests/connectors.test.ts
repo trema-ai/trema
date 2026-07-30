@@ -1228,6 +1228,50 @@ integration("connector connection flows", () => {
     );
   });
 
+  it("revalidates shared-scope authorization after static credential verification", async () => {
+    const org = await createOrg();
+    const shared = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Static Authorization Race" },
+    });
+    let markVerificationStarted!: () => void;
+    const verificationStarted = new Promise<void>((resolve) => {
+      markVerificationStarted = resolve;
+    });
+    let releaseVerification!: () => void;
+    const verificationReleased = new Promise<void>((resolve) => {
+      releaseVerification = resolve;
+    });
+    const delayedFetch = vi.fn(async () => {
+      markVerificationStarted();
+      await verificationReleased;
+      return new Response("{}", { status: 200 });
+    });
+
+    const pending = call(
+      connectorsRouter.connect.createStatic,
+      {
+        scopeId: shared.id,
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_revoked_during_verification" },
+      },
+      { context: { ...org.context, connectorFetch: delayedFetch } },
+    );
+    await verificationStarted;
+    await db.grant.deleteMany({
+      where: { orgId: org.org.id, principalId: org.principal.id },
+    });
+    releaseVerification();
+
+    await expect(pending).rejects.toThrow("no longer authorized");
+    await expect(
+      db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "stripe" } }),
+    ).resolves.toBe(0);
+    await expect(
+      db.item.count({ where: { orgId: org.org.id, scopeId: shared.id, kind: "connector" } }),
+    ).resolves.toBe(0);
+  });
+
   it("consumes OAuth state once and rejects expired state", async () => {
     const org = await createOrg();
     const state = await start(org.org.id);
