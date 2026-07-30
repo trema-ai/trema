@@ -305,7 +305,7 @@ integration("data plane", () => {
     const audit = await db.auditLog.findFirstOrThrow({
       where: { orgId: org.org.id, action: "dataplane.get_item", subject: item.id },
     });
-    expect(audit.actorPrincipalId).toBe(opened.actingPrincipalId);
+    expect(audit.actorPrincipalId).toBe(opened.agentPrincipalId);
     expect(audit.payload).toMatchObject({ sessionId: opened.sessionId, kind: "memory" });
 
     await client.close();
@@ -410,7 +410,7 @@ integration("data plane", () => {
       where: { orgId_id: { orgId: org.org.id, id: fact.id } },
     });
     expect(stored.sourceSessionId).toBe(opened.sessionId);
-    expect(stored.createdById).toBe(opened.actingPrincipalId);
+    expect(stored.createdById).toBe(opened.agentPrincipalId);
 
     const audit = await db.auditLog.findFirstOrThrow({
       where: { orgId: org.org.id, action: "dataplane.save_memory", subject: fact.id },

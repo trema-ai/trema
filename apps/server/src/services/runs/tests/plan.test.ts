@@ -36,7 +36,7 @@ function fakeDb(toolAllowlist: string[]): Database {
         orgId: "org-1",
         scopeId: "scope-1",
         scopeChain: ["scope-1"],
-        actingPrincipalId: "agent-1",
+        agentPrincipalId: "agent-1",
         requesterPrincipalId: "person-1",
         requesterExternalRef: null,
         approvalMode: "ask",

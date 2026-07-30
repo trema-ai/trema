@@ -587,7 +587,7 @@ async function resolveSession(
     }
     bindLogger({
       orgId: session.orgId,
-      principalId: session.actingPrincipalId,
+      principalId: session.agentPrincipalId,
       sessionId: session.id,
       actor: "session",
     });

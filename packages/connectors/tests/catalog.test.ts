@@ -56,7 +56,7 @@ describe("loadProviderCatalog", () => {
       .map(({ key }) => key);
 
     // No <key>_mcp duals: where the vendor MCP server is dominated by the
-    // REST integration (identity model, scopes, coverage), only REST ships.
+    // REST integration (principal mapping, scopes, coverage), only REST ships.
     expect(catalog.some(({ key }) => key.endsWith("_mcp"))).toBe(false);
     expect(restKeys).toEqual([
       "box",

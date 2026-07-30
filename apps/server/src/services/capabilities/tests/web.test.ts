@@ -13,7 +13,7 @@ const session: DataPlaneSession = {
   scopeId: "scope-1",
   scopeKind: "org",
   scopeChain: ["scope-1"],
-  actingPrincipalId: "agent-1",
+  agentPrincipalId: "agent-1",
   requesterPrincipalId: "person-1",
   requesterExternalRef: null,
   approvalMode: "ask",

@@ -21,7 +21,6 @@ const usage = {
 function snapshot() {
   return {
     sessionId: "session-1",
-    mode: "service" as const,
     scopeChain: [],
     standing: { instructions: "Be useful.", rules: [], skillIndex: [] },
     tools: [],

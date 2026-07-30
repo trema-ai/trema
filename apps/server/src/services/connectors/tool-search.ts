@@ -331,7 +331,7 @@ export async function searchConnectorTools(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "dataplane.search_tools",
       subject: session.id,
       payload: {

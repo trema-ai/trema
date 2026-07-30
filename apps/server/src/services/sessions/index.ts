@@ -5,16 +5,15 @@ import type { ToolDef } from "@trema/harness";
 import type {
   ApprovalMode,
   ContextSession,
-  Principal,
   Prisma,
   Scope,
-  SessionMode,
 } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { type ResolveLocationInput, resolveLocation } from "#server/services/bindings/index.js";
 import { enabledCapabilityKeys } from "#server/services/capabilities/index.js";
 import { capabilityToolDefs, sessionToolDefs } from "#server/services/dataplane/tools.js";
+import { OrgAgentNotFoundError, requireOrgAgent } from "#server/services/org/index.js";
 import { type PolicySnapshot, resolvePolicySnapshot } from "#server/services/policies/index.js";
 import {
   type AssembledStanding,
@@ -88,11 +87,6 @@ export function hashSessionToken(token: string): string {
 
 function mintSessionToken(): string {
   return `${SESSION_TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
-}
-
-/** The identity mode is a pure function of the scope kind. */
-export function deriveMode(scopeKind: Scope["kind"]): SessionMode {
-  return scopeKind === "personal" ? "delegated" : "service";
 }
 
 export type SessionRequester = { externalUserId: string } | { principalId: string };
@@ -272,33 +266,15 @@ async function resolveScopeChain(db: Database, orgId: string, scope: Scope): Pro
   return [orgScope, scope];
 }
 
-async function resolveActingPrincipal(
-  db: Database,
-  orgId: string,
-  scope: Scope,
-  requester: ResolvedRequester,
-): Promise<Principal> {
-  if (scope.kind === "personal") {
-    if (!scope.ownerId) throw new SessionValidationError("Personal scope has no owner");
-    // A personal session acts as the human it belongs to, so only that human
-    // can open one.
-    if (requester.principal && requester.principal.id !== scope.ownerId) {
-      throw new SessionValidationError("Only a personal scope's owner can open a session in it");
-    }
-    if (!requester.principal) {
-      throw new SessionValidationError("A personal session requires a linked requester");
-    }
-    const owner = await db.principal.findFirst({ where: { id: scope.ownerId, orgId } });
-    if (!owner) throw new SessionValidationError("Personal scope owner not found");
-    return owner;
+function validatePersonalRequester(scope: Scope, requester: ResolvedRequester): void {
+  if (scope.kind !== "personal") return;
+  if (!scope.ownerId) throw new SessionValidationError("Personal scope has no owner");
+  if (!requester.principal) {
+    throw new SessionValidationError("A personal session requires a linked requester");
   }
-
-  const agent = await db.principal.findFirst({
-    where: { orgId, kind: "agent" },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-  if (!agent) throw new SessionValidationError("Organization has no agent principal");
-  return agent;
+  if (requester.principal.id !== scope.ownerId) {
+    throw new SessionValidationError("Only a personal scope's owner can open a session in it");
+  }
 }
 
 async function loadStandingCandidates(
@@ -330,13 +306,11 @@ async function loadStandingCandidates(
  * context share a hash, so a run can be traced to exactly what shaped it.
  */
 export function hashSnapshot(input: {
-  mode: SessionMode;
   scopeChain: readonly string[];
   standing: AssembledStanding;
   policySnapshot: PolicySnapshot;
 }): string {
   const canonical = JSON.stringify({
-    mode: input.mode,
     scopeChain: input.scopeChain,
     instructions: input.standing.standing.instructions,
     items: input.standing.included,
@@ -355,10 +329,15 @@ export async function openSession(
   // its scope through that principal.
   const requester = await resolveRequester(db, input.orgId, input.surface, input.requester);
   const scope = await resolveScope(db, input, requester);
-  const actingPrincipal = await resolveActingPrincipal(db, input.orgId, scope, requester);
+  validatePersonalRequester(scope, requester);
+  const agentPrincipal = await requireOrgAgent(db, input.orgId).catch((error: unknown) => {
+    if (error instanceof OrgAgentNotFoundError) {
+      throw new SessionValidationError(error.message);
+    }
+    throw error;
+  });
   const scopeChain = await resolveScopeChain(db, input.orgId, scope);
   const scopeChainIds = scopeChain.map(({ id }) => id);
-  const mode = deriveMode(scope.kind);
 
   const candidates = await loadStandingCandidates(db, input.orgId, scopeChainIds);
   const standing = assembleStanding(candidates, {
@@ -375,7 +354,6 @@ export async function openSession(
   const capabilityKeys = await enabledCapabilityKeys(db, input.orgId);
   const tools = [...sessionToolDefs(), ...capabilityToolDefs(capabilityKeys)];
   const snapshotHash = hashSnapshot({
-    mode,
     scopeChain: scopeChainIds,
     standing,
     policySnapshot,
@@ -390,10 +368,9 @@ export async function openSession(
         surface: input.surface,
         locationRef: input.locationRef,
         ...(input.threadRef ? { threadRef: input.threadRef } : {}),
-        mode,
         ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
         scopeChain: scopeChainIds,
-        actingPrincipalId: actingPrincipal.id,
+        agentPrincipalId: agentPrincipal.id,
         requesterPrincipalId: requester.principal?.id ?? null,
         requesterExternalRef: requester.externalRef,
         standing: {
@@ -412,12 +389,11 @@ export async function openSession(
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
-        actorPrincipalId: actingPrincipal.id,
+        actorPrincipalId: agentPrincipal.id,
         action: "session.open",
         subject: created.id,
         payload: {
           scopeId: created.scopeId,
-          mode: created.mode,
           surface: created.surface,
           requesterPrincipalId: created.requesterPrincipalId,
           requesterExternalRef: created.requesterExternalRef,
@@ -433,7 +409,6 @@ export async function openSession(
   log.info("Session opened", {
     sessionId: session.id,
     scopeId: scope.id,
-    mode,
     surface: input.surface,
     scopeChainLength: scopeChainIds.length,
     standingItems: standing.included.length,
@@ -519,7 +494,7 @@ export async function renewSession(
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
-        actorPrincipalId: session.actingPrincipalId,
+        actorPrincipalId: session.agentPrincipalId,
         action: "session.renew",
         subject: session.id,
         payload: { expiresAt: updated.expiresAt.toISOString() },
@@ -579,7 +554,7 @@ export async function closeSession(
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
-        actorPrincipalId: session.actingPrincipalId,
+        actorPrincipalId: session.agentPrincipalId,
         action: "session.close",
         subject: session.id,
         payload: {

@@ -31,7 +31,7 @@ export interface DataPlaneSession {
   scopeKind: ScopeKind;
   /** Scope IDs in resolution order, widest first. Reads never leave this list. */
   scopeChain: string[];
-  actingPrincipalId: string;
+  agentPrincipalId: string;
   /**
    * The person the run is acting for, when they are linked to a principal. The
    * audit tuple names them alongside the agent: an org's record of what its
@@ -63,7 +63,7 @@ export function toDataPlaneSession(
     scopeId: session.scopeId,
     scopeKind: session.scope.kind,
     scopeChain: session.scopeChain,
-    actingPrincipalId: session.actingPrincipalId,
+    agentPrincipalId: session.agentPrincipalId,
     requesterPrincipalId: session.requesterPrincipalId,
     requesterExternalRef: session.requesterExternalRef,
     approvalMode: session.approvalMode,
@@ -148,7 +148,7 @@ export async function searchContext(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "dataplane.search_context",
       subject: session.id,
       payload: {
@@ -204,7 +204,7 @@ export async function getContextItem(
     await transaction.auditLog.create({
       data: {
         orgId: session.orgId,
-        actorPrincipalId: session.actingPrincipalId,
+        actorPrincipalId: session.agentPrincipalId,
         action: "dataplane.get_item",
         subject: item.id,
         payload: {

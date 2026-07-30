@@ -188,7 +188,7 @@ export const sessionAuthed = pub.use(
         const session = await authenticateSession(context.db, match[1]!);
         bindLogger({
           orgId: session.orgId,
-          principalId: session.actingPrincipalId,
+          principalId: session.agentPrincipalId,
           sessionId: session.id,
           actor: "session",
         });

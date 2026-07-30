@@ -161,7 +161,7 @@ export function createRunCapture(options: RunCaptureOptions): CaptureOpeningMess
         surface: true,
         locationRef: true,
         threadRef: true,
-        actingPrincipalId: true,
+        agentPrincipalId: true,
       },
     });
     // The plan reads the same session moments later and fails the run with a

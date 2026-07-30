@@ -345,7 +345,7 @@ const submit = serviceOrSessionAuthed
           .min(1)
           .optional()
           .describe(
-            "The surface-specific location identifier, bound to a scope. Service-mode messages require it; a browser session posts to its own web location and must not send it.",
+            "The surface-specific location identifier, bound to a scope. Service-credential messages require it; a browser session posts to its own web location and must not send it.",
           ),
         surface: z
           .string()
@@ -353,7 +353,7 @@ const submit = serviceOrSessionAuthed
           .min(1)
           .optional()
           .describe(
-            "The integration surface the location belongs to. Service mode only; defaults to `api`. A browser session is always the `web` surface.",
+            "The integration surface the location belongs to. Service credentials only; defaults to `api`. A browser session is always the `web` surface.",
           ),
         threadRef: z
           .string()
@@ -419,7 +419,7 @@ const submit = serviceOrSessionAuthed
     assertTargetAgrees(input.target, input.intent);
 
     if (input.intent.type === "message") {
-      // Session mode stamps the web origin from the cookie: the surface is
+      // Browser authentication stamps the web origin from the cookie: the surface is
       // `web`, the location is the member — one web location per member — and
       // the run classifies as a surface message, not an API trigger.
       const origin =
@@ -435,7 +435,7 @@ const submit = serviceOrSessionAuthed
               surface: input.surface ?? "api",
               locationRef: requireServiceLocation(input.locationRef),
               // A credential bound to the organization's agent is nobody
-              // asking, so the session opens in service mode with no requester.
+              // asking, so the session opens with no requester.
               ...(caller.principal.kind === "human"
                 ? { requester: { principalId: caller.principal.id } }
                 : {}),
@@ -512,11 +512,11 @@ function toTargetIntent(
   return { type: intent.type, runId: intent.runId };
 }
 
-/** A service-mode message must say where it goes; nothing can be derived. */
+/** A service-credential message must say where it goes; nothing can be derived. */
 function requireServiceLocation(locationRef: string | undefined): string {
   if (locationRef === undefined) {
     throw new ORPCError("BAD_REQUEST", {
-      message: "A service-mode message names the location it goes to",
+      message: "A service-credential message names the location it goes to",
       data: { code: "location_required" },
     });
   }

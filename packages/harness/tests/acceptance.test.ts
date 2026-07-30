@@ -25,7 +25,6 @@ describe("in-memory harness", () => {
     const engine = new InMemoryEngine();
     const session = new FakeContextSession({
       sessionId: "session-1",
-      mode: "delegated",
       scopeChain: [],
       standing: { instructions: "Be useful.", rules: [], skillIndex: [] },
       tools: [],

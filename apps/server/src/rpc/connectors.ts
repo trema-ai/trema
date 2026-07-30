@@ -43,6 +43,7 @@ import {
   updateConnectorConnectionLabel,
   updateConnectorInstallation,
 } from "#server/services/connectors/index.js";
+import { OrgAgentNotFoundError, requireOrgAgent } from "#server/services/org/index.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
 const enabledToolsSchema = z.union([z.literal("all"), z.array(z.string().trim().min(1))]);
@@ -144,12 +145,7 @@ function serializeConnection(connection: ListedConnection) {
 }
 
 async function orgAgentPrincipalId(db: Database, orgId: string) {
-  const principal = await db.principal.findFirst({
-    where: { orgId, kind: "agent", deactivatedAt: null },
-    select: { id: true },
-  });
-  if (!principal) throw new ConnectorInstallationError("Organization agent principal not found");
-  return principal.id;
+  return (await requireOrgAgent(db, orgId)).id;
 }
 
 function requirePersonalOAuthProvider(providerKey: string) {
@@ -172,7 +168,8 @@ function throwConnectorError(error: unknown): never {
     error instanceof UnsupportedConnectorAuthModeError ||
     error instanceof ConnectorCatalogDefectError ||
     error instanceof ConnectorToolValidationError ||
-    error instanceof ConnectorSsrfRejectedError
+    error instanceof ConnectorSsrfRejectedError ||
+    error instanceof OrgAgentNotFoundError
   ) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }

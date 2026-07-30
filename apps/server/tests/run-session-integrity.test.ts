@@ -35,8 +35,7 @@ integration("run session referential integrity", () => {
         scopeId,
         surface: "web",
         locationRef: "member-1",
-        mode: "service",
-        actingPrincipalId: agent.id,
+        agentPrincipalId: agent.id,
         standing: { instructions: "Be useful.", rules: [], skillIndex: [] },
         policySnapshot: {},
         snapshotHash: "snapshot-1",
@@ -89,5 +88,62 @@ integration("run session referential integrity", () => {
     await db.agentRun.delete({ where: { id: runId } });
 
     await expect(db.contextSession.delete({ where: { id: sessionId } })).resolves.toBeDefined();
+  });
+
+  it("pins the same organization agent on org, shared, and personal runs", async () => {
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId, kind: "agent" },
+    });
+    const owner = await db.principal.create({
+      data: { orgId, kind: "human", displayName: "Personal owner" },
+    });
+    const [sharedScope, personalScope] = await Promise.all([
+      db.scope.create({ data: { orgId, kind: "shared", name: "Shared" } }),
+      db.scope.create({
+        data: { orgId, kind: "personal", name: "Personal", ownerId: owner.id },
+      }),
+    ]);
+
+    for (const scope of [sharedScope, personalScope]) {
+      const session = await db.contextSession.create({
+        data: {
+          orgId,
+          scopeId: scope.id,
+          surface: "web",
+          locationRef: scope.id,
+          agentPrincipalId: agent.id,
+          requesterPrincipalId: owner.id,
+          standing: { instructions: "Be useful.", rules: [], skillIndex: [] },
+          policySnapshot: {},
+          snapshotHash: `snapshot-${scope.kind}`,
+          tokenHash: randomUUID(),
+          expiresAt: new Date(Date.now() + 3_600_000),
+        },
+      });
+      await db.agentRun.create({
+        data: {
+          id: `run-${scope.kind}-${randomUUID()}`,
+          orgId,
+          threadRef: `thread-${scope.kind}`,
+          state: "completed",
+          trigger: "message",
+          sessionId: session.id,
+        },
+      });
+    }
+
+    const sessions = await db.contextSession.findMany({
+      where: { orgId, agentRuns: { some: {} } },
+      include: { scope: { select: { kind: true } } },
+    });
+    expect(
+      sessions
+        .map(({ scope, agentPrincipalId }) => [scope.kind, agentPrincipalId] as const)
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ).toEqual([
+      ["org", agent.id],
+      ["personal", agent.id],
+      ["shared", agent.id],
+    ]);
   });
 });

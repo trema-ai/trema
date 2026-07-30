@@ -62,6 +62,38 @@ integration("database schema", () => {
     ).rejects.toThrow();
   });
 
+  it("allows at most one active agent principal per org", async () => {
+    const firstOrg = await db.org.create({ data: { name: "Agent identity org" } });
+    const secondOrg = await db.org.create({ data: { name: "Second agent identity org" } });
+
+    await db.principal.create({
+      data: { orgId: firstOrg.id, kind: "agent", displayName: "Active agent" },
+    });
+
+    await expect(
+      db.principal.create({
+        data: { orgId: firstOrg.id, kind: "agent", displayName: "Duplicate active agent" },
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      db.principal.create({
+        data: {
+          orgId: firstOrg.id,
+          kind: "agent",
+          displayName: "Historical agent",
+          deactivatedAt: new Date(),
+        },
+      }),
+    ).resolves.toMatchObject({ orgId: firstOrg.id, kind: "agent" });
+
+    await expect(
+      db.principal.create({
+        data: { orgId: secondOrg.id, kind: "agent", displayName: "Other org agent" },
+      }),
+    ).resolves.toMatchObject({ orgId: secondOrg.id, kind: "agent" });
+  });
+
   it("allows only one active instruction per scope", async () => {
     const org = await db.org.create({ data: { name: "Instruction org" } });
     const human = await db.principal.create({

@@ -7,7 +7,7 @@ Terms are alphabetical, with the exact spelling the product and API use. For how
 
 | Term | Definition |
 | --- | --- |
-| Agent principal | The organization's one principal of kind `agent`. Service-mode sessions act as it, and it holds no control-plane role. |
+| Agent principal | The organization's one principal of kind `agent`. Every context session uses it, and it holds no control-plane role. |
 | Approval | One gated tool call waiting on a human decision: pending, approved, denied, or expired. It covers the exact recorded arguments and nothing else. |
 | Approval mode | How a session's connector calls are gated: `ask` pauses every call, `delegated` lets a call-time classifier escalate unsafe calls (`ask` while no classifier is configured), `full` runs ungated. Chosen per thread, clamped to the policy ceiling. |
 | Approval policy | One scope's ceiling on approval modes—scope-wide or for one connector—plus the roles that resolve its interrupts. The most restrictive applicable row wins. |
@@ -35,7 +35,7 @@ Terms are alphabetical, with the exact spelling the product and API use. For how
 | Model role | What a model is asked to do: `turns`, `utility`, or `embed`. Each role resolves to its own provider and model. |
 | Organization | The tenancy boundary. Every record belongs to exactly one organization. |
 | Organization scope | The single scope of kind `org`. Context and policies here reach every session in the organization. |
-| Personal scope | One person's scope of kind `personal`. Sessions here run delegated as the owner, and an organization can turn personal scopes off entirely. |
+| Personal scope | One person's scope of kind `personal`. Only its linked owner can open a session there, and an organization can turn personal scopes off entirely. |
 | Policy snapshot | The policy rows a session pins at open. Each call resolves against them, and a policy edit reaches the next session, never a running one. |
 | Principal | An actor in an organization: a person (`human`) or the organization's agent (`agent`). |
 | Queued input | A message waiting for a turn boundary. Steering input joins the active run; a follow-up starts the thread's next run. |
@@ -48,7 +48,6 @@ Terms are alphabetical, with the exact spelling the product and API use. For how
 | Scope | The container context lives in. Kinds are `org`, `shared`, and `personal`. |
 | Scope chain | The scopes a session resolves through, widest first: the organization scope, then the session's scope. |
 | Service credential | A long-lived API token bound to a principal. The token renders once and is stored as a hash. |
-| Session mode | Whether a session acts as the agent principal (`service`) or as a personal scope's owner (`delegated`). The mode follows from the scope kind. |
 | Shared scope | A named scope of kind `shared` for a group of people. Organization-scope grants carry into it. |
 | Snapshot hash | The hash of everything a session resolved. Two sessions resolving the same context share a hash, so a run traces to what shaped it. |
 | Standing set | The active standing-disclosure items assembled into a session from its scope chain, within a token budget. |

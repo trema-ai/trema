@@ -152,7 +152,7 @@ export async function fetchTranscript(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "dataplane.fetch_transcript",
       subject: conversation.id,
       payload: {

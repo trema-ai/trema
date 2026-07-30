@@ -149,7 +149,7 @@ async function writeCallRecord(db: Database, input: AuditInput): Promise<void> {
   await db.auditLog.create({
     data: {
       orgId: input.session.orgId,
-      actorPrincipalId: input.session.actingPrincipalId,
+      actorPrincipalId: input.session.agentPrincipalId,
       action: "dataplane.use_connector",
       subject: input.resolved?.installationItemId ?? input.session.id,
       payload: {
@@ -327,7 +327,7 @@ export async function useConnector(
       orgId: session.orgId,
       scopeChain: session.scopeChain,
       sessionScopeKind: session.scopeKind,
-      principalId: session.actingPrincipalId,
+      principalId: session.agentPrincipalId,
       toolKey,
       args,
       ...(input.masterKey ? { masterKey: input.masterKey } : {}),

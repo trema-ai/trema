@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
-  deriveMode,
   hashSessionToken,
   isSessionToken,
   SESSION_TOKEN_TTL_MS,
@@ -26,13 +25,5 @@ describe("session token helpers", () => {
 
   it("lives fifteen minutes", () => {
     expect(SESSION_TOKEN_TTL_MS).toBe(15 * 60 * 1000);
-  });
-});
-
-describe("identity mode derivation", () => {
-  it("delegates in personal scopes and acts as the agent everywhere else", () => {
-    expect(deriveMode("personal")).toBe("delegated");
-    expect(deriveMode("shared")).toBe("service");
-    expect(deriveMode("org")).toBe("service");
   });
 });
