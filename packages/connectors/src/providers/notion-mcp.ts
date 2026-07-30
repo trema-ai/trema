@@ -10,6 +10,7 @@ export const notionMcpProvider = {
   categories: ["knowledge-management"],
   docsUrl: "https://developers.notion.com/docs/mcp",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: {
     defaultScopes: [],
     // Both values are required: one user can authorize multiple workspaces,
@@ -22,5 +23,4 @@ export const notionMcpProvider = {
     type: "mcp",
     serverUrl: "https://mcp.notion.com/mcp",
   },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

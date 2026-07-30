@@ -11,6 +11,7 @@ export const lucidProvider = {
   categories: ["design"],
   docsUrl: "https://developer.lucid.co/reference/documents",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://lucid.app/oauth2/authorize",
     tokenUrl: "https://api.lucid.co/oauth2/token",
@@ -146,5 +147,4 @@ export const lucidProvider = {
       paramsSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

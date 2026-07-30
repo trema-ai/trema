@@ -112,8 +112,8 @@ integration("connector connections and installations", () => {
       data: {
         orgId: input.orgId,
         providerKey: input.providerKey,
-        principalId: input.principalId,
-        mode: input.providerKey === "notion" ? "mcp_oauth" : "oauth2_code",
+        ownerPrincipalId: input.principalId,
+        authMode: input.providerKey === "notion" ? "mcp_oauth" : "oauth2_code",
         config: {},
         ciphertext: encryptEnvelope({ accessToken: input.token ?? "token" }, masterKey),
         ...(input.revokedAt ? { revokedAt: input.revokedAt } : {}),
@@ -168,8 +168,7 @@ integration("connector connections and installations", () => {
       /authorizationUrl|tokenUrl|serverUrl|clientSecret|ciphertext/,
     );
     expect(catalog.find(({ key }) => key === "notion")).toMatchObject({
-      memberConnectable: true,
-      memberEnabled: true,
+      supportsPersonalOAuth: true,
       transport: { type: "mcp" },
     });
     await expect(call(connectorsRouter.meta, undefined, { context: org.context })).resolves.toEqual(
@@ -263,7 +262,7 @@ integration("connector connections and installations", () => {
     });
   });
 
-  it("gates personal installations on the ceiling and the default-on member toggle", async () => {
+  it("allows user OAuth and rejects app or static credentials in personal scopes", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "member");
     const personal = await db.scope.create({
@@ -284,16 +283,17 @@ integration("connector connections and installations", () => {
       principalId: member.principal.id,
       providerKey: "hubspot",
     });
+    const memberSlack = await connection({
+      orgId: org.org.id,
+      principalId: member.principal.id,
+      providerKey: "slack",
+    });
+    const memberStripe = await connection({
+      orgId: org.org.id,
+      principalId: member.principal.id,
+      providerKey: "stripe",
+    });
 
-    // hubspot is below the ceiling: never member-connectable, and its toggle
-    // cannot be turned on.
-    await expect(
-      call(
-        connectorsRouter.providers.updateSettings,
-        { providerKey: "hubspot", memberEnabled: true },
-        { context: org.context },
-      ),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(
       call(
         connectorsRouter.installations.create,
@@ -304,32 +304,11 @@ integration("connector connections and installations", () => {
         },
         { context: member.context },
       ),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).resolves.toMatchObject({
+      scopeId: personal.id,
+      body: { connectionId: memberHubspot.id },
+    });
 
-    // An explicit opt-out closes notion despite the ceiling allowing it.
-    await call(
-      connectorsRouter.providers.updateSettings,
-      { providerKey: "notion", memberEnabled: false },
-      { context: org.context },
-    );
-    await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "notion",
-          connectionId: memberNotion.id,
-        },
-        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
-      ),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-
-    // Re-enabling restores it (member access is on by default).
-    await call(
-      connectorsRouter.providers.updateSettings,
-      { providerKey: "notion", memberEnabled: true },
-      { context: org.context },
-    );
     await expect(
       call(
         connectorsRouter.installations.create,
@@ -344,6 +323,24 @@ integration("connector connections and installations", () => {
       scopeId: personal.id,
       body: { connectionId: memberNotion.id },
     });
+
+    for (const [catalogKey, connectionId] of [
+      ["slack", memberSlack.id],
+      ["stripe", memberStripe.id],
+    ] as const) {
+      await expect(
+        call(
+          connectorsRouter.installations.create,
+          {
+            scopeId: personal.id,
+            catalogKey,
+            connectionId,
+          },
+          { context: member.context },
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+
     const agentNotion = await connection({
       orgId: org.org.id,
       principalId: org.agent.id,
@@ -394,12 +391,6 @@ integration("connector connections and installations", () => {
       principalId: other.principal.id,
       providerKey: "github",
     });
-    await call(
-      connectorsRouter.providers.updateSettings,
-      { providerKey: "github", memberEnabled: true },
-      { context: org.context },
-    );
-
     for (const scopeId of [org.orgScope.id, otherPersonal.id]) {
       await expect(
         call(

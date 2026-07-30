@@ -11,6 +11,7 @@ export const boxProvider = {
   categories: ["productivity"],
   docsUrl: "https://developer.box.com/reference/",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://account.box.com/api/oauth2/authorize",
     tokenUrl: "https://api.box.com/oauth2/token",
@@ -163,5 +164,4 @@ export const boxProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

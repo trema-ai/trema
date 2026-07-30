@@ -10,9 +10,9 @@ export const supabaseProvider = {
   categories: ["developer-tools"],
   docsUrl: "https://supabase.com/docs/guides/ai-tools/mcp",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: { defaultScopes: [] },
   configFields: {},
   credentialFields: {},
   transport: { type: "mcp", serverUrl: "https://mcp.supabase.com/mcp" },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

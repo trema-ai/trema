@@ -194,9 +194,6 @@ export function SettingsConnectorDetailPage() {
           onAddToScope={setBindConnectionId}
           onChanged={invalidate}
         />
-        {provider.memberConnectable ? (
-          <MemberAccessSection provider={provider} onChanged={invalidate} />
-        ) : null}
         {provider.authMode === "oauth2_code" ? (
           <AppCredentialsSection
             registrations={registrationRows}
@@ -882,45 +879,6 @@ function ScopeBindingDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function MemberAccessSection({
-  provider,
-  onChanged,
-}: {
-  provider: CatalogProvider;
-  onChanged: () => Promise<void>;
-}) {
-  const update = useMutation({
-    mutationFn: (memberEnabled: boolean) =>
-      rpcClient.connectors.providers.updateSettings({
-        providerKey: provider.key,
-        memberEnabled,
-      }),
-    onSuccess: async () => {
-      await onChanged();
-      toast.success("Member access updated");
-    },
-    onError: (error) => toast.error(messageFrom(error)),
-  });
-  return (
-    <SettingsSection
-      title="Member access"
-      description="Allow members to connect this provider to their own personal scopes."
-    >
-      <SettingRow
-        label="Allow personal connections"
-        description="Members sign in with their own account; the agent acts as them in their personal scope. Enabled by default."
-        control={
-          <Switch
-            checked={provider.memberEnabled}
-            disabled={update.isPending}
-            onCheckedChange={(checked) => update.mutate(checked)}
-          />
-        }
-      />
-    </SettingsSection>
   );
 }
 

@@ -34,6 +34,8 @@ export {
   fieldDescriptorSchema,
   type McpTransport,
   mcpTransportSchema,
+  type OAuthActor,
+  oauthActorSchema,
   type ProviderDef,
   type ProviderDefInput,
   type ProviderHooks,

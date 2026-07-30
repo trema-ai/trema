@@ -598,9 +598,9 @@ function applyAuth(
     return;
   }
   if (
-    resolved.mode === "oauth2_code" ||
-    resolved.mode === "oauth2_client_credentials" ||
-    resolved.mode === "mcp_oauth"
+    resolved.authMode === "oauth2_code" ||
+    resolved.authMode === "oauth2_client_credentials" ||
+    resolved.authMode === "mcp_oauth"
   ) {
     const token = bearerToken(resolved.credential);
     if (!token) {
@@ -611,19 +611,19 @@ function applyAuth(
     redactor.addString(authorization);
     return;
   }
-  if (resolved.mode === "basic") {
+  if (resolved.authMode === "basic") {
     const authorization = basicAuthorization(resolved.credential);
     headers.set("Authorization", authorization);
     redactor.addString(authorization);
     return;
   }
-  if (resolved.mode === "api_key") {
+  if (resolved.authMode === "api_key") {
     throw new ConnectorToolValidationError(
       `API-key provider '${provider.key}' must declare authHeader, authHeaders, or tool authInjection`,
     );
   }
   throw new ConnectorToolValidationError(
-    `Provider '${provider.key}' must declare auth injection for mode '${resolved.mode}'`,
+    `Provider '${provider.key}' must declare auth injection for mode '${resolved.authMode}'`,
   );
 }
 
@@ -906,7 +906,7 @@ async function executeMcp(
       resolved.config,
     ).toString();
     const token = bearerToken(resolved.credential);
-    if (resolved.mode === "mcp_oauth" && !token) {
+    if (resolved.authMode === "mcp_oauth" && !token) {
       throw new ConnectorReconnectRequiredError(resolved.connectionId, provider.key, "expired");
     }
     const authorization = token ? `Bearer ${token}` : undefined;

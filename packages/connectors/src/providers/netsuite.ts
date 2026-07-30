@@ -13,6 +13,7 @@ export const netsuiteProvider = {
   docsUrl:
     "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_157780312610.html",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: `https://\${config.accountId}.app.netsuite.com/app/login/oauth2/authorize.nl`,
     tokenUrl: `https://\${config.accountId}.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token`,
@@ -152,5 +153,4 @@ export const netsuiteProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

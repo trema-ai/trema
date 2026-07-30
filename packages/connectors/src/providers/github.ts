@@ -10,6 +10,7 @@ export const githubProvider = {
   categories: ["developer-tools"],
   docsUrl: "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://github.com/login/oauth/authorize",
     tokenUrl: "https://github.com/login/oauth/access_token",
@@ -367,5 +368,4 @@ export const githubProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

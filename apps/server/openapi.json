@@ -2668,7 +2668,7 @@
       "get": {
         "operationId": "connectors.catalog.list",
         "summary": "List connector providers",
-        "description": "List safe catalog metadata and effective member-access settings.",
+        "description": "List safe catalog metadata and personal OAuth support.",
         "tags": [
           "Connectors"
         ],
@@ -2722,10 +2722,7 @@
                           "type"
                         ]
                       },
-                      "memberConnectable": {
-                        "type": "boolean"
-                      },
-                      "memberEnabled": {
+                      "supportsPersonalOAuth": {
                         "type": "boolean"
                       },
                       "defaultScopes": {
@@ -2918,85 +2915,12 @@
                       "docsUrl",
                       "authMode",
                       "transport",
-                      "memberConnectable",
-                      "memberEnabled",
+                      "supportsPersonalOAuth",
                       "defaultScopes",
                       "configFields",
                       "credentialFields"
                     ]
                   }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ]
-      }
-    },
-    "/connector-providers/{providerKey}/settings": {
-      "patch": {
-        "operationId": "connectors.providers.updateSettings",
-        "summary": "Update connector provider settings",
-        "description": "Enable or disable member connections for one provider.",
-        "tags": [
-          "Connectors"
-        ],
-        "parameters": [
-          {
-            "name": "providerKey",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "memberEnabled": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "memberEnabled"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "providerKey": {
-                      "type": "string"
-                    },
-                    "memberEnabled": {
-                      "type": "boolean"
-                    },
-                    "updatedAt": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "providerKey",
-                    "memberEnabled",
-                    "updatedAt"
-                  ]
                 }
               }
             }
@@ -4537,11 +4461,11 @@
                       "providerKey": {
                         "type": "string"
                       },
-                      "principalId": {
+                      "ownerPrincipalId": {
                         "type": "string",
                         "format": "uuid"
                       },
-                      "mode": {
+                      "authMode": {
                         "type": "string"
                       },
                       "label": {
@@ -4647,8 +4571,8 @@
                     "required": [
                       "id",
                       "providerKey",
-                      "principalId",
-                      "mode",
+                      "ownerPrincipalId",
+                      "authMode",
                       "label",
                       "providerScopes",
                       "expiresAt",
@@ -4908,100 +4832,6 @@
         ]
       }
     },
-    "/member/connector-connections/static": {
-      "post": {
-        "operationId": "connectors.member.connect.createStatic",
-        "summary": "Create a member static connector connection",
-        "description": "Validate, verify, and encrypt an API-key or basic connection for the caller.",
-        "tags": [
-          "Connectors"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "providerKey": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "config": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "boolean"
-                        }
-                      ]
-                    }
-                  },
-                  "credentials": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  "label": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 60
-                  },
-                  "reconnectConnectionId": {
-                    "type": "string",
-                    "format": "uuid"
-                  }
-                },
-                "required": [
-                  "providerKey",
-                  "config",
-                  "credentials"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "id"
-                  ]
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ]
-      }
-    },
     "/member/connector-connections": {
       "get": {
         "operationId": "connectors.member.connections.list",
@@ -5039,11 +4869,11 @@
                       "providerKey": {
                         "type": "string"
                       },
-                      "principalId": {
+                      "ownerPrincipalId": {
                         "type": "string",
                         "format": "uuid"
                       },
-                      "mode": {
+                      "authMode": {
                         "type": "string"
                       },
                       "label": {
@@ -5149,8 +4979,8 @@
                     "required": [
                       "id",
                       "providerKey",
-                      "principalId",
-                      "mode",
+                      "ownerPrincipalId",
+                      "authMode",
                       "label",
                       "providerScopes",
                       "expiresAt",

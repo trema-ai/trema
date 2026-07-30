@@ -261,5 +261,4 @@ export const stripeProvider = {
       },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

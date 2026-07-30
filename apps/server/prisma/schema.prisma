@@ -240,82 +240,82 @@ enum ScheduleFiringOutcome {
 }
 
 model Org {
-  id                        String                      @id @default(uuid(7))
-  name                      String
+  id                    String                @id @default(uuid(7))
+  name                  String
   /// When false, DMs neither create nor resolve personal scopes.
-  personalScopesEnabled     Boolean                     @default(true)
-  createdAt                 DateTime                    @default(now())
-  updatedAt                 DateTime                    @updatedAt
-  principals                Principal[]
-  identityLinks             IdentityLink[]
-  scopes                    Scope[]
-  grants                    Grant[]
-  policies                  Policy[]
-  approvals                 Approval[]
-  toolGrants                ToolGrant[]
-  invites                   Invite[]
-  serviceCredentials        ServiceCredential[]
-  auditLogs                 AuditLog[]
-  bindings                  Binding[]
-  items                     Item[]
-  itemVersions              ItemVersion[]
-  clientRegistrations       ClientRegistration[]
-  connectorConnections      ConnectorConnection[]
-  connectorOAuthStates      ConnectorOAuthState[]
-  connectorProviderSettings ConnectorProviderSettings[]
-  modelProviders            ModelProvider[]
-  modelDefaults             ModelDefault[]
-  capabilityProviders       CapabilityProvider[]
-  capabilityRoutes          CapabilityRoute[]
-  contextSessions           ContextSession[]
-  conversations             Conversation[]
-  messages                  Message[]
-  agentRuns                 AgentRun[]
-  turns                     Turn[]
-  runEvents                 RunEvent[]
-  runQueuedInputs           RunQueuedInput[]
-  runIntents                RunIntent[]
-  runStops                  RunStop[]
-  runElicitations           RunElicitation[]
-  schedules                 Schedule[]
-  scheduleFirings           ScheduleFiring[]
+  personalScopesEnabled Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  principals            Principal[]
+  identityLinks         IdentityLink[]
+  scopes                Scope[]
+  grants                Grant[]
+  policies              Policy[]
+  approvals             Approval[]
+  toolGrants            ToolGrant[]
+  invites               Invite[]
+  serviceCredentials    ServiceCredential[]
+  auditLogs             AuditLog[]
+  bindings              Binding[]
+  items                 Item[]
+  itemVersions          ItemVersion[]
+  clientRegistrations   ClientRegistration[]
+  connectorConnections  ConnectorConnection[]
+  connectorOAuthStates  ConnectorOAuthState[]
+  modelProviders        ModelProvider[]
+  modelDefaults         ModelDefault[]
+  capabilityProviders   CapabilityProvider[]
+  capabilityRoutes      CapabilityRoute[]
+  contextSessions       ContextSession[]
+  conversations         Conversation[]
+  messages              Message[]
+  agentRuns             AgentRun[]
+  turns                 Turn[]
+  runEvents             RunEvent[]
+  runQueuedInputs       RunQueuedInput[]
+  runIntents            RunIntent[]
+  runStops              RunStop[]
+  runElicitations       RunElicitation[]
+  schedules             Schedule[]
+  scheduleFirings       ScheduleFiring[]
 }
 
 model Principal {
-  id                        String                @id @default(uuid(7))
-  orgId                     String
-  kind                      PrincipalKind
-  displayName               String
-  authId                    String?
-  email                     String?
-  deactivatedAt             DateTime?
-  createdAt                 DateTime              @default(now())
-  updatedAt                 DateTime              @updatedAt
-  org                       Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  auth                      User?                 @relation(fields: [authId], references: [id], onDelete: SetNull)
-  identityLinks             IdentityLink[]
-  ownedScopes               Scope[]               @relation("ScopeOwner")
-  grants                    Grant[]
-  createdInvites            Invite[]              @relation("InviteCreator")
-  redeemedInvites           Invite[]              @relation("InviteRedeemer")
-  serviceCredentials        ServiceCredential[]   @relation("CredentialPrincipal")
-  createdServiceCredentials ServiceCredential[]   @relation("CredentialCreator")
-  auditLogs                 AuditLog[]            @relation("AuditActor")
-  createdItems              Item[]                @relation("ItemCreator")
-  confirmedItems            Item[]                @relation("ItemConfirmer")
-  updatedItems              Item[]                @relation("ItemUpdater")
-  authoredItemVersions      ItemVersion[]         @relation("ItemVersionAuthor")
-  connectorConnections      ConnectorConnection[]
-  connectorOAuthStates      ConnectorOAuthState[]
-  actedContextSessions      ContextSession[]      @relation("ContextSessionActor")
-  requestedContextSessions  ContextSession[]      @relation("ContextSessionRequester")
-  authoredMessages          Message[]             @relation("MessageAuthor")
-  createdSchedules          Schedule[]            @relation("ScheduleCreator")
-  activatedSchedules        Schedule[]            @relation("ScheduleActivator")
-  requestedApprovals        Approval[]            @relation("ApprovalRequester")
-  resolvedApprovals         Approval[]            @relation("ApprovalResolver")
-  toolGrantsRequested       ToolGrant[]           @relation("ToolGrantRequester")
-  toolGrantsCreated         ToolGrant[]           @relation("ToolGrantCreator")
+  id                            String                @id @default(uuid(7))
+  orgId                         String
+  kind                          PrincipalKind
+  displayName                   String
+  authId                        String?
+  email                         String?
+  deactivatedAt                 DateTime?
+  createdAt                     DateTime              @default(now())
+  updatedAt                     DateTime              @updatedAt
+  org                           Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  auth                          User?                 @relation(fields: [authId], references: [id], onDelete: SetNull)
+  identityLinks                 IdentityLink[]
+  ownedScopes                   Scope[]               @relation("ScopeOwner")
+  grants                        Grant[]
+  createdInvites                Invite[]              @relation("InviteCreator")
+  redeemedInvites               Invite[]              @relation("InviteRedeemer")
+  serviceCredentials            ServiceCredential[]   @relation("CredentialPrincipal")
+  createdServiceCredentials     ServiceCredential[]   @relation("CredentialCreator")
+  auditLogs                     AuditLog[]            @relation("AuditActor")
+  createdItems                  Item[]                @relation("ItemCreator")
+  confirmedItems                Item[]                @relation("ItemConfirmer")
+  updatedItems                  Item[]                @relation("ItemUpdater")
+  authoredItemVersions          ItemVersion[]         @relation("ItemVersionAuthor")
+  connectorConnections          ConnectorConnection[]
+  ownedConnectorOAuthStates     ConnectorOAuthState[] @relation("ConnectorOAuthStateOwner")
+  initiatedConnectorOAuthStates ConnectorOAuthState[] @relation("ConnectorOAuthStateInitiator")
+  actedContextSessions          ContextSession[]      @relation("ContextSessionActor")
+  requestedContextSessions      ContextSession[]      @relation("ContextSessionRequester")
+  authoredMessages              Message[]             @relation("MessageAuthor")
+  createdSchedules              Schedule[]            @relation("ScheduleCreator")
+  activatedSchedules            Schedule[]            @relation("ScheduleActivator")
+  requestedApprovals            Approval[]            @relation("ApprovalRequester")
+  resolvedApprovals             Approval[]            @relation("ApprovalResolver")
+  toolGrantsRequested           ToolGrant[]           @relation("ToolGrantRequester")
+  toolGrantsCreated             ToolGrant[]           @relation("ToolGrantCreator")
 
   @@unique([orgId, authId])
   @@unique([orgId, id])
@@ -931,8 +931,8 @@ model ConnectorConnection {
   id                      String                @id @default(uuid(7))
   orgId                   String
   providerKey             String
-  principalId             String
-  mode                    String
+  ownerPrincipalId        String
+  authMode                String
   config                  Json
   ciphertext              String
   providerScopes          String[]              @default([])
@@ -947,56 +947,46 @@ model ConnectorConnection {
   createdAt               DateTime              @default(now())
   updatedAt               DateTime              @updatedAt
   org                     Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  principal               Principal             @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  owner                   Principal             @relation(fields: [orgId, ownerPrincipalId], references: [orgId, id], onDelete: Cascade)
   oauthStates             ConnectorOAuthState[]
 
   @@index([orgId, providerKey])
-  @@index([orgId, principalId])
+  @@index([orgId, ownerPrincipalId])
 }
 
 model ConnectorOAuthState {
-  id             String               @id @default(uuid(7))
-  orgId          String
-  providerKey    String
-  registrationId String
-  connectionId   String?
-  principalId    String
-  stateHash      String               @unique
-  codeVerifier   String
-  config         Json
-  label          String?
-  providerScopes String[]             @default([])
+  id                     String               @id @default(uuid(7))
+  orgId                  String
+  providerKey            String
+  registrationId         String
+  connectionId           String?
+  ownerPrincipalId       String
+  initiatedByPrincipalId String
+  stateHash              String               @unique
+  codeVerifier           String
+  config                 Json
+  label                  String?
+  providerScopes         String[]             @default([])
   // mcp_oauth only: the token endpoint and RFC 8707 resource discovered before
   // the redirect, persisted so the callback can complete the exchange without
   // re-running discovery. Null for oauth2_code, whose token URL comes from the
   // provider catalog.
-  tokenEndpoint  String?
-  resource       String?
-  returnTo       String?
-  expiresAt      DateTime
-  createdAt      DateTime             @default(now())
-  org            Org                  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  registration   ClientRegistration   @relation(fields: [orgId, registrationId], references: [orgId, id], onDelete: Cascade)
-  connection     ConnectorConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
-  principal      Principal            @relation(fields: [orgId, principalId], references: [orgId, id], onDelete: Cascade)
+  tokenEndpoint          String?
+  resource               String?
+  returnTo               String?
+  expiresAt              DateTime
+  createdAt              DateTime             @default(now())
+  org                    Org                  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  registration           ClientRegistration   @relation(fields: [orgId, registrationId], references: [orgId, id], onDelete: Cascade)
+  connection             ConnectorConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  owner                  Principal            @relation("ConnectorOAuthStateOwner", fields: [orgId, ownerPrincipalId], references: [orgId, id], onDelete: Cascade)
+  initiatedBy            Principal            @relation("ConnectorOAuthStateInitiator", fields: [orgId, initiatedByPrincipalId], references: [orgId, id], onDelete: Cascade)
 
   @@index([orgId, registrationId])
   @@index([connectionId])
-  @@index([orgId, principalId])
+  @@index([orgId, ownerPrincipalId])
+  @@index([orgId, initiatedByPrincipalId])
   @@index([expiresAt])
-}
-
-model ConnectorProviderSettings {
-  id            String   @id @default(uuid(7))
-  orgId         String
-  providerKey   String
-  memberEnabled Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  org           Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-
-  @@unique([orgId, providerKey])
-  @@index([orgId])
 }
 
 /// One agent run: the unit the workflow engine schedules and the harness owns.

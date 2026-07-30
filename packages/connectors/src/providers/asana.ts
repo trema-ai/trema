@@ -10,6 +10,7 @@ export const asanaProvider = {
   categories: ["project-management"],
   docsUrl: "https://developers.asana.com/docs/mcp-server",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: {
     defaultScopes: [],
     // Asana's token response nests the authorizing user's stable GID.
@@ -22,5 +23,4 @@ export const asanaProvider = {
     // V1 (https://mcp.asana.com/sse) is deprecated; V2 is the supported endpoint.
     serverUrl: "https://mcp.asana.com/v2/mcp",
   },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

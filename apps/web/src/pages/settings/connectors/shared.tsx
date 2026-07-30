@@ -23,8 +23,7 @@ export type CatalogProvider = {
   docsUrl: string;
   authMode: string;
   transport: { type: "mcp" | "rest" };
-  memberConnectable: boolean;
-  memberEnabled: boolean;
+  supportsPersonalOAuth: boolean;
   configFields: Record<string, FieldDescriptor>;
   credentialFields: Record<string, FieldDescriptor>;
   toolManifest?: Array<{ name: string; description: string }>;
@@ -41,9 +40,9 @@ export type Scope = {
 
 export type ConnectorConnection = {
   id: string;
-  principalId: string;
+  ownerPrincipalId: string;
   providerKey: string;
-  mode: string;
+  authMode: string;
   label: string | null;
   providerScopes: string[];
   isRevoked: boolean;

@@ -10,6 +10,7 @@ export const slackProvider = {
   categories: ["communication"],
   docsUrl: "https://api.slack.com/authentication/oauth-v2",
   authMode: "oauth2_code",
+  oauthActor: "app",
   auth: {
     authorizationUrl: "https://slack.com/oauth/v2/authorize",
     tokenUrl: "https://slack.com/api/oauth.v2.access",
@@ -330,5 +331,4 @@ export const slackProvider = {
       },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

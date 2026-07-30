@@ -150,5 +150,4 @@ export const n8nProvider = {
       },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

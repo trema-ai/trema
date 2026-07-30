@@ -74,7 +74,7 @@ export class ConnectorReconnectRequiredError extends Error {
 export interface ResolvedConnectionCredential {
   connectionId: string;
   providerKey: string;
-  mode: string;
+  authMode: string;
   credential: ConnectionCredentialPayload;
   config: Record<string, string | number | boolean>;
   expiresAt: Date | null;
@@ -321,7 +321,7 @@ export function connectionNeedsRefresh(
   provider: ProviderDef,
   now: Date,
 ): boolean {
-  if (connection.mode !== "oauth2_code" && connection.mode !== "mcp_oauth") return false;
+  if (connection.authMode !== "oauth2_code" && connection.authMode !== "mcp_oauth") return false;
   const expiration = effectiveExpiration(connection, payload);
   return expiration !== null && now.getTime() > expiration.getTime() - refreshMarginMs(provider);
 }
@@ -358,7 +358,7 @@ function assertConnectionAvailable(
     );
   }
   if (
-    (connection.mode === "oauth2_code" || connection.mode === "mcp_oauth") &&
+    (connection.authMode === "oauth2_code" || connection.authMode === "mcp_oauth") &&
     expirationHasPassed(connection, payload, now) &&
     !refreshToken(payload)
   ) {
@@ -373,7 +373,7 @@ function resolvedCredential(
   return {
     connectionId: connection.id,
     providerKey: connection.providerKey,
-    mode: connection.mode,
+    authMode: connection.authMode,
     credential: payload,
     config: primitiveConfig(connection.config),
     expiresAt: effectiveExpiration(connection, payload),
@@ -501,7 +501,7 @@ async function exchangeRefreshToken(
   let mcpClient: ResolvedMcpClient | undefined;
 
   try {
-    if (connection.mode === "mcp_oauth") {
+    if (connection.authMode === "mcp_oauth") {
       if (provider.transport.type !== "mcp") return { ok: false };
       resource = interpolate(provider.transport.serverUrl, {
         ...(Object.keys(config).length > 0 ? { config } : {}),

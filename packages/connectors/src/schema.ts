@@ -32,6 +32,7 @@ export const authModes = [
 ] as const;
 
 export const authModeSchema = z.enum(authModes);
+export const oauthActorSchema = z.enum(["user", "app"]);
 
 export const authRecipeSchema = z
   .object({
@@ -167,17 +168,34 @@ export const providerDefSchema = z
     categories: z.array(z.string().trim().min(1)).min(1),
     docsUrl: z.url(),
     authMode: authModeSchema,
+    oauthActor: oauthActorSchema.optional(),
     auth: authRecipeSchema,
     configFields: z.record(z.string().min(1), fieldDescriptorSchema),
     credentialFields: z.record(z.string().min(1), fieldDescriptorSchema),
     transport: transportSchema,
     webhooks: webhooksSchema.optional(),
     toolManifest: z.array(toolDefinitionSchema).default([]),
-    memberConnectable: z.boolean().default(false),
     hooks: providerHooksSchema.optional(),
   })
   .strict()
   .superRefine((provider, context) => {
+    const interactiveOAuth =
+      provider.authMode === "oauth2_code" || provider.authMode === "mcp_oauth";
+    if (interactiveOAuth && !provider.oauthActor) {
+      context.addIssue({
+        code: "custom",
+        message: `${provider.authMode} requires oauthActor`,
+        path: ["oauthActor"],
+      });
+    }
+    if (!interactiveOAuth && provider.oauthActor) {
+      context.addIssue({
+        code: "custom",
+        message: `${provider.authMode} does not accept oauthActor`,
+        path: ["oauthActor"],
+      });
+    }
+
     if (provider.authMode === "oauth2_code") {
       if (!provider.auth.authorizationUrl) {
         context.addIssue({
@@ -226,6 +244,7 @@ export const providerDefSchema = z
 
 export type FieldDescriptor = z.infer<typeof fieldDescriptorSchema>;
 export type AuthMode = z.infer<typeof authModeSchema>;
+export type OAuthActor = z.infer<typeof oauthActorSchema>;
 export type AuthRecipe = z.infer<typeof authRecipeSchema>;
 export type RestTransport = z.infer<typeof restTransportSchema>;
 export type McpTransport = z.infer<typeof mcpTransportSchema>;

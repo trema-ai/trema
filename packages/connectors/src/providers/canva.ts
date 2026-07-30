@@ -12,6 +12,7 @@ export const canvaProvider = {
   categories: ["design"],
   docsUrl: "https://www.canva.dev/docs/connect/api-reference/authentication/",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://www.canva.com/api/oauth/authorize",
     tokenUrl: "https://api.canva.com/rest/v1/oauth/token",
@@ -161,5 +162,4 @@ export const canvaProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

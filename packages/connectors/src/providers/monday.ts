@@ -10,9 +10,9 @@ export const mondayProvider = {
   categories: ["project-management"],
   docsUrl: "https://developer.monday.com/api-reference/docs/build-on-monday-with-ai",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: { defaultScopes: [] },
   configFields: {},
   credentialFields: {},
   transport: { type: "mcp", serverUrl: "https://mcp.monday.com/mcp" },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

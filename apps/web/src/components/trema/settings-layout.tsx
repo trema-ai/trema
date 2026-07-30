@@ -8,9 +8,9 @@ import {
   Monitor,
   ScrollText,
   Settings,
-  Sparkles,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   UserRound,
   UsersRound,
 } from "lucide-react";

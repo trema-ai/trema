@@ -10,6 +10,7 @@ export const figmaProvider = {
   categories: ["design"],
   docsUrl: "https://www.figma.com/developers/api",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://www.figma.com/oauth",
     tokenUrl: "https://api.figma.com/v1/oauth/token",
@@ -209,5 +210,4 @@ export const figmaProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

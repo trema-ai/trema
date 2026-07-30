@@ -45,6 +45,8 @@ Connections made from the settings page belong to the organization's agent princ
 2. Fill any provider-specific fields. Providers with a published scope catalog also show a scope picker, with the defaults preselected.
 3. Click **Continue**. The browser goes to the provider's consent screen and returns to Trema when you approve.
 
+For a user-acting OAuth provider, authorize an organization-controlled account for organization or shared use. Slack's current bot OAuth flow is app-acting and always creates an organization-owned connection.
+
 For API-key providers, **Connect** opens a credential form instead. The credential is verified against the provider before it is stored; a credential that fails verification is never written. Either way, [Credential security](/credential-security) describes how the flow and the stored secret are protected.
 
 Connect more than one account to reach separate workspaces—each becomes its own connection. **Rename** gives a connection a label so accounts stay distinguishable.
@@ -75,11 +77,11 @@ tools stay off when the installation uses an explicit selection.
 
 A synced tool keeps the server's own MCP annotations verbatim. They gate nothing—the delegated-mode classifier reads them as untrusted signal; see [Approval policies](/approval-policies).
 
-## Open a provider to members
+## Connect a personal account
 
-Member-connectable providers let members connect their own accounts, so the agent acts as them in their personal sessions. Member access is on by default; the **Member access** toggle on the provider page turns it off per provider.
+Members can connect any user-acting OAuth provider from the Connections tab of their personal scope. App OAuth, API keys, basic authentication, and machine-to-machine credentials stay organization-owned and do not appear in the personal flow.
 
-Members connect from the Connections tab of their personal scope, and the connection is bound to that scope automatically. A personal installation always uses the owner's own connection, never the organization agent's. Turning member access off stops new personal connections for that provider; members can always revoke a connection they own.
+A personal installation always uses the scope owner's connection. Members can reconnect or revoke connections they own.
 
 ## Watch credential health
 

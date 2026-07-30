@@ -135,5 +135,4 @@ export const gammaProvider = {
       paramsSchema: { type: "object", properties: {} },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

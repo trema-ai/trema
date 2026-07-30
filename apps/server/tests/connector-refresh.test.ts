@@ -75,9 +75,9 @@ integration("connector credential refresh", () => {
     return db.connectorConnection.create({
       data: {
         orgId: input.orgId,
-        principalId: input.principalId,
+        ownerPrincipalId: input.principalId,
         providerKey: "google_workspace",
-        mode: "oauth2_code",
+        authMode: "oauth2_code",
         config: {},
         ciphertext: encryptEnvelope(
           {
@@ -702,9 +702,9 @@ integration("connector credential refresh", () => {
     const connection = await db.connectorConnection.create({
       data: {
         orgId: owner.org.id,
-        principalId: owner.principal.id,
+        ownerPrincipalId: owner.principal.id,
         providerKey: "notion",
-        mode: "mcp_oauth",
+        authMode: "mcp_oauth",
         config: {},
         ciphertext: encryptEnvelope(
           {
