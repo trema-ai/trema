@@ -36,8 +36,12 @@ describe("ModelSelector", () => {
     render(
       <ModelSelector
         models={[
-          { id: modelSelectionValue(offered[1]!), name: "Claude Opus" },
-          { id: modelSelectionValue(offered[0]!), name: "GPT-5" },
+          {
+            id: modelSelectionValue(offered[1]!),
+            name: "Claude Opus",
+            provider: "Anthropic",
+          },
+          { id: modelSelectionValue(offered[0]!), name: "GPT-5", provider: "OpenAI" },
         ]}
         value={modelSelectionValue(offered[1]!)}
         onValueChange={onValueChange}
@@ -46,11 +50,49 @@ describe("ModelSelector", () => {
 
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
     fireEvent.change(screen.getByPlaceholderText("Search models…"), {
-      target: { value: "GPT" },
+      target: { value: "gpt5" },
     });
+    expect(screen.getByText("OpenAI")).toBeTruthy();
     fireEvent.click(screen.getByText("GPT-5"));
 
     expect(onValueChange).toHaveBeenCalledWith(modelSelectionValue(offered[0]!));
     expect(screen.queryByPlaceholderText("Search models…")).toBeNull();
+  });
+
+  it("uses the same fuzzy picker for settings model defaults", () => {
+    const onValueChange = vi.fn();
+    render(
+      <ModelSelector
+        models={[
+          {
+            id: modelSelectionValue(offered[1]!),
+            name: "Claude Opus",
+            provider: "Anthropic",
+            keywords: ["Anthropic"],
+          },
+          {
+            id: modelSelectionValue(offered[0]!),
+            name: "GPT-5",
+            provider: "OpenAI",
+            keywords: ["OpenAI"],
+          },
+        ]}
+        value={modelSelectionValue(offered[1]!)}
+        selectedLabel="Claude Opus on Anthropic"
+        onValueChange={onValueChange}
+        ariaLabel="Choose a model for chat"
+        emptyMessage="No model matches."
+        placeholder="Choose a model"
+        variant="settings"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Choose a model for chat" }));
+    fireEvent.change(screen.getByPlaceholderText("Search models…"), {
+      target: { value: "gpt5 openai" },
+    });
+    fireEvent.click(screen.getByText("GPT-5"));
+
+    expect(onValueChange).toHaveBeenCalledWith(modelSelectionValue(offered[0]!));
   });
 });

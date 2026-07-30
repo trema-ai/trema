@@ -1,3 +1,8 @@
+import {
+  type SearchOptions as DuckDuckGoSearchOptions,
+  type SearchResponse as DuckDuckGoSearchResponse,
+  search as searchDuckDuckGo,
+} from "ddg-search";
 import { z } from "zod";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
@@ -39,6 +44,7 @@ export interface WebSearchResult {
 }
 
 export interface WebSearchResponse {
+  provider: string;
   results: WebSearchResult[];
 }
 
@@ -53,7 +59,13 @@ export interface WebFetchResponse {
 export interface WebCapabilityExecutionOptions {
   masterKey?: string;
   providerFetch?: typeof fetch;
+  ddgsSearch?: DuckDuckGoSearch;
 }
+
+type DuckDuckGoSearch = (
+  query: string,
+  options: DuckDuckGoSearchOptions,
+) => Promise<DuckDuckGoSearchResponse>;
 
 export class WebCapabilityError extends Error {
   constructor(
@@ -228,10 +240,121 @@ const tavilyExtractResponseSchema = z.object({
   failed_results: z.array(z.object({ url: z.url() })).default([]),
 });
 
+const firecrawlSearchResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({
+    web: z
+      .array(
+        z.object({
+          title: z.string().default(""),
+          url: z.url(),
+          description: z.string().default(""),
+        }),
+      )
+      .default([]),
+  }),
+});
+
+const firecrawlScrapeResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({
+    markdown: z.string(),
+    metadata: z
+      .object({
+        title: z.string().optional(),
+        sourceURL: z.url().optional(),
+        url: z.url().optional(),
+      })
+      .passthrough()
+      .default({}),
+  }),
+});
+
+const searxngResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      title: z.string().default(""),
+      url: z.url(),
+      content: z.string().default(""),
+      publishedDate: z.string().nullish(),
+    }),
+  ),
+});
+
+const ddgsSearchResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      title: z.string().default(""),
+      url: z.url(),
+      description: z.string().default(""),
+    }),
+  ),
+});
+
+const exaSearchResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      title: z.string().nullish(),
+      url: z.url(),
+      publishedDate: z.string().nullish(),
+      text: z.string().optional(),
+      highlights: z.array(z.string()).optional(),
+      summary: z.string().optional(),
+    }),
+  ),
+});
+
+const exaContentsResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      title: z.string().nullish(),
+      url: z.url(),
+      text: z.string(),
+    }),
+  ),
+});
+
+const parallelSearchResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      title: z.string().nullish(),
+      url: z.url(),
+      publish_date: z.string().nullish(),
+      excerpts: z.array(z.string()).default([]),
+    }),
+  ),
+});
+
+const parallelExtractResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      title: z.string().nullish(),
+      url: z.url(),
+      excerpts: z.array(z.string()).default([]),
+      full_content: z.string().nullish(),
+    }),
+  ),
+});
+
+function providerEndpoint(provider: ResolvedCapabilityProvider, path: string): string {
+  const baseUrl = provider.settings.baseUrl;
+  if (typeof baseUrl !== "string") throw new WebProviderError(provider.name);
+  return new URL(path.replace(/^\/+/, ""), `${baseUrl.replace(/\/+$/, "")}/`).toString();
+}
+
+function recencyStart(
+  recency: z.infer<typeof searchWebInputSchema>["recency"],
+): string | undefined {
+  if (recency === undefined) return undefined;
+  const days = { day: 1, week: 7, month: 30, year: 365 }[recency];
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 async function callSearchProvider(
   provider: ResolvedCapabilityProvider,
   input: z.infer<typeof searchWebInputSchema>,
   fetchImpl: typeof fetch,
+  ddgsSearch: DuckDuckGoSearch,
 ): Promise<WebSearchResult[]> {
   const limit = boundedLimit(input.limit);
   const signal = AbortSignal.timeout(15_000);
@@ -303,6 +426,147 @@ async function callSearchProvider(
         ...(result.published_date ? { publishedAt: result.published_date } : {}),
       }));
     }
+    if (provider.driverKey === "firecrawl") {
+      response = await fetchImpl("https://api.firecrawl.dev/v2/search", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${provider.credential!}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: input.query,
+          limit,
+          sources: ["web"],
+          highlights: false,
+          ...(input.recency
+            ? { tbs: `qdr:${{ day: "d", week: "w", month: "m", year: "y" }[input.recency]}` }
+            : {}),
+        }),
+        redirect: "error",
+        signal,
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = firecrawlSearchResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success || !parsed.data.success) throw new WebProviderError(provider.name);
+      return parsed.data.data.web.slice(0, limit).map((result) => ({
+        title: result.title,
+        url: result.url,
+        snippet: result.description,
+      }));
+    }
+    if (provider.driverKey === "searxng") {
+      const url = new URL(providerEndpoint(provider, "search"));
+      url.searchParams.set("q", input.query);
+      url.searchParams.set("format", "json");
+      url.searchParams.set("safesearch", "1");
+      if (input.recency) {
+        url.searchParams.set("time_range", input.recency);
+      }
+      response = await fetchImpl(url, {
+        headers: { Accept: "application/json" },
+        redirect: "error",
+        signal,
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = searxngResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success) throw new WebProviderError(provider.name);
+      return parsed.data.results.slice(0, limit).map((result) => ({
+        title: htmlToText(result.title).text,
+        url: result.url,
+        snippet: htmlToText(result.content).text,
+        ...(result.publishedDate ? { publishedAt: result.publishedDate } : {}),
+      }));
+    }
+    if (provider.driverKey === "ddgs") {
+      const raw = await ddgsSearch(input.query, {
+        maxPages: 1,
+        maxResults: limit,
+        region: "",
+        time:
+          input.recency === undefined
+            ? ""
+            : { day: "d", week: "w", month: "m", year: "y" }[input.recency],
+        signal,
+        fetchImpl,
+        stderr: { isTTY: false, write: () => true },
+      });
+      const parsed = ddgsSearchResponseSchema.safeParse(raw);
+      if (!parsed.success) throw new WebProviderError(provider.name);
+      return parsed.data.results.slice(0, limit).map((result) => ({
+        title: result.title,
+        url: result.url,
+        snippet: result.description,
+      }));
+    }
+    if (provider.driverKey === "exa") {
+      response = await fetchImpl("https://api.exa.ai/search", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "x-api-key": provider.credential!,
+        },
+        body: JSON.stringify({
+          query: input.query,
+          numResults: limit,
+          contents: { highlights: true },
+          ...(input.recency ? { startPublishedDate: recencyStart(input.recency) } : {}),
+        }),
+        redirect: "error",
+        signal,
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = exaSearchResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success) throw new WebProviderError(provider.name);
+      return parsed.data.results.slice(0, limit).map((result) => ({
+        title: result.title ?? result.url,
+        url: result.url,
+        snippet: result.highlights?.join("\n") ?? result.summary ?? result.text ?? "",
+        ...(result.publishedDate ? { publishedAt: result.publishedDate } : {}),
+      }));
+    }
+    if (provider.driverKey === "parallel") {
+      response = await fetchImpl("https://api.parallel.ai/v1/search", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "x-api-key": provider.credential!,
+        },
+        body: JSON.stringify({
+          objective: input.query,
+          search_queries: [input.query],
+          mode: "basic",
+          max_chars_total: Math.max(2_000, limit * 1_000),
+          advanced_settings: {
+            max_results: limit,
+            ...(input.recency
+              ? { source_policy: { after_date: recencyStart(input.recency)!.slice(0, 10) } }
+              : {}),
+          },
+        }),
+        redirect: "error",
+        signal,
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = parallelSearchResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success) throw new WebProviderError(provider.name);
+      return parsed.data.results.slice(0, limit).map((result) => ({
+        title: result.title ?? result.url,
+        url: result.url,
+        snippet: result.excerpts.join("\n"),
+        ...(result.publish_date ? { publishedAt: result.publish_date } : {}),
+      }));
+    }
     throw new WebProviderError(provider.name);
   } catch (error) {
     if (error instanceof WebProviderError) throw error;
@@ -335,6 +599,7 @@ export async function searchWeb(
         provider,
         input,
         options.providerFetch ?? globalThis.fetch,
+        options.ddgsSearch ?? searchDuckDuckGo,
       );
       await db.auditLog.create({
         data: {
@@ -356,7 +621,7 @@ export async function searchWeb(
         resultCount: results.length,
         durationMs: Math.round(performance.now() - startedAt),
       });
-      return { results };
+      return { provider: provider.label, results };
     } catch (error) {
       const failure =
         error instanceof WebProviderError ? error : new WebProviderError(provider.name);
@@ -389,48 +654,156 @@ export async function searchWeb(
 
 const FETCH_URL_MAX_CHARACTERS = 50_000;
 
+function boundedFetchResponse(url: string, text: string, title?: string): WebFetchResponse {
+  return {
+    url,
+    ...(title ? { title } : {}),
+    contentType: "text/markdown",
+    text: text.slice(0, FETCH_URL_MAX_CHARACTERS),
+    truncated: text.length > FETCH_URL_MAX_CHARACTERS,
+  };
+}
+
 async function callFetchProvider(
   provider: ResolvedCapabilityProvider,
   url: URL,
   fetchImpl: typeof fetch,
 ): Promise<WebFetchResponse> {
   try {
-    if (provider.driverKey !== "tavily_search") {
-      throw new WebProviderError(provider.name);
+    let response: Response;
+    if (provider.driverKey === "tavily_search") {
+      response = await fetchImpl("https://api.tavily.com/extract", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${provider.credential!}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          urls: url.toString(),
+          extract_depth: "basic",
+          include_images: false,
+          include_favicon: false,
+          format: "markdown",
+          timeout: 15,
+          include_usage: false,
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = tavilyExtractResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success) throw new WebProviderError(provider.name);
+      const result = parsed.data.results[0];
+      if (result === undefined) throw new WebProviderError(provider.name);
+      return boundedFetchResponse(result.url, result.raw_content);
     }
-    const response = await fetchImpl("https://api.tavily.com/extract", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${provider.credential!}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        urls: url.toString(),
-        extract_depth: "basic",
-        include_images: false,
-        include_favicon: false,
-        format: "markdown",
-        timeout: 15,
-        include_usage: false,
-      }),
-      redirect: "error",
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) throw new WebProviderError(provider.name, response.status);
-    const parsed = tavilyExtractResponseSchema.safeParse(
-      parseJson(await responseText(response, provider.name), provider.name),
-    );
-    if (!parsed.success) throw new WebProviderError(provider.name);
-    const result = parsed.data.results[0];
-    if (result === undefined) throw new WebProviderError(provider.name);
-    const truncated = result.raw_content.length > FETCH_URL_MAX_CHARACTERS;
-    return {
-      url: result.url,
-      contentType: "text/markdown",
-      text: result.raw_content.slice(0, FETCH_URL_MAX_CHARACTERS),
-      truncated,
-    };
+    if (provider.driverKey === "firecrawl") {
+      response = await fetchImpl("https://api.firecrawl.dev/v2/scrape", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${provider.credential!}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: url.toString(),
+          formats: ["markdown"],
+          onlyMainContent: true,
+          removeBase64Images: true,
+          blockAds: true,
+          timeout: 15_000,
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = firecrawlScrapeResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success || !parsed.data.success) throw new WebProviderError(provider.name);
+      return boundedFetchResponse(
+        parsed.data.data.metadata.sourceURL ?? parsed.data.data.metadata.url ?? url.toString(),
+        parsed.data.data.markdown,
+        parsed.data.data.metadata.title,
+      );
+    }
+    if (provider.driverKey === "ddgs") {
+      response = await fetchImpl(url, {
+        headers: {
+          Accept: "text/html, text/plain;q=0.9",
+          "User-Agent": "Trema/1.0",
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+        throw new WebProviderError(provider.name, response.status);
+      }
+      const extracted = htmlToText(await responseText(response, provider.name));
+      if (extracted.text === "") throw new WebProviderError(provider.name);
+      return boundedFetchResponse(response.url || url.toString(), extracted.text, extracted.title);
+    }
+    if (provider.driverKey === "exa") {
+      response = await fetchImpl("https://api.exa.ai/contents", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "x-api-key": provider.credential!,
+        },
+        body: JSON.stringify({ urls: [url.toString()], text: true }),
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = exaContentsResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success || parsed.data.results[0] === undefined) {
+        throw new WebProviderError(provider.name);
+      }
+      const result = parsed.data.results[0];
+      return boundedFetchResponse(result.url, result.text, result.title ?? undefined);
+    }
+    if (provider.driverKey === "parallel") {
+      response = await fetchImpl("https://api.parallel.ai/v1/extract", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "x-api-key": provider.credential!,
+        },
+        body: JSON.stringify({
+          urls: [url.toString()],
+          objective: "Return the complete readable content of this page.",
+          max_chars_total: FETCH_URL_MAX_CHARACTERS,
+          advanced_settings: {
+            full_content: { max_chars_per_result: FETCH_URL_MAX_CHARACTERS },
+          },
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
+      const parsed = parallelExtractResponseSchema.safeParse(
+        parseJson(await responseText(response, provider.name), provider.name),
+      );
+      if (!parsed.success || parsed.data.results[0] === undefined) {
+        throw new WebProviderError(provider.name);
+      }
+      const result = parsed.data.results[0];
+      return boundedFetchResponse(
+        result.url,
+        result.full_content ?? result.excerpts.join("\n\n"),
+        result.title ?? undefined,
+      );
+    }
+    throw new WebProviderError(provider.name);
   } catch (error) {
     if (error instanceof WebProviderError) throw error;
     throw new WebProviderError(provider.name);

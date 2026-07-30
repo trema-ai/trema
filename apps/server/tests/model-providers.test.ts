@@ -229,6 +229,7 @@ integration("model provider registry", () => {
     expect(listed).toEqual([
       {
         providerName: "picker",
+        providerLabel: "Picker Provider",
         modelId: "shown",
         label: "Shown Model",
         contextWindow: 128_000,

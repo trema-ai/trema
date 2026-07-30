@@ -252,7 +252,12 @@
                       "key": {
                         "enum": [
                           "brave_search",
-                          "tavily_search"
+                          "tavily_search",
+                          "firecrawl",
+                          "searxng",
+                          "ddgs",
+                          "exa",
+                          "parallel"
                         ],
                         "type": "string",
                         "description": "The adapter's stable key."
@@ -334,7 +339,12 @@
                       "driverKey": {
                         "enum": [
                           "brave_search",
-                          "tavily_search"
+                          "tavily_search",
+                          "firecrawl",
+                          "searxng",
+                          "ddgs",
+                          "exa",
+                          "parallel"
                         ],
                         "type": "string"
                       },
@@ -421,7 +431,12 @@
                   "driverKey": {
                     "enum": [
                       "brave_search",
-                      "tavily_search"
+                      "tavily_search",
+                      "firecrawl",
+                      "searxng",
+                      "ddgs",
+                      "exa",
+                      "parallel"
                     ],
                     "type": "string"
                   },
@@ -471,7 +486,12 @@
                     "driverKey": {
                       "enum": [
                         "brave_search",
-                        "tavily_search"
+                        "tavily_search",
+                        "firecrawl",
+                        "searxng",
+                        "ddgs",
+                        "exa",
+                        "parallel"
                       ],
                       "type": "string"
                     },
@@ -8911,6 +8931,10 @@
                         "type": "string",
                         "description": "The provider's stable name."
                       },
+                      "providerLabel": {
+                        "type": "string",
+                        "description": "The provider name shown in the picker."
+                      },
                       "modelId": {
                         "type": "string",
                         "description": "The model id the provider expects."
@@ -8933,6 +8957,7 @@
                     },
                     "required": [
                       "providerName",
+                      "providerLabel",
                       "modelId",
                       "label"
                     ],

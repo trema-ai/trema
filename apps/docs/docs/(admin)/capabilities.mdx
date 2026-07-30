@@ -9,38 +9,64 @@ Managing capabilities requires the `manage_capabilities` permission, held by own
 
 ## Configure web search
 
-Web search supports Brave Search and Tavily. Each provider needs its own API key.
+Web search supports hosted APIs and self-hosted search services.
+
+| Provider | Configuration | Capabilities |
+| --- | --- | --- |
+| Brave Search | API key | Search |
+| Tavily | API key | Search and extract |
+| Firecrawl | API key | Search and extract |
+| SearXNG | Service URL | Search |
+| DDGS | None | Search and extract |
+| Exa | API key | Search and extract |
+| Parallel | API key | Search and extract |
 
 1. Open **Settings → Capabilities**.
 2. Select **Web Search**.
 3. Open a provider's actions menu.
 4. Select **Configure**.
-5. Enter its API key and save.
+5. Enter its API key or service URL when the provider requires one.
+6. Select **Save key** or **Save**.
 
 The first configured provider becomes primary and enables web search. Configure another provider, then select **Make fallback** to add failover.
 
 Select **Make primary** to change the primary provider. The previous primary becomes the fallback. A fallback runs only when the primary request fails.
 It does not merge, rerank, or supplement successful results.
 
-The agent receives one `search_web` tool regardless of provider. The tool accepts a query, an optional result limit up to 20, and an optional day, week, month, or year recency filter. Results use one shape: title, URL, snippet, and an optional publication time.
+The agent receives one `search_web` tool regardless of provider. The tool accepts a query and an optional result limit up to 20.
+It also accepts a day, week, month, or year recency filter. Results use one shape: title, URL, snippet, and optional publication time.
 
-Replacing a key overwrites its encrypted value. Trema never returns a saved key. Removing a provider deletes its key and removes the provider from the route; removing the final provider disables web search.
+Replacing a key overwrites its encrypted value. Trema never returns a saved key.
+Removing a provider deletes its configuration and removes it from the route. Removing the final provider disables web search.
+
+### Configure SearXNG
+
+Run SearXNG where the Trema server can reach it. Enable JSON output in the SearXNG `search.formats` setting.
+
+Enter the SearXNG base URL as the service URL. For example, enter `http://searxng:8080` when both services share a container network.
+
+If searches return HTTP 403, confirm that the SearXNG instance enables JSON output.
+
+### Configure DDGS
+
+DDGS runs inside the Trema server. Select **Configure**, then select **Enable**.
+You do not need an API key or a separate service.
 
 ## Configure web fetch
 
-Web fetch uses the extraction API of a configured provider. Tavily currently provides web fetch.
+Web fetch uses the extraction API of Tavily, Firecrawl, DDGS, Exa, or Parallel.
 
 1. Open **Settings → Capabilities**.
 2. Select **Web Extract**.
-3. Open Tavily's actions menu.
-4. Select **Configure** if Tavily has no saved key.
-5. Select **Make primary** if Tavily is already configured for web search.
+3. Open a provider's actions menu.
+4. Select **Configure** if the provider has no saved configuration.
+5. Select **Make primary** if the provider is already configured for web search.
 
-The agent receives the `fetch_url` tool while the route is enabled. Tavily Extract returns the page as Markdown. Trema limits the result to 50,000 characters.
+The agent receives the `fetch_url` tool while the route is enabled. Providers return normalized Markdown. Trema limits the result to 50,000 characters.
 
-One provider record can serve several capabilities. For example, one Tavily API key can appear in both the web search and web fetch routes.
+One provider record can serve several capabilities. For example, one Firecrawl API key can appear in both routes.
 
-## Disable a capability
+## Turn off a capability
 
 Remove every provider assigned to the capability. The tool disappears from new model turns and external Model Context Protocol (MCP) tool listings.
 
@@ -57,8 +83,9 @@ Drivers describe the adapters bundled with the deployment and list every capabil
 | Create or replace a provider | `PUT /capability-providers/{name}` |
 | Delete a provider | `DELETE /capability-providers/{name}` |
 | List enabled routes | `GET /capability-routes` |
-| Set or disable a route | `PUT /capability-routes/{capabilityKey}` |
+| Set or turn off a route | `PUT /capability-routes/{capabilityKey}` |
 
-Set a route's `chain` to an empty array to disable it. Provider names in a route are ordered from primary to fallback and must serve that route's capability.
+Set a route's `chain` to an empty array to turn it off. Provider names are ordered from primary to fallback.
+Each provider must serve the route's capability.
 
 See the [API reference](/api) for request and response schemas.

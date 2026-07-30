@@ -34,6 +34,7 @@ export interface ModelChainEntry {
 
 /** One catalog model safe to offer to every member of the organization. */
 export interface OfferedModel extends ModelChainEntry {
+  providerLabel: string;
   label: string;
   contextWindow?: number;
   /** Whether this entry is the organization's resolved `turns` default. */
@@ -950,6 +951,7 @@ export async function listOfferedModels(
         .filter((model) => model.offered === true)
         .map((model) => ({
           providerName: provider.name,
+          providerLabel: provider.label,
           modelId: model.id,
           label: model.label ?? model.id,
           ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),

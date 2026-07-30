@@ -11,10 +11,30 @@ import { log } from "#server/lib/logger/index.js";
 export const capabilityKeys = ["web.search", "web.fetch"] as const;
 export type CapabilityKey = (typeof capabilityKeys)[number];
 
-export const capabilityDriverKeys = ["brave_search", "tavily_search"] as const;
+export const capabilityDriverKeys = [
+  "brave_search",
+  "tavily_search",
+  "firecrawl",
+  "searxng",
+  "ddgs",
+  "exa",
+  "parallel",
+] as const;
 export type CapabilityDriverKey = (typeof capabilityDriverKeys)[number];
 
 const noSettingsSchema = z.object({}).strict();
+const serviceUrlSchema = z
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === ""
+    );
+  }, "Service URL must use HTTP or HTTPS and cannot contain credentials")
+  .transform((value) => value.replace(/\/+$/, ""));
+const serviceSettingsSchema = z.object({ baseUrl: serviceUrlSchema }).strict();
 
 interface CapabilityDriverDefinition {
   key: CapabilityDriverKey;
@@ -37,6 +57,46 @@ export const capabilityDriverCatalog: readonly CapabilityDriverDefinition[] = [
   {
     key: "tavily_search",
     label: "Tavily",
+    capabilities: ["web.search", "web.fetch"],
+    credentialRequired: true,
+    settingsSchema: noSettingsSchema,
+    defaultSettings: {},
+  },
+  {
+    key: "firecrawl",
+    label: "Firecrawl",
+    capabilities: ["web.search", "web.fetch"],
+    credentialRequired: true,
+    settingsSchema: noSettingsSchema,
+    defaultSettings: {},
+  },
+  {
+    key: "searxng",
+    label: "SearXNG",
+    capabilities: ["web.search"],
+    credentialRequired: false,
+    settingsSchema: serviceSettingsSchema,
+    defaultSettings: { baseUrl: "http://localhost:8080" },
+  },
+  {
+    key: "ddgs",
+    label: "DDGS",
+    capabilities: ["web.search", "web.fetch"],
+    credentialRequired: false,
+    settingsSchema: noSettingsSchema,
+    defaultSettings: {},
+  },
+  {
+    key: "exa",
+    label: "Exa",
+    capabilities: ["web.search", "web.fetch"],
+    credentialRequired: true,
+    settingsSchema: noSettingsSchema,
+    defaultSettings: {},
+  },
+  {
+    key: "parallel",
+    label: "Parallel",
     capabilities: ["web.search", "web.fetch"],
     credentialRequired: true,
     settingsSchema: noSettingsSchema,

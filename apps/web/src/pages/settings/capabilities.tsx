@@ -1,7 +1,10 @@
 import braveIcon from "@lobehub/icons-static-svg/icons/brave-color.svg";
+import exaIcon from "@lobehub/icons-static-svg/icons/exa-color.svg";
+import firecrawlIcon from "@lobehub/icons-static-svg/icons/firecrawl-color.svg";
+import searxngIcon from "@lobehub/icons-static-svg/icons/searxng-color.svg";
 import tavilyIcon from "@lobehub/icons-static-svg/icons/tavily-color.svg";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MoreHorizontal } from "lucide-react";
+import { Globe2, MoreHorizontal } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -41,7 +44,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "#web/components/ui/tab
 import { orpc, rpcClient } from "#web/lib/api.ts";
 
 type CapabilityKey = "web.search" | "web.fetch";
-type DriverKey = "brave_search" | "tavily_search";
+type DriverKey =
+  | "brave_search"
+  | "tavily_search"
+  | "firecrawl"
+  | "searxng"
+  | "ddgs"
+  | "exa"
+  | "parallel";
 
 type CapabilityDriver = {
   key: DriverKey;
@@ -70,11 +80,52 @@ type CapabilityRoute = {
 const providerNames: Record<DriverKey, string> = {
   brave_search: "brave-search",
   tavily_search: "tavily-search",
+  firecrawl: "firecrawl",
+  searxng: "searxng",
+  ddgs: "ddgs",
+  exa: "exa",
+  parallel: "parallel",
 };
 
-const providerIcons: Record<DriverKey, string> = {
+const providerIcons: Partial<Record<DriverKey, string>> = {
   brave_search: braveIcon,
   tavily_search: tavilyIcon,
+  firecrawl: firecrawlIcon,
+  searxng: searxngIcon,
+  ddgs: "/capability-icons/duckduckgo.svg",
+  exa: exaIcon,
+  parallel: "/capability-icons/parallel.svg",
+};
+
+const providerDescriptions: Record<DriverKey, Record<CapabilityKey, string>> = {
+  brave_search: {
+    "web.search": "Uses the Brave Web Search API.",
+    "web.fetch": "Brave does not provide web extraction.",
+  },
+  tavily_search: {
+    "web.search": "Uses Tavily Search with basic-depth results.",
+    "web.fetch": "Uses Tavily Extract with basic-depth extraction.",
+  },
+  firecrawl: {
+    "web.search": "Uses Firecrawl Search v2.",
+    "web.fetch": "Uses Firecrawl Scrape v2 for clean Markdown.",
+  },
+  searxng: {
+    "web.search": "Uses the JSON API of your SearXNG instance.",
+    "web.fetch": "SearXNG does not provide web extraction.",
+  },
+  ddgs: {
+    "web.search": "Uses your self-hosted DDGS metasearch API.",
+    "web.fetch": "Uses your self-hosted DDGS extraction API.",
+  },
+  exa: {
+    "web.search": "Uses Exa Search with query-relevant highlights.",
+    "web.fetch": "Uses Exa Contents with text extraction.",
+  },
+  parallel: {
+    "web.search": "Uses Parallel Search with LLM-optimized excerpts.",
+    "web.fetch": "Uses Parallel Extract for readable page content.",
+  },
 };
 
 function messageFrom(error: unknown): string {
@@ -207,6 +258,9 @@ function CapabilityProviderRow({
   const [removeOpen, setRemoveOpen] = useState(false);
   const name = providerNames[driver.key];
   const routePosition = route?.chain.indexOf(name) ?? -1;
+  const configured =
+    provider !== undefined && (!driver.credentialRequired || provider.hasCredential);
+  const icon = providerIcons[driver.key];
   const remove = useMutation({
     mutationFn: () => rpcClient.capabilities.providers.remove({ name }),
     onSuccess: async () => {
@@ -237,27 +291,25 @@ function CapabilityProviderRow({
       <SettingRow
         label={driver.label}
         icon={
-          <img
-            src={providerIcons[driver.key]}
-            alt=""
-            className="size-9 shrink-0 rounded-md border bg-white object-contain p-1.5"
-          />
+          icon ? (
+            <img
+              src={icon}
+              alt=""
+              className="size-9 shrink-0 rounded-md border bg-white object-contain p-1.5"
+            />
+          ) : (
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/30">
+              <Globe2 className="size-5" />
+            </span>
+          )
         }
-        description={
-          driver.key === "brave_search"
-            ? "Uses the Brave Web Search API."
-            : capabilityKey === "web.search"
-              ? "Uses Tavily Search with basic-depth results."
-              : "Uses Tavily Extract with basic-depth extraction."
-        }
+        description={providerDescriptions[driver.key][capabilityKey]}
         control={
           <div className="flex items-center gap-2">
             {routePosition === 0 ? <Badge variant="secondary">Primary</Badge> : null}
             {routePosition === 1 ? <Badge variant="outline">Fallback</Badge> : null}
-            {provider?.hasCredential && routePosition < 0 ? (
-              <Badge variant="outline">Configured</Badge>
-            ) : null}
-            {!provider?.hasCredential ? (
+            {configured && routePosition < 0 ? <Badge variant="outline">Configured</Badge> : null}
+            {!configured ? (
               <Button variant="outline" size="sm" onClick={() => setConfigureOpen(true)}>
                 Configure
               </Button>
@@ -278,17 +330,14 @@ function CapabilityProviderRow({
                   Configure
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={!provider?.hasCredential || routePosition === 0}
+                  disabled={!configured || routePosition === 0}
                   onSelect={() => setRole.mutate("primary")}
                 >
                   Make primary
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={
-                    !provider?.hasCredential ||
-                    route === undefined ||
-                    routePosition === 0 ||
-                    routePosition === 1
+                    !configured || route === undefined || routePosition === 0 || routePosition === 1
                   }
                   onSelect={() => setRole.mutate("fallback")}
                 >
@@ -307,9 +356,10 @@ function CapabilityProviderRow({
           </div>
         }
       />
-      <ProviderCredentialDialog
+      <ProviderConfigurationDialog
         capabilityKey={capabilityKey}
         driver={driver}
+        provider={provider}
         name={name}
         autoEnable={autoEnable}
         open={configureOpen}
@@ -340,9 +390,10 @@ function CapabilityProviderRow({
   );
 }
 
-function ProviderCredentialDialog({
+function ProviderConfigurationDialog({
   capabilityKey,
   driver,
+  provider,
   name,
   autoEnable,
   open,
@@ -351,6 +402,7 @@ function ProviderCredentialDialog({
 }: {
   capabilityKey: CapabilityKey;
   driver: CapabilityDriver;
+  provider: CapabilityProvider | undefined;
   name: string;
   autoEnable: boolean;
   open: boolean;
@@ -358,16 +410,34 @@ function ProviderCredentialDialog({
   onChanged: () => Promise<void>;
 }) {
   const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const serviceUrlRequired = typeof driver.defaultSettings.baseUrl === "string";
   useEffect(() => {
-    if (!open) setApiKey("");
-  }, [open]);
+    if (!open) {
+      setApiKey("");
+      return;
+    }
+    const configuredUrl = provider?.settings.baseUrl;
+    const defaultUrl = driver.defaultSettings.baseUrl;
+    setBaseUrl(
+      typeof configuredUrl === "string"
+        ? configuredUrl
+        : typeof defaultUrl === "string"
+          ? defaultUrl
+          : "",
+    );
+  }, [driver.defaultSettings.baseUrl, open, provider?.settings.baseUrl]);
   const save = useMutation({
     mutationFn: async () => {
       await rpcClient.capabilities.providers.put({
         name,
         label: driver.label,
         driverKey: driver.key,
-        credential: apiKey.trim(),
+        ...(driver.credentialRequired
+          ? { credential: apiKey.trim() }
+          : serviceUrlRequired
+            ? { settings: { baseUrl: baseUrl.trim() } }
+            : { settings: {} }),
       });
       if (autoEnable) {
         await rpcClient.capabilities.routes.put({
@@ -396,26 +466,64 @@ function ProviderCredentialDialog({
           <DialogHeader>
             <DialogTitle>Configure {driver.label}</DialogTitle>
             <DialogDescription>
-              The API key is encrypted and cannot be read back after it is saved.
+              {driver.credentialRequired
+                ? "The API key is encrypted and cannot be read back after it is saved."
+                : serviceUrlRequired
+                  ? "Enter the HTTP or HTTPS URL Trema can use to reach this service."
+                  : "This provider runs inside Trema and does not require credentials or a service URL."}
             </DialogDescription>
           </DialogHeader>
           <div className="py-5">
-            <Label htmlFor={`${driver.key}-key`}>API key</Label>
-            <Input
-              id={`${driver.key}-key`}
-              type="password"
-              autoComplete="off"
-              className="mt-2"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-            />
+            {driver.credentialRequired ? (
+              <>
+                <Label htmlFor={`${driver.key}-key`}>API key</Label>
+                <Input
+                  id={`${driver.key}-key`}
+                  type="password"
+                  autoComplete="off"
+                  className="mt-2"
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                />
+              </>
+            ) : serviceUrlRequired ? (
+              <>
+                <Label htmlFor={`${driver.key}-url`}>Service URL</Label>
+                <Input
+                  id={`${driver.key}-url`}
+                  type="url"
+                  inputMode="url"
+                  autoComplete="url"
+                  className="mt-2"
+                  placeholder="http://localhost:8080"
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                />
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Save this provider to make it available for capability routes.
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button disabled={apiKey.trim() === "" || save.isPending}>
-              {save.isPending ? "Saving…" : "Save key"}
+            <Button
+              disabled={
+                (driver.credentialRequired
+                  ? apiKey.trim() === ""
+                  : serviceUrlRequired && baseUrl.trim() === "") || save.isPending
+              }
+            >
+              {save.isPending
+                ? "Saving…"
+                : driver.credentialRequired
+                  ? "Save key"
+                  : serviceUrlRequired
+                    ? "Save"
+                    : "Enable"}
             </Button>
           </DialogFooter>
         </form>
