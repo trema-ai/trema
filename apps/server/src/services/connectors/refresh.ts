@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ProviderDef } from "@trema/connectors";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 
@@ -73,11 +74,16 @@ export class ConnectorReconnectRequiredError extends Error {
 
 export interface ResolvedConnectionCredential {
   connectionId: string;
+  credentialGeneration: string;
   providerKey: string;
   authMode: string;
   credential: ConnectionCredentialPayload;
   config: Record<string, string | number | boolean>;
   expiresAt: Date | null;
+}
+
+export function connectorCredentialGeneration(ciphertext: string): string {
+  return createHash("sha256").update(ciphertext).digest("hex");
 }
 
 export interface ResolveConnectionCredentialInput {
@@ -372,6 +378,7 @@ function resolvedCredential(
 ): ResolvedConnectionCredential {
   return {
     connectionId: connection.id,
+    credentialGeneration: connectorCredentialGeneration(connection.ciphertext),
     providerKey: connection.providerKey,
     authMode: connection.authMode,
     credential: payload,

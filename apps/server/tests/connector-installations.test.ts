@@ -692,6 +692,98 @@ integration("connector connections and installations", () => {
     });
   });
 
+  it("rejects a delayed MCP sync result after an in-place connection reconnect", async () => {
+    const org = await createOrg();
+    const connected = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+      token: "old_account_token",
+    });
+    const installation = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: org.orgScope.id,
+        kind: "connector",
+        title: "Notion",
+        body: {
+          catalogKey: "notion",
+          connectionId: connected.id,
+          enabledTools: "all",
+          syncedTools: [{ name: "old_tool" }],
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: org.principal.id,
+        updatedById: org.principal.id,
+      },
+    });
+    let markDiscoveryStarted!: () => void;
+    const discoveryStarted = new Promise<void>((resolve) => {
+      markDiscoveryStarted = resolve;
+    });
+    let releaseDiscovery!: (value: {
+      tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }>;
+    }) => void;
+    const discovery = new Promise<{
+      tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }>;
+    }>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    const delayedFactory: McpClientFactory = async () => ({
+      listTools: async () => {
+        markDiscoveryStarted();
+        return discovery;
+      },
+      close: async () => {},
+    });
+
+    const pendingSync = syncConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      installationItemId: installation.id,
+      clientFactory: delayedFactory,
+      masterKey,
+    });
+    await discoveryStarted;
+    await db.$transaction([
+      db.connectorConnection.update({
+        where: { id: connected.id },
+        data: {
+          ciphertext: encryptEnvelope({ accessToken: "new_account_token" }, masterKey),
+        },
+      }),
+      db.item.update({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        data: {
+          body: {
+            catalogKey: "notion",
+            connectionId: connected.id,
+            enabledTools: "all",
+            syncedTools: [{ name: "new_account_tool" }],
+          },
+        },
+      }),
+    ]);
+    releaseDiscovery({
+      tools: [{ name: "old_account_tool", annotations: { readOnlyHint: true } }],
+    });
+
+    await expect(pendingSync).rejects.toThrow("credentials changed during tool sync");
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        catalogKey: "notion",
+        connectionId: connected.id,
+        enabledTools: "all",
+        syncedTools: [{ name: "new_account_tool" }],
+      },
+    });
+  });
+
   it("reads installations written before approval modes dropped sensitivity", async () => {
     const org = await createOrg();
     const bound = await connection({

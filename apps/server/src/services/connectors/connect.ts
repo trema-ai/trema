@@ -657,6 +657,19 @@ interface StoreConnectionInput {
   accountIdentityFields?: readonly string[];
 }
 
+interface ConnectionStoredEvent {
+  kind: "created" | "updated";
+  connectionId: string;
+  provider: string;
+}
+
+function logConnectionStored(event: ConnectionStoredEvent) {
+  log.info(
+    event.kind === "created" ? "Connector connection created" : "Connector connection updated",
+    { connectionId: event.connectionId, provider: event.provider },
+  );
+}
+
 async function storeConnection(db: ProvisioningDatabase, input: StoreConnectionInput) {
   const config = JSON.parse(
     JSON.stringify({ ...input.config, ...(input.metadata ?? {}) }),
@@ -688,11 +701,18 @@ async function storeConnection(db: ProvisioningDatabase, input: StoreConnectionI
       },
     });
     if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
-    log.info("Connector connection updated", { connectionId, provider: input.providerKey });
-    return db.connectorConnection.findUniqueOrThrow({
+    const connection = await db.connectorConnection.findUniqueOrThrow({
       where: { id: connectionId },
       select: publicConnectionSelect(),
     });
+    return {
+      connection,
+      event: {
+        kind: "updated" as const,
+        connectionId,
+        provider: input.providerKey,
+      },
+    };
   }
   const created = await db.connectorConnection.create({
     data: {
@@ -708,11 +728,14 @@ async function storeConnection(db: ProvisioningDatabase, input: StoreConnectionI
     },
     select: publicConnectionSelect(),
   });
-  log.info("Connector connection created", {
-    connectionId: created.id,
-    provider: input.providerKey,
-  });
-  return created;
+  return {
+    connection: created,
+    event: {
+      kind: "created" as const,
+      connectionId: created.id,
+      provider: input.providerKey,
+    },
+  };
 }
 
 export interface CompleteOAuthCallbackInput {
@@ -739,7 +762,8 @@ async function persistOAuthProvisioning(
   const committed = await db.$transaction(async (transaction) => {
     const owner = await validateOAuthOwnership(transaction, input.oauthState);
     await validateOAuthProvisioningIntent(transaction, input.oauthState, input.provider, owner);
-    const connection = await storeConnection(transaction, input.connection);
+    const stored = await storeConnection(transaction, input.connection);
+    const connection = stored.connection;
     const provisioned = await provisionConnectorInstallation(transaction, {
       orgId: input.oauthState.orgId,
       actorPrincipalId: input.oauthState.initiatedByPrincipalId,
@@ -766,9 +790,14 @@ async function persistOAuthProvisioning(
         },
       },
     });
-    return { connection, installation: provisioned.installation };
+    return {
+      connection,
+      installation: provisioned.installation,
+      connectionEvent: stored.event,
+    };
   });
 
+  logConnectionStored(committed.connectionEvent);
   const setupStatus = await finalizeConnectorInstallation(db, {
     orgId: input.oauthState.orgId,
     actorPrincipalId: input.oauthState.initiatedByPrincipalId,
@@ -780,7 +809,8 @@ async function persistOAuthProvisioning(
     catalog: input.callback.catalog ?? defaultCatalog,
   });
   return {
-    ...committed,
+    connection: committed.connection,
+    installation: committed.installation,
     setupStatus,
     orgId: input.oauthState.orgId,
     returnTo: input.oauthState.returnTo,
@@ -1103,7 +1133,7 @@ export interface CreateStaticConnectionInput {
   };
 }
 
-type StoredConnection = Awaited<ReturnType<typeof storeConnection>>;
+type StoredConnection = Awaited<ReturnType<typeof storeConnection>>["connection"];
 type ProvisionedStaticConnection = StoredConnection & {
   installation: Awaited<ReturnType<typeof provisionConnectorInstallation>>["installation"];
   setupStatus: Awaited<ReturnType<typeof finalizeConnectorInstallation>>;
@@ -1235,7 +1265,11 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
     ...(existing ? { connectionId: existing.id } : {}),
   };
   const installationIntent = input.installation;
-  if (!installationIntent) return storeConnection(db, connectionInput);
+  if (!installationIntent) {
+    const stored = await storeConnection(db, connectionInput);
+    logConnectionStored(stored.event);
+    return stored.connection;
+  }
 
   const committed = await db.$transaction(async (transaction) => {
     const [activeOwner, actor] = await Promise.all([
@@ -1271,7 +1305,8 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
         "Static connector initiator is no longer authorized for the target scope",
       );
     }
-    const connection = await storeConnection(transaction, connectionInput);
+    const stored = await storeConnection(transaction, connectionInput);
+    const connection = stored.connection;
     const targetScopeId = installationIntent.scopeId;
     if (input.reconnectConnectionId) {
       const existingInstallations = await transaction.item.findMany({
@@ -1327,8 +1362,13 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
         },
       },
     });
-    return { connection, installation: provisioned.installation };
+    return {
+      connection,
+      installation: provisioned.installation,
+      connectionEvent: stored.event,
+    };
   });
+  logConnectionStored(committed.connectionEvent);
   const setupStatus = await finalizeConnectorInstallation(db, {
     orgId: input.orgId,
     actorPrincipalId: installationIntent.actorPrincipalId,
