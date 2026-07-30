@@ -12,12 +12,15 @@ Managing capabilities requires the `manage_capabilities` permission, held by own
 Web search supports Brave Search and Tavily. Each provider needs its own API key.
 
 1. Open **Settings → Capabilities**.
-2. Choose **Configure** beside a search provider.
-3. Enter its API key and save.
-4. Under **Routing**, select the primary provider and an optional fallback.
-5. Save the route.
+2. Select **Web Search**.
+3. Open a provider's actions menu.
+4. Select **Configure**.
+5. Enter its API key and save.
 
-The first configured provider enables web search automatically. A configured fallback runs only when the primary request fails. It does not merge, rerank, or supplement successful results.
+The first configured provider becomes primary and enables web search. Configure another provider, then select **Make fallback** to add failover.
+
+Select **Make primary** to change the primary provider. The previous primary becomes the fallback. A fallback runs only when the primary request fails.
+It does not merge, rerank, or supplement successful results.
 
 The agent receives one `search_web` tool regardless of provider. The tool accepts a query, an optional result limit up to 20, and an optional day, week, month, or year recency filter. Results use one shape: title, URL, snippet, and an optional publication time.
 
@@ -28,10 +31,10 @@ Replacing a key overwrites its encrypted value. Trema never returns a saved key.
 Web fetch uses the extraction API of a configured provider. Tavily currently provides web fetch.
 
 1. Open **Settings → Capabilities**.
-2. Configure Tavily under **Web search** if it is not configured.
-3. Under **Web fetch**, turn on the route.
-4. Select Tavily as the primary provider.
-5. Save the route.
+2. Select **Web Extract**.
+3. Open Tavily's actions menu.
+4. Select **Configure** if Tavily has no saved key.
+5. Select **Make primary** if Tavily is already configured for web search.
 
 The agent receives the `fetch_url` tool while the route is enabled. Tavily Extract returns the page as Markdown. Trema limits the result to 50,000 characters.
 
@@ -39,7 +42,9 @@ One provider record can serve several capabilities. For example, one Tavily API 
 
 ## Disable a capability
 
-Turn off its route and save. The tool disappears from new model turns and external MCP tool listings. Its provider configuration stays available for later use.
+Remove every provider assigned to the capability. The tool disappears from new model turns and external Model Context Protocol (MCP) tool listings.
+
+Removing a provider deletes its saved key and removes it from every capability it serves.
 
 ## Configure through the API
 
