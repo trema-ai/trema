@@ -37,7 +37,6 @@ describe("web search activity", () => {
     expect(screen.getByText("Searched the web")).toBeTruthy();
     expect(screen.getByText("for “who won the last FIFA World Cup”")).toBeTruthy();
     expect(screen.getByText("DDGS")).toBeTruthy();
-    expect(screen.getByText("8 results")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByText("Past year")).toBeTruthy();

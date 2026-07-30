@@ -262,18 +262,18 @@ describe("web capabilities", () => {
   it("searches DDGS through the embedded library", async () => {
     const db = fakeDb({ "web.search": ["ddgs"] }, [provider("ddgs", "ddgs")]);
     const ddgsSearch = vi.fn(async () => ({
-      noResults: false,
-      vqd: "3-123-456",
       results: [
         {
-          hostname: "example.com",
           url: "https://example.com/ddgs",
           title: "DDGS result",
           description: "DDGS snippet",
-          rawDescription: "DDGS snippet",
-          icon: "https://example.com/favicon.ico",
+          displayUrl: "example.com/ddgs",
         },
       ],
+      spelling: null,
+      zeroClick: null,
+      pagesScraped: 1,
+      query: "current web result",
     }));
 
     await expect(
@@ -295,7 +295,7 @@ describe("web capabilities", () => {
     });
     expect(ddgsSearch).toHaveBeenCalledWith(
       "current web result",
-      expect.objectContaining({ safeSearch: -1, time: "w" }),
+      expect.objectContaining({ maxPages: 1, maxResults: 2, region: "", time: "w" }),
     );
   });
 

@@ -1,9 +1,8 @@
 import {
-  type SearchResults as DuckDuckGoSearchResults,
-  SafeSearchType,
-  SearchTimeType,
+  type SearchOptions as DuckDuckGoSearchOptions,
+  type SearchResponse as DuckDuckGoSearchResponse,
   search as searchDuckDuckGo,
-} from "duck-duck-scrape";
+} from "ddg-search";
 import { z } from "zod";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
@@ -65,11 +64,8 @@ export interface WebCapabilityExecutionOptions {
 
 type DuckDuckGoSearch = (
   query: string,
-  options: {
-    safeSearch: SafeSearchType;
-    time?: SearchTimeType;
-  },
-) => Promise<DuckDuckGoSearchResults>;
+  options: DuckDuckGoSearchOptions,
+) => Promise<DuckDuckGoSearchResponse>;
 
 export class WebCapabilityError extends Error {
   constructor(
@@ -488,17 +484,16 @@ async function callSearchProvider(
     }
     if (provider.driverKey === "ddgs") {
       const raw = await ddgsSearch(input.query, {
-        safeSearch: SafeSearchType.MODERATE,
-        ...(input.recency
-          ? {
-              time: {
-                day: SearchTimeType.DAY,
-                week: SearchTimeType.WEEK,
-                month: SearchTimeType.MONTH,
-                year: SearchTimeType.YEAR,
-              }[input.recency],
-            }
-          : {}),
+        maxPages: 1,
+        maxResults: limit,
+        region: "",
+        time:
+          input.recency === undefined
+            ? ""
+            : { day: "d", week: "w", month: "m", year: "y" }[input.recency],
+        signal,
+        fetchImpl,
+        stderr: { isTTY: false, write: () => true },
       });
       const parsed = ddgsSearchResponseSchema.safeParse(raw);
       if (!parsed.success) throw new WebProviderError(provider.name);
