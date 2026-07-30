@@ -25,7 +25,7 @@ A call that fails a capability check answers with status 403 and a message namin
 | `read` | `viewer` | Listing and reading scopes, items, members, schedules, policies, bindings, and surfaces. |
 | `write_items` | `member` | Creating, editing, activating, archiving, and restoring items. |
 | `install_skills` | `member` | Reserved for skill installation. No operation checks it in this release. |
-| `manage_connectors` | `admin` | Connector connections, installations, registrations, provider settings, tool execution, and service credentials. |
+| `manage_connectors` | `admin` | Connector connections, installations, registrations, tool execution, and service credentials. |
 | `manage_scopes` | `admin` | Shared scopes, surface bindings, and the personal-scope policy. |
 | `edit_policies` | `admin` | Setting and deleting approval policies. |
 | `manage_schedules` | `admin` | Creating, editing, and changing the status of schedules. |
@@ -117,7 +117,6 @@ Every operation on the organization agent's connections requires `manage_connect
 | Operation | Route | Checked at |
 | --- | --- | --- |
 | Get deployment metadata | `GET /connectors/meta` | The organization scope |
-| Update provider settings | `PATCH /connector-providers/{providerKey}/settings` | The organization scope |
 | Start an OAuth connection | `POST /connector-connections/oauth` | The organization scope |
 | Create a static connection | `POST /connector-connections/static` | The organization scope |
 | List connections | `GET /connector-connections` | The organization scope |
@@ -138,13 +137,12 @@ The member routes carry no capability check: any active member, whatever their r
 | Operation | Route | Requires |
 | --- | --- | --- |
 | List the connector catalog | `GET /connector-catalog` | Membership |
-| Start a personal OAuth connection | `POST /member/connector-connections/oauth` | Membership; member access enabled for the provider |
-| Create a personal static connection | `POST /member/connector-connections/static` | Membership; member access enabled for the provider |
+| Start a personal OAuth connection | `POST /member/connector-connections/oauth` | Membership; user-acting OAuth support |
 | List your connections | `GET /member/connector-connections` | Membership |
 | Revoke one of your connections | `POST /member/connector-connections/{connectionId}/revoke` | Owning the connection |
-| Create a personal installation | `POST /member/connector-installations` | Membership; member access enabled for the provider |
+| Create a personal installation | `POST /member/connector-installations` | Membership; user-acting OAuth support |
 
-- Ownership alone gates revocation: a member can always revoke their own connection, even after member access for the provider is turned off.
+- Ownership gates listing, reconnecting, and revocation.
 - A member may install connectors only in their own personal scope; any other scope is refused.
 
 ### Service credentials

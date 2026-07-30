@@ -10,9 +10,9 @@ export const apolloProvider = {
   categories: ["crm"],
   docsUrl: "https://docs.apollo.io/docs/apollo-mcp",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: { defaultScopes: [] },
   configFields: {},
   credentialFields: {},
   transport: { type: "mcp", serverUrl: "https://mcp.apollo.io/mcp" },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

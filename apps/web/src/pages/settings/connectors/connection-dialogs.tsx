@@ -77,14 +77,12 @@ function submittedFields(data: FormData, prefix: "config" | "credential"): Recor
 export function StaticConnectionDialog({
   provider,
   reconnect,
-  audience = "admin",
   open,
   onOpenChange,
   onConnected,
 }: {
   provider: CatalogProvider;
   reconnect?: ConnectorConnection | undefined;
-  audience?: "admin" | "member";
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected: (connectionId: string) => void;
@@ -100,14 +98,10 @@ export function StaticConnectionDialog({
         credentials: values.credentials,
         ...(reconnect ? { reconnectConnectionId: reconnect.id } : {}),
       };
-      return audience === "member"
-        ? rpcClient.connectors.member.connect.createStatic(input)
-        : rpcClient.connectors.connect.createStatic(input);
+      return rpcClient.connectors.connect.createStatic(input);
     },
     onSuccess: ({ id }) => {
-      if (audience === "admin") {
-        toast.success(`${provider.displayName} ${reconnect ? "reconnected" : "connected"}`);
-      }
+      toast.success(`${provider.displayName} ${reconnect ? "reconnected" : "connected"}`);
       onOpenChange(false);
       onConnected(id);
     },
@@ -209,8 +203,8 @@ export function OAuthConnectionDialog({
             </DialogTitle>
             <DialogDescription>
               {audience === "member"
-                ? "Authorize the provider account the agent may use for you in personal sessions."
-                : "An admin authorizes the provider account the organization agent acts as."}
+                ? "Authorize the provider account to connect to your personal scope."
+                : "Authorize an organization-controlled account for shared use."}
             </DialogDescription>
           </DialogHeader>
           <div className="my-5 space-y-4">

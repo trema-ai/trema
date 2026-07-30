@@ -163,5 +163,4 @@ export const vercelProvider = {
       },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

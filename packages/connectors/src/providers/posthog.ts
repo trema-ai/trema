@@ -173,5 +173,4 @@ export const posthogProvider = {
       },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

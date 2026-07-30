@@ -153,37 +153,6 @@ export class ConnectorInstallationNotFoundError extends Error {
   }
 }
 
-export class ConnectorMemberConnectabilityError extends Error {
-  readonly code = "member_connection_not_allowed";
-
-  constructor(
-    providerKey: string,
-    message = `Provider '${providerKey}' cannot be installed in a personal scope`,
-  ) {
-    super(message);
-    this.name = "ConnectorMemberConnectabilityError";
-  }
-}
-
-type MemberConnectorAccessDb = Pick<Prisma.TransactionClient, "connectorProviderSettings">;
-
-// Member access defaults to enabled: the catalog's memberConnectable is the
-// ceiling, and the per-org settings row only records an explicit opt-out.
-export async function requireMemberConnectorAccess(
-  db: MemberConnectorAccessDb,
-  input: { orgId: string; provider: ProviderDef; errorMessage?: string },
-) {
-  const settings = await db.connectorProviderSettings.findUnique({
-    where: {
-      orgId_providerKey: { orgId: input.orgId, providerKey: input.provider.key },
-    },
-    select: { memberEnabled: true },
-  });
-  if (!input.provider.memberConnectable || settings?.memberEnabled === false) {
-    throw new ConnectorMemberConnectabilityError(input.provider.key, input.errorMessage);
-  }
-}
-
 function parseBody(body: unknown, catalog: ProviderCatalog): ConnectorInstallationBody {
   const parsed = createConnectorInstallationBodySchema(catalog).safeParse(body);
   if (!parsed.success) {
@@ -317,7 +286,7 @@ export interface CreateConnectorInstallationInput extends EmbeddingOptions {
 
 type BindingValidationDb = Pick<
   Prisma.TransactionClient,
-  "connectorConnection" | "connectorProviderSettings" | "principal" | "scope"
+  "connectorConnection" | "principal" | "scope"
 >;
 
 async function validateBinding(
@@ -336,7 +305,7 @@ async function validateBinding(
     }),
     db.connectorConnection.findFirst({
       where: { id: input.connectionId, orgId: input.orgId },
-      select: { id: true, providerKey: true, principalId: true, revokedAt: true },
+      select: { id: true, providerKey: true, ownerPrincipalId: true, revokedAt: true },
     }),
     db.principal.findFirst({
       where: { orgId: input.orgId, kind: "agent", deactivatedAt: null },
@@ -356,16 +325,17 @@ async function validateBinding(
     throw new ConnectorInstallationValidationError("Connector connection is revoked");
   }
   if (scope.kind === "personal") {
-    await requireMemberConnectorAccess(db, {
-      orgId: input.orgId,
-      provider: input.provider,
-    });
-    if (!scope.ownerId || connection.principalId !== scope.ownerId) {
+    if (input.provider.oauthActor !== "user") {
+      throw new ConnectorInstallationValidationError(
+        "Personal installations require a user-acting OAuth provider",
+      );
+    }
+    if (!scope.ownerId || connection.ownerPrincipalId !== scope.ownerId) {
       throw new ConnectorInstallationValidationError(
         "Personal installations must use the scope owner's connection",
       );
     }
-  } else if (!agent || connection.principalId !== agent.id) {
+  } else if (!agent || connection.ownerPrincipalId !== agent.id) {
     throw new ConnectorInstallationValidationError(
       "Organization and shared installations must use the organization agent's connection",
     );

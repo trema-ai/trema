@@ -18,6 +18,7 @@ export const googleWorkspaceProvider = {
   categories: ["productivity"],
   docsUrl: "https://developers.google.com/workspace",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
@@ -329,5 +330,4 @@ export const googleWorkspaceProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

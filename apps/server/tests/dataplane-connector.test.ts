@@ -132,9 +132,9 @@ integration("data plane connector proxy", () => {
     return db.connectorConnection.create({
       data: {
         orgId: input.orgId,
-        principalId: input.principalId,
+        ownerPrincipalId: input.principalId,
         providerKey: input.providerKey ?? "google_workspace",
-        mode: input.mode ?? "oauth2_code",
+        authMode: input.mode ?? "oauth2_code",
         config: {},
         ciphertext: encryptEnvelope({ accessToken: input.accessToken }, masterKey),
         ...(input.revokedAt ? { revokedAt: input.revokedAt } : {}),

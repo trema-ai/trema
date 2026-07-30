@@ -52,8 +52,7 @@ export type CatalogEntry = {
   docsUrl: string;
   authMode: string;
   transport: { type: "mcp" | "rest" };
-  memberConnectable: boolean;
-  memberEnabled: boolean;
+  supportsPersonalOAuth: boolean;
   toolManifest?: ConnectorTool[];
 };
 

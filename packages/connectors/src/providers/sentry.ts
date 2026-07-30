@@ -10,6 +10,7 @@ export const sentryProvider = {
   categories: ["developer-tools"],
   docsUrl: "https://docs.sentry.io/product/sentry-mcp/",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: {
     defaultScopes: [],
   },
@@ -19,5 +20,4 @@ export const sentryProvider = {
     type: "mcp",
     serverUrl: "https://mcp.sentry.dev/mcp",
   },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

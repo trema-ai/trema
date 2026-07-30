@@ -13,6 +13,7 @@ export const intercomProvider = {
   docsUrl:
     "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/setting-up-oauth",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: `https://\${config.authorizationHost}/oauth`,
     tokenUrl: `https://\${config.apiHost}/auth/eagle/token`,
@@ -168,5 +169,4 @@ export const intercomProvider = {
       paramsSchema: { type: "object", properties: {} },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

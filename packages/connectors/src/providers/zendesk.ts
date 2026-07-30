@@ -10,6 +10,7 @@ export const zendeskProvider = {
   docsUrl:
     "https://developer.zendesk.com/documentation/ticketing/working-with-oauth/creating-and-using-oauth-tokens-with-the-api/",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: `https://\${config.subdomain}.zendesk.com/oauth/authorizations/new`,
     tokenUrl: `https://\${config.subdomain}.zendesk.com/oauth/tokens`,
@@ -219,5 +220,4 @@ export const zendeskProvider = {
       },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

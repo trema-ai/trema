@@ -196,6 +196,19 @@ describe("loadProviderCatalog", () => {
     }
   });
 
+  it("classifies Slack OAuth as app-acting and other interactive OAuth as user-acting", () => {
+    const interactive = loadProviderCatalog().filter(
+      ({ authMode }) => authMode === "oauth2_code" || authMode === "mcp_oauth",
+    );
+
+    expect(interactive.find(({ key }) => key === "slack")?.oauthActor).toBe("app");
+    expect(
+      interactive
+        .filter(({ key }) => key !== "slack")
+        .every(({ oauthActor }) => oauthActor === "user"),
+    ).toBe(true);
+  });
+
   it("exposes a logo for every shipped provider", () => {
     const catalog = loadProviderCatalog();
     for (const provider of catalog) {

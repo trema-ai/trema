@@ -16,9 +16,7 @@ import {
   ConnectorInstallationError,
   ConnectorInstallationNotFoundError,
   ConnectorInstallationValidationError,
-  ConnectorMemberConnectabilityError,
   ConnectorProviderNotFoundError,
-  ConnectorProviderSettingsError,
   ConnectorReconnectRequiredError,
   ConnectorSsrfRejectedError,
   ConnectorSyncTransportError,
@@ -34,11 +32,9 @@ import {
   listClientRegistrations,
   listConnectorConnections,
   listConnectorInstallations,
-  listConnectorProviderSettings,
   loadProviderCatalog,
   McpOAuthDiscoveryError,
   NoClientRegistrationError,
-  requireMemberConnectorAccess,
   revokeConnectorConnection,
   StaticCredentialValidationError,
   startOAuthConnect,
@@ -46,7 +42,6 @@ import {
   UnsupportedConnectorAuthModeError,
   updateConnectorConnectionLabel,
   updateConnectorInstallation,
-  updateConnectorProviderSettings,
 } from "#server/services/connectors/index.js";
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
@@ -114,8 +109,8 @@ function serializeInstallation(
 const connectionSchema = z.object({
   id: z.uuid(),
   providerKey: z.string(),
-  principalId: z.uuid(),
-  mode: z.string(),
+  ownerPrincipalId: z.uuid(),
+  authMode: z.string(),
   label: z.string().nullable(),
   providerScopes: z.array(z.string()),
   expiresAt: z.string().nullable(),
@@ -157,14 +152,14 @@ async function orgAgentPrincipalId(db: Database, orgId: string) {
   return principal.id;
 }
 
-async function requireMemberProvider(db: Database, orgId: string, providerKey: string) {
+function requirePersonalOAuthProvider(providerKey: string) {
   const provider = loadProviderCatalog().find((candidate) => candidate.key === providerKey);
   if (!provider) throw new ConnectorProviderNotFoundError(providerKey);
-  await requireMemberConnectorAccess(db, {
-    orgId,
-    provider,
-    errorMessage: `Provider '${provider.key}' is not enabled for member connections`,
-  });
+  if (provider.oauthActor !== "user") {
+    throw new UnsupportedConnectorAuthModeError(
+      `Provider '${provider.key}' does not support personal OAuth connections`,
+    );
+  }
   return provider;
 }
 
@@ -176,7 +171,6 @@ function throwConnectorError(error: unknown): never {
     error instanceof StaticCredentialValidationError ||
     error instanceof UnsupportedConnectorAuthModeError ||
     error instanceof ConnectorCatalogDefectError ||
-    error instanceof ConnectorProviderSettingsError ||
     error instanceof ConnectorToolValidationError ||
     error instanceof ConnectorSsrfRejectedError
   ) {
@@ -191,9 +185,6 @@ function throwConnectorError(error: unknown): never {
         installationItemId: error.installationItemId,
       },
     });
-  }
-  if (error instanceof ConnectorMemberConnectabilityError) {
-    throw new ORPCError("FORBIDDEN", { message: error.message });
   }
   if (
     error instanceof ClientRegistrationNotFoundError ||
@@ -565,7 +556,7 @@ const catalog = orgScoped
     method: "GET",
     path: "/connector-catalog",
     summary: "List connector providers",
-    description: "List safe catalog metadata and effective member-access settings.",
+    description: "List safe catalog metadata and personal OAuth support.",
     tags: ["Connectors"],
   })
   .output(
@@ -579,8 +570,7 @@ const catalog = orgScoped
         docsUrl: z.url(),
         authMode: z.string(),
         transport: z.object({ type: z.enum(["mcp", "rest"]) }),
-        memberConnectable: z.boolean(),
-        memberEnabled: z.boolean(),
+        supportsPersonalOAuth: z.boolean(),
         defaultScopes: z.array(z.string()),
         availableScopes: z.array(z.string()).optional(),
         configFields: z.record(z.string(), fieldDescriptorSchema),
@@ -589,12 +579,8 @@ const catalog = orgScoped
       }),
     ),
   )
-  .handler(async ({ context }) => {
-    const settings = await listConnectorProviderSettings(context.db, context.org.id);
-    const memberEnabled = new Map(
-      settings.map((setting) => [setting.providerKey, setting.memberEnabled]),
-    );
-    return loadProviderCatalog().map((provider) => ({
+  .handler(() =>
+    loadProviderCatalog().map((provider) => ({
       key: provider.key,
       displayName: provider.displayName,
       description: provider.description,
@@ -603,8 +589,7 @@ const catalog = orgScoped
       docsUrl: provider.docsUrl,
       authMode: provider.authMode,
       transport: { type: provider.transport.type },
-      memberConnectable: provider.memberConnectable,
-      memberEnabled: provider.memberConnectable && memberEnabled.get(provider.key) !== false,
+      supportsPersonalOAuth: provider.oauthActor === "user",
       defaultScopes: provider.auth.defaultScopes,
       ...(provider.auth.availableScopes ? { availableScopes: provider.auth.availableScopes } : {}),
       configFields: provider.configFields,
@@ -617,8 +602,8 @@ const catalog = orgScoped
             })),
           }
         : {}),
-    }));
-  });
+    })),
+  );
 
 const meta = requireCapability("manage_connectors")
   .route({
@@ -632,39 +617,6 @@ const meta = requireCapability("manage_connectors")
   .handler(({ context }) => ({
     callbackUrl: connectorCallbackUrl(context.env.TREMA_AUTH_BASE_URL),
   }));
-
-const updateProviderSettings = requireCapability("manage_connectors")
-  .route({
-    method: "PATCH",
-    path: "/connector-providers/{providerKey}/settings",
-    summary: "Update connector provider settings",
-    description: "Enable or disable member connections for one provider.",
-    tags: ["Connectors"],
-  })
-  .input(z.object({ providerKey: z.string().trim().min(1), memberEnabled: z.boolean() }))
-  .output(
-    z.object({
-      providerKey: z.string(),
-      memberEnabled: z.boolean(),
-      updatedAt: z.string(),
-    }),
-  )
-  .handler(async ({ context, input }) => {
-    try {
-      const settings = await updateConnectorProviderSettings(context.db, {
-        orgId: context.org.id,
-        providerKey: input.providerKey,
-        memberEnabled: input.memberEnabled,
-      });
-      return {
-        providerKey: settings.providerKey,
-        memberEnabled: settings.memberEnabled,
-        updatedAt: settings.updatedAt.toISOString(),
-      };
-    } catch (error) {
-      throwConnectorError(error);
-    }
-  });
 
 const startOAuth = requireCapability("manage_connectors")
   .route({
@@ -692,10 +644,11 @@ const startOAuth = requireCapability("manage_connectors")
       ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
     });
     try {
-      const principalId = await orgAgentPrincipalId(context.db, context.org.id);
+      const ownerPrincipalId = await orgAgentPrincipalId(context.db, context.org.id);
       return await startOAuthConnect(context.db, {
         orgId: context.org.id,
-        principalId,
+        ownerPrincipalId,
+        initiatedByPrincipalId: context.principal.id,
         providerKey: input.providerKey,
         authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
         ...(input.config ? { config: input.config } : {}),
@@ -737,10 +690,10 @@ const createStatic = requireCapability("manage_connectors")
   .output(z.object({ id: z.uuid() }))
   .handler(async ({ context, input }) => {
     try {
-      const principalId = await orgAgentPrincipalId(context.db, context.org.id);
+      const ownerPrincipalId = await orgAgentPrincipalId(context.db, context.org.id);
       const connection = await createStaticConnection(context.db, {
         orgId: context.org.id,
-        principalId,
+        ownerPrincipalId,
         providerKey: input.providerKey,
         config: input.config,
         credentials: input.credentials,
@@ -800,6 +753,7 @@ const revokeConnection = requireCapability("manage_connectors")
         context.db,
         context.org.id,
         input.connectionId,
+        await orgAgentPrincipalId(context.db, context.org.id),
       );
       return { id: result.id, revokedAt: result.revokedAt.toISOString() };
     } catch (error) {
@@ -823,7 +777,7 @@ const updateConnection = requireCapability("manage_connectors")
         orgId: context.org.id,
         connectionId: input.connectionId,
         label: input.label,
-        principalId: await orgAgentPrincipalId(context.db, context.org.id),
+        ownerPrincipalId: await orgAgentPrincipalId(context.db, context.org.id),
       });
       return { id: connection.id, label: connection.label };
     } catch (error) {
@@ -857,10 +811,11 @@ const memberStartOAuth = orgScoped
       ...(input.providerScopes ? { providerScopes: input.providerScopes } : {}),
     });
     try {
-      await requireMemberProvider(context.db, context.org.id, input.providerKey);
+      requirePersonalOAuthProvider(input.providerKey);
       return await startOAuthConnect(context.db, {
         orgId: context.org.id,
-        principalId: context.principal.id,
+        ownerPrincipalId: context.principal.id,
+        initiatedByPrincipalId: context.principal.id,
         providerKey: input.providerKey,
         authBaseUrl: context.env.TREMA_AUTH_BASE_URL,
         ...(input.config ? { config: input.config } : {}),
@@ -876,48 +831,6 @@ const memberStartOAuth = orgScoped
         ...(context.platformApps ? { platformApps: context.platformApps } : {}),
         ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
       });
-    } catch (error) {
-      throwConnectorError(error);
-    }
-  });
-
-const memberCreateStatic = orgScoped
-  .route({
-    method: "POST",
-    path: "/member/connector-connections/static",
-    summary: "Create a member static connector connection",
-    description: "Validate, verify, and encrypt an API-key or basic connection for the caller.",
-    tags: ["Connectors"],
-  })
-  .input(
-    z.object({
-      providerKey: z.string().trim().min(1),
-      config: configSchema,
-      credentials: z.record(z.string(), z.string()),
-      label: z.string().trim().min(1).max(60).optional(),
-      reconnectConnectionId: z.uuid().optional(),
-    }),
-  )
-  .output(z.object({ id: z.uuid() }))
-  .handler(async ({ context, input }) => {
-    try {
-      await requireMemberProvider(context.db, context.org.id, input.providerKey);
-      const connection = await createStaticConnection(context.db, {
-        orgId: context.org.id,
-        principalId: context.principal.id,
-        providerKey: input.providerKey,
-        config: input.config,
-        credentials: input.credentials,
-        ...(input.label ? { label: input.label } : {}),
-        ...(input.reconnectConnectionId
-          ? { reconnectConnectionId: input.reconnectConnectionId }
-          : {}),
-        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-          : {}),
-        ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
-      });
-      return { id: connection.id };
     } catch (error) {
       throwConnectorError(error);
     }
@@ -958,8 +871,6 @@ const memberRevokeConnection = orgScoped
   .output(z.object({ id: z.uuid(), revokedAt: z.string() }))
   .handler(async ({ context, input }) => {
     try {
-      // Ownership alone gates revocation: a member can always revoke their own
-      // connection, even after an admin disables member access for the provider.
       const result = await revokeConnectorConnection(
         context.db,
         context.org.id,
@@ -991,7 +902,7 @@ const memberCreateInstallation = orgScoped
   .output(installationSchema)
   .handler(async ({ context, input }) => {
     try {
-      await requireMemberProvider(context.db, context.org.id, input.catalogKey);
+      requirePersonalOAuthProvider(input.catalogKey);
       const scope = await context.db.scope.findFirst({
         where: {
           id: input.scopeId,
@@ -1031,7 +942,6 @@ const memberCreateInstallation = orgScoped
 export const connectorsRouter = {
   meta,
   catalog: { list: catalog },
-  providers: { updateSettings: updateProviderSettings },
   installations: {
     create: createInstallation,
     list: listInstallations,
@@ -1047,7 +957,7 @@ export const connectorsRouter = {
   connect: { startOAuth, createStatic },
   connections: { list: listConnections, revoke: revokeConnection, update: updateConnection },
   member: {
-    connect: { startOAuth: memberStartOAuth, createStatic: memberCreateStatic },
+    connect: { startOAuth: memberStartOAuth },
     connections: { list: memberListConnections, revoke: memberRevokeConnection },
     installations: { create: memberCreateInstallation },
   },

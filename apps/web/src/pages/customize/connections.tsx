@@ -30,10 +30,7 @@ import { Skeleton } from "#web/components/ui/skeleton.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 import type { ConnectorBody, Item, Scope } from "#web/pages/customize/types.ts";
 import { useAuthenticatedSession } from "#web/pages/home.tsx";
-import {
-  OAuthConnectionDialog,
-  StaticConnectionDialog,
-} from "#web/pages/settings/connectors/connection-dialogs.tsx";
+import { OAuthConnectionDialog } from "#web/pages/settings/connectors/connection-dialogs.tsx";
 import {
   authModeLabel,
   type CatalogProvider,
@@ -42,8 +39,6 @@ import {
   messageFrom,
   providerLogo,
 } from "#web/pages/settings/connectors/shared.tsx";
-
-const oauthModes = new Set(["oauth2_code", "mcp_oauth"]);
 
 type ConnectSelection = {
   provider: CatalogProvider;
@@ -81,10 +76,12 @@ export function ConnectionsTab({
     (item) => item.kind === "connector" && item.status !== "archived",
   );
   const eligibleConnections = connectionRows.filter(
-    (connection) => entryByKey.get(connection.providerKey)?.memberEnabled === true,
+    (connection) => entryByKey.get(connection.providerKey)?.supportsPersonalOAuth === true,
   );
   const connectedKeys = new Set(eligibleConnections.map((connection) => connection.providerKey));
-  const available = entries.filter((entry) => entry.memberEnabled && !connectedKeys.has(entry.key));
+  const available = entries.filter(
+    (entry) => entry.supportsPersonalOAuth && !connectedKeys.has(entry.key),
+  );
   const connectedId = searchParams.get("connected");
 
   const removeSearchParam = useCallback(
@@ -201,32 +198,18 @@ export function ConnectionsTab({
     return <ReadOnlyConnections entries={entryByKey} installations={installations} scope={scope} />;
   }
 
-  function finishStaticConnection(connectionId: string) {
-    if (!selection) return;
-    const reconnect = selection.reconnect;
-    if (
-      reconnect?.id === connectionId &&
-      reconnect.installations.some((installation) => installation.scopeId === scope.id)
-    ) {
-      toast.success(`${selection.provider.displayName} reconnected`);
-      void invalidateConnections();
-      return;
-    }
-    bind.mutate({ connectionId, catalogKey: selection.provider.key });
-  }
-
   return (
     <div className="space-y-8">
       <ConnectionSection
         title="Your connections"
-        description="The agent acts as you with these in your personal sessions."
+        description="Provider accounts connected for your personal scope."
       >
         {eligibleConnections.length === 0 ? (
           <div className="rounded-md border bg-card">
             <EmptyState
               icon={Cable}
               title="No personal connections yet"
-              description="Connect an account below to let the agent act on your behalf."
+              description="Connect a provider account for use in your personal scope."
             />
           </div>
         ) : (
@@ -256,14 +239,14 @@ export function ConnectionsTab({
 
       <ConnectionSection
         title="Available"
-        description="Connections your admins have enabled for personal use."
+        description="Providers that support personal OAuth connections."
       >
         {available.length === 0 ? (
           <div className="rounded-md border bg-card">
             <EmptyState
               icon={Cable}
               title="No connections available"
-              description="You have connected every account currently enabled for members."
+              description="You have connected every provider that supports personal OAuth."
             />
           </div>
         ) : (
@@ -279,7 +262,7 @@ export function ConnectionsTab({
         )}
       </ConnectionSection>
 
-      {selection && oauthModes.has(selection.provider.authMode) ? (
+      {selection ? (
         <OAuthConnectionDialog
           audience="member"
           provider={selection.provider}
@@ -288,18 +271,6 @@ export function ConnectionsTab({
           onOpenChange={(open) => {
             if (!open) setSelection(undefined);
           }}
-        />
-      ) : null}
-      {selection && !oauthModes.has(selection.provider.authMode) ? (
-        <StaticConnectionDialog
-          audience="member"
-          provider={selection.provider}
-          reconnect={selection.reconnect}
-          open
-          onOpenChange={(open) => {
-            if (!open) setSelection(undefined);
-          }}
-          onConnected={finishStaticConnection}
         />
       ) : null}
     </div>
@@ -498,7 +469,7 @@ function PersonalConnectionRow({
         <CardContent className="px-4">
           <CardDescription>{provider.description ?? "No description available."}</CardDescription>
           <p className="mt-2 text-meta text-muted-foreground">
-            {authModeLabel(connection.mode)} · Connected{" "}
+            {authModeLabel(connection.authMode)} · Connected{" "}
             <RelativeTime date={connection.createdAt} />
             {connection.expiresAt ? (
               <>

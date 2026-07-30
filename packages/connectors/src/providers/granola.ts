@@ -10,9 +10,9 @@ export const granolaProvider = {
   categories: ["knowledge-management", "productivity"],
   docsUrl: "https://docs.granola.ai/help-center/sharing/integrations/mcp",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: { defaultScopes: [] },
   configFields: {},
   credentialFields: {},
   transport: { type: "mcp", serverUrl: "https://mcp.granola.ai/mcp" },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

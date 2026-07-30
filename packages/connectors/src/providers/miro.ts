@@ -11,6 +11,7 @@ export const miroProvider = {
   categories: ["design"],
   docsUrl: "https://developers.miro.com/docs/rest-api-reference-guide",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://miro.com/oauth/authorize",
     tokenUrl: "https://api.miro.com/v1/oauth/token",
@@ -177,5 +178,4 @@ export const miroProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

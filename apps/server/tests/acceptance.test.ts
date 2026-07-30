@@ -308,9 +308,9 @@ integration("acceptance", () => {
     const connection = await db.connectorConnection.create({
       data: {
         orgId: org.id,
-        principalId: principal.id,
+        ownerPrincipalId: principal.id,
         providerKey: "google_workspace",
-        mode: "oauth2_code",
+        authMode: "oauth2_code",
         config: {},
         ciphertext: encryptEnvelope({ accessToken: GMAIL_TOKEN }, masterKey),
       },

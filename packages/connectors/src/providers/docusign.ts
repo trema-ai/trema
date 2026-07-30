@@ -12,6 +12,7 @@ export const docusignProvider = {
   categories: ["productivity"],
   docsUrl: "https://developers.docusign.com/docs/esign-rest-api/",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://account.docusign.com/oauth/auth",
     tokenUrl: "https://account.docusign.com/oauth/token",
@@ -170,5 +171,4 @@ export const docusignProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

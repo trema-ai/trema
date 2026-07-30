@@ -9,6 +9,7 @@ export const dropboxProvider = {
   categories: ["productivity"],
   docsUrl: "https://www.dropbox.com/developers/documentation/http/documentation",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://www.dropbox.com/oauth2/authorize",
     tokenUrl: "https://api.dropboxapi.com/oauth2/token",
@@ -132,5 +133,4 @@ export const dropboxProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

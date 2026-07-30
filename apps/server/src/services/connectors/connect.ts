@@ -97,8 +97,8 @@ export class ConnectorCatalogDefectError extends Error {
 }
 
 export class ConnectorConnectionNotFoundError extends Error {
-  constructor() {
-    super("Connector connection not found");
+  constructor(message = "Connector connection not found") {
+    super(message);
     this.name = "ConnectorConnectionNotFoundError";
   }
 }
@@ -178,7 +178,8 @@ export function connectorCallbackUrl(authBaseUrl: string): string {
 
 export interface StartOAuthConnectInput {
   orgId: string;
-  principalId: string;
+  ownerPrincipalId: string;
+  initiatedByPrincipalId: string;
   providerKey: string;
   authBaseUrl: string;
   masterKey?: string;
@@ -238,13 +239,47 @@ export function buildOAuthAuthorizationUrl(input: BuildAuthorizationUrlInput): s
   return authorizationUrl.toString();
 }
 
+async function validateOAuthOwnership(db: Database, input: StartOAuthConnectInput) {
+  const principals = await db.principal.findMany({
+    where: {
+      orgId: input.orgId,
+      id: { in: [input.ownerPrincipalId, input.initiatedByPrincipalId] },
+      deactivatedAt: null,
+    },
+    select: { id: true, kind: true },
+  });
+  const owner = principals.find(({ id }) => id === input.ownerPrincipalId);
+  const initiatedBy = principals.find(({ id }) => id === input.initiatedByPrincipalId);
+  if (!owner) throw new ConnectorConnectionNotFoundError("Credential owner not found");
+  if (initiatedBy?.kind !== "human") {
+    throw new ConnectorConnectionNotFoundError("OAuth initiator must be an active human");
+  }
+  if (input.ownerPrincipalId !== input.initiatedByPrincipalId && owner.kind !== "agent") {
+    throw new ConnectorConnectionNotFoundError(
+      "A human may only start OAuth for their own connection",
+    );
+  }
+  return owner;
+}
+
 export async function startOAuthConnect(db: Database, input: StartOAuthConnectInput) {
   const catalog = input.catalog ?? defaultCatalog;
   const provider = providerFrom(catalog, input.providerKey);
+  if (provider.authMode !== "oauth2_code" && provider.authMode !== "mcp_oauth") {
+    throw new UnsupportedConnectorAuthModeError(
+      `Provider '${provider.key}' does not support an interactive OAuth connect flow`,
+    );
+  }
+  const owner = await validateOAuthOwnership(db, input);
+  if (provider.oauthActor === "app" && owner.kind !== "agent") {
+    throw new UnsupportedConnectorAuthModeError(
+      `Provider '${provider.key}' requires an organization-owned connection`,
+    );
+  }
   if (provider.authMode === "mcp_oauth") {
     return startMcpOAuthConnect(db, provider, input);
   }
-  if (provider.authMode !== "oauth2_code" || !provider.auth.authorizationUrl) {
+  if (!provider.auth.authorizationUrl) {
     throw new UnsupportedConnectorAuthModeError(
       `Provider '${provider.key}' does not support the authorization-code connect flow`,
     );
@@ -256,7 +291,7 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
           id: input.reconnectConnectionId,
           orgId: input.orgId,
           providerKey: input.providerKey,
-          principalId: input.principalId,
+          ownerPrincipalId: input.ownerPrincipalId,
         },
         select: { id: true, config: true },
       })
@@ -297,7 +332,8 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
       providerKey: input.providerKey,
       registrationId: registration.registrationId,
       ...(existing ? { connectionId: existing.id } : {}),
-      principalId: input.principalId,
+      ownerPrincipalId: input.ownerPrincipalId,
+      initiatedByPrincipalId: input.initiatedByPrincipalId,
       stateHash: hashOAuthState(state),
       codeVerifier,
       config: config as Prisma.InputJsonValue,
@@ -336,7 +372,7 @@ async function startMcpOAuthConnect(
           id: input.reconnectConnectionId,
           orgId: input.orgId,
           providerKey: input.providerKey,
-          principalId: input.principalId,
+          ownerPrincipalId: input.ownerPrincipalId,
         },
         select: { id: true, config: true },
       })
@@ -377,7 +413,8 @@ async function startMcpOAuthConnect(
       providerKey: input.providerKey,
       registrationId: client.registrationId,
       ...(existing ? { connectionId: existing.id } : {}),
-      principalId: input.principalId,
+      ownerPrincipalId: input.ownerPrincipalId,
+      initiatedByPrincipalId: input.initiatedByPrincipalId,
       stateHash: hashOAuthState(state),
       codeVerifier,
       config: config as Prisma.InputJsonValue,
@@ -487,8 +524,8 @@ function publicConnectionSelect() {
   return {
     id: true,
     providerKey: true,
-    principalId: true,
-    mode: true,
+    ownerPrincipalId: true,
+    authMode: true,
     providerScopes: true,
     label: true,
     expiresAt: true,
@@ -507,7 +544,7 @@ function publicConnectionSelect() {
 // supplies every one. Arbitrary token metadata is never account identity.
 async function sameAccountConnectionId(
   db: Database,
-  input: { orgId: string; providerKey: string; principalId: string },
+  input: { orgId: string; providerKey: string; ownerPrincipalId: string },
   metadata: Record<string, unknown> | undefined,
   identityFields: readonly string[] | undefined,
 ): Promise<string | undefined> {
@@ -526,7 +563,7 @@ async function sameAccountConnectionId(
     where: {
       orgId: input.orgId,
       providerKey: input.providerKey,
-      principalId: input.principalId,
+      ownerPrincipalId: input.ownerPrincipalId,
       revokedAt: null,
     },
     select: { id: true, config: true },
@@ -546,8 +583,8 @@ async function storeConnection(
   input: {
     orgId: string;
     providerKey: string;
-    principalId: string;
-    mode: string;
+    ownerPrincipalId: string;
+    authMode: string;
     config: Record<string, unknown>;
     ciphertext: string;
     connectionId?: string;
@@ -570,10 +607,10 @@ async function storeConnection(
         id: connectionId,
         orgId: input.orgId,
         providerKey: input.providerKey,
-        principalId: input.principalId,
+        ownerPrincipalId: input.ownerPrincipalId,
       },
       data: {
-        mode: input.mode,
+        authMode: input.authMode,
         config,
         ciphertext: input.ciphertext,
         ...(input.label !== undefined ? { label: input.label } : {}),
@@ -598,8 +635,8 @@ async function storeConnection(
     data: {
       orgId: input.orgId,
       providerKey: input.providerKey,
-      principalId: input.principalId,
-      mode: input.mode,
+      ownerPrincipalId: input.ownerPrincipalId,
+      authMode: input.authMode,
       config,
       ciphertext: input.ciphertext,
       ...(input.label !== undefined ? { label: input.label } : {}),
@@ -726,8 +763,8 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
   const connection = await storeConnection(db, {
     orgId: oauthState.orgId,
     providerKey: oauthState.providerKey,
-    principalId: oauthState.principalId,
-    mode: provider.authMode,
+    ownerPrincipalId: oauthState.ownerPrincipalId,
+    authMode: provider.authMode,
     config: connectionConfig(oauthState.config),
     ciphertext: encryptEnvelope(payload, input.masterKey),
     ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
@@ -820,8 +857,8 @@ async function completeMcpOAuthCallback(
   const connection = await storeConnection(db, {
     orgId: oauthState.orgId,
     providerKey: oauthState.providerKey,
-    principalId: oauthState.principalId,
-    mode: provider.authMode,
+    ownerPrincipalId: oauthState.ownerPrincipalId,
+    authMode: provider.authMode,
     config: connectionConfig(oauthState.config),
     ciphertext: encryptEnvelope(payload, input.masterKey),
     ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
@@ -919,7 +956,7 @@ function basicAuthorization(credentials: Readonly<Record<string, string>>): stri
 
 export interface CreateStaticConnectionInput {
   orgId: string;
-  principalId: string;
+  ownerPrincipalId: string;
   providerKey: string;
   credentials: Readonly<Record<string, unknown>>;
   config: Readonly<Record<string, string | number | boolean>>;
@@ -942,13 +979,27 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
       `Provider '${provider.key}' has no static credential verification recipe`,
     );
   }
+  const owner = await db.principal.findFirst({
+    where: {
+      id: input.ownerPrincipalId,
+      orgId: input.orgId,
+      kind: "agent",
+      deactivatedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!owner) {
+    throw new StaticCredentialValidationError(
+      "Static connector credentials must be owned by the organization agent",
+    );
+  }
   const existing = input.reconnectConnectionId
     ? await db.connectorConnection.findFirst({
         where: {
           id: input.reconnectConnectionId,
           orgId: input.orgId,
           providerKey: input.providerKey,
-          principalId: input.principalId,
+          ownerPrincipalId: input.ownerPrincipalId,
         },
         select: { id: true, config: true },
       })
@@ -1024,8 +1075,8 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
   return storeConnection(db, {
     orgId: input.orgId,
     providerKey: input.providerKey,
-    principalId: input.principalId,
-    mode: provider.authMode,
+    ownerPrincipalId: input.ownerPrincipalId,
+    authMode: provider.authMode,
     config,
     ciphertext: encryptEnvelope(payload, input.masterKey),
     ...(input.label !== undefined ? { label: input.label } : {}),
@@ -1035,13 +1086,13 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
 
 export async function updateConnectorConnectionLabel(
   db: Database,
-  input: { orgId: string; connectionId: string; label: string | null; principalId?: string },
+  input: { orgId: string; connectionId: string; label: string | null; ownerPrincipalId?: string },
 ) {
   const updated = await db.connectorConnection.updateMany({
     where: {
       id: input.connectionId,
       orgId: input.orgId,
-      ...(input.principalId ? { principalId: input.principalId } : {}),
+      ...(input.ownerPrincipalId ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
     },
     data: { label: input.label },
   });
@@ -1075,7 +1126,7 @@ export async function listConnectorConnections(
   orgId: string,
   providerKey?: string,
   now = new Date(),
-  principalId?: string,
+  ownerPrincipalId?: string,
   catalog: ProviderCatalog = defaultCatalog,
 ) {
   const [connections, installations] = await Promise.all([
@@ -1083,7 +1134,7 @@ export async function listConnectorConnections(
       where: {
         orgId,
         ...(providerKey ? { providerKey } : {}),
-        ...(principalId ? { principalId } : {}),
+        ...(ownerPrincipalId ? { ownerPrincipalId } : {}),
       },
       select: { ...publicConnectionSelect(), config: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -1136,11 +1187,11 @@ export async function revokeConnectorConnection(
   db: Database,
   orgId: string,
   connectionId: string,
-  principalId?: string,
+  ownerPrincipalId?: string,
 ) {
   const revokedAt = new Date();
   const result = await db.connectorConnection.updateMany({
-    where: { id: connectionId, orgId, ...(principalId ? { principalId } : {}) },
+    where: { id: connectionId, orgId, ...(ownerPrincipalId ? { ownerPrincipalId } : {}) },
     data: { revokedAt },
   });
   if (result.count === 0) throw new ConnectorConnectionNotFoundError();

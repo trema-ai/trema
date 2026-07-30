@@ -138,9 +138,9 @@ integration("in-process connector execution", () => {
     const connection = await db.connectorConnection.create({
       data: {
         orgId: org.id,
-        principalId: agent.id,
+        ownerPrincipalId: agent.id,
         providerKey: "google_workspace",
-        mode: "oauth2_code",
+        authMode: "oauth2_code",
         config: {},
         ciphertext: encryptEnvelope({ accessToken: connectorToken }, masterKey),
       },

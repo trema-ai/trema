@@ -12,6 +12,7 @@ export const zapierProvider = {
   categories: ["productivity"],
   docsUrl: "https://docs.zapier.com/powered-by-zapier/api-reference/",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://api.zapier.com/v2/authorize",
     tokenUrl: "https://zapier.com/oauth/token",
@@ -151,5 +152,4 @@ export const zapierProvider = {
       },
     },
   ],
-  memberConnectable: true,
 } satisfies ProviderDefInput;

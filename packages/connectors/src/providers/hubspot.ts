@@ -10,6 +10,7 @@ export const hubspotProvider = {
   categories: ["CRM"],
   docsUrl: "https://developers.hubspot.com/docs/api/oauth-quickstart-guide",
   authMode: "oauth2_code",
+  oauthActor: "user",
   auth: {
     authorizationUrl: "https://app.hubspot.com/oauth/authorize",
     tokenUrl: "https://api.hubapi.com/oauth/v1/token",
@@ -432,5 +433,4 @@ export const hubspotProvider = {
       },
     },
   ],
-  memberConnectable: false,
 } satisfies ProviderDefInput;

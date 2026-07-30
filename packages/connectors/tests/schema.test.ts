@@ -29,6 +29,30 @@ describe("providerDefSchema", () => {
     expect(providerDefSchema.safeParse(provider).success).toBe(false);
   });
 
+  it.each(["user", "app"] as const)("accepts the '%s' OAuth actor", (oauthActor) => {
+    const provider = githubInput();
+    provider.oauthActor = oauthActor;
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(true);
+  });
+
+  it("rejects an interactive OAuth provider without an actor", () => {
+    const provider = githubInput();
+    delete provider.oauthActor;
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(false);
+  });
+
+  it("rejects an OAuth actor on a non-interactive provider", () => {
+    const provider = githubInput();
+    provider.authMode = "api_key";
+    provider.oauthActor = "user";
+    delete provider.auth.authorizationUrl;
+    delete provider.auth.tokenUrl;
+
+    expect(providerDefSchema.safeParse(provider).success).toBe(false);
+  });
+
   it("rejects OAuth URL fields on api_key providers", () => {
     const provider = githubInput();
     provider.authMode = "api_key";

@@ -10,6 +10,7 @@ export const linearProvider = {
   categories: ["project-management"],
   docsUrl: "https://linear.app/docs/mcp",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: {
     defaultScopes: [],
   },
@@ -19,5 +20,4 @@ export const linearProvider = {
     type: "mcp",
     serverUrl: "https://mcp.linear.app/mcp",
   },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

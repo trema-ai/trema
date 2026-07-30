@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { call } from "@orpc/server";
-import { githubProvider, googleWorkspaceProvider, loadProviderCatalog } from "@trema/connectors";
+import {
+  githubProvider,
+  googleWorkspaceProvider,
+  loadProviderCatalog,
+  slackProvider,
+} from "@trema/connectors";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "#server/app.js";
 import { createAuth } from "#server/lib/auth/index.js";
@@ -20,7 +25,9 @@ import {
   type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
+  StaticCredentialValidationError,
   startOAuthConnect,
+  UnsupportedConnectorAuthModeError,
 } from "#server/services/connectors/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -136,13 +143,13 @@ integration("connector connection flows", () => {
     return { ...signedUp, principal, personalScope };
   }
 
-  async function storedConnection(orgId: string, principalId: string, providerKey = "github") {
+  async function storedConnection(orgId: string, ownerPrincipalId: string, providerKey = "github") {
     return db.connectorConnection.create({
       data: {
         orgId,
-        principalId,
+        ownerPrincipalId,
         providerKey,
-        mode: "oauth2_code",
+        authMode: "oauth2_code",
         config: {},
         ciphertext: encryptEnvelope({ accessToken: "test-token" }, masterKey),
       },
@@ -187,9 +194,14 @@ integration("connector connection flows", () => {
       where: { orgId, kind: "agent" },
       select: { id: true },
     });
+    const initiator = await db.principal.findFirstOrThrow({
+      where: { orgId, kind: "human", deactivatedAt: null },
+      select: { id: true },
+    });
     const started = await startOAuthConnect(db, {
       orgId,
-      principalId: agent.id,
+      ownerPrincipalId: agent.id,
+      initiatedByPrincipalId: initiator.id,
       providerKey: "github",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -208,9 +220,14 @@ integration("connector connection flows", () => {
       where: { orgId, kind: "agent" },
       select: { id: true },
     });
+    const initiator = await db.principal.findFirstOrThrow({
+      where: { orgId, kind: "human", deactivatedAt: null },
+      select: { id: true },
+    });
     const started = await startOAuthConnect(db, {
       orgId,
-      principalId: agent.id,
+      ownerPrincipalId: agent.id,
+      initiatedByPrincipalId: initiator.id,
       providerKey: "google_workspace",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -238,12 +255,13 @@ integration("connector connection flows", () => {
     expect(pending).toMatchObject({
       orgId: org.org.id,
       providerKey: "github",
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
+      initiatedByPrincipalId: org.principal.id,
       connectionId: null,
       config: {},
       providerScopes: ["repo", "read:org"],
     });
-    expect(pending.principalId).not.toBe(org.principal.id);
+    expect(pending.ownerPrincipalId).not.toBe(org.principal.id);
 
     const completed = await completeOAuthCallback(db, {
       state,
@@ -255,7 +273,7 @@ integration("connector connection flows", () => {
     });
     expect(completed.connection).toMatchObject({
       providerKey: "github",
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
       providerScopes: ["repo", "read:org"],
     });
     const stored = await db.connectorConnection.findUniqueOrThrow({
@@ -288,14 +306,9 @@ integration("connector connection flows", () => {
     expect(renamed.label).toBe("Primary org");
   });
 
-  it("derives the caller principal for member OAuth after both access gates pass", async () => {
+  it("uses the caller as both owner and initiator for personal OAuth", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "OAuth Member");
-    await call(
-      connectorsRouter.providers.updateSettings,
-      { providerKey: "github", memberEnabled: true },
-      { context: org.context },
-    );
 
     const started = await call(
       connectorsRouter.member.connect.startOAuth,
@@ -313,18 +326,17 @@ integration("connector connection flows", () => {
     ).resolves.toMatchObject({
       orgId: org.org.id,
       providerKey: "github",
-      principalId: member.principal.id,
+      ownerPrincipalId: member.principal.id,
+      initiatedByPrincipalId: member.principal.id,
       connectionId: null,
     });
   });
 
-  it("allows member OAuth by default and rejects it once disabled or below the ceiling", async () => {
+  it("allows personal user OAuth and rejects app or non-interactive providers", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "Gated Member");
     const returnTo = "https://app.trema.example/customize?tab=connections";
 
-    // memberConnectable is the ceiling and member access defaults on, so a
-    // member may connect github without any admin opt-in.
     const started = await call(
       connectorsRouter.member.connect.startOAuth,
       { providerKey: "github", returnTo },
@@ -332,24 +344,17 @@ integration("connector connection flows", () => {
     );
     expect(started.authorizationUrl).toContain("https://");
 
-    // An explicit opt-out closes it.
-    await call(
-      connectorsRouter.providers.updateSettings,
-      { providerKey: "github", memberEnabled: false },
-      { context: org.context },
-    );
     await expect(
       call(
         connectorsRouter.member.connect.startOAuth,
-        { providerKey: "github", returnTo },
+        { providerKey: "slack", returnTo },
         { context: member.context },
       ),
     ).rejects.toMatchObject({
-      code: "FORBIDDEN",
-      message: expect.stringContaining("not enabled for member connections"),
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("does not support personal OAuth"),
     });
 
-    // A provider below the ceiling is never member-connectable.
     await expect(
       call(
         connectorsRouter.member.connect.startOAuth,
@@ -357,20 +362,56 @@ integration("connector connection flows", () => {
         { context: member.context },
       ),
     ).rejects.toMatchObject({
-      code: "FORBIDDEN",
-      message: expect.stringContaining("not enabled for member connections"),
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("does not support personal OAuth"),
     });
+  });
+
+  it("exposes personal OAuth support without a provider policy surface", async () => {
+    const org = await createOrg();
+    const catalog = await call(connectorsRouter.catalog.list, {}, { context: org.context });
+    const byKey = new Map(catalog.map((provider) => [provider.key, provider]));
+
+    expect(byKey.get("github")?.supportsPersonalOAuth).toBe(true);
+    expect(byKey.get("hubspot")?.supportsPersonalOAuth).toBe(true);
+    expect(byKey.get("zendesk")?.supportsPersonalOAuth).toBe(true);
+    expect(byKey.get("slack")?.supportsPersonalOAuth).toBe(false);
+    expect(byKey.get("stripe")?.supportsPersonalOAuth).toBe(false);
+    expect(connectorsRouter).not.toHaveProperty("providers");
+    expect(connectorsRouter.member.connect).not.toHaveProperty("createStatic");
+  });
+
+  it("enforces organization ownership for app OAuth and static credentials", async () => {
+    const org = await createOrg();
+
+    await expect(
+      startOAuthConnect(db, {
+        orgId: org.org.id,
+        ownerPrincipalId: org.principal.id,
+        initiatedByPrincipalId: org.principal.id,
+        providerKey: "slack",
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        catalog: loadProviderCatalog([slackProvider]),
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedConnectorAuthModeError);
+
+    await expect(
+      createStaticConnection(db, {
+        orgId: org.org.id,
+        ownerPrincipalId: org.principal.id,
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_human_secret" },
+        masterKey,
+        fetch: async () => new Response("{}", { status: 200 }),
+      }),
+    ).rejects.toBeInstanceOf(StaticCredentialValidationError);
   });
 
   it("lists and revokes only the caller's connections", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "Connection Member");
     const other = await addMember(org.org.id, org.orgScope.id, "Other Connection Member");
-    await call(
-      connectorsRouter.providers.updateSettings,
-      { providerKey: "github", memberEnabled: true },
-      { context: org.context },
-    );
     const ownConnection = await storedConnection(org.org.id, member.principal.id);
     const otherConnection = await storedConnection(org.org.id, other.principal.id);
     const installation = await call(
@@ -391,7 +432,7 @@ integration("connector connection flows", () => {
     expect(listed).toEqual([
       expect.objectContaining({
         id: ownConnection.id,
-        principalId: member.principal.id,
+        ownerPrincipalId: member.principal.id,
         installations: [{ id: installation.id, scopeId: member.personalScope.id }],
       }),
     ]);
@@ -402,6 +443,13 @@ integration("connector connection flows", () => {
         connectorsRouter.member.connections.revoke,
         { connectionId: otherConnection.id },
         { context: member.context },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      call(
+        connectorsRouter.connections.revoke,
+        { connectionId: ownConnection.id },
+        { context: org.context },
       ),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(
@@ -551,7 +599,8 @@ integration("connector connection flows", () => {
 
     const started = await startOAuthConnect(db, {
       orgId: org.org.id,
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
+      initiatedByPrincipalId: org.principal.id,
       providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -570,7 +619,8 @@ integration("connector connection flows", () => {
     ).resolves.toMatchObject({
       orgId: org.org.id,
       providerKey: "notion",
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
+      initiatedByPrincipalId: org.principal.id,
       connectionId: null,
       config: {},
       providerScopes: ["default"],
@@ -605,8 +655,8 @@ integration("connector connection flows", () => {
     ).resolves.toMatchObject({
       orgId: org.org.id,
       providerKey: "notion",
-      principalId: org.agent.id,
-      mode: "mcp_oauth",
+      ownerPrincipalId: org.agent.id,
+      authMode: "mcp_oauth",
       config: {
         workspace_id: "notion-workspace",
         user_id: "notion-user",
@@ -616,7 +666,8 @@ integration("connector connection flows", () => {
 
     const duplicateStarted = await startOAuthConnect(db, {
       orgId: org.org.id,
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
+      initiatedByPrincipalId: org.principal.id,
       providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -633,7 +684,8 @@ integration("connector connection flows", () => {
 
     const reconnectStarted = await startOAuthConnect(db, {
       orgId: org.org.id,
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
+      initiatedByPrincipalId: org.principal.id,
       providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,
@@ -877,8 +929,8 @@ integration("connector connection flows", () => {
     });
     expect(stored).toMatchObject({
       providerKey: "stripe",
-      principalId: org.agent.id,
-      mode: "api_key",
+      ownerPrincipalId: org.agent.id,
+      authMode: "api_key",
       config: {},
     });
 
@@ -891,7 +943,7 @@ integration("connector connection flows", () => {
       expect.objectContaining({
         id: created.id,
         providerKey: "stripe",
-        principalId: org.agent.id,
+        ownerPrincipalId: org.agent.id,
         isValid: true,
       }),
     ]);
@@ -925,7 +977,7 @@ integration("connector connection flows", () => {
     const okFetch = async () => new Response("{}", { status: 200 });
     const first = await createStaticConnection(db, {
       orgId: org.org.id,
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
       providerKey: "stripe",
       config: {},
       credentials: { apiKey: "rk_old_secret" },
@@ -938,7 +990,7 @@ integration("connector connection flows", () => {
     });
     const second = await createStaticConnection(db, {
       orgId: org.org.id,
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
       providerKey: "stripe",
       config: {},
       credentials: { apiKey: "rk_new_secret" },
@@ -960,7 +1012,7 @@ integration("connector connection flows", () => {
     await expect(
       createStaticConnection(db, {
         orgId: org.org.id,
-        principalId: org.agent.id,
+        ownerPrincipalId: org.agent.id,
         providerKey: "stripe",
         config: {},
         credentials: { apiKey: "rk_new_secret" },
@@ -979,7 +1031,8 @@ integration("connector connection flows", () => {
 
     const expired = await startOAuthConnect(db, {
       orgId: org.org.id,
-      principalId: org.agent.id,
+      ownerPrincipalId: org.agent.id,
+      initiatedByPrincipalId: org.principal.id,
       providerKey: "github",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
       masterKey,

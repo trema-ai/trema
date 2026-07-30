@@ -14,6 +14,8 @@ export {
   type McpTransport,
   mcpTransportSchema,
   notionMcpProvider,
+  type OAuthActor,
+  oauthActorSchema,
   type ProviderCatalog,
   ProviderCatalogValidationError,
   type ProviderDef,
@@ -78,7 +80,6 @@ export {
   type ConnectorInstallationBody,
   ConnectorInstallationNotFoundError,
   ConnectorInstallationValidationError,
-  ConnectorMemberConnectabilityError,
   type CreateConnectorInstallationInput,
   connectorInstallationBodySchema,
   createConnectorInstallation,
@@ -86,7 +87,6 @@ export {
   type ListConnectorInstallationsInput,
   listConnectorInstallations,
   type ResolvedInstallationTool,
-  requireMemberConnectorAccess,
   resolveInstallationTools,
   type SyncedTool,
   syncedToolSchema,
@@ -135,11 +135,6 @@ export {
   resolveStoredClientRegistration,
   validateRegistrationFields,
 } from "#server/services/connectors/registrations.js";
-export {
-  ConnectorProviderSettingsError,
-  listConnectorProviderSettings,
-  updateConnectorProviderSettings,
-} from "#server/services/connectors/settings.js";
 export {
   ConnectorSyncTransportError,
   createStreamableHttpMcpClient,

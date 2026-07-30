@@ -10,9 +10,9 @@ export const airtableProvider = {
   categories: ["productivity"],
   docsUrl: "https://support.airtable.com/v1/docs/using-the-airtable-mcp-server",
   authMode: "mcp_oauth",
+  oauthActor: "user",
   auth: { defaultScopes: [] },
   configFields: {},
   credentialFields: {},
   transport: { type: "mcp", serverUrl: "https://mcp.airtable.com/mcp" },
-  memberConnectable: true,
 } satisfies ProviderDefInput;

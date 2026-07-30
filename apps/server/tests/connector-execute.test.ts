@@ -101,9 +101,9 @@ integration("connector tool execution", () => {
     return db.connectorConnection.create({
       data: {
         orgId: input.orgId,
-        principalId: input.principalId,
+        ownerPrincipalId: input.principalId,
         providerKey: input.providerKey,
-        mode: input.mode ?? "oauth2_code",
+        authMode: input.mode ?? "oauth2_code",
         config: input.config ?? {},
         ciphertext: encryptEnvelope(input.credential, masterKey),
         ...(input.revokedAt ? { revokedAt: input.revokedAt } : {}),
