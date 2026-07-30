@@ -84,12 +84,12 @@ export function ConnectionsTab({
   );
   const connectedId = searchParams.get("connected");
 
-  const removeSearchParam = useCallback(
-    (name: string) => {
+  const removeSearchParams = useCallback(
+    (names: readonly string[]) => {
       setSearchParams(
         (current) => {
           const next = new URLSearchParams(current);
-          next.delete(name);
+          for (const name of names) next.delete(name);
           return next;
         },
         { replace: true },
@@ -111,8 +111,8 @@ export function ConnectionsTab({
     const connectorError = searchParams.get("connector_error");
     if (!connectorError) return;
     toast.error(`Connection failed: ${connectorError.replaceAll("_", " ")}`);
-    removeSearchParam("connector_error");
-  }, [removeSearchParam, searchParams]);
+    removeSearchParams(["connector_error"]);
+  }, [removeSearchParams, searchParams]);
 
   useEffect(() => {
     if (!connectedId) {
@@ -122,8 +122,7 @@ export function ConnectionsTab({
     if (!ownPersonal || handledCallback.current === connectedId) return;
     handledCallback.current = connectedId;
     const setupStatus = searchParams.get("connector_status");
-    removeSearchParam("connected");
-    removeSearchParam("connector_status");
+    removeSearchParams(["connected", "connector_status"]);
     void invalidateConnections();
     toast.success(
       setupStatus === "syncing"
@@ -132,7 +131,7 @@ export function ConnectionsTab({
           ? "Connection added; connector tool sync needs attention"
           : "Connection added to your personal scope",
     );
-  }, [connectedId, invalidateConnections, ownPersonal, removeSearchParam, searchParams]);
+  }, [connectedId, invalidateConnections, ownPersonal, removeSearchParams, searchParams]);
 
   if (loading || catalog.isPending || (ownPersonal && memberConnections.isPending)) {
     return (
