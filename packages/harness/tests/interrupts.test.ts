@@ -21,7 +21,6 @@ const now = "2026-07-19T12:00:00.000Z";
 function context() {
   return new FakeContextSession({
     sessionId: "session-1",
-    mode: "delegated",
     scopeChain: [],
     standing: { instructions: "", rules: [], skillIndex: [] },
     tools: [],

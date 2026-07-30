@@ -196,7 +196,7 @@ integration("data plane connector proxy", () => {
     owner: Fixture,
     input: {
       scope: { id: string; kind: ScopeKind };
-      actingPrincipalId: string;
+      agentPrincipalId: string;
       requesterPrincipalId?: string;
       /** The requester's chosen mode for the thread; the gate clamps per call. */
       approvalMode?: ApprovalMode;
@@ -219,10 +219,9 @@ integration("data plane connector proxy", () => {
         scopeId: input.scope.id,
         surface: "slack",
         locationRef: `T1:${randomUUID()}`,
-        mode: input.scope.kind === "personal" ? "delegated" : "service",
         approvalMode: input.approvalMode ?? "ask",
         scopeChain,
-        actingPrincipalId: input.actingPrincipalId,
+        agentPrincipalId: input.agentPrincipalId,
         requesterPrincipalId: input.requesterPrincipalId ?? null,
         standing: {} as Prisma.InputJsonValue,
         policySnapshot: policySnapshot as unknown as Prisma.InputJsonValue,
@@ -237,7 +236,7 @@ integration("data plane connector proxy", () => {
       scopeId: row.scopeId,
       scopeKind: input.scope.kind,
       scopeChain,
-      actingPrincipalId: row.actingPrincipalId,
+      agentPrincipalId: row.agentPrincipalId,
       requesterPrincipalId: row.requesterPrincipalId,
       requesterExternalRef: row.requesterExternalRef,
       approvalMode: row.approvalMode,
@@ -344,7 +343,7 @@ integration("data plane connector proxy", () => {
     await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
       approvalMode: "full",
     });
@@ -414,7 +413,7 @@ integration("data plane connector proxy", () => {
     });
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
     });
     const clientFactory = vi.fn(async () => {
@@ -473,7 +472,7 @@ integration("data plane connector proxy", () => {
     // merely by the chain: the filter holds even when the chain names it.
     const shared = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       approvalMode: "full",
       scopeChain: [owner.orgScope.id, owner.personalScope.id, owner.sharedScope.id],
     });
@@ -491,7 +490,7 @@ integration("data plane connector proxy", () => {
     fetch.mockClear();
     const personal = await openTestSession(owner, {
       scope: owner.personalScope,
-      actingPrincipalId: owner.human.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
       approvalMode: "full",
     });
@@ -535,7 +534,7 @@ integration("data plane connector proxy", () => {
     });
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ id: "draft-1" }));
@@ -637,12 +636,12 @@ integration("data plane connector proxy", () => {
     });
     const first = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
     });
     const second = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ id: "draft-1" }));
@@ -699,7 +698,7 @@ integration("data plane connector proxy", () => {
     });
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ id: "draft-1" }));
@@ -775,7 +774,7 @@ integration("data plane connector proxy", () => {
     });
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ id: "event-1" }));
@@ -826,7 +825,7 @@ integration("data plane connector proxy", () => {
     // to `ask`. Choosing a loose mode is never what loosens the gate.
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
       approvalMode: "full",
     });
@@ -879,7 +878,7 @@ integration("data plane connector proxy", () => {
     });
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
     });
     await expect(
       useConnector(db, opened.session, {
@@ -930,7 +929,7 @@ integration("data plane connector proxy", () => {
     await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       approvalMode: "full",
     });
     const connectorFetch: FetchMock = vi.fn();
@@ -969,7 +968,7 @@ integration("data plane connector proxy", () => {
     await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       approvalMode: "full",
     });
     const fetch: FetchMock = vi.fn(async () => jsonResponse({ messages: [] }));
@@ -1008,7 +1007,7 @@ integration("data plane connector proxy", () => {
     });
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       requesterPrincipalId: owner.human.id,
     });
     const connectorFetch: FetchMock = vi.fn(async () => jsonResponse({ id: "draft-1" }));
@@ -1107,7 +1106,7 @@ integration("data plane connector proxy", () => {
     await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       approvalMode: "full",
     });
     // A chatty provider: it echoes the credential it was given, first in a
@@ -1171,7 +1170,7 @@ integration("data plane connector proxy", () => {
     await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       approvalMode: "full",
     });
     const connectorFetch: FetchMock = vi.fn();
@@ -1226,7 +1225,7 @@ integration("data plane connector proxy", () => {
     const token = "unclassified-path-token";
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
     });
     // Resolution dies on an error nothing on this path has a vocabulary for,
     // carrying text that a real infrastructure failure could just as easily
@@ -1287,7 +1286,7 @@ integration("data plane connector proxy", () => {
     await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       approvalMode: "full",
     });
     // The call is refused, and then recording the refusal fails too. The
@@ -1341,7 +1340,7 @@ integration("data plane connector proxy", () => {
     await allowFullMode(owner.org.id, owner.orgScope.id);
     const opened = await openTestSession(owner, {
       scope: owner.sharedScope,
-      actingPrincipalId: owner.agent.id,
+      agentPrincipalId: owner.agent.id,
       approvalMode: "full",
     });
     const received: { query: string; authorization: string | null }[] = [];

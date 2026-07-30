@@ -3,6 +3,24 @@ import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { ensurePersonalScope } from "#server/services/scopes/index.js";
 
+type OrgAgentDatabase = Pick<Database, "principal"> | Pick<Prisma.TransactionClient, "principal">;
+
+export class OrgAgentNotFoundError extends Error {
+  constructor() {
+    super("Organization has no active agent principal");
+    this.name = "OrgAgentNotFoundError";
+  }
+}
+
+/** Resolve the organization's single active agent principal. */
+export async function requireOrgAgent(db: OrgAgentDatabase, orgId: string) {
+  const agent = await db.principal.findFirst({
+    where: { orgId, kind: "agent", deactivatedAt: null },
+  });
+  if (!agent) throw new OrgAgentNotFoundError();
+  return agent;
+}
+
 export class OrganizationNameError extends Error {
   constructor(message: string) {
     super(message);

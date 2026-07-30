@@ -155,7 +155,7 @@ export interface CaptureSession {
   surface: string;
   locationRef: string;
   threadRef: string | null;
-  actingPrincipalId: string;
+  agentPrincipalId: string;
 }
 
 /**
@@ -628,7 +628,7 @@ export async function captureMessages(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "session.messages",
       subject: captured.conversation.id,
       payload: {

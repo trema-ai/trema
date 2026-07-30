@@ -8,6 +8,7 @@ import type { ConnectorFetch } from "#server/services/connectors/connect.js";
 import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
 import type { McpClientFactory } from "#server/services/connectors/sync.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
+import { requireOrgAgent } from "#server/services/org/index.js";
 import { indexItemSafely } from "#server/services/search/index.js";
 
 /// The provider's own MCP annotations, kept verbatim as classifier signal —
@@ -307,10 +308,7 @@ async function validateBinding(
       where: { id: input.connectionId, orgId: input.orgId },
       select: { id: true, providerKey: true, ownerPrincipalId: true, revokedAt: true },
     }),
-    db.principal.findFirst({
-      where: { orgId: input.orgId, kind: "agent", deactivatedAt: null },
-      select: { id: true },
-    }),
+    requireOrgAgent(db, input.orgId),
   ]);
   if (!scope) throw new ConnectorInstallationValidationError("Installation scope not found");
   if (!connection) {
@@ -335,7 +333,7 @@ async function validateBinding(
         "Personal installations must use the scope owner's connection",
       );
     }
-  } else if (!agent || connection.ownerPrincipalId !== agent.id) {
+  } else if (connection.ownerPrincipalId !== agent.id) {
     throw new ConnectorInstallationValidationError(
       "Organization and shared installations must use the organization agent's connection",
     );

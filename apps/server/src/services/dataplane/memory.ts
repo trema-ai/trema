@@ -180,7 +180,7 @@ export async function saveMemory(
   const item = duplicate
     ? await updateItem(db, {
         orgId: session.orgId,
-        actorPrincipalId: session.actingPrincipalId,
+        actorPrincipalId: session.agentPrincipalId,
         itemId: duplicate.item.id,
         title,
         body,
@@ -188,7 +188,7 @@ export async function saveMemory(
       })
     : await createItem(db, {
         orgId: session.orgId,
-        actorPrincipalId: session.actingPrincipalId,
+        actorPrincipalId: session.agentPrincipalId,
         scopeId: session.scopeId,
         kind: "memory",
         title,
@@ -201,7 +201,7 @@ export async function saveMemory(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "dataplane.save_memory",
       subject: item.id,
       payload: {
@@ -280,7 +280,7 @@ export async function updateMemory(
   const body = parseMemoryBody(type, input.content);
   const item = await updateItem(db, {
     orgId: session.orgId,
-    actorPrincipalId: session.actingPrincipalId,
+    actorPrincipalId: session.agentPrincipalId,
     itemId: existing.id,
     body,
     ...(input.masterKey ? { masterKey: input.masterKey } : {}),
@@ -290,7 +290,7 @@ export async function updateMemory(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "dataplane.update_memory",
       subject: item.id,
       payload: {

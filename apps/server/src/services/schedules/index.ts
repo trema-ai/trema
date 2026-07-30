@@ -263,9 +263,9 @@ async function recordFiring(
  * skipped for overlap, because ticks recur while a person waiting on a reply
  * does not.
  *
- * The run a tick starts is completely normal: service mode against the
- * schedule's scope, the same policy snapshot, the same approval gates. A
- * schedule automates the asking, never the approving.
+ * The run a tick starts is completely normal: it uses the schedule's scope,
+ * the same policy snapshot, and the same approval gates. A schedule automates
+ * the asking, never the approving.
  * @throws {ScheduleNotFirableError} When the schedule's scope has no bound location.
  */
 export async function tickSchedule(options: TickScheduleOptions): Promise<ScheduleTickResult> {

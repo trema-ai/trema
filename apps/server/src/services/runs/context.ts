@@ -74,7 +74,6 @@ export class ServerContextSession implements ContextSession {
     });
     return {
       sessionId: opened.session.id,
-      mode: opened.session.mode,
       scopeChain: opened.scopeChain,
       standing: opened.standing.standing,
       tools: opened.tools,

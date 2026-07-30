@@ -11,7 +11,6 @@ export interface SessionStanding {
 /** Context and tools resolved when a session opens. */
 export interface SessionSnapshot {
   sessionId: string;
-  mode: "service" | "delegated";
   /** Opaque hierarchy used to resolve the session. */
   scopeChain: unknown[];
   standing: SessionStanding;
@@ -28,7 +27,7 @@ export interface OpenSessionRequest {
   locationRef: unknown;
   /** The thread the session serves, where the surface has threads. */
   threadRef?: string;
-  /** Who asked. Omitted for work nobody triggered, such as a service call as the agent. */
+  /** Who asked. Omitted for work nobody triggered, such as a scheduled run. */
   requester?: { externalUserId: string } | { principalId: string };
 }
 

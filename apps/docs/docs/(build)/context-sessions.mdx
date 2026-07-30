@@ -32,7 +32,9 @@ The response carries the session and everything the harness injects into the mod
 | --- | --- |
 | `sessionToken` | The bearer token for data-plane calls, prefixed `trema_ses_`. Returned only once. |
 | `expiresAt` | The token expiry, fifteen minutes out. |
-| `mode` | Either `service`, acting as the organization's agent, or `delegated`, acting as the requesting person. |
+| `agentPrincipalId` | The organization's agent principal used by the session. |
+| `requesterPrincipalId` | The linked person who asked, or `null`. |
+| `requesterExternalRef` | The raw surface id for an unlinked requester, or `null`. |
 | `scopeChain` | The scopes the session reads, widest first. Writes land at the last one. |
 | `standing` | The instructions, standing memories, and skill index to inject into every turn, cut to a token budget. |
 | `policySnapshot` | The policy rows pinned for the session's whole life. The connector gate resolves each call against them. |

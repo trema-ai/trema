@@ -64,7 +64,6 @@ async function recordRun(options: {
     engine,
     context: new FakeContextSession({
       sessionId: "session-1",
-      mode: "service",
       scopeChain: [],
       standing: { instructions: "Be useful.", rules: [], skillIndex: [] },
       tools: [],

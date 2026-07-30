@@ -35,7 +35,6 @@ await store.updateRunState(runId, "running");
 
 const context = new FakeContextSession({
   sessionId: "session-support-42",
-  mode: "service",
   scopeChain: [],
   standing: {
     instructions: "Answer support questions accurately.",

@@ -142,14 +142,6 @@ enum ClientRegistrationSource {
   dynamic
 }
 
-/// The identity mode of a context session. It is a pure function of the scope
-/// kind the session opens against: personal scopes delegate, everything else
-/// acts as the organization's agent.
-enum SessionMode {
-  service
-  delegated
-}
-
 /// The wire protocol a model provider speaks. One member per protocol, never
 /// per vendor: a vendor is a preset over a protocol, and a new protocol is a
 /// new arm in `@trema/models`. Values are snake_case here and map to the
@@ -280,6 +272,9 @@ model Org {
   scheduleFirings       ScheduleFiring[]
 }
 
+/// Active agent uniqueness is enforced by the DB-level partial unique index
+/// `Principal_one_active_agent_per_org` on (orgId) where kind = 'agent' and
+/// deactivatedAt is null.
 model Principal {
   id                            String                @id @default(uuid(7))
   orgId                         String
@@ -307,7 +302,7 @@ model Principal {
   connectorConnections          ConnectorConnection[]
   ownedConnectorOAuthStates     ConnectorOAuthState[] @relation("ConnectorOAuthStateOwner")
   initiatedConnectorOAuthStates ConnectorOAuthState[] @relation("ConnectorOAuthStateInitiator")
-  actedContextSessions          ContextSession[]      @relation("ContextSessionActor")
+  agentContextSessions          ContextSession[]      @relation("ContextSessionAgent")
   requestedContextSessions      ContextSession[]      @relation("ContextSessionRequester")
   authoredMessages              Message[]             @relation("MessageAuthor")
   createdSchedules              Schedule[]            @relation("ScheduleCreator")
@@ -376,13 +371,12 @@ model ContextSession {
   surface              String
   locationRef          String
   threadRef            String?
-  mode                 SessionMode
   /// The approval mode the requester chose for this thread. The gate clamps it
   /// to the policy ceiling per call; this is the choice, never the outcome.
   approvalMode         ApprovalMode @default(ask)
   /// Scope IDs in resolution order, widest first.
   scopeChain           String[]     @default([])
-  actingPrincipalId    String
+  agentPrincipalId     String
   requesterPrincipalId String?
   /// The raw surface id of a requester with no identity link.
   requesterExternalRef String?
@@ -397,7 +391,7 @@ model ContextSession {
   updatedAt            DateTime     @updatedAt
   org                  Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
   scope                Scope        @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
-  actingPrincipal      Principal    @relation("ContextSessionActor", fields: [orgId, actingPrincipalId], references: [orgId, id], onDelete: Restrict)
+  agentPrincipal       Principal    @relation("ContextSessionAgent", fields: [orgId, agentPrincipalId], references: [orgId, id], onDelete: Restrict)
   requesterPrincipal   Principal?   @relation("ContextSessionRequester", fields: [orgId, requesterPrincipalId], references: [orgId, id], onDelete: Restrict)
   agentRuns            AgentRun[]
   approvals            Approval[]
@@ -405,7 +399,7 @@ model ContextSession {
 
   @@unique([orgId, id])
   @@index([orgId, scopeId])
-  @@index([orgId, actingPrincipalId])
+  @@index([orgId, agentPrincipalId])
   @@index([orgId, requesterPrincipalId])
   @@index([orgId, expiresAt])
 }

@@ -25,7 +25,7 @@ Scopes resolve as a chain, widest first: the organization scope, then the sessio
 
 ## Principals
 
-Every actor is a principal, and a principal is either a person or the organization's agent. People sign in, hold roles, and appear in the audit trail. The agent principal is the identity the agent acts as in organization and shared scopes. It holds no role, and the authorization check denies it every control-plane capability by construction.
+Every actor is a principal, and a principal is either a person or the organization's agent. People sign in, hold roles, and appear in the audit trail. Every context session uses the agent principal. It holds no role, and the authorization check denies it every control-plane capability by construction.
 
 An identity link maps a surface user id, such as a chat account, to a principal. That is how a message on a surface resolves to a known person. See [Members and invites](/members-and-invites).
 
@@ -47,7 +47,9 @@ A paused call becomes an approval: a durable record of the exact arguments, reso
 
 ## Context sessions
 
-Nothing reads context or calls tools anonymously. Before agent work starts, the harness opens a context session against a scope. The scope comes from a binding, which maps a surface location, such as a channel, to a scope. A direct message resolves to the sender's personal scope. The scope kind fixes the session's mode. A personal scope opens `delegated`, acting as the owner; every other scope opens `service`, acting as the agent principal.
+Nothing reads context or calls tools anonymously. Before agent work starts, the harness opens a context session against a scope. The scope comes from a binding, which maps a surface location, such as a channel, to a scope. A direct message resolves to the sender's personal scope.
+
+Every session uses the organization's agent principal. The requester records who asked, separately from the agent. Personal scopes still require their owner as the linked requester.
 
 At open, the session pins what it resolved: the scope chain, the standing items within a token budget, and the policy snapshot. A hash of the snapshot ties a run to exactly the context that shaped it. Edits made while a session runs reach the next session, never the running one. Session tokens live fifteen minutes and renew while work continues. See [Context sessions](/context-sessions).
 

@@ -368,7 +368,7 @@ integration("triggers", () => {
     });
   });
 
-  describe("POST /intents (session mode)", () => {
+  describe("POST /intents (session requester)", () => {
     it("starts a run on the member's own web location, stamped server-side", async () => {
       const { sessionContext, owner } = await setup();
 
@@ -489,7 +489,7 @@ integration("triggers", () => {
       });
     });
 
-    it("requires a service-mode message to name its location", async () => {
+    it("requires a service-credential message to name its location", async () => {
       const { serviceContext } = await setup();
 
       await expect(
@@ -835,7 +835,7 @@ integration("triggers", () => {
       });
     }
 
-    it("fires a normal run in service mode with the schedule trigger", async () => {
+    it("fires a normal run with the schedule trigger", async () => {
       const { org, orgScope, engine } = await setup();
       const schedule = await activeSchedule(org.id, orgScope.id);
       const services = servicesFor(org.id, engine);

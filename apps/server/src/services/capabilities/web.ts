@@ -604,7 +604,7 @@ export async function searchWeb(
       await db.auditLog.create({
         data: {
           orgId: session.orgId,
-          actorPrincipalId: session.actingPrincipalId,
+          actorPrincipalId: session.agentPrincipalId,
           action: "dataplane.search_web",
           subject: session.id,
           payload: {
@@ -636,7 +636,7 @@ export async function searchWeb(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "dataplane.search_web",
       subject: session.id,
       payload: {
@@ -848,7 +848,7 @@ export async function fetchUrl(
     await db.auditLog.create({
       data: {
         orgId: session.orgId,
-        actorPrincipalId: session.actingPrincipalId,
+        actorPrincipalId: session.agentPrincipalId,
         action: "dataplane.fetch_url",
         subject: session.id,
         payload: {
@@ -870,7 +870,7 @@ export async function fetchUrl(
   await db.auditLog.create({
     data: {
       orgId: session.orgId,
-      actorPrincipalId: session.actingPrincipalId,
+      actorPrincipalId: session.agentPrincipalId,
       action: "dataplane.fetch_url",
       subject: session.id,
       payload: {

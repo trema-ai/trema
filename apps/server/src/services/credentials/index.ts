@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
+import { OrgAgentNotFoundError, requireOrgAgent } from "#server/services/org/index.js";
 
 export const SERVICE_CREDENTIAL_PREFIX = "trema_sc_";
 
@@ -47,13 +48,14 @@ export async function createServiceCredential(db: Database, input: CreateService
   const tokenHash = hashServiceCredentialToken(secret);
 
   const credential = await db.$transaction(async (transaction) => {
-    const agentPrincipal = await transaction.principal.findFirst({
-      where: { orgId: input.orgId, kind: "agent" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-    if (!agentPrincipal) {
-      throw new ServiceCredentialNotFoundError("Organization has no agent principal");
-    }
+    const agentPrincipal = await requireOrgAgent(transaction, input.orgId).catch(
+      (error: unknown) => {
+        if (error instanceof OrgAgentNotFoundError) {
+          throw new ServiceCredentialNotFoundError(error.message);
+        }
+        throw error;
+      },
+    );
 
     const created = await transaction.serviceCredential.create({
       data: {

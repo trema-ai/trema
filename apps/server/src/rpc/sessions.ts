@@ -22,12 +22,6 @@ import {
   SessionValidationError,
 } from "#server/services/sessions/index.js";
 
-const modeSchema = z
-  .enum(["service", "delegated"])
-  .describe(
-    "The session's identity mode. `service` acts as the organization's agent; `delegated` acts as the requesting person.",
-  );
-
 const scopeSchema = z
   .object({
     id: z.string().describe("The scope's unique ID. A UUID (version 7)."),
@@ -106,7 +100,6 @@ const sessionSchema = z
     expiresAt: z
       .string()
       .describe("When the session token expires. An ISO 8601 date-time. Renewal extends it."),
-    mode: modeSchema,
     scopeChain: z
       .array(scopeSchema)
       .describe("The scopes the session reads, widest first. Writes land at the last one."),
@@ -114,7 +107,9 @@ const sessionSchema = z
     tools: z.array(z.json()).describe("The tool definitions this session may call."),
     policySnapshot: policySnapshotSchema,
     snapshotHash: z.string().describe("A stable identifier for the resolved snapshot contents."),
-    actingPrincipalId: z.string().describe("The principal the session acts as."),
+    agentPrincipalId: z
+      .string()
+      .describe("The organization's agent principal used by this session."),
     requesterPrincipalId: z
       .string()
       .nullable()
@@ -132,7 +127,6 @@ function serializeOpenedSession(result: OpenSessionResult) {
     sessionId: session.id,
     sessionToken: result.sessionToken,
     expiresAt: session.expiresAt.toISOString(),
-    mode: session.mode,
     scopeChain: result.scopeChain.map((scope: Scope) => ({
       id: scope.id,
       kind: scope.kind,
@@ -150,7 +144,7 @@ function serializeOpenedSession(result: OpenSessionResult) {
     tools: result.tools as unknown as z.infer<typeof sessionSchema>["tools"],
     policySnapshot: result.policySnapshot,
     snapshotHash: session.snapshotHash,
-    actingPrincipalId: session.actingPrincipalId,
+    agentPrincipalId: session.agentPrincipalId,
     requesterPrincipalId: session.requesterPrincipalId,
     requesterExternalRef: session.requesterExternalRef,
   };

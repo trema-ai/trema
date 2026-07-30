@@ -21,7 +21,6 @@ function fixture() {
   const engine = new InMemoryEngine();
   const context = new FakeContextSession({
     sessionId: "session-1",
-    mode: "delegated",
     scopeChain: [],
     standing: { instructions: "", rules: [], skillIndex: [] },
     tools: [],

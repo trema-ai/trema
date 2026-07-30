@@ -78,15 +78,20 @@ integration("conversation capture", () => {
   async function createOrg(name = "Conversation Org") {
     const signedUp = await signUp(`${name} Owner`);
     const membership = await call(orgRouter.create, { name }, { context: signedUp.context });
-    const orgScope = await db.scope.findFirstOrThrow({
-      where: { orgId: membership.org.id, kind: "org" },
-    });
+    const [orgScope, agent] = await Promise.all([
+      db.scope.findFirstOrThrow({
+        where: { orgId: membership.org.id, kind: "org" },
+      }),
+      db.principal.findFirstOrThrow({
+        where: { orgId: membership.org.id, kind: "agent" },
+      }),
+    ]);
     const credential = await call(
       serviceCredentialsRouter.create,
       { name: "Harness" },
       { context: signedUp.context },
     );
-    return { ...signedUp, ...membership, orgScope, credential };
+    return { ...signedUp, ...membership, orgScope, agent, credential };
   }
 
   type Org = Awaited<ReturnType<typeof createOrg>>;
@@ -413,7 +418,7 @@ integration("conversation capture", () => {
   it("keeps a personal conversation out of every other session's reach", async () => {
     const org = await createOrg();
     const alice = await linkMember(org, "Alice", "U-ALICE");
-    const bob = await linkMember(org, "Bob", "U-BOB");
+    await linkMember(org, "Bob", "U-BOB");
 
     const aliceSession = await call(
       sessionsRouter.open,
@@ -452,7 +457,7 @@ integration("conversation capture", () => {
       },
       { context: serviceContext(org.credential.secret) },
     );
-    expect(bobSession.actingPrincipalId).toBe(bob.principal.id);
+    expect(bobSession.agentPrincipalId).toBe(org.agent.id);
     const bobClient = await connect(bobSession.sessionToken);
     const denied = await transcript(bobClient, { conversationId: personal.conversationId });
     const unknown = await transcript(bobClient, { conversationId: randomUUID() });

@@ -116,7 +116,7 @@ integration("context sessions", () => {
     });
   }
 
-  it("opens a service-mode session on a bound location with dual attribution", async () => {
+  it("opens a shared-scope session with separate agent and requester attribution", async () => {
     const org = await createOrg();
     const shared = await call(scopesRouter.create, { name: "Support" }, { context: org.context });
     await call(
@@ -137,8 +137,7 @@ integration("context sessions", () => {
       { context: serviceContext(org.credential.secret) },
     );
 
-    expect(opened.mode).toBe("service");
-    expect(opened.actingPrincipalId).toBe(org.agent.id);
+    expect(opened.agentPrincipalId).toBe(org.agent.id);
     expect(opened.requesterPrincipalId).toBe(member.principal.id);
     expect(opened.requesterExternalRef).toBe("U-ASKS");
     expect(opened.scopeChain.map(({ id }) => id)).toEqual([org.orgScope.id, shared.id]);
@@ -166,7 +165,7 @@ integration("context sessions", () => {
     expect(audit.actorPrincipalId).toBe(org.agent.id);
   });
 
-  it("derives delegated mode from a personal scope and service mode from the org scope", async () => {
+  it("uses the organization agent for personal and org scopes", async () => {
     const org = await createOrg();
     const member = await linkMember(org.org.id, org.orgScope.id, "Dm Human", "U-DM");
 
@@ -175,8 +174,7 @@ integration("context sessions", () => {
       { surface: "slack", locationRef: "T1:D1", dm: true, requester: { externalUserId: "U-DM" } },
       { context: serviceContext(org.credential.secret) },
     );
-    expect(personal.mode).toBe("delegated");
-    expect(personal.actingPrincipalId).toBe(member.principal.id);
+    expect(personal.agentPrincipalId).toBe(org.agent.id);
     expect(personal.requesterPrincipalId).toBe(member.principal.id);
     expect(personal.scopeChain.map(({ kind }) => kind)).toEqual(["org", "personal"]);
     // No stored rows: the gate resolves the built-in defaults per call.
@@ -192,8 +190,7 @@ integration("context sessions", () => {
       { surface: "slack", locationRef: "T1" },
       { context: serviceContext(org.credential.secret) },
     );
-    expect(orgWide.mode).toBe("service");
-    expect(orgWide.actingPrincipalId).toBe(org.agent.id);
+    expect(orgWide.agentPrincipalId).toBe(org.agent.id);
     expect(orgWide.scopeChain.map(({ id }) => id)).toEqual([org.orgScope.id]);
     expect(orgWide.requesterPrincipalId).toBeNull();
     expect(orgWide.requesterExternalRef).toBeNull();
@@ -212,8 +209,7 @@ integration("context sessions", () => {
     // No binding, no identity link, no dm flag: the surface itself says this
     // location is the requester's own chat with the agent.
     const opened = await openWeb({ principalId: member.principal.id });
-    expect(opened.mode).toBe("delegated");
-    expect(opened.actingPrincipalId).toBe(member.principal.id);
+    expect(opened.agentPrincipalId).toBe(org.agent.id);
     expect(opened.requesterPrincipalId).toBe(member.principal.id);
     expect(opened.requesterExternalRef).toBeNull();
     expect(opened.scopeChain.map(({ kind }) => kind)).toEqual(["org", "personal"]);
@@ -283,7 +279,7 @@ integration("context sessions", () => {
       where: { orgId: org.org.id, kind: "personal", ownerId: owner.principal.id },
     });
     expect(opened.scopeChain.at(-1)?.id).toBe(personal.id);
-    expect(opened.actingPrincipalId).toBe(owner.principal.id);
+    expect(opened.agentPrincipalId).toBe(org.agent.id);
   });
 
   it("gives an unknown surface no implicit location rule", async () => {

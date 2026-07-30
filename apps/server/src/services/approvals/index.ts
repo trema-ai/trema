@@ -338,7 +338,7 @@ export async function requestApproval(
       await transaction.auditLog.create({
         data: {
           orgId: input.orgId,
-          actorPrincipalId: session.actingPrincipalId,
+          actorPrincipalId: session.agentPrincipalId,
           action: "approval.request",
           subject: created.id,
           payload: {
