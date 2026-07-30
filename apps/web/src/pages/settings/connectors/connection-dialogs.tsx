@@ -13,18 +13,28 @@ import {
 } from "#web/components/ui/dialog.tsx";
 import { Input } from "#web/components/ui/input.tsx";
 import { Label } from "#web/components/ui/label.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "#web/components/ui/select.tsx";
 import { rpcClient } from "#web/lib/api.ts";
+import { scopeDisplayName } from "#web/lib/scopes.ts";
 import {
   type CatalogProvider,
   type ConnectorConnection,
   type FieldDescriptor,
   messageFrom,
+  type Scope,
 } from "#web/pages/settings/connectors/shared.tsx";
 
 function returnUrl() {
   const url = new URL(window.location.href);
   url.searchParams.delete("connected");
   url.searchParams.delete("connector_error");
+  url.searchParams.delete("connector_status");
   return url.toString();
 }
 
@@ -155,12 +165,16 @@ export function OAuthConnectionDialog({
   provider,
   reconnect,
   audience = "admin",
+  scopes = [],
+  defaultScopeId,
   open,
   onOpenChange,
 }: {
   provider: CatalogProvider;
   reconnect?: ConnectorConnection | undefined;
   audience?: "admin" | "member";
+  scopes?: Scope[];
+  defaultScopeId?: string | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -168,12 +182,19 @@ export function OAuthConnectionDialog({
     ? reconnect.providerScopes
     : provider.defaultScopes;
   const [selectedScopes, setSelectedScopes] = useState<string[]>(defaultScopes);
+  const [targetScopeId, setTargetScopeId] = useState(
+    defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
+  );
   useEffect(() => {
-    if (open) setSelectedScopes(defaultScopes);
-  }, [open, defaultScopes]);
+    if (!open) return;
+    setSelectedScopes(defaultScopes);
+    setTargetScopeId(
+      defaultScopeId ?? scopes.find((scope) => scope.kind === "org")?.id ?? scopes[0]?.id ?? "",
+    );
+  }, [open, defaultScopes, defaultScopeId, scopes]);
   const start = useMutation({
     mutationFn: (config: Record<string, string>) => {
-      const input = {
+      const sharedInput = {
         providerKey: provider.key,
         ...(Object.keys(config).length > 0 ? { config } : {}),
         ...(provider.availableScopes ? { providerScopes: selectedScopes } : {}),
@@ -181,8 +202,11 @@ export function OAuthConnectionDialog({
         returnTo: returnUrl(),
       };
       return audience === "member"
-        ? rpcClient.connectors.member.connect.startOAuth(input)
-        : rpcClient.connectors.connect.startOAuth(input);
+        ? rpcClient.connectors.member.connect.startOAuth(sharedInput)
+        : rpcClient.connectors.connect.startOAuth({
+            ...sharedInput,
+            scopeId: targetScopeId,
+          });
     },
     onSuccess: ({ authorizationUrl }) => window.location.assign(authorizationUrl),
     onError: (error) => toast.error(messageFrom(error)),
@@ -208,6 +232,26 @@ export function OAuthConnectionDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="my-5 space-y-4">
+            {audience === "admin" ? (
+              <div className="space-y-2">
+                <Label htmlFor={`oauth-target-${provider.key}`}>Available in</Label>
+                <Select value={targetScopeId} onValueChange={setTargetScopeId}>
+                  <SelectTrigger id={`oauth-target-${provider.key}`} className="w-full">
+                    <SelectValue placeholder="Choose a scope" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {scopes.map((scope) => (
+                      <SelectItem key={scope.id} value={scope.id}>
+                        {scopeDisplayName(scope)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-meta text-muted-foreground">
+                  The callback installs this connection in the selected scope.
+                </p>
+              </div>
+            ) : null}
             {Object.entries(provider.configFields).map(([name, descriptor]) =>
               fieldInput(provider.key, name, descriptor, "config"),
             )}
@@ -248,7 +292,7 @@ export function OAuthConnectionDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button disabled={start.isPending}>
+            <Button disabled={start.isPending || (audience === "admin" && !targetScopeId)}>
               {start.isPending ? "Redirecting…" : reconnect ? "Reconnect" : "Continue"}
             </Button>
           </DialogFooter>

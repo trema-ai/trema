@@ -154,10 +154,10 @@ export function SettingsConnectorsPage() {
           onOpenChange={(next) => {
             if (!next) setStaticProvider(undefined);
           }}
-          onConnected={(connectionId) => {
+          onConnected={() => {
             const key = staticProvider.key;
             setStaticProvider(undefined);
-            navigate(`/settings/connectors/${key}?connected=${connectionId}`);
+            navigate(`/settings/connectors/${key}`);
           }}
         />
       ) : null}

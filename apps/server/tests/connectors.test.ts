@@ -19,12 +19,14 @@ import {
   completeOAuthCallback,
   consumeOAuthState,
   createClientRegistration,
+  createConnectorInstallation,
   createStaticConnection,
   hashOAuthState,
   listConnectorConnections,
   type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
+  OAuthTokenExchangeError,
   StaticCredentialValidationError,
   startOAuthConnect,
   UnsupportedConnectorAuthModeError,
@@ -200,6 +202,12 @@ integration("connector connection flows", () => {
     });
     const started = await startOAuthConnect(db, {
       orgId,
+      scopeId: (
+        await db.scope.findFirstOrThrow({
+          where: { orgId, kind: "org" },
+          select: { id: true },
+        })
+      ).id,
       ownerPrincipalId: agent.id,
       initiatedByPrincipalId: initiator.id,
       providerKey: "github",
@@ -226,6 +234,12 @@ integration("connector connection flows", () => {
     });
     const started = await startOAuthConnect(db, {
       orgId,
+      scopeId: (
+        await db.scope.findFirstOrThrow({
+          where: { orgId, kind: "org" },
+          select: { id: true },
+        })
+      ).id,
       ownerPrincipalId: agent.id,
       initiatedByPrincipalId: initiator.id,
       providerKey: "google_workspace",
@@ -242,6 +256,7 @@ integration("connector connection flows", () => {
     const started = await call(
       connectorsRouter.connect.startOAuth,
       {
+        scopeId: org.orgScope.id,
         providerKey: "github",
         returnTo: "https://app.trema.example/settings/connectors/github",
         providerScopes: ["repo", "read:org"],
@@ -254,6 +269,7 @@ integration("connector connection flows", () => {
     });
     expect(pending).toMatchObject({
       orgId: org.org.id,
+      scopeId: org.orgScope.id,
       providerKey: "github",
       ownerPrincipalId: org.agent.id,
       initiatedByPrincipalId: org.principal.id,
@@ -275,6 +291,30 @@ integration("connector connection flows", () => {
       providerKey: "github",
       ownerPrincipalId: org.agent.id,
       providerScopes: ["repo", "read:org"],
+    });
+    expect(completed.installation).toMatchObject({
+      scopeId: org.orgScope.id,
+      body: {
+        catalogKey: "github",
+        connectionId: completed.connection.id,
+        enabledTools: "all",
+      },
+    });
+    await expect(
+      db.auditLog.findFirstOrThrow({
+        where: {
+          orgId: org.org.id,
+          action: "connector.oauth.callback",
+          subject: completed.connection.id,
+        },
+      }),
+    ).resolves.toMatchObject({
+      actorPrincipalId: org.principal.id,
+      payload: {
+        credentialOwnerPrincipalId: org.agent.id,
+        initiatedByPrincipalId: org.principal.id,
+        scopeId: org.orgScope.id,
+      },
     });
     const stored = await db.connectorConnection.findUniqueOrThrow({
       where: { id: completed.connection.id },
@@ -325,10 +365,28 @@ integration("connector connection flows", () => {
       }),
     ).resolves.toMatchObject({
       orgId: org.org.id,
+      scopeId: member.personalScope.id,
       providerKey: "github",
       ownerPrincipalId: member.principal.id,
       initiatedByPrincipalId: member.principal.id,
       connectionId: null,
+    });
+
+    const completed = await completeOAuthCallback(db, {
+      state,
+      code: "personal-authorization-code",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      catalog: oauthCatalog,
+      fetch: tokenFetch(),
+    });
+    expect(completed.installation).toMatchObject({
+      scopeId: member.personalScope.id,
+      body: {
+        catalogKey: "github",
+        connectionId: completed.connection.id,
+        enabledTools: "all",
+      },
     });
   });
 
@@ -379,6 +437,7 @@ integration("connector connection flows", () => {
     expect(byKey.get("stripe")?.supportsPersonalOAuth).toBe(false);
     expect(connectorsRouter).not.toHaveProperty("providers");
     expect(connectorsRouter.member.connect).not.toHaveProperty("createStatic");
+    expect(connectorsRouter.member).not.toHaveProperty("installations");
   });
 
   it("enforces organization ownership for app OAuth and static credentials", async () => {
@@ -387,6 +446,7 @@ integration("connector connection flows", () => {
     await expect(
       startOAuthConnect(db, {
         orgId: org.org.id,
+        scopeId: org.orgScope.id,
         ownerPrincipalId: org.principal.id,
         initiatedByPrincipalId: org.principal.id,
         providerKey: "slack",
@@ -414,15 +474,13 @@ integration("connector connection flows", () => {
     const other = await addMember(org.org.id, org.orgScope.id, "Other Connection Member");
     const ownConnection = await storedConnection(org.org.id, member.principal.id);
     const otherConnection = await storedConnection(org.org.id, other.principal.id);
-    const installation = await call(
-      connectorsRouter.member.installations.create,
-      {
-        scopeId: member.personalScope.id,
-        catalogKey: "github",
-        connectionId: ownConnection.id,
-      },
-      { context: member.context },
-    );
+    const installation = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: member.principal.id,
+      scopeId: member.personalScope.id,
+      catalogKey: "github",
+      connectionId: ownConnection.id,
+    });
 
     const listed = await call(
       connectorsRouter.member.connections.list,
@@ -497,6 +555,60 @@ integration("connector connection flows", () => {
     await expect(
       db.connectorConnection.findUnique({ where: { id: connectionId! } }),
     ).resolves.not.toBeNull();
+  });
+
+  it("revalidates shared-scope authorization before callback provisioning", async () => {
+    const org = await createOrg();
+    const shared = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Support" },
+    });
+    const started = await call(
+      connectorsRouter.connect.startOAuth,
+      {
+        scopeId: shared.id,
+        providerKey: "github",
+        returnTo: "https://app.trema.example/settings/connectors/github",
+      },
+      { context: org.context },
+    );
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await db.grant.deleteMany({
+      where: { orgId: org.org.id, principalId: org.principal.id },
+    });
+
+    await expect(
+      completeOAuthCallback(db, {
+        state,
+        code: "authorization-code",
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: oauthCatalog,
+        fetch: tokenFetch(),
+      }),
+    ).rejects.toThrow("no longer authorized");
+    await expect(db.connectorConnection.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
+    await expect(
+      db.item.count({ where: { orgId: org.org.id, scopeId: shared.id, kind: "connector" } }),
+    ).resolves.toBe(0);
+  });
+
+  it("does not activate an installation when the OAuth callback fails", async () => {
+    const org = await createOrg();
+    const state = await start(org.org.id);
+    await expect(
+      completeOAuthCallback(db, {
+        state,
+        code: "authorization-code",
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: oauthCatalog,
+        fetch: async () => new Response("denied", { status: 401 }),
+      }),
+    ).rejects.toBeInstanceOf(OAuthTokenExchangeError);
+    await expect(
+      db.item.count({ where: { orgId: org.org.id, kind: "connector", status: "active" } }),
+    ).resolves.toBe(0);
+    await expect(db.connectorConnection.count({ where: { orgId: org.org.id } })).resolves.toBe(0);
   });
 
   it("completes dynamic MCP OAuth, redirects with the connection, and syncs installation tools", async () => {
@@ -600,6 +712,7 @@ integration("connector connection flows", () => {
     const started = await startOAuthConnect(db, {
       orgId: org.org.id,
       ownerPrincipalId: org.agent.id,
+      scopeId: org.orgScope.id,
       initiatedByPrincipalId: org.principal.id,
       providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
@@ -620,6 +733,7 @@ integration("connector connection flows", () => {
       orgId: org.org.id,
       providerKey: "notion",
       ownerPrincipalId: org.agent.id,
+      scopeId: org.orgScope.id,
       initiatedByPrincipalId: org.principal.id,
       connectionId: null,
       config: {},
@@ -636,7 +750,23 @@ integration("connector connection flows", () => {
       tokenEndpointAuthMethod: "client_secret_post",
     });
 
-    const app = createApp({ db, auth, env, connectorFetch });
+    const clientFactory = vi.fn(async ({ serverUrl, authorization }) => {
+      expect(serverUrl).toBe(mcpServerUrl);
+      expect(authorization).toBe("Bearer notion-access-token");
+      return {
+        listTools: async () => ({
+          tools: [
+            {
+              name: "notion-search",
+              description: "Search the connected Notion workspace",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+        close: async () => {},
+      };
+    }) satisfies McpClientFactory;
+    const app = createApp({ db, auth, env, connectorFetch, mcpClientFactory: clientFactory });
     const callback = await app.request(
       `https://auth.trema.example/connect/callback?state=${encodeURIComponent(state!)}&code=notion-authorization-code`,
     );
@@ -667,6 +797,7 @@ integration("connector connection flows", () => {
     const duplicateStarted = await startOAuthConnect(db, {
       orgId: org.org.id,
       ownerPrincipalId: org.agent.id,
+      scopeId: org.orgScope.id,
       initiatedByPrincipalId: org.principal.id,
       providerKey: "notion",
       authBaseUrl: env.TREMA_AUTH_BASE_URL,
@@ -684,6 +815,7 @@ integration("connector connection flows", () => {
 
     const reconnectStarted = await startOAuthConnect(db, {
       orgId: org.org.id,
+      scopeId: org.orgScope.id,
       ownerPrincipalId: org.agent.id,
       initiatedByPrincipalId: org.principal.id,
       providerKey: "notion",
@@ -709,32 +841,14 @@ integration("connector connection flows", () => {
       db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "notion" } }),
     ).resolves.toBe(1);
 
-    const clientFactory = vi.fn(async ({ serverUrl, authorization }) => {
-      expect(serverUrl).toBe(mcpServerUrl);
-      expect(authorization).toBe("Bearer notion-access-token");
-      return {
-        listTools: async () => ({
-          tools: [
-            {
-              name: "notion-search",
-              description: "Search the connected Notion workspace",
-              annotations: { readOnlyHint: true },
-            },
-          ],
-        }),
-        close: async () => {},
-      };
-    }) satisfies McpClientFactory;
-    const installation = await call(
-      connectorsRouter.installations.create,
-      {
+    const installation = await db.item.findFirstOrThrow({
+      where: {
+        orgId: org.org.id,
         scopeId: orgScope.id,
-        catalogKey: "notion",
-        connectionId: connectionId!,
-        enabledTools: "all",
+        kind: "connector",
+        status: "active",
       },
-      { context: { ...org.context, mcpClientFactory: clientFactory } },
-    );
+    });
     const storedInstallation = await db.item.findUniqueOrThrow({
       where: { orgId_id: { orgId: org.org.id, id: installation.id } },
     });
@@ -750,7 +864,7 @@ integration("connector connection flows", () => {
         },
       ],
     });
-    expect(clientFactory).toHaveBeenCalledOnce();
+    expect(clientFactory).toHaveBeenCalledTimes(3);
   });
 
   it("reconnects in place and clears revocation and refresh exhaustion", async () => {
@@ -763,6 +877,16 @@ integration("connector connection flows", () => {
       masterKey,
       catalog: oauthCatalog,
       fetch: tokenFetch(),
+    });
+    await db.item.update({
+      where: { orgId_id: { orgId: org.org.id, id: first.installation.id } },
+      data: {
+        body: {
+          catalogKey: "github",
+          connectionId: first.connection.id,
+          enabledTools: [],
+        },
+      },
     });
     await db.connectorConnection.update({
       where: { id: first.connection.id },
@@ -795,6 +919,8 @@ integration("connector connection flows", () => {
       }),
     });
     expect(second.connection.id).toBe(first.connection.id);
+    expect(second.installation.id).toBe(first.installation.id);
+    expect(second.installation.body).toMatchObject({ enabledTools: [] });
     await expect(
       db.connectorConnection.findUniqueOrThrow({ where: { id: first.connection.id } }),
     ).resolves.toMatchObject({
@@ -933,6 +1059,20 @@ integration("connector connection flows", () => {
       authMode: "api_key",
       config: {},
     });
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: created.installationId } },
+      }),
+    ).resolves.toMatchObject({
+      scopeId: org.orgScope.id,
+      kind: "connector",
+      status: "active",
+      body: {
+        catalogKey: "stripe",
+        connectionId: created.id,
+        enabledTools: "all",
+      },
+    });
 
     const listed = await call(
       connectorsRouter.connections.list,
@@ -1031,6 +1171,7 @@ integration("connector connection flows", () => {
 
     const expired = await startOAuthConnect(db, {
       orgId: org.org.id,
+      scopeId: org.orgScope.id,
       ownerPrincipalId: org.agent.id,
       initiatedByPrincipalId: org.principal.id,
       providerKey: "github",

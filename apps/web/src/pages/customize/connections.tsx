@@ -107,24 +107,6 @@ export function ConnectionsTab({
     ]);
   }, [queryClient]);
 
-  const bind = useMutation({
-    mutationFn: (input: { connectionId: string; catalogKey: string }) =>
-      rpcClient.connectors.member.installations.create({
-        scopeId: scope.id,
-        catalogKey: input.catalogKey,
-        connectionId: input.connectionId,
-      }),
-    onSuccess: async () => {
-      await invalidateConnections();
-      removeSearchParam("connected");
-      toast.success("Connection added to your personal scope");
-    },
-    onError: (error) => {
-      removeSearchParam("connected");
-      toast.error(messageFrom(error));
-    },
-  });
-
   useEffect(() => {
     const connectorError = searchParams.get("connector_error");
     if (!connectorError) return;
@@ -137,45 +119,20 @@ export function ConnectionsTab({
       handledCallback.current = undefined;
       return;
     }
-    if (
-      !ownPersonal ||
-      memberConnections.isPending ||
-      memberConnections.isError ||
-      handledCallback.current === connectedId
-    ) {
-      return;
-    }
+    if (!ownPersonal || handledCallback.current === connectedId) return;
     handledCallback.current = connectedId;
-    const connection = connectionRows.find((candidate) => candidate.id === connectedId);
-    if (!connection) {
-      removeSearchParam("connected");
-      toast.error("Connected account was not found");
-      return;
-    }
-    if (connection.installations.some((installation) => installation.scopeId === scope.id)) {
-      removeSearchParam("connected");
-      toast.success(
-        `${entryByKey.get(connection.providerKey)?.displayName ?? "Connection"} reconnected`,
-      );
-      void invalidateConnections();
-      return;
-    }
-    bind.mutate({
-      connectionId: connection.id,
-      catalogKey: connection.providerKey,
-    });
-  }, [
-    connectedId,
-    bind.mutate,
-    connectionRows,
-    entryByKey,
-    invalidateConnections,
-    memberConnections.isError,
-    memberConnections.isPending,
-    ownPersonal,
-    removeSearchParam,
-    scope.id,
-  ]);
+    const setupStatus = searchParams.get("connector_status");
+    removeSearchParam("connected");
+    removeSearchParam("connector_status");
+    void invalidateConnections();
+    toast.success(
+      setupStatus === "syncing"
+        ? "Connection added; connector tools are still syncing"
+        : setupStatus === "sync_failed"
+          ? "Connection added; connector tool sync needs attention"
+          : "Connection added to your personal scope",
+    );
+  }, [connectedId, invalidateConnections, ownPersonal, removeSearchParam, searchParams]);
 
   if (loading || catalog.isPending || (ownPersonal && memberConnections.isPending)) {
     return (
@@ -221,14 +178,7 @@ export function ConnectionsTab({
                   key={connection.id}
                   provider={provider}
                   connection={connection}
-                  personalScopeId={scope.id}
                   onReconnect={() => setSelection({ provider, reconnect: connection })}
-                  onBind={() =>
-                    bind.mutate({
-                      connectionId: connection.id,
-                      catalogKey: connection.providerKey,
-                    })
-                  }
                   onChanged={invalidateConnections}
                 />
               ) : null;
@@ -412,16 +362,12 @@ function AvailableConnectionCard({
 function PersonalConnectionRow({
   provider,
   connection,
-  personalScopeId,
   onReconnect,
-  onBind,
   onChanged,
 }: {
   provider: CatalogProvider;
   connection: ConnectorConnection;
-  personalScopeId: string;
   onReconnect: () => void;
-  onBind: () => void;
   onChanged: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState(false);
@@ -435,9 +381,6 @@ function PersonalConnectionRow({
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
-  const isBound = connection.installations.some(
-    (installation) => installation.scopeId === personalScopeId,
-  );
   const statusLabel = connection.isRevoked
     ? "Revoked"
     : connection.isExpired
@@ -479,11 +422,6 @@ function PersonalConnectionRow({
             ) : null}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {connection.isValid && !isBound ? (
-              <Button size="xs" variant="outline" onClick={onBind}>
-                Finish setup
-              </Button>
-            ) : null}
             {!connection.isValid ? (
               <Button size="xs" variant="outline" onClick={onReconnect}>
                 <RefreshCw />

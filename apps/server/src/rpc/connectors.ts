@@ -383,6 +383,19 @@ const createInstallation = requireCapability("manage_connectors", {
   .output(installationSchema)
   .handler(async ({ context, input }) => {
     try {
+      const scope = await context.db.scope.findFirst({
+        where: {
+          id: input.scopeId,
+          orgId: context.org.id,
+          kind: { in: ["org", "shared"] },
+        },
+        select: { id: true },
+      });
+      if (!scope) {
+        throw new ORPCError("FORBIDDEN", {
+          message: "Organization connector installations require an organization or shared scope",
+        });
+      }
       return serializeInstallation(
         await createConnectorInstallation(context.db, {
           orgId: context.org.id,
@@ -618,7 +631,9 @@ const meta = requireCapability("manage_connectors")
     callbackUrl: connectorCallbackUrl(context.env.TREMA_AUTH_BASE_URL),
   }));
 
-const startOAuth = requireCapability("manage_connectors")
+const startOAuth = requireCapability("manage_connectors", {
+  scopeId: (input) => (input as { scopeId?: string }).scopeId,
+})
   .route({
     method: "POST",
     path: "/connector-connections/oauth",
@@ -629,6 +644,7 @@ const startOAuth = requireCapability("manage_connectors")
   })
   .input(
     z.object({
+      scopeId: z.uuid(),
       providerKey: z.string().trim().min(1),
       config: configSchema.optional(),
       providerScopes: z.array(z.string().trim().min(1)).optional(),
@@ -647,6 +663,7 @@ const startOAuth = requireCapability("manage_connectors")
       const ownerPrincipalId = await orgAgentPrincipalId(context.db, context.org.id);
       return await startOAuthConnect(context.db, {
         orgId: context.org.id,
+        scopeId: input.scopeId,
         ownerPrincipalId,
         initiatedByPrincipalId: context.principal.id,
         providerKey: input.providerKey,
@@ -687,10 +704,21 @@ const createStatic = requireCapability("manage_connectors")
       reconnectConnectionId: z.uuid().optional(),
     }),
   )
-  .output(z.object({ id: z.uuid() }))
+  .output(
+    z.object({
+      id: z.uuid(),
+      installationId: z.uuid(),
+      setupStatus: z.enum(["ready", "syncing", "sync_failed"]),
+    }),
+  )
   .handler(async ({ context, input }) => {
     try {
       const ownerPrincipalId = await orgAgentPrincipalId(context.db, context.org.id);
+      const orgScope = await context.db.scope.findFirst({
+        where: { orgId: context.org.id, kind: "org" },
+        select: { id: true },
+      });
+      if (!orgScope) throw new ConnectorInstallationError("Organization scope not found");
       const connection = await createStaticConnection(context.db, {
         orgId: context.org.id,
         ownerPrincipalId,
@@ -705,8 +733,16 @@ const createStatic = requireCapability("manage_connectors")
           ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
           : {}),
         ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+        installation: {
+          actorPrincipalId: context.principal.id,
+          scopeId: orgScope.id,
+        },
       });
-      return { id: connection.id };
+      return {
+        id: connection.id,
+        installationId: connection.installation.id,
+        setupStatus: connection.setupStatus,
+      };
     } catch (error) {
       throwConnectorError(error);
     }
@@ -812,8 +848,22 @@ const memberStartOAuth = orgScoped
     });
     try {
       requirePersonalOAuthProvider(input.providerKey);
+      const personalScope = await context.db.scope.findFirst({
+        where: {
+          orgId: context.org.id,
+          kind: "personal",
+          ownerId: context.principal.id,
+        },
+        select: { id: true },
+      });
+      if (!personalScope) {
+        throw new ORPCError("FORBIDDEN", {
+          message: "A personal scope is required to connect this provider",
+        });
+      }
       return await startOAuthConnect(context.db, {
         orgId: context.org.id,
+        scopeId: personalScope.id,
         ownerPrincipalId: context.principal.id,
         initiatedByPrincipalId: context.principal.id,
         providerKey: input.providerKey,
@@ -883,62 +933,6 @@ const memberRevokeConnection = orgScoped
     }
   });
 
-const memberCreateInstallation = orgScoped
-  .route({
-    method: "POST",
-    path: "/member/connector-installations",
-    summary: "Create a personal connector installation",
-    description:
-      "Bind one of the caller's connections into the caller's personal scope with all tools enabled.",
-    tags: ["Connectors"],
-  })
-  .input(
-    z.object({
-      scopeId: z.uuid(),
-      catalogKey: z.string().trim().min(1),
-      connectionId: z.uuid(),
-    }),
-  )
-  .output(installationSchema)
-  .handler(async ({ context, input }) => {
-    try {
-      requirePersonalOAuthProvider(input.catalogKey);
-      const scope = await context.db.scope.findFirst({
-        where: {
-          id: input.scopeId,
-          orgId: context.org.id,
-          kind: "personal",
-          ownerId: context.principal.id,
-        },
-        select: { id: true },
-      });
-      if (!scope) {
-        throw new ORPCError("FORBIDDEN", {
-          message: "Members may only install connectors in their own personal scope",
-        });
-      }
-      return serializeInstallation(
-        await createConnectorInstallation(context.db, {
-          orgId: context.org.id,
-          actorPrincipalId: context.principal.id,
-          scopeId: scope.id,
-          catalogKey: input.catalogKey,
-          connectionId: input.connectionId,
-          enabledTools: "all",
-          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-            : {}),
-          ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
-          ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
-          ...(context.platformApps ? { platformApps: context.platformApps } : {}),
-        }),
-      );
-    } catch (error) {
-      if (error instanceof ORPCError) throw error;
-      throwConnectorError(error);
-    }
-  });
-
 export const connectorsRouter = {
   meta,
   catalog: { list: catalog },
@@ -959,6 +953,5 @@ export const connectorsRouter = {
   member: {
     connect: { startOAuth: memberStartOAuth },
     connections: { list: memberListConnections, revoke: memberRevokeConnection },
-    installations: { create: memberCreateInstallation },
   },
 };

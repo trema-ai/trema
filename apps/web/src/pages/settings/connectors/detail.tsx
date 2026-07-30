@@ -8,7 +8,7 @@ import {
   Trash2,
   Unplug,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
@@ -112,6 +112,14 @@ export function SettingsConnectorDetailPage() {
     registrations.isPending ||
     meta.isPending;
 
+  const invalidate = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: orpc.connectors.connections.list.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.connectors.installations.list.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.connectors.catalog.list.key() }),
+    ]);
+  }, [queryClient]);
+
   useEffect(() => {
     const connectorError = searchParams.get("connector_error");
     if (connectorError) {
@@ -126,16 +134,27 @@ export function SettingsConnectorDetailPage() {
       );
     }
     const connected = searchParams.get("connected");
-    if (connected) setBindConnectionId(connected);
-  }, [searchParams, setSearchParams]);
-
-  async function invalidate() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: orpc.connectors.connections.list.key() }),
-      queryClient.invalidateQueries({ queryKey: orpc.connectors.installations.list.key() }),
-      queryClient.invalidateQueries({ queryKey: orpc.connectors.catalog.list.key() }),
-    ]);
-  }
+    if (connected) {
+      const setupStatus = searchParams.get("connector_status");
+      toast.success(
+        setupStatus === "syncing"
+          ? "Connected; connector tools are still syncing"
+          : setupStatus === "sync_failed"
+            ? "Connected; connector tool sync needs attention"
+            : "Connected and added to scope",
+      );
+      void invalidate();
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.delete("connected");
+          next.delete("connector_status");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [invalidate, searchParams, setSearchParams]);
 
   if (pending) {
     return (
@@ -214,6 +233,13 @@ export function SettingsConnectorDetailPage() {
         <OAuthConnectionDialog
           provider={provider}
           reconnect={reconnect}
+          scopes={scopeRows}
+          defaultScopeId={
+            reconnect
+              ? installationRows.find((installation) => installation.connectionId === reconnect.id)
+                  ?.scopeId
+              : scopeRows.find((scope) => scope.kind === "org")?.id
+          }
           open={connectOpen}
           onOpenChange={(next) => {
             setConnectOpen(next);
@@ -229,9 +255,8 @@ export function SettingsConnectorDetailPage() {
           setStaticOpen(next);
           if (!next) setReconnect(undefined);
         }}
-        onConnected={(connectionId) => {
+        onConnected={() => {
           void invalidate();
-          if (!reconnect) setBindConnectionId(connectionId);
         }}
       />
       <ScopeBindingDialog

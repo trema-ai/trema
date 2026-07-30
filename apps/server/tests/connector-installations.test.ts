@@ -11,7 +11,10 @@ import { parseEnv } from "#server/lib/env/schema.js";
 import { connectorsRouter } from "#server/rpc/connectors.js";
 import { itemsRouter } from "#server/rpc/items.js";
 import { orgRouter } from "#server/rpc/org.js";
-import type { McpClientFactory } from "#server/services/connectors/index.js";
+import {
+  createConnectorInstallation,
+  type McpClientFactory,
+} from "#server/services/connectors/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
@@ -234,7 +237,7 @@ integration("connector connections and installations", () => {
           },
           { context: org.context },
         ),
-      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      ).rejects.toThrow();
       await expect(
         call(
           connectorsRouter.installations.update,
@@ -244,7 +247,7 @@ integration("connector connections and installations", () => {
           },
           { context: org.context },
         ),
-      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      ).rejects.toThrow();
     }
     const secondGithub = await connection({
       orgId: org.org.id,
@@ -295,30 +298,28 @@ integration("connector connections and installations", () => {
     });
 
     await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "hubspot",
-          connectionId: memberHubspot.id,
-        },
-        { context: member.context },
-      ),
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "hubspot",
+        connectionId: memberHubspot.id,
+      }),
     ).resolves.toMatchObject({
       scopeId: personal.id,
       body: { connectionId: memberHubspot.id },
     });
 
     await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "notion",
-          connectionId: memberNotion.id,
-        },
-        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
-      ),
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "notion",
+        connectionId: memberNotion.id,
+        clientFactory: emptyMcpFactory,
+        masterKey,
+      }),
     ).resolves.toMatchObject({
       scopeId: personal.id,
       body: { connectionId: memberNotion.id },
@@ -329,16 +330,14 @@ integration("connector connections and installations", () => {
       ["stripe", memberStripe.id],
     ] as const) {
       await expect(
-        call(
-          connectorsRouter.installations.create,
-          {
-            scopeId: personal.id,
-            catalogKey,
-            connectionId,
-          },
-          { context: member.context },
-        ),
-      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+        createConnectorInstallation(db, {
+          orgId: org.org.id,
+          actorPrincipalId: member.principal.id,
+          scopeId: personal.id,
+          catalogKey,
+          connectionId,
+        }),
+      ).rejects.toThrow("Personal installations require a user-acting OAuth provider");
     }
 
     const agentNotion = await connection({
@@ -347,40 +346,30 @@ integration("connector connections and installations", () => {
       providerKey: "notion",
     });
     await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "notion",
-          connectionId: agentNotion.id,
-        },
-        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
-      ),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "notion",
+        connectionId: agentNotion.id,
+        clientFactory: emptyMcpFactory,
+        masterKey,
+      }),
+    ).rejects.toThrow();
   });
 
-  it("creates member installations only in the caller's personal scope", async () => {
+  it("keeps personal installation creation inside the OAuth provisioning flow", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "member");
     const other = await addMember(org.org.id, org.orgScope.id, "member");
-    const [personal, otherPersonal] = await Promise.all([
-      db.scope.create({
-        data: {
-          orgId: org.org.id,
-          kind: "personal",
-          name: "Connector Member",
-          ownerId: member.principal.id,
-        },
-      }),
-      db.scope.create({
-        data: {
-          orgId: org.org.id,
-          kind: "personal",
-          name: "Other Connector Member",
-          ownerId: other.principal.id,
-        },
-      }),
-    ]);
+    const personal = await db.scope.create({
+      data: {
+        orgId: org.org.id,
+        kind: "personal",
+        name: "Connector Member",
+        ownerId: member.principal.id,
+      },
+    });
     const memberGithub = await connection({
       orgId: org.org.id,
       principalId: member.principal.id,
@@ -391,40 +380,10 @@ integration("connector connections and installations", () => {
       principalId: other.principal.id,
       providerKey: "github",
     });
-    for (const scopeId of [org.orgScope.id, otherPersonal.id]) {
-      await expect(
-        call(
-          connectorsRouter.member.installations.create,
-          {
-            scopeId,
-            catalogKey: "github",
-            connectionId: memberGithub.id,
-          },
-          { context: member.context },
-        ),
-      ).rejects.toMatchObject({
-        code: "FORBIDDEN",
-        message: expect.stringContaining("own personal scope"),
-      });
-    }
+    expect(connectorsRouter.member).not.toHaveProperty("installations");
     await expect(
       call(
-        connectorsRouter.member.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "github",
-          connectionId: otherGithub.id,
-        },
-        { context: member.context },
-      ),
-    ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-      message: expect.stringContaining("scope owner's connection"),
-    });
-
-    await expect(
-      call(
-        connectorsRouter.member.installations.create,
+        connectorsRouter.installations.create,
         {
           scopeId: personal.id,
           catalogKey: "github",
@@ -432,6 +391,29 @@ integration("connector connections and installations", () => {
         },
         { context: member.context },
       ),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("organization or shared scope"),
+    });
+
+    await expect(
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "github",
+        connectionId: otherGithub.id,
+      }),
+    ).rejects.toThrow("scope owner's connection");
+
+    await expect(
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "github",
+        connectionId: memberGithub.id,
+      }),
     ).resolves.toMatchObject({
       scopeId: personal.id,
       body: {

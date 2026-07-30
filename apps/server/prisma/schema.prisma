@@ -341,25 +341,26 @@ model IdentityLink {
 /// Personal-scope uniqueness is enforced by the DB-level partial unique index
 /// `Scope_one_personal_per_owner` on (orgId, ownerId) where kind = 'personal'.
 model Scope {
-  id            String           @id @default(uuid(7))
-  orgId         String
-  kind          ScopeKind
-  name          String
-  ownerId       String?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  org           Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  owner         Principal?       @relation("ScopeOwner", fields: [orgId, ownerId], references: [orgId, id], onDelete: Restrict)
-  grants        Grant[]
-  policies      Policy[]
-  approvals     Approval[]
-  toolGrants    ToolGrant[]
-  invites       Invite[]
-  bindings      Binding[]
-  items         Item[]
-  sessions      ContextSession[]
-  conversations Conversation[]
-  schedules     Schedule[]
+  id                   String                @id @default(uuid(7))
+  orgId                String
+  kind                 ScopeKind
+  name                 String
+  ownerId              String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  org                  Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner                Principal?            @relation("ScopeOwner", fields: [orgId, ownerId], references: [orgId, id], onDelete: Restrict)
+  grants               Grant[]
+  policies             Policy[]
+  approvals            Approval[]
+  toolGrants           ToolGrant[]
+  invites              Invite[]
+  bindings             Binding[]
+  items                Item[]
+  sessions             ContextSession[]
+  conversations        Conversation[]
+  schedules            Schedule[]
+  connectorOAuthStates ConnectorOAuthState[]
 
   @@unique([orgId, id])
   @@index([orgId, ownerId])
@@ -957,6 +958,7 @@ model ConnectorConnection {
 model ConnectorOAuthState {
   id                     String               @id @default(uuid(7))
   orgId                  String
+  scopeId                String
   providerKey            String
   registrationId         String
   connectionId           String?
@@ -977,12 +979,14 @@ model ConnectorOAuthState {
   expiresAt              DateTime
   createdAt              DateTime             @default(now())
   org                    Org                  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope                  Scope                @relation(fields: [orgId, scopeId], references: [orgId, id], onDelete: Cascade)
   registration           ClientRegistration   @relation(fields: [orgId, registrationId], references: [orgId, id], onDelete: Cascade)
   connection             ConnectorConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
   owner                  Principal            @relation("ConnectorOAuthStateOwner", fields: [orgId, ownerPrincipalId], references: [orgId, id], onDelete: Cascade)
   initiatedBy            Principal            @relation("ConnectorOAuthStateInitiator", fields: [orgId, initiatedByPrincipalId], references: [orgId, id], onDelete: Cascade)
 
   @@index([orgId, registrationId])
+  @@index([orgId, scopeId])
   @@index([connectionId])
   @@index([orgId, ownerPrincipalId])
   @@index([orgId, initiatedByPrincipalId])

@@ -1,4 +1,4 @@
-import type { Principal, Role } from "#server/generated/prisma/client.js";
+import type { Principal, Prisma, Role } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 
@@ -95,7 +95,7 @@ export type AuthorizePrincipal = Pick<Principal, "id" | "orgId" | "kind">;
 export async function effectiveRolesAtScope(
   principal: AuthorizePrincipal,
   scopeId: string,
-  db: Database,
+  db: Database | Prisma.TransactionClient,
 ): Promise<Role[]> {
   if (principal.kind === "agent") return [];
 
@@ -138,7 +138,7 @@ export async function authorize(
   principal: AuthorizePrincipal,
   capability: Capability,
   scopeId: string,
-  db: Database,
+  db: Database | Prisma.TransactionClient,
 ): Promise<boolean> {
   if (principal.kind === "agent") {
     log.debug("Authorization denied", { capability, reason: "agent_principal" });
