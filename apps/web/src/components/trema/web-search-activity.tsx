@@ -191,13 +191,13 @@ export function WebSearchActivity({
         aria-hidden="true"
         className={cn(
           "size-3.5 shrink-0",
-          state === "error" || state === "denied" ? "text-destructive" : "text-muted-foreground",
+          state === "error" || state === "denied" ? "text-destructive" : "",
         )}
       />
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      <span className="flex min-w-0 flex-1 items-baseline gap-1">
         <span
           className={cn(
-            "shrink-0 text-chrome font-medium",
+            "shrink-0 text-sm",
             (state === "error" || state === "denied") && "text-destructive",
           )}
         >

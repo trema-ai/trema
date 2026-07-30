@@ -462,7 +462,7 @@ async function callSearchProvider(
       url.searchParams.set("q", input.query);
       url.searchParams.set("format", "json");
       url.searchParams.set("safesearch", "1");
-      if (input.recency && input.recency !== "week") {
+      if (input.recency) {
         url.searchParams.set("time_range", input.recency);
       }
       response = await fetchImpl(url, {

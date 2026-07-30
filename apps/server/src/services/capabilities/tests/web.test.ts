@@ -255,7 +255,11 @@ describe("web capabilities", () => {
           { masterKey, providerFetch: providerFetch as typeof fetch },
         ),
       ).resolves.toEqual({ provider: "provider", results: [example.result] });
-      expect(String(providerFetch.mock.calls[0]![0])).toContain(example.expectedUrl);
+      const requestedUrl = new URL(String(providerFetch.mock.calls[0]![0]));
+      expect(requestedUrl.href).toContain(example.expectedUrl);
+      if (example.driverKey === "searxng") {
+        expect(requestedUrl.searchParams.get("time_range")).toBe("week");
+      }
     }
   });
 
