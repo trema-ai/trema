@@ -6,17 +6,13 @@ import { z } from "zod";
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { bindLogger, log } from "#server/lib/logger/index.js";
-import {
-  enabledCapabilityKeys,
-  type CapabilityKey,
-} from "#server/services/capabilities/index.js";
+import { type CapabilityKey, enabledCapabilityKeys } from "#server/services/capabilities/index.js";
 import {
   fetchUrl,
   fetchUrlInputSchema,
   searchWeb,
   searchWebInputSchema,
   WebCapabilityError,
-  type WebCapabilityExecutionOptions,
 } from "#server/services/capabilities/web.js";
 import type {
   ConnectorFetch,
@@ -75,7 +71,6 @@ export interface DataPlaneDependencies {
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
   providerFetch?: typeof fetch;
-  publicPageFetch?: WebCapabilityExecutionOptions["publicPageFetch"];
 }
 
 function textResult(payload: unknown): { type: "text"; text: string }[] {
@@ -219,9 +214,7 @@ export function createDataPlaneServer(
         runTool("search_web", async () => {
           const searched = await searchWeb(db, session, input, {
             ...embedding,
-            ...(dependencies.providerFetch
-              ? { providerFetch: dependencies.providerFetch }
-              : {}),
+            ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
           });
           return { content: textResult(searched), structuredContent: { ...searched } };
         }),
@@ -234,7 +227,7 @@ export function createDataPlaneServer(
       {
         title: "Fetch URL",
         description:
-          "Read one public HTTP or HTTPS page as text. Private-network addresses, oversized responses, and unsupported content types are refused.",
+          "Extract one public HTTP or HTTPS page as bounded text through the configured provider.",
         inputSchema: fetchUrlInputSchema,
         outputSchema: {
           url: z.url(),
@@ -249,9 +242,7 @@ export function createDataPlaneServer(
         runTool("fetch_url", async () => {
           const fetched = await fetchUrl(db, session, input, {
             ...embedding,
-            ...(dependencies.publicPageFetch
-              ? { publicPageFetch: dependencies.publicPageFetch }
-              : {}),
+            ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
           });
           return { content: textResult(fetched), structuredContent: { ...fetched } };
         }),

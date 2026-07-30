@@ -143,7 +143,7 @@ Every tool is scoped to the session's scope chain, so there is nothing to filter
 | `search_tools` | Searches current authorized connector operations with lexical and semantic ranking. An in-process run enables the matches as typed tools. |
 | `use_connector` | Executes a connector operation by `toolKey` for an external MCP client. |
 | `search_web` | Searches the public web through the configured primary provider and optional fallback. Present only while web search is enabled. |
-| `fetch_url` | Reads a public HTTP or HTTPS page as bounded text. Present only while web fetch is enabled. |
+| `fetch_url` | Extracts a public HTTP or HTTPS page as bounded text through the configured provider. Present only while web fetch is enabled. |
 
 The memory writes follow the writer policy. A `fact` or `preference` takes effect at once; a `rule` or `procedure` lands proposed and waits for a person to confirm it. Rewriting is narrower still: only facts and preferences saved at the session's own scope, because a confirmed rule or procedure needs a person.
 

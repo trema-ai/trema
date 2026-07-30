@@ -1,22 +1,21 @@
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
-
 import {
+  CredentialDecryptionError,
+  CredentialEncryptionConfigError,
+} from "#server/lib/crypto/index.js";
+import {
+  CapabilityProviderNotFoundError,
+  CapabilityValidationError,
   capabilityDriverKeys,
   capabilityDriverSummaries,
   capabilityKeys,
-  CapabilityProviderNotFoundError,
-  CapabilityValidationError,
   deleteCapabilityProvider,
   listCapabilityProviders,
   listCapabilityRoutes,
   putCapabilityProvider,
   putCapabilityRoute,
 } from "#server/services/capabilities/index.js";
-import {
-  CredentialDecryptionError,
-  CredentialEncryptionConfigError,
-} from "#server/lib/crypto/index.js";
 import { requireCapability } from "./builders.js";
 
 const capabilityKeySchema = z.enum(capabilityKeys);
@@ -27,7 +26,9 @@ const settingsSchema = z.record(z.string(), z.unknown());
 const driverSchema = z.object({
   key: driverKeySchema.describe("The adapter's stable key."),
   label: z.string().describe("The adapter name shown to administrators."),
-  capability: capabilityKeySchema.describe("The native capability this adapter provides."),
+  capabilities: z
+    .array(capabilityKeySchema)
+    .describe("The native capabilities this adapter provides."),
   credentialRequired: z.boolean().describe("Whether the adapter needs a stored credential."),
   defaultSettings: settingsSchema.describe("The settings a new provider starts with."),
 });
@@ -36,7 +37,7 @@ const providerSchema = z.object({
   name: z.string().describe("The stable name capability routes reference."),
   label: z.string().describe("The provider name shown to administrators."),
   driverKey: driverKeySchema,
-  capability: capabilityKeySchema,
+  capabilities: z.array(capabilityKeySchema),
   hasCredential: z
     .boolean()
     .describe("Whether a credential is stored. The credential itself is never returned."),

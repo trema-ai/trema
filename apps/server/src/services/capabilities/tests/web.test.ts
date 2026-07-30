@@ -1,15 +1,9 @@
+import { describe, expect, it, vi } from "vitest";
 import type { CapabilityProvider, Prisma } from "#server/generated/prisma/client.js";
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
-import {
-  fetchPublicWebPage,
-  fetchUrl,
-  htmlToText,
-  isPublicAddress,
-  searchWeb,
-} from "#server/services/capabilities/web.js";
+import { fetchUrl, htmlToText, searchWeb } from "#server/services/capabilities/web.js";
 import type { DataPlaneSession } from "#server/services/dataplane/index.js";
-import { describe, expect, it, vi } from "vitest";
 
 const masterKey = Buffer.alloc(32, 7).toString("base64");
 const now = new Date("2026-07-29T12:00:00.000Z");
@@ -39,8 +33,7 @@ function provider(
     label: name,
     driverKey,
     settingsJson,
-    credentialCiphertext:
-      credential === undefined ? null : encryptEnvelope(credential, masterKey),
+    credentialCiphertext: credential === undefined ? null : encryptEnvelope(credential, masterKey),
     createdAt: now,
     updatedAt: now,
   };
@@ -94,41 +87,11 @@ describe("web capabilities", () => {
     });
   });
 
-  it("refuses private and reserved addresses", () => {
-    for (const address of [
-      "127.0.0.1",
-      "10.0.0.1",
-      "169.254.169.254",
-      "192.168.1.1",
-      "198.51.100.10",
-      "::1",
-      "fd00::1",
-      "fe80::1",
-    ]) {
-      expect(isPublicAddress(address), address).toBe(false);
-    }
-    expect(isPublicAddress("8.8.8.8")).toBe(true);
-    expect(isPublicAddress("2606:4700:4700::1111")).toBe(true);
-  });
-
-  it("rejects a loopback fetch before opening a connection", async () => {
-    await expect(
-      fetchPublicWebPage(new URL("http://127.0.0.1/private"), {
-        timeoutMs: 1_000,
-        maxBytes: 16_384,
-        maxCharacters: 1_000,
-      }),
-    ).rejects.toMatchObject({ code: "private_network_refused" });
-  });
-
   it("falls through to the next search provider and normalizes its result", async () => {
-    const db = fakeDb(
-      { "web.search": ["brave", "tavily"] },
-      [
-        provider("brave", "brave_search", "brave-key"),
-        provider("tavily", "tavily_search", "tavily-key"),
-      ],
-    );
+    const db = fakeDb({ "web.search": ["brave", "tavily"] }, [
+      provider("brave", "brave_search", "brave-key"),
+      provider("tavily", "tavily_search", "tavily-key"),
+    ]);
     const calls: Array<{ url: string; authorization?: string }> = [];
     const providerFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -178,38 +141,49 @@ describe("web capabilities", () => {
     );
   });
 
-  it("extracts and truncates a fetched HTML page under the configured route", async () => {
-    const db = fakeDb(
-      { "web.fetch": ["builtin-fetch"] },
-      [
-        provider("builtin-fetch", "builtin_web_fetch", undefined, {
-          timeoutMs: 2_000,
-          maxBytes: 20_000,
-          maxCharacters: 1_000,
-        }),
-      ],
+  it("extracts and truncates a page through the configured Tavily route", async () => {
+    const db = fakeDb({ "web.fetch": ["tavily"] }, [
+      provider("tavily", "tavily_search", "tavily-key"),
+    ]);
+    const providerFetch = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            url: "https://example.com/article",
+            raw_content: "a".repeat(52_000),
+          },
+        ],
+        failed_results: [],
+      }),
     );
 
     const fetched = await fetchUrl(
       db,
       session,
       { url: "https://example.com/article" },
-      {
-        publicPageFetch: async (url) => ({
-          url,
-          status: 200,
-          headers: { "content-type": "text/html; charset=utf-8" },
-          body: Buffer.from(`<title>Article</title><p>${"a".repeat(1_200)}</p>`),
-        }),
-      },
+      { masterKey, providerFetch: providerFetch as typeof fetch },
     );
 
     expect(fetched).toEqual({
       url: "https://example.com/article",
-      title: "Article",
-      contentType: "text/html",
-      text: "a".repeat(1_000),
+      contentType: "text/markdown",
+      text: "a".repeat(50_000),
       truncated: true,
     });
+    expect(providerFetch).toHaveBeenCalledWith(
+      "https://api.tavily.com/extract",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"urls":"https://example.com/article"'),
+      }),
+    );
+    expect(db.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "dataplane.fetch_url",
+          payload: expect.objectContaining({ providerName: "tavily" }),
+        }),
+      }),
+    );
   });
 });

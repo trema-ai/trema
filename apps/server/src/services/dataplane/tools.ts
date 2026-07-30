@@ -7,10 +7,7 @@ import { z } from "zod";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { CapabilityKey } from "#server/services/capabilities/index.js";
-import {
-  fetchUrlInputSchema,
-  searchWebInputSchema,
-} from "#server/services/capabilities/web.js";
+import { fetchUrlInputSchema, searchWebInputSchema } from "#server/services/capabilities/web.js";
 import {
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
@@ -212,7 +209,7 @@ const capabilityToolSpecs = [
     name: SEARCH_WEB_TOOL_NAME,
     title: "Search the web",
     description:
-      "Search the public web for current information. Returns ranked page titles, URLs, and bounded snippets. Use `fetch_url` to read a promising page.",
+      "Search the public web for current information. Returns ranked page titles, URLs, and bounded snippets. Use `fetch_url` when available to read a promising page.",
     kind: "search",
     inputSchema: searchWebInputSchema,
     annotations: { readOnlyHint: true, openWorldHint: true },
@@ -222,7 +219,7 @@ const capabilityToolSpecs = [
     name: FETCH_URL_TOOL_NAME,
     title: "Fetch URL",
     description:
-      "Read one public HTTP or HTTPS page as text. Private-network addresses, oversized responses, and unsupported content types are refused.",
+      "Extract one public HTTP or HTTPS page as bounded text through the configured provider.",
     kind: "fetch",
     inputSchema: fetchUrlInputSchema,
     annotations: { readOnlyHint: true, openWorldHint: true },

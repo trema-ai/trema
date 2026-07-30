@@ -66,9 +66,9 @@ working set order without preserving stale schemas or authority.
 
 A native capability exposes one Trema-owned tool contract independently of its backend. An organization configures provider records, then enables the capability with an ordered provider route. The route can change without changing model prompts or harness integrations.
 
-Web search uses this pattern for Brave Search and Tavily, including ordered failover. Web fetch uses the same route model with a built-in backend. Unlike connectors, capability routes belong to the organization and need no scope installation.
+Web search uses this pattern for Brave Search and Tavily, including ordered failover. A provider can implement several contracts: Tavily also serves web fetch through its Extract API. Unlike connectors, capability routes belong to the organization and need no scope installation.
 
-Capability credentials stay server-side and encrypted. The web fetch backend carries no ambient credentials and refuses private-network destinations.
+Capability credentials stay server-side and encrypted. Each tool call uses the credential for the provider selected by its capability route.
 
 ## One API for every client
 

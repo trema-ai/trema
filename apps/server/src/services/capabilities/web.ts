@@ -1,17 +1,11 @@
-import { lookup } from "node:dns/promises";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
-
+import { z } from "zod";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import {
-  type BuiltinFetchSettings,
-  resolveCapabilityProviders,
   type ResolvedCapabilityProvider,
+  resolveCapabilityProviders,
 } from "#server/services/capabilities/index.js";
 import type { DataPlaneSession } from "#server/services/dataplane/index.js";
-import { z } from "zod";
 
 export const SEARCH_WEB_DEFAULT_LIMIT = 8;
 export const SEARCH_WEB_MAX_LIMIT = 20;
@@ -59,10 +53,6 @@ export interface WebFetchResponse {
 export interface WebCapabilityExecutionOptions {
   masterKey?: string;
   providerFetch?: typeof fetch;
-  publicPageFetch?: (
-    url: URL,
-    settings: BuiltinFetchSettings,
-  ) => Promise<PublicWebResponse>;
 }
 
 export class WebCapabilityError extends Error {
@@ -75,21 +65,14 @@ export class WebCapabilityError extends Error {
   }
 }
 
-class SearchProviderError extends Error {
+class WebProviderError extends Error {
   constructor(
     readonly providerName: string,
     readonly status?: number,
   ) {
-    super("Search provider failed");
-    this.name = "SearchProviderError";
+    super("Web capability provider failed");
+    this.name = "WebProviderError";
   }
-}
-
-interface PublicWebResponse {
-  url: URL;
-  status: number;
-  headers: Record<string, string | undefined>;
-  body: Buffer;
 }
 
 function boundedLimit(limit: number | undefined): number {
@@ -142,10 +125,7 @@ export function htmlToText(html: string): { title?: string; text: string } {
   const text = decodeHtmlEntities(
     html
       .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(
-        /<(script|style|svg|noscript|template|head|title)\b[^>]*>[\s\S]*?<\/\1>/gi,
-        " ",
-      )
+      .replace(/<(script|style|svg|noscript|template|head|title)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/(p|div|section|article|main|aside|header|footer|h[1-6]|li|tr)>/gi, "\n")
       .replace(/<li\b[^>]*>/gi, "\n- ")
@@ -156,65 +136,6 @@ export function htmlToText(html: string): { title?: string; text: string } {
     .filter(Boolean)
     .join("\n");
   return { ...(title ? { title } : {}), text };
-}
-
-function ipv4Number(address: string): number | undefined {
-  const octets = address.split(".").map(Number);
-  if (
-    octets.length !== 4 ||
-    octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)
-  ) {
-    return undefined;
-  }
-  return (((octets[0]! << 24) >>> 0) +
-    (octets[1]! << 16) +
-    (octets[2]! << 8) +
-    octets[3]!) >>> 0;
-}
-
-function inIpv4Range(address: number, base: string, prefix: number): boolean {
-  const baseNumber = ipv4Number(base)!;
-  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  return (address & mask) === (baseNumber & mask);
-}
-
-const blockedIpv4Ranges = [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.0.2.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["198.51.100.0", 24],
-  ["203.0.113.0", 24],
-  ["224.0.0.0", 4],
-  ["240.0.0.0", 4],
-] as const;
-
-/** True only for an address the public-web fetcher may connect to. */
-export function isPublicAddress(address: string): boolean {
-  const family = isIP(address);
-  if (family === 4) {
-    const value = ipv4Number(address);
-    return (
-      value !== undefined &&
-      !blockedIpv4Ranges.some(([base, prefix]) => inIpv4Range(value, base, prefix))
-    );
-  }
-  if (family !== 6) return false;
-  const normalized = address.toLowerCase();
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-  if (mapped) return isPublicAddress(mapped);
-  if (normalized === "::" || normalized === "::1") return false;
-  if (/^(fc|fd)/.test(normalized)) return false;
-  if (/^fe[89ab]/.test(normalized)) return false;
-  if (normalized.startsWith("ff")) return false;
-  if (normalized.startsWith("2001:db8:")) return false;
-  return true;
 }
 
 function checkedWebUrl(value: string | URL): URL {
@@ -231,118 +152,6 @@ function checkedWebUrl(value: string | URL): URL {
   return url;
 }
 
-function headerValue(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
-  const value = headers[name.toLowerCase()];
-  return Array.isArray(value) ? value.join(", ") : value;
-}
-
-async function requestOnce(
-  url: URL,
-  settings: BuiltinFetchSettings,
-): Promise<PublicWebResponse> {
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  if (addresses.length === 0 || addresses.some(({ address }) => !isPublicAddress(address))) {
-    throw new WebCapabilityError(
-      "private_network_refused",
-      "The URL resolves to a private or reserved network address",
-    );
-  }
-  const target = addresses[0]!;
-  const transport = url.protocol === "https:" ? httpsRequest : httpRequest;
-  const defaultPort = url.protocol === "https:" ? "443" : "80";
-  const hostHeader = url.port && url.port !== defaultPort ? `${url.hostname}:${url.port}` : url.hostname;
-
-  return new Promise<PublicWebResponse>((resolve, reject) => {
-    const request = transport(
-      {
-        protocol: url.protocol,
-        hostname: target.address,
-        family: target.family,
-        port: url.port || defaultPort,
-        path: `${url.pathname}${url.search}`,
-        method: "GET",
-        servername: url.hostname,
-        headers: {
-          Host: hostHeader,
-          Accept: "text/html, application/xhtml+xml, text/plain, application/json;q=0.8",
-          "Accept-Encoding": "identity",
-          "User-Agent": "Trema/0.0 web-fetch",
-        },
-      },
-      (response) => {
-        const contentLength = Number(headerValue(response.headers, "content-length"));
-        if (Number.isFinite(contentLength) && contentLength > settings.maxBytes) {
-          response.destroy();
-          reject(
-            new WebCapabilityError(
-              "response_too_large",
-              `The page is larger than the configured ${settings.maxBytes} byte limit`,
-            ),
-          );
-          return;
-        }
-        const chunks: Buffer[] = [];
-        let bytes = 0;
-        response.on("data", (chunk: Buffer | string) => {
-          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-          bytes += buffer.length;
-          if (bytes > settings.maxBytes) {
-            response.destroy(
-              new WebCapabilityError(
-                "response_too_large",
-                `The page is larger than the configured ${settings.maxBytes} byte limit`,
-              ),
-            );
-            return;
-          }
-          chunks.push(buffer);
-        });
-        response.on("end", () => {
-          resolve({
-            url,
-            status: response.statusCode ?? 0,
-            headers: {
-              location: headerValue(response.headers, "location"),
-              "content-type": headerValue(response.headers, "content-type"),
-            },
-            body: Buffer.concat(chunks),
-          });
-        });
-        response.on("error", reject);
-      },
-    );
-    request.setTimeout(settings.timeoutMs, () => {
-      request.destroy(new WebCapabilityError("fetch_timeout", "The page took too long to respond"));
-    });
-    request.on("error", reject);
-    request.end();
-  });
-}
-
-/** Fetch a public URL while pinning each DNS result and rechecking every redirect. */
-export async function fetchPublicWebPage(
-  initialUrl: URL,
-  settings: BuiltinFetchSettings,
-): Promise<PublicWebResponse> {
-  let url = checkedWebUrl(initialUrl);
-  for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await requestOnce(url, settings);
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-    const location = response.headers.location;
-    if (!location) {
-      throw new WebCapabilityError("invalid_redirect", "The page returned an invalid redirect");
-    }
-    if (redirects === 5) {
-      throw new WebCapabilityError("too_many_redirects", "The page redirected too many times");
-    }
-    url = checkedWebUrl(new URL(location, url));
-  }
-  throw new WebCapabilityError("too_many_redirects", "The page redirected too many times");
-}
-
 async function responseText(
   response: Response,
   providerName: string,
@@ -350,7 +159,7 @@ async function responseText(
 ): Promise<string> {
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new SearchProviderError(providerName, response.status);
+    throw new WebProviderError(providerName, response.status);
   }
   if (response.body === null) return "";
   const reader = response.body.getReader();
@@ -362,7 +171,7 @@ async function responseText(
     bytes += value.byteLength;
     if (bytes > maxBytes) {
       await reader.cancel();
-      throw new SearchProviderError(providerName, response.status);
+      throw new WebProviderError(providerName, response.status);
     }
     chunks.push(value);
   }
@@ -379,7 +188,7 @@ function parseJson(text: string, providerName: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new SearchProviderError(providerName);
+    throw new WebProviderError(providerName);
   }
 }
 
@@ -407,6 +216,16 @@ const tavilyResponseSchema = z.object({
       published_date: z.string().optional(),
     }),
   ),
+});
+
+const tavilyExtractResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      url: z.url(),
+      raw_content: z.string(),
+    }),
+  ),
+  failed_results: z.array(z.object({ url: z.url() })).default([]),
 });
 
 async function callSearchProvider(
@@ -439,11 +258,11 @@ async function callSearchProvider(
         redirect: "error",
         signal,
       });
-      if (!response.ok) throw new SearchProviderError(provider.name, response.status);
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
       const parsed = braveResponseSchema.safeParse(
         parseJson(await responseText(response, provider.name), provider.name),
       );
-      if (!parsed.success) throw new SearchProviderError(provider.name);
+      if (!parsed.success) throw new WebProviderError(provider.name);
       return (parsed.data.web?.results ?? []).slice(0, limit).map((result) => ({
         title: htmlToText(result.title).text,
         url: result.url,
@@ -472,11 +291,11 @@ async function callSearchProvider(
         redirect: "error",
         signal,
       });
-      if (!response.ok) throw new SearchProviderError(provider.name, response.status);
+      if (!response.ok) throw new WebProviderError(provider.name, response.status);
       const parsed = tavilyResponseSchema.safeParse(
         parseJson(await responseText(response, provider.name), provider.name),
       );
-      if (!parsed.success) throw new SearchProviderError(provider.name);
+      if (!parsed.success) throw new WebProviderError(provider.name);
       return parsed.data.results.slice(0, limit).map((result) => ({
         title: result.title,
         url: result.url,
@@ -484,10 +303,10 @@ async function callSearchProvider(
         ...(result.published_date ? { publishedAt: result.published_date } : {}),
       }));
     }
-    throw new SearchProviderError(provider.name);
+    throw new WebProviderError(provider.name);
   } catch (error) {
-    if (error instanceof SearchProviderError) throw error;
-    throw new SearchProviderError(provider.name);
+    if (error instanceof WebProviderError) throw error;
+    throw new WebProviderError(provider.name);
   }
 }
 
@@ -509,7 +328,7 @@ export async function searchWeb(
     );
   }
   const startedAt = performance.now();
-  const failures: SearchProviderError[] = [];
+  const failures: WebProviderError[] = [];
   for (const provider of providers) {
     try {
       const results = await callSearchProvider(
@@ -540,9 +359,7 @@ export async function searchWeb(
       return { results };
     } catch (error) {
       const failure =
-        error instanceof SearchProviderError
-          ? error
-          : new SearchProviderError(provider.name);
+        error instanceof WebProviderError ? error : new WebProviderError(provider.name);
       failures.push(failure);
       log.warn("Web search provider failed", {
         sessionId: session.id,
@@ -567,14 +384,57 @@ export async function searchWeb(
       },
     },
   });
-  throw new WebCapabilityError(
-    "web_search_failed",
-    "Every configured web search provider failed",
-  );
+  throw new WebCapabilityError("web_search_failed", "Every configured web search provider failed");
 }
 
-function contentType(headers: Record<string, string | undefined>): string {
-  return (headers["content-type"] ?? "application/octet-stream").split(";", 1)[0]!.toLowerCase();
+const FETCH_URL_MAX_CHARACTERS = 50_000;
+
+async function callFetchProvider(
+  provider: ResolvedCapabilityProvider,
+  url: URL,
+  fetchImpl: typeof fetch,
+): Promise<WebFetchResponse> {
+  try {
+    if (provider.driverKey !== "tavily_search") {
+      throw new WebProviderError(provider.name);
+    }
+    const response = await fetchImpl("https://api.tavily.com/extract", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${provider.credential!}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        urls: url.toString(),
+        extract_depth: "basic",
+        include_images: false,
+        include_favicon: false,
+        format: "markdown",
+        timeout: 15,
+        include_usage: false,
+      }),
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) throw new WebProviderError(provider.name, response.status);
+    const parsed = tavilyExtractResponseSchema.safeParse(
+      parseJson(await responseText(response, provider.name), provider.name),
+    );
+    if (!parsed.success) throw new WebProviderError(provider.name);
+    const result = parsed.data.results[0];
+    if (result === undefined) throw new WebProviderError(provider.name);
+    const truncated = result.raw_content.length > FETCH_URL_MAX_CHARACTERS;
+    return {
+      url: result.url,
+      contentType: "text/markdown",
+      text: result.raw_content.slice(0, FETCH_URL_MAX_CHARACTERS),
+      truncated,
+    };
+  } catch (error) {
+    if (error instanceof WebProviderError) throw error;
+    throw new WebProviderError(provider.name);
+  }
 }
 
 export async function fetchUrl(
@@ -583,97 +443,74 @@ export async function fetchUrl(
   input: z.infer<typeof fetchUrlInputSchema>,
   options: WebCapabilityExecutionOptions = {},
 ): Promise<WebFetchResponse> {
-  const [provider] = await resolveCapabilityProviders(db, {
+  const providers = await resolveCapabilityProviders(db, {
     orgId: session.orgId,
     capabilityKey: "web.fetch",
     ...(options.masterKey ? { masterKey: options.masterKey } : {}),
   });
-  if (provider === undefined || provider.driverKey !== "builtin_web_fetch") {
+  if (providers.length === 0) {
     throw new WebCapabilityError(
       "web_fetch_unavailable",
       "Web fetch is not configured for this organization",
     );
   }
-  const settings = provider.settings as BuiltinFetchSettings;
+  const url = checkedWebUrl(input.url);
   const startedAt = performance.now();
-  try {
-    const response = await (options.publicPageFetch ?? fetchPublicWebPage)(
-      checkedWebUrl(input.url),
-      settings,
-    );
-    if (response.status < 200 || response.status >= 300) {
-      throw new WebCapabilityError(
-        "web_fetch_http_error",
-        `The page returned HTTP ${response.status}`,
+  const failures: WebProviderError[] = [];
+  for (const provider of providers) {
+    try {
+      const fetched = await callFetchProvider(
+        provider,
+        url,
+        options.providerFetch ?? globalThis.fetch,
       );
-    }
-    const type = contentType(response.headers);
-    if (
-      type !== "text/html" &&
-      type !== "application/xhtml+xml" &&
-      type !== "text/plain" &&
-      type !== "application/json"
-    ) {
-      throw new WebCapabilityError(
-        "unsupported_content_type",
-        `The page returned unsupported content type ${type}`,
-      );
-    }
-    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(response.body);
-    const extracted =
-      type === "text/html" || type === "application/xhtml+xml"
-        ? htmlToText(decoded)
-        : { text: decoded.trim() };
-    const truncated = extracted.text.length > settings.maxCharacters;
-    const text = extracted.text.slice(0, settings.maxCharacters);
-    await db.auditLog.create({
-      data: {
-        orgId: session.orgId,
-        actorPrincipalId: session.actingPrincipalId,
-        action: "dataplane.fetch_url",
-        subject: session.id,
-        payload: {
-          status: response.status,
-          contentType: type,
-          bytes: response.body.byteLength,
-          characters: text.length,
-          truncated,
+      await db.auditLog.create({
+        data: {
+          orgId: session.orgId,
+          actorPrincipalId: session.actingPrincipalId,
+          action: "dataplane.fetch_url",
+          subject: session.id,
+          payload: {
+            providerName: provider.name,
+            characters: fetched.text.length,
+            truncated: fetched.truncated,
+          },
         },
-      },
-    });
-    log.info("Web page fetched", {
-      sessionId: session.id,
-      status: response.status,
-      contentType: type,
-      bytes: response.body.byteLength,
-      characters: text.length,
-      truncated,
-      durationMs: Math.round(performance.now() - startedAt),
-    });
-    return {
-      url: response.url.toString(),
-      ...(extracted.title ? { title: extracted.title } : {}),
-      contentType: type,
-      text,
-      truncated,
-    };
-  } catch (error) {
-    const code = error instanceof WebCapabilityError ? error.code : "web_fetch_failed";
-    await db.auditLog.create({
-      data: {
-        orgId: session.orgId,
-        actorPrincipalId: session.actingPrincipalId,
-        action: "dataplane.fetch_url",
-        subject: session.id,
-        payload: { outcome: "failed", code },
-      },
-    });
-    log.warn("Web page fetch failed", {
-      sessionId: session.id,
-      code,
-      durationMs: Math.round(performance.now() - startedAt),
-    });
-    if (error instanceof WebCapabilityError) throw error;
-    throw new WebCapabilityError("web_fetch_failed", "The page could not be fetched");
+      });
+      log.info("Web page fetched", {
+        sessionId: session.id,
+        providerName: provider.name,
+        characters: fetched.text.length,
+        truncated: fetched.truncated,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return fetched;
+    } catch (error) {
+      const failure =
+        error instanceof WebProviderError ? error : new WebProviderError(provider.name);
+      failures.push(failure);
+      log.warn("Web fetch provider failed", {
+        sessionId: session.id,
+        providerName: provider.name,
+        ...(failure.status === undefined ? {} : { status: failure.status }),
+      });
+    }
   }
+  await db.auditLog.create({
+    data: {
+      orgId: session.orgId,
+      actorPrincipalId: session.actingPrincipalId,
+      action: "dataplane.fetch_url",
+      subject: session.id,
+      payload: {
+        outcome: "failed",
+        providerCount: failures.length,
+        statuses: failures.map(({ providerName, status }) => ({
+          providerName,
+          status: status ?? null,
+        })),
+      },
+    },
+  });
+  throw new WebCapabilityError("web_fetch_failed", "Every configured web fetch provider failed");
 }

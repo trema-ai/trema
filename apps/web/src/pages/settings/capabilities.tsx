@@ -38,12 +38,12 @@ import { Switch } from "#web/components/ui/switch.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
 
 type CapabilityKey = "web.search" | "web.fetch";
-type DriverKey = "brave_search" | "tavily_search" | "builtin_web_fetch";
+type DriverKey = "brave_search" | "tavily_search";
 
 type CapabilityDriver = {
   key: DriverKey;
   label: string;
-  capability: CapabilityKey;
+  capabilities: CapabilityKey[];
   credentialRequired: boolean;
   defaultSettings: Record<string, unknown>;
 };
@@ -52,7 +52,7 @@ type CapabilityProvider = {
   name: string;
   label: string;
   driverKey: DriverKey;
-  capability: CapabilityKey;
+  capabilities: CapabilityKey[];
   hasCredential: boolean;
   settings: Record<string, unknown>;
   updatedAt: string;
@@ -67,7 +67,6 @@ type CapabilityRoute = {
 const providerNames: Record<DriverKey, string> = {
   brave_search: "brave-search",
   tavily_search: "tavily-search",
-  builtin_web_fetch: "builtin-web-fetch",
 };
 
 function messageFrom(error: unknown): string {
@@ -112,17 +111,16 @@ export function SettingsCapabilitiesPage() {
       ) : (
         <div className="space-y-7">
           <WebSearchSection
-            drivers={driverRows.filter((driver) => driver.capability === "web.search")}
-            providers={providerRows.filter(
-              (provider) => provider.capability === "web.search",
+            drivers={driverRows.filter((driver) => driver.capabilities.includes("web.search"))}
+            providers={providerRows.filter((provider) =>
+              provider.capabilities.includes("web.search"),
             )}
             route={routeRows.find((route) => route.capabilityKey === "web.search")}
             onChanged={invalidate}
           />
           <WebFetchSection
-            driver={driverRows.find((driver) => driver.key === "builtin_web_fetch")}
-            provider={providerRows.find(
-              (provider) => provider.driverKey === "builtin_web_fetch",
+            providers={providerRows.filter((provider) =>
+              provider.capabilities.includes("web.fetch"),
             )}
             route={routeRows.find((route) => route.capabilityKey === "web.fetch")}
             onChanged={invalidate}
@@ -158,7 +156,12 @@ function WebSearchSection({
           onChanged={onChanged}
         />
       ))}
-      <SearchRouteRow providers={providers} route={route} onChanged={onChanged} />
+      <WebRouteRow
+        capabilityKey="web.search"
+        providers={providers}
+        route={route}
+        onChanged={onChanged}
+      />
     </SettingsSection>
   );
 }
@@ -198,10 +201,6 @@ function SearchProviderRow({
         }
         control={
           <div className="flex items-center gap-3">
-            <CredentialStatusBadge
-              status={provider?.hasCredential ? "connected" : "missing"}
-              label={provider?.hasCredential ? "Configured" : "Not configured"}
-            />
             <Button variant="outline" size="sm" onClick={() => setConfigureOpen(true)}>
               {provider ? "Replace key" : "Configure"}
             </Button>
@@ -226,7 +225,7 @@ function SearchProviderRow({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {driver.label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Its API key is deleted and it is removed from the web search route.
+              Its API key is deleted and it is removed from every route that uses it.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -327,37 +326,40 @@ function ProviderCredentialDialog({
   );
 }
 
-function SearchRouteRow({
+function WebRouteRow({
+  capabilityKey,
   providers,
   route,
   onChanged,
 }: {
+  capabilityKey: CapabilityKey;
   providers: CapabilityProvider[];
   route: CapabilityRoute | undefined;
   onChanged: () => Promise<void>;
 }) {
+  const label = capabilityKey === "web.search" ? "Web search" : "Web fetch";
+  const providerKind = capabilityKey === "web.search" ? "search" : "fetch";
   const configured = providers.filter((provider) => provider.hasCredential);
+  const defaultProviderName = configured[0]?.name ?? "";
   const [enabled, setEnabled] = useState(route !== undefined);
-  const [primary, setPrimary] = useState(route?.chain[0] ?? configured[0]?.name ?? "");
+  const [primary, setPrimary] = useState(route?.chain[0] ?? defaultProviderName);
   const [fallback, setFallback] = useState(route?.chain[1] ?? "none");
-  const routeKey = route?.chain.join("\0") ?? "";
-  const providerKey = configured.map(({ name }) => name).join("\0");
   useEffect(() => {
     setEnabled(route !== undefined);
-    setPrimary(route?.chain[0] ?? configured[0]?.name ?? "");
+    setPrimary(route?.chain[0] ?? defaultProviderName);
     setFallback(route?.chain[1] ?? "none");
-  }, [route, routeKey, providerKey]);
+  }, [route, defaultProviderName]);
   const save = useMutation({
     mutationFn: () =>
       rpcClient.capabilities.routes.put({
-        capabilityKey: "web.search",
+        capabilityKey,
         chain: enabled
           ? [primary, ...(fallback === "none" || fallback === primary ? [] : [fallback])]
           : [],
       }),
     onSuccess: async () => {
       await onChanged();
-      toast.success(enabled ? "Web search route saved" : "Web search disabled");
+      toast.success(enabled ? `${label} route saved` : `${label} disabled`);
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -371,7 +373,7 @@ function SearchRouteRow({
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <Switch
-              aria-label="Enable web search"
+              aria-label={`Enable ${label.toLowerCase()}`}
               checked={enabled}
               disabled={configured.length === 0}
               onCheckedChange={setEnabled}
@@ -380,14 +382,17 @@ function SearchRouteRow({
           </div>
           {configured.length === 0 ? (
             <p className="text-meta text-muted-foreground">
-              Configure at least one search provider to enable this capability.
+              Configure at least one {providerKind} provider to enable this capability.
             </p>
           ) : enabled ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <Label>Primary</Label>
                 <Select value={primary} onValueChange={setPrimary}>
-                  <SelectTrigger className="mt-2 w-full" aria-label="Primary search provider">
+                  <SelectTrigger
+                    className="mt-2 w-full"
+                    aria-label={`Primary ${providerKind} provider`}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -402,7 +407,10 @@ function SearchRouteRow({
               <div>
                 <Label>Fallback</Label>
                 <Select value={fallback} onValueChange={setFallback}>
-                  <SelectTrigger className="mt-2 w-full" aria-label="Fallback search provider">
+                  <SelectTrigger
+                    className="mt-2 w-full"
+                    aria-label={`Fallback ${providerKind} provider`}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -432,139 +440,25 @@ function SearchRouteRow({
   );
 }
 
-function numericSetting(
-  provider: CapabilityProvider | undefined,
-  driver: CapabilityDriver | undefined,
-  key: string,
-  fallback: number,
-): number {
-  const value = provider?.settings[key] ?? driver?.defaultSettings[key];
-  return typeof value === "number" ? value : fallback;
-}
-
 function WebFetchSection({
-  driver,
-  provider,
+  providers,
   route,
   onChanged,
 }: {
-  driver: CapabilityDriver | undefined;
-  provider: CapabilityProvider | undefined;
+  providers: CapabilityProvider[];
   route: CapabilityRoute | undefined;
   onChanged: () => Promise<void>;
 }) {
-  const name = providerNames.builtin_web_fetch;
-  const [enabled, setEnabled] = useState(route?.chain.includes(name) ?? false);
-  const [timeoutMs, setTimeoutMs] = useState(numericSetting(provider, driver, "timeoutMs", 15_000));
-  const [maxBytes, setMaxBytes] = useState(
-    numericSetting(provider, driver, "maxBytes", 1_000_000),
-  );
-  const [maxCharacters, setMaxCharacters] = useState(
-    numericSetting(provider, driver, "maxCharacters", 50_000),
-  );
-  useEffect(() => {
-    setEnabled(route?.chain.includes(name) ?? false);
-    setTimeoutMs(numericSetting(provider, driver, "timeoutMs", 15_000));
-    setMaxBytes(numericSetting(provider, driver, "maxBytes", 1_000_000));
-    setMaxCharacters(numericSetting(provider, driver, "maxCharacters", 50_000));
-  }, [provider, driver, route]);
-  const save = useMutation({
-    mutationFn: async () => {
-      await rpcClient.capabilities.providers.put({
-        name,
-        label: driver?.label ?? "Built-in web fetch",
-        driverKey: "builtin_web_fetch",
-        settings: { timeoutMs, maxBytes, maxCharacters },
-      });
-      await rpcClient.capabilities.routes.put({
-        capabilityKey: "web.fetch",
-        chain: enabled ? [name] : [],
-      });
-    },
-    onSuccess: async () => {
-      await onChanged();
-      toast.success(enabled ? "Web fetch saved" : "Web fetch disabled");
-    },
-    onError: (error) => toast.error(messageFrom(error)),
-  });
-
   return (
     <SettingsSection
       title="Web fetch"
-      description="The built-in fetcher reads public HTML, plain text, and JSON without carrying cookies or connector credentials."
+      description="Fetch providers extract a page into one normalized, bounded text result."
     >
-      <SettingRow
-        label="Availability"
-        description="New runs receive the fetch_url tool while this is enabled."
-        control={
-          <Switch
-            aria-label="Enable web fetch"
-            checked={enabled}
-            onCheckedChange={setEnabled}
-          />
-        }
-      />
-      <SettingRow
-        label="Limits"
-        description="Private-network targets stay blocked regardless of these values."
-        orientation="stack"
-        control={
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div>
-              <Label htmlFor="fetch-timeout">Timeout (ms)</Label>
-              <Input
-                id="fetch-timeout"
-                type="number"
-                min={1_000}
-                max={60_000}
-                className="mt-2"
-                value={timeoutMs}
-                onChange={(event) => setTimeoutMs(event.target.valueAsNumber)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="fetch-bytes">Response bytes</Label>
-              <Input
-                id="fetch-bytes"
-                type="number"
-                min={16_384}
-                max={5_000_000}
-                className="mt-2"
-                value={maxBytes}
-                onChange={(event) => setMaxBytes(event.target.valueAsNumber)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="fetch-characters">Returned characters</Label>
-              <Input
-                id="fetch-characters"
-                type="number"
-                min={1_000}
-                max={200_000}
-                className="mt-2"
-                value={maxCharacters}
-                onChange={(event) => setMaxCharacters(event.target.valueAsNumber)}
-              />
-            </div>
-          </div>
-        }
-      />
-      <SettingRow
-        label=""
-        control={
-          <Button
-            size="sm"
-            disabled={
-              save.isPending ||
-              !Number.isFinite(timeoutMs) ||
-              !Number.isFinite(maxBytes) ||
-              !Number.isFinite(maxCharacters)
-            }
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? "Saving…" : "Save"}
-          </Button>
-        }
+      <WebRouteRow
+        capabilityKey="web.fetch"
+        providers={providers}
+        route={route}
+        onChanged={onChanged}
       />
     </SettingsSection>
   );

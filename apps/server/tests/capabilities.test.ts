@@ -71,8 +71,11 @@ integration("capability registry", () => {
       },
       { context: org.context },
     );
-    expect(brave).toMatchObject({ hasCredential: true, capability: "web.search" });
-    expect(tavily).toMatchObject({ hasCredential: true, capability: "web.search" });
+    expect(brave).toMatchObject({ hasCredential: true, capabilities: ["web.search"] });
+    expect(tavily).toMatchObject({
+      hasCredential: true,
+      capabilities: ["web.search", "web.fetch"],
+    });
     expect(JSON.stringify([brave, tavily])).not.toContain("secret");
 
     await call(
@@ -91,35 +94,31 @@ integration("capability registry", () => {
       { name: "tavily", credential: "tavily-secret" },
     ]);
 
-    const listed = await call(
-      capabilitiesRouter.providers.list,
-      {},
-      { context: org.context },
-    );
+    const listed = await call(capabilitiesRouter.providers.list, {}, { context: org.context });
     expect(JSON.stringify(listed)).not.toContain("brave-secret");
     expect(JSON.stringify(listed)).not.toContain("tavily-secret");
   });
 
-  it("enables the built-in fetcher and disables it with an empty chain", async () => {
+  it("uses a provider's fetch capability and disables it with an empty chain", async () => {
     const org = await createOrg();
     await call(
       capabilitiesRouter.providers.put,
       {
-        name: "builtin-fetch",
-        label: "Built-in web fetch",
-        driverKey: "builtin_web_fetch",
-        settings: { timeoutMs: 5_000, maxBytes: 200_000, maxCharacters: 20_000 },
+        name: "tavily",
+        label: "Tavily",
+        driverKey: "tavily_search",
+        credential: "tavily-secret",
       },
       { context: org.context },
     );
     const enabled = await call(
       capabilitiesRouter.routes.put,
-      { capabilityKey: "web.fetch", chain: ["builtin-fetch"] },
+      { capabilityKey: "web.fetch", chain: ["tavily"] },
       { context: org.context },
     );
     expect(enabled).toMatchObject({
       capabilityKey: "web.fetch",
-      chain: ["builtin-fetch"],
+      chain: ["tavily"],
     });
 
     const disabled = await call(

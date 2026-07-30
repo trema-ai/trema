@@ -252,8 +252,7 @@
                       "key": {
                         "enum": [
                           "brave_search",
-                          "tavily_search",
-                          "builtin_web_fetch"
+                          "tavily_search"
                         ],
                         "type": "string",
                         "description": "The adapter's stable key."
@@ -262,13 +261,16 @@
                         "type": "string",
                         "description": "The adapter name shown to administrators."
                       },
-                      "capability": {
-                        "enum": [
-                          "web.search",
-                          "web.fetch"
-                        ],
-                        "type": "string",
-                        "description": "The native capability this adapter provides."
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "web.search",
+                            "web.fetch"
+                          ],
+                          "type": "string"
+                        },
+                        "description": "The native capabilities this adapter provides."
                       },
                       "credentialRequired": {
                         "type": "boolean",
@@ -286,7 +288,7 @@
                     "required": [
                       "key",
                       "label",
-                      "capability",
+                      "capabilities",
                       "credentialRequired",
                       "defaultSettings"
                     ]
@@ -332,17 +334,19 @@
                       "driverKey": {
                         "enum": [
                           "brave_search",
-                          "tavily_search",
-                          "builtin_web_fetch"
+                          "tavily_search"
                         ],
                         "type": "string"
                       },
-                      "capability": {
-                        "enum": [
-                          "web.search",
-                          "web.fetch"
-                        ],
-                        "type": "string"
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "web.search",
+                            "web.fetch"
+                          ],
+                          "type": "string"
+                        }
                       },
                       "hasCredential": {
                         "type": "boolean",
@@ -364,7 +368,7 @@
                       "name",
                       "label",
                       "driverKey",
-                      "capability",
+                      "capabilities",
                       "hasCredential",
                       "settings",
                       "updatedAt"
@@ -417,8 +421,7 @@
                   "driverKey": {
                     "enum": [
                       "brave_search",
-                      "tavily_search",
-                      "builtin_web_fetch"
+                      "tavily_search"
                     ],
                     "type": "string"
                   },
@@ -468,17 +471,19 @@
                     "driverKey": {
                       "enum": [
                         "brave_search",
-                        "tavily_search",
-                        "builtin_web_fetch"
+                        "tavily_search"
                       ],
                       "type": "string"
                     },
-                    "capability": {
-                      "enum": [
-                        "web.search",
-                        "web.fetch"
-                      ],
-                      "type": "string"
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "web.search",
+                          "web.fetch"
+                        ],
+                        "type": "string"
+                      }
                     },
                     "hasCredential": {
                       "type": "boolean",
@@ -500,7 +505,7 @@
                     "name",
                     "label",
                     "driverKey",
-                    "capability",
+                    "capabilities",
                     "hasCredential",
                     "settings",
                     "updatedAt"

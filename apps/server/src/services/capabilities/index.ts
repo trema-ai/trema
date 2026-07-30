@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   CapabilityProvider,
   CapabilityRoute,
@@ -6,34 +7,19 @@ import type {
 import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
-import { z } from "zod";
 
 export const capabilityKeys = ["web.search", "web.fetch"] as const;
 export type CapabilityKey = (typeof capabilityKeys)[number];
 
-export const capabilityDriverKeys = [
-  "brave_search",
-  "tavily_search",
-  "builtin_web_fetch",
-] as const;
+export const capabilityDriverKeys = ["brave_search", "tavily_search"] as const;
 export type CapabilityDriverKey = (typeof capabilityDriverKeys)[number];
 
-const builtinFetchSettingsSchema = z
-  .object({
-    timeoutMs: z.number().int().min(1_000).max(60_000).default(15_000),
-    maxBytes: z.number().int().min(16_384).max(5_000_000).default(1_000_000),
-    maxCharacters: z.number().int().min(1_000).max(200_000).default(50_000),
-  })
-  .strict();
-
 const noSettingsSchema = z.object({}).strict();
-
-export type BuiltinFetchSettings = z.infer<typeof builtinFetchSettingsSchema>;
 
 interface CapabilityDriverDefinition {
   key: CapabilityDriverKey;
   label: string;
-  capability: CapabilityKey;
+  capabilities: readonly CapabilityKey[];
   credentialRequired: boolean;
   settingsSchema: z.ZodType<Record<string, unknown>>;
   defaultSettings: Record<string, unknown>;
@@ -43,7 +29,7 @@ export const capabilityDriverCatalog: readonly CapabilityDriverDefinition[] = [
   {
     key: "brave_search",
     label: "Brave Search",
-    capability: "web.search",
+    capabilities: ["web.search"],
     credentialRequired: true,
     settingsSchema: noSettingsSchema,
     defaultSettings: {},
@@ -51,18 +37,10 @@ export const capabilityDriverCatalog: readonly CapabilityDriverDefinition[] = [
   {
     key: "tavily_search",
     label: "Tavily",
-    capability: "web.search",
+    capabilities: ["web.search", "web.fetch"],
     credentialRequired: true,
     settingsSchema: noSettingsSchema,
     defaultSettings: {},
-  },
-  {
-    key: "builtin_web_fetch",
-    label: "Built-in web fetch",
-    capability: "web.fetch",
-    credentialRequired: false,
-    settingsSchema: builtinFetchSettingsSchema,
-    defaultSettings: builtinFetchSettingsSchema.parse({}),
   },
 ] as const;
 
@@ -112,7 +90,7 @@ export interface CapabilityProviderSummary {
   name: string;
   label: string;
   driverKey: CapabilityDriverKey;
-  capability: CapabilityKey;
+  capabilities: CapabilityKey[];
   hasCredential: boolean;
   settings: Record<string, unknown>;
   updatedAt: Date;
@@ -134,7 +112,7 @@ function toProviderSummary(provider: CapabilityProvider): CapabilityProviderSumm
     name: provider.name,
     label: provider.label,
     driverKey: definition.key,
-    capability: definition.capability,
+    capabilities: [...definition.capabilities],
     hasCredential: provider.credentialCiphertext !== null,
     settings: parseSettings(definition, provider.settingsJson),
     updatedAt: provider.updatedAt,
@@ -145,7 +123,7 @@ export function capabilityDriverSummaries() {
   return capabilityDriverCatalog.map((definition) => ({
     key: definition.key,
     label: definition.label,
-    capability: definition.capability,
+    capabilities: [...definition.capabilities],
     credentialRequired: definition.credentialRequired,
     defaultSettings: definition.defaultSettings,
   }));
@@ -228,11 +206,7 @@ export async function putCapabilityProvider(
     input.credential === undefined &&
     existing?.driverKey === input.driverKey &&
     existing.credentialCiphertext !== null;
-  if (
-    definition.credentialRequired &&
-    typeof input.credential !== "string" &&
-    !keepsCredential
-  ) {
+  if (definition.credentialRequired && typeof input.credential !== "string" && !keepsCredential) {
     throw new CapabilityValidationError(`${definition.label} needs an API key`);
   }
 
@@ -372,7 +346,7 @@ export async function putCapabilityRoute(
       throw new CapabilityValidationError(`Capability provider not found: ${name}`);
     }
     const definition = driverDefinition(provider.driverKey);
-    if (definition.capability !== input.capabilityKey) {
+    if (!definition.capabilities.includes(input.capabilityKey)) {
       throw new CapabilityValidationError(
         `${provider.label} does not provide ${input.capabilityKey}`,
       );
@@ -415,10 +389,7 @@ export async function putCapabilityRoute(
   return { capabilityKey: input.capabilityKey, chain, updatedAt: route.updatedAt };
 }
 
-export async function enabledCapabilityKeys(
-  db: Database,
-  orgId: string,
-): Promise<CapabilityKey[]> {
+export async function enabledCapabilityKeys(db: Database, orgId: string): Promise<CapabilityKey[]> {
   const rows = await db.capabilityRoute.findMany({
     where: { orgId, capabilityKey: { in: [...capabilityKeys] } },
     select: { capabilityKey: true, chainJson: true },
@@ -451,7 +422,7 @@ export async function resolveCapabilityProviders(
     const row = byName.get(name);
     if (row === undefined) continue;
     const definition = driverDefinition(row.driverKey);
-    if (definition.capability !== input.capabilityKey) continue;
+    if (!definition.capabilities.includes(input.capabilityKey)) continue;
     let credential: string | undefined;
     if (definition.credentialRequired) {
       if (row.credentialCiphertext === null) continue;

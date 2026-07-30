@@ -19,7 +19,6 @@ import {
   searchWeb,
   searchWebInputSchema,
   WebCapabilityError,
-  type WebCapabilityExecutionOptions,
 } from "#server/services/capabilities/web.js";
 import type {
   ConnectorFetch,
@@ -44,8 +43,8 @@ import {
   resolveConnectorToolDefs,
   SAVE_MEMORY_TOOL_NAME,
   SEARCH_CONTEXT_TOOL_NAME,
-  SEARCH_WEB_TOOL_NAME,
   SEARCH_TOOLS_TOOL_NAME,
+  SEARCH_WEB_TOOL_NAME,
   saveMemoryInputSchema,
   searchContextInputSchema,
   searchToolsInputSchema,
@@ -74,7 +73,6 @@ export interface DataPlaneToolExecutorDependencies {
   clientFactory?: McpClientFactory;
   embedder?: Embedder;
   providerFetch?: typeof fetch;
-  publicPageFetch?: WebCapabilityExecutionOptions["publicPageFetch"];
   now?: Date;
 }
 
@@ -299,21 +297,14 @@ async function executeBuiltIn(
           ...(dependencies.masterKey ? { masterKey: dependencies.masterKey } : {}),
           ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
         });
-        return result(
-          call.callId,
-          "ok",
-          `Found ${searched.results.length} web results`,
-          searched,
-        );
+        return result(call.callId, "ok", `Found ${searched.results.length} web results`, searched);
       }
       case FETCH_URL_TOOL_NAME: {
         const parsed = fetchUrlInputSchema.safeParse(call.input);
         if (!parsed.success) break;
         const fetched = await fetchUrl(dependencies.db, session, parsed.data, {
           ...(dependencies.masterKey ? { masterKey: dependencies.masterKey } : {}),
-          ...(dependencies.publicPageFetch
-            ? { publicPageFetch: dependencies.publicPageFetch }
-            : {}),
+          ...(dependencies.providerFetch ? { providerFetch: dependencies.providerFetch } : {}),
         });
         return result(call.callId, "ok", `Fetched ${fetched.title ?? fetched.url}`, fetched);
       }
