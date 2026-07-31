@@ -13,6 +13,7 @@ import { log } from "#server/lib/logger/index.js";
 import { authorize } from "#server/services/authorize/index.js";
 import {
   finalizeConnectorInstallation,
+  lockConnectorConnectionBindings,
   provisionConnectorInstallation,
 } from "#server/services/connectors/installations.js";
 import {
@@ -670,7 +671,53 @@ function logConnectionStored(event: ConnectionStoredEvent) {
   );
 }
 
-async function storeConnection(db: ProvisioningDatabase, input: StoreConnectionInput) {
+async function assertConnectionUpdateAuthorized(
+  db: Prisma.TransactionClient,
+  input: {
+    orgId: string;
+    actorPrincipalId: string;
+    connectionId: string;
+  },
+) {
+  await lockConnectorConnectionBindings(db, input.orgId, input.connectionId);
+  const bindings = await db.item.findMany({
+    where: {
+      orgId: input.orgId,
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    select: { scopeId: true, body: true },
+  });
+  const boundScopeIds = new Set(
+    bindings.flatMap((binding) => {
+      const body = binding.body;
+      return typeof body === "object" &&
+        body !== null &&
+        !Array.isArray(body) &&
+        body.connectionId === input.connectionId
+        ? [binding.scopeId]
+        : [];
+    }),
+  );
+  const actor = {
+    id: input.actorPrincipalId,
+    orgId: input.orgId,
+    kind: "human" as const,
+  };
+  for (const scopeId of boundScopeIds) {
+    if (!(await authorize(actor, "manage_connectors", scopeId, db))) {
+      throw new ConnectorInstallationError(
+        "Connector credentials can only be updated by an initiator authorized for every bound scope",
+      );
+    }
+  }
+}
+
+async function storeConnection(
+  db: ProvisioningDatabase,
+  input: StoreConnectionInput,
+  beforeUpdate?: (connectionId: string) => Promise<void>,
+) {
   const config = JSON.parse(
     JSON.stringify({ ...input.config, ...(input.metadata ?? {}) }),
   ) as Prisma.InputJsonValue;
@@ -678,6 +725,7 @@ async function storeConnection(db: ProvisioningDatabase, input: StoreConnectionI
     input.connectionId ??
     (await sameAccountConnectionId(db, input, input.metadata, input.accountIdentityFields));
   if (connectionId) {
+    await beforeUpdate?.(connectionId);
     const updated = await db.connectorConnection.updateMany({
       where: {
         id: connectionId,
@@ -762,7 +810,15 @@ async function persistOAuthProvisioning(
   const committed = await db.$transaction(async (transaction) => {
     const owner = await validateOAuthOwnership(transaction, input.oauthState);
     await validateOAuthProvisioningIntent(transaction, input.oauthState, input.provider, owner);
-    const stored = await storeConnection(transaction, input.connection);
+    const stored = await storeConnection(transaction, input.connection, async (connectionId) => {
+      if (owner.kind === "agent") {
+        await assertConnectionUpdateAuthorized(transaction, {
+          orgId: input.oauthState.orgId,
+          actorPrincipalId: input.oauthState.initiatedByPrincipalId,
+          connectionId,
+        });
+      }
+    });
     const connection = stored.connection;
     const provisioned = await provisionConnectorInstallation(transaction, {
       orgId: input.oauthState.orgId,
@@ -1320,7 +1376,13 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
         "Static connector initiator is no longer authorized for the target scope",
       );
     }
-    const stored = await storeConnection(transaction, connectionInput);
+    const stored = await storeConnection(transaction, connectionInput, (connectionId) =>
+      assertConnectionUpdateAuthorized(transaction, {
+        orgId: input.orgId,
+        actorPrincipalId: installationIntent.actorPrincipalId,
+        connectionId,
+      }),
+    );
     const connection = stored.connection;
     const targetScopeId = installationIntent.scopeId;
     if (input.reconnectConnectionId) {

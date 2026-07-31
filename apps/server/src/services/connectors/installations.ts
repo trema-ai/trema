@@ -399,6 +399,18 @@ export interface ProvisionConnectorInstallationInput {
   catalog?: ProviderCatalog;
 }
 
+export async function lockConnectorConnectionBindings(
+  transaction: Prisma.TransactionClient,
+  orgId: string,
+  connectionId: string,
+) {
+  const lockKey = `${orgId}:${connectionId}`;
+  await transaction.$queryRaw`
+    SELECT 1::int AS locked
+    FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))
+  `;
+}
+
 async function invalidateMcpConnectionInstallations(
   transaction: Prisma.TransactionClient,
   input: ProvisionConnectorInstallationInput,
@@ -489,6 +501,7 @@ export async function provisionConnectorInstallation(
     );
   }
 
+  await lockConnectorConnectionBindings(transaction, input.orgId, input.connectionId);
   // The expression index is the final concurrency guard. Serializing the
   // read/update decision avoids turning an ordinary concurrent setup into a
   // unique-constraint failure whose transaction can no longer recover.
@@ -785,6 +798,7 @@ export async function updateConnectorInstallation(
       },
       catalog,
     );
+    await lockConnectorConnectionBindings(transaction, input.orgId, body.connectionId);
     await validateBinding(transaction, {
       orgId: input.orgId,
       scopeId: existing.scopeId,

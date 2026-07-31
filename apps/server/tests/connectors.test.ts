@@ -1259,6 +1259,71 @@ integration("connector connection flows", () => {
     );
   });
 
+  it("requires reconnect authority across every scope bound to a connection", async () => {
+    const org = await createOrg();
+    const shared = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Scoped Connector Admin" },
+    });
+    const scopedAdmin = await addMember(
+      org.org.id,
+      org.orgScope.id,
+      "Scoped Connector Administrator",
+    );
+    await db.grant.create({
+      data: {
+        orgId: org.org.id,
+        principalId: scopedAdmin.principal.id,
+        scopeId: shared.id,
+        role: "admin",
+      },
+    });
+    const okFetch = async () => new Response("{}", { status: 200 });
+    const connected = await call(
+      connectorsRouter.connect.createStatic,
+      {
+        scopeId: org.orgScope.id,
+        providerKey: "stripe",
+        config: {},
+        credentials: { apiKey: "rk_original_global_secret" },
+      },
+      { context: { ...org.context, connectorFetch: okFetch } },
+    );
+    await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: shared.id,
+      catalogKey: "stripe",
+      connectionId: connected.id,
+    });
+    const before = await db.connectorConnection.findUniqueOrThrow({
+      where: { id: connected.id },
+      select: { ciphertext: true },
+    });
+
+    await expect(
+      call(
+        connectorsRouter.connect.createStatic,
+        {
+          scopeId: shared.id,
+          providerKey: "stripe",
+          config: {},
+          credentials: { apiKey: "rk_unauthorized_global_replacement" },
+          reconnectConnectionId: connected.id,
+        },
+        { context: { ...scopedAdmin.context, connectorFetch: okFetch } },
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("every bound scope"),
+    });
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({
+        where: { id: connected.id },
+        select: { ciphertext: true },
+      }),
+    ).resolves.toEqual(before);
+  });
+
   it("revalidates shared-scope authorization after static credential verification", async () => {
     const org = await createOrg();
     const shared = await db.scope.create({
