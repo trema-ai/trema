@@ -588,11 +588,18 @@ type ConnectorCatalogEntry = {
 function connectorIdentity(
   activity: ActivityPart | undefined,
   catalog: readonly ConnectorCatalogEntry[],
-): { name: string; logoUrl?: string } | undefined {
+):
+  | {
+      name: string;
+      logoUrl?: string;
+      account?: { label: string; source: "personal" | "organization" };
+    }
+  | undefined {
   if (activity?.connector !== undefined) {
     return {
       name: activity.connector.displayName,
       ...(activity.connector.logoUrl === undefined ? {} : { logoUrl: activity.connector.logoUrl }),
+      ...(activity.connector.account === undefined ? {} : { account: activity.connector.account }),
     };
   }
   if (activity?.toolKind !== "connector") return undefined;

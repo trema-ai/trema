@@ -1526,7 +1526,7 @@ export async function updateConnectorConnectionLabel(
 // Derive a display label from the provider's hoisted token-response metadata
 // (an account or workspace name) when the connection has no explicit label.
 // Config itself never leaves the server; only the derived string does.
-function metadataLabel(
+export function connectorConnectionMetadataLabel(
   catalog: ProviderCatalog,
   providerKey: string,
   config: Prisma.JsonValue,
@@ -1583,7 +1583,10 @@ export async function listConnectorConnections(
   }
   return connections.map(({ config, ...connection }) => ({
     ...connection,
-    label: connection.label ?? metadataLabel(catalog, connection.providerKey, config) ?? null,
+    label:
+      connection.label ??
+      connectorConnectionMetadataLabel(catalog, connection.providerKey, config) ??
+      null,
     installations: bindings.get(connection.id) ?? [],
     ...connectorConnectionValidity(connection, now),
   }));

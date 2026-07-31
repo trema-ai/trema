@@ -32,6 +32,10 @@ type ApprovalCardProps = {
   connector?: {
     name: string;
     logoUrl?: string;
+    account?: {
+      label: string;
+      source: "personal" | "organization";
+    };
   };
   /** Provenance for card surfaces; omit where the context already says it. */
   requestedBy?: string;
@@ -146,6 +150,15 @@ function ApprovalCard({
       </div>
 
       {prompt !== undefined && <p className="mt-1.5 text-chrome text-muted-foreground">{prompt}</p>}
+
+      {connector?.account !== undefined && (
+        <p className="mt-2 text-meta text-muted-foreground">
+          Using <span className="font-medium text-foreground">{connector.account.label}</span> ·{" "}
+          {connector.account.source === "personal"
+            ? "Connected as you"
+            : "Provided by your organization"}
+        </p>
+      )}
 
       {/* The gated call as one unit: tool, connector, args. */}
       {action !== undefined && (

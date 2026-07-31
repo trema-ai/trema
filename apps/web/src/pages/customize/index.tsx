@@ -143,7 +143,12 @@ export function CustomizePage() {
           </TabsContent>
           <TabsContent value="connections">
             {selectedScope ? (
-              <ConnectionsTab items={scopedItems} scope={selectedScope} loading={loading} />
+              <ConnectionsTab
+                items={allItems}
+                scope={selectedScope}
+                orgScope={orgScope}
+                loading={loading}
+              />
             ) : null}
           </TabsContent>
         </Tabs>

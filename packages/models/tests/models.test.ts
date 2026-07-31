@@ -476,6 +476,7 @@ describe("SDK full-stream golden transcripts", () => {
         key: "linear",
         displayName: "Linear",
         logoUrl: "/connector-logos/linear.svg",
+        account: { label: "Acme Linear", source: "personal" },
       },
     };
     const actual = await collect(

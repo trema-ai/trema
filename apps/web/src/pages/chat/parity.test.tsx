@@ -247,6 +247,7 @@ const approvalGate: FixtureLog = {
         key: "linear",
         displayName: "Linear",
         logoUrl: "/connector-logos/linear.svg",
+        account: { label: "Acme Linear", source: "personal" },
       },
     },
     {
@@ -585,6 +586,7 @@ describe("chat / run view golden parity", () => {
       const card = container.querySelector('[data-slot="approval-card"]');
       expect(card?.textContent).toContain("Permission required");
       expect(card?.textContent).toContain("Allow List issues for this request?");
+      expect(card?.textContent).toContain("Using Acme Linear · Connected as you");
       expect(card?.querySelector('button[data-variant="default"]')?.textContent).toBe("Allow");
       expect(card?.querySelector('button[data-variant="outline"]')?.textContent).toBe(
         "Don’t allow",

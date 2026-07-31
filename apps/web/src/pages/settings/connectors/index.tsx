@@ -5,35 +5,38 @@ import { useNavigate } from "react-router";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
-import { Button } from "#web/components/ui/button.tsx";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#web/components/ui/card.tsx";
 import { orpc } from "#web/lib/api.ts";
+import { ConnectorCard } from "#web/pages/settings/connectors/card.tsx";
 import { StaticConnectionDialog } from "#web/pages/settings/connectors/connection-dialogs.tsx";
-import { RegistrationDialog } from "#web/pages/settings/connectors/registration-dialog.tsx";
 import {
-  type CatalogProvider,
-  type ConnectorConnection,
-  type ConnectorInstallation,
-  type ConnectorMeta,
-  categoryLabel,
-  providerLogo,
-  type Registration,
-  type Scope,
+  ConnectorFilters,
+  connectorCategoryOptions,
+  filterConnectorRows,
+} from "#web/pages/settings/connectors/filters.tsx";
+import { RegistrationDialog } from "#web/pages/settings/connectors/registration-dialog.tsx";
+import type {
+  CatalogProvider,
+  ConnectorConnection,
+  ConnectorInstallation,
+  ConnectorMeta,
+  Registration,
+  Scope,
 } from "#web/pages/settings/connectors/shared.tsx";
 
-type ProviderRow = {
+export type ProviderRow = {
   provider: CatalogProvider;
   connections: ConnectorConnection[];
   installations: ConnectorInstallation[];
   needsSetup: boolean;
 };
+
+const adminStatusOptions = [
+  { value: "all", label: "All statuses" },
+  { value: "healthy", label: "Healthy" },
+  { value: "attention", label: "Needs attention" },
+  { value: "disconnected", label: "Not connected" },
+  { value: "setup", label: "Needs setup" },
+];
 
 export function SettingsConnectorsPage() {
   const navigate = useNavigate();
@@ -46,6 +49,9 @@ export function SettingsConnectorsPage() {
   const meta = useQuery(orpc.connectors.meta.queryOptions({}));
   const [registrationProvider, setRegistrationProvider] = useState<CatalogProvider>();
   const [staticProvider, setStaticProvider] = useState<CatalogProvider>();
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
+  const [status, setStatus] = useState("all");
   const providers = (catalog.data ?? []) as CatalogProvider[];
   const connectionRows = (connections.data ?? []) as ConnectorConnection[];
   const installationRows = (installations.data ?? []) as ConnectorInstallation[];
@@ -71,6 +77,12 @@ export function SettingsConnectorsPage() {
       installations: providerInstallations,
       needsSetup,
     };
+  });
+  const filteredRows = filterConnectorRows({
+    rows: rows.filter((row) => status === "all" || providerStatus(row) === status),
+    search,
+    category,
+    providerOf: (row) => row.provider,
   });
   const error =
     catalog.error ??
@@ -105,8 +117,8 @@ export function SettingsConnectorsPage() {
   return (
     <main className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
       <PageHeader
-        title="Connectors"
-        description="Connect provider accounts and bind them into organization and shared scopes."
+        title="Organization connectors"
+        description="Manage provider accounts, availability, audience, and tools."
       />
       {error ? (
         <Alert variant="destructive" className="mb-5">
@@ -126,19 +138,42 @@ export function SettingsConnectorsPage() {
           description="No providers are available in the connector catalog."
         />
       ) : (
-        <div className="space-y-8">
-          <CatalogSection
-            title="Ready to connect"
-            description="Connect these without further configuration."
-            rows={rows.filter((row) => !row.needsSetup)}
-            onOpen={open}
+        <div className="space-y-6">
+          <ConnectorFilters
+            search={search}
+            onSearchChange={setSearch}
+            category={category}
+            onCategoryChange={setCategory}
+            categoryOptions={connectorCategoryOptions(providers)}
+            kindLabel="Status"
+            kind={status}
+            onKindChange={setStatus}
+            kindOptions={adminStatusOptions}
           />
-          <CatalogSection
-            title="Needs setup"
-            description="Add the organization's OAuth app before connecting."
-            rows={rows.filter((row) => row.needsSetup)}
-            onOpen={open}
-          />
+          {filteredRows.length === 0 ? (
+            <div className="rounded-md border bg-card">
+              <EmptyState
+                icon={Cable}
+                title="No connectors match"
+                description="Try a different search or filter."
+              />
+            </div>
+          ) : (
+            <div className="space-y-8">
+              <CatalogSection
+                title="Available providers"
+                description="Open a provider to connect an account or review its availability."
+                rows={filteredRows.filter((row) => !row.needsSetup)}
+                onOpen={open}
+              />
+              <CatalogSection
+                title="Needs setup"
+                description="Add the organization's OAuth app before connecting."
+                rows={filteredRows.filter((row) => row.needsSetup)}
+                onOpen={open}
+              />
+            </div>
+          )}
         </div>
       )}
       {registrationProvider ? (
@@ -188,6 +223,13 @@ export function SettingsConnectorsPage() {
   );
 }
 
+function providerStatus(row: ProviderRow) {
+  if (row.needsSetup) return "setup";
+  const active = row.connections.filter((connection) => !connection.isRevoked);
+  if (active.length === 0) return "disconnected";
+  return active.every((connection) => connection.isValid) ? "healthy" : "attention";
+}
+
 function CatalogSection({
   title,
   description,
@@ -213,53 +255,31 @@ function CatalogSection({
   );
 }
 
-function ProviderCard({ row, onOpen }: { row: ProviderRow; onOpen: () => void }) {
+export function ProviderCard({ row, onOpen }: { row: ProviderRow; onOpen: () => void }) {
   const { provider } = row;
-  const counts = [
-    row.connections.length > 0
-      ? `${row.connections.length} connection${row.connections.length === 1 ? "" : "s"}`
-      : undefined,
-    row.installations.length > 0
-      ? `${row.installations.length} scope${row.installations.length === 1 ? "" : "s"}`
-      : undefined,
-  ].filter(Boolean);
+  const active = row.connections.filter((connection) => !connection.isRevoked);
+  const healthy = active.length > 0 && active.every((connection) => connection.isValid);
   return (
-    <Card
-      className="cursor-pointer gap-2 py-4 shadow-xs transition-colors hover:bg-muted/40"
-      onClick={onOpen}
-    >
-      <CardHeader className="px-4">
-        <div className="flex items-center gap-2">
-          {providerLogo(provider)}
-          <div className="min-w-0">
-            <CardTitle>{provider.displayName}</CardTitle>
-            <p className="mt-0.5 text-meta text-muted-foreground">
-              {categoryLabel(provider.categories)}
-            </p>
-          </div>
-        </div>
-        {row.needsSetup ? (
-          <CardAction>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpen();
-              }}
-            >
-              <Settings2 />
-              Setup
-            </Button>
-          </CardAction>
-        ) : null}
-      </CardHeader>
-      <CardContent className="px-4">
-        <CardDescription>{provider.description ?? "No description available."}</CardDescription>
-        {counts.length > 0 ? (
-          <p className="mt-2 text-meta text-muted-foreground">{counts.join(" · ")}</p>
-        ) : null}
-      </CardContent>
-    </Card>
+    <ConnectorCard
+      provider={provider}
+      onOpen={onOpen}
+      {...(row.needsSetup
+        ? {
+            action: {
+              label: "Setup",
+              onClick: onOpen,
+              icon: <Settings2 />,
+              variant: "outline" as const,
+            },
+          }
+        : active.length === 0
+          ? { action: { label: "Connect", onClick: onOpen } }
+          : {
+              status: {
+                value: healthy ? ("connected" as const) : ("expired" as const),
+                label: healthy ? "Healthy" : "Needs attention",
+              },
+            })}
+    />
   );
 }

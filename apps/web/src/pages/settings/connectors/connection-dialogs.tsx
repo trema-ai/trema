@@ -154,7 +154,9 @@ export function StaticConnectionDialog({
               {reconnect ? "Reconnect" : "Connect"} {provider.displayName}
             </DialogTitle>
             <DialogDescription>
-              The credential is verified, encrypted, and never shown again.
+              {reconnect
+                ? `Replace the credential for ${reconnect.label ?? provider.displayName}.`
+                : "This organization credential is verified, encrypted, and never shown again."}
             </DialogDescription>
           </DialogHeader>
           <div className="my-5 space-y-4">
@@ -174,8 +176,8 @@ export function StaticConnectionDialog({
               </Select>
               <p className="text-meta text-muted-foreground">
                 {reconnect
-                  ? "Reconnect the account used by this scope."
-                  : "The connection will be installed in this scope."}
+                  ? "The account remains available in its current locations."
+                  : "Organization is selected by default so the connector is available throughout Trema."}
               </p>
             </div>
             {Object.entries(provider.configFields).map(([name, descriptor]) =>
@@ -243,7 +245,9 @@ export function OAuthConnectionDialog({
       const sharedInput = {
         providerKey: provider.key,
         ...(Object.keys(config).length > 0 ? { config } : {}),
-        ...(provider.availableScopes ? { providerScopes: selectedScopes } : {}),
+        ...(audience === "admin" && provider.availableScopes
+          ? { providerScopes: selectedScopes }
+          : {}),
         ...(reconnect ? { reconnectConnectionId: reconnect.id } : {}),
         returnTo: returnUrl(),
       };
@@ -273,14 +277,18 @@ export function OAuthConnectionDialog({
             </DialogTitle>
             <DialogDescription>
               {audience === "member"
-                ? "Authorize the provider account to connect to your personal scope."
-                : "Authorize an organization-controlled account for shared use."}
+                ? reconnect
+                  ? `Reconnect ${reconnect.label ?? provider.displayName}. Trema will use this account for connector calls in your personal chats.`
+                  : `Choose the ${provider.displayName} account you want Trema to use for connector calls in your personal chats.`
+                : reconnect
+                  ? `Authorize ${reconnect.label ?? provider.displayName} again for shared use.`
+                  : `Choose an organization-controlled ${provider.displayName} account for this location.`}
             </DialogDescription>
           </DialogHeader>
           <div className="my-5 space-y-4">
             {audience === "admin" ? (
               <div className="space-y-2">
-                <Label htmlFor={`oauth-target-${provider.key}`}>Available in</Label>
+                <Label htmlFor={`oauth-target-${provider.key}`}>Location</Label>
                 <Select value={targetScopeId} onValueChange={setTargetScopeId}>
                   <SelectTrigger id={`oauth-target-${provider.key}`} className="w-full">
                     <SelectValue placeholder="Choose a scope" />
@@ -294,44 +302,49 @@ export function OAuthConnectionDialog({
                   </SelectContent>
                 </Select>
                 <p className="text-meta text-muted-foreground">
-                  The callback installs this connection in the selected scope.
+                  The account will be available in the selected location after authorization.
                 </p>
               </div>
             ) : null}
             {Object.entries(provider.configFields).map(([name, descriptor]) =>
               fieldInput(provider.key, name, descriptor, "config"),
             )}
-            {provider.availableScopes ? (
-              <div className="space-y-3">
-                <div>
-                  <Label>Provider scopes</Label>
-                  <p className="text-meta text-muted-foreground">
-                    Choose what the provider token may access.
-                  </p>
+            {audience === "admin" && provider.availableScopes ? (
+              <details className="rounded-md border p-3">
+                <summary className="cursor-pointer text-chrome font-medium">
+                  Advanced provider access
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <Label>Provider permissions</Label>
+                    <p className="text-meta text-muted-foreground">
+                      Choose what this account allows Trema to access at the provider.
+                    </p>
+                  </div>
+                  <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
+                    {provider.availableScopes.map((scope) => (
+                      <label
+                        key={scope}
+                        htmlFor={`oauth-scope-${provider.key}-${scope}`}
+                        className="flex items-center gap-2 text-chrome"
+                      >
+                        <Checkbox
+                          id={`oauth-scope-${provider.key}-${scope}`}
+                          checked={selectedScopes.includes(scope)}
+                          onCheckedChange={(checked) =>
+                            setSelectedScopes((current) =>
+                              checked
+                                ? [...current, scope]
+                                : current.filter((candidate) => candidate !== scope),
+                            )
+                          }
+                        />
+                        <span className="font-mono text-meta">{scope}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-                <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
-                  {provider.availableScopes.map((scope) => (
-                    <label
-                      key={scope}
-                      htmlFor={`oauth-scope-${provider.key}-${scope}`}
-                      className="flex items-center gap-2 text-chrome"
-                    >
-                      <Checkbox
-                        id={`oauth-scope-${provider.key}-${scope}`}
-                        checked={selectedScopes.includes(scope)}
-                        onCheckedChange={(checked) =>
-                          setSelectedScopes((current) =>
-                            checked
-                              ? [...current, scope]
-                              : current.filter((candidate) => candidate !== scope),
-                          )
-                        }
-                      />
-                      <span className="font-mono text-meta">{scope}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+              </details>
             ) : null}
           </div>
           <DialogFooter>
@@ -339,7 +352,13 @@ export function OAuthConnectionDialog({
               Cancel
             </Button>
             <Button disabled={start.isPending || (audience === "admin" && !targetScopeId)}>
-              {start.isPending ? "Redirecting…" : reconnect ? "Reconnect" : "Continue"}
+              {start.isPending
+                ? "Redirecting…"
+                : reconnect
+                  ? "Reconnect"
+                  : audience === "member"
+                    ? `Connect ${provider.displayName}`
+                    : "Continue"}
             </Button>
           </DialogFooter>
         </form>

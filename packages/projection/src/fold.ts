@@ -163,6 +163,14 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
               ...(event.connector.logoUrl === undefined
                 ? {}
                 : { logoUrl: event.connector.logoUrl }),
+              ...(event.connector.account === undefined
+                ? {}
+                : {
+                    account: {
+                      label: event.connector.account.label,
+                      source: event.connector.account.source,
+                    },
+                  }),
             };
       const part = draft.mutableByKey("activity", event.callId);
       if (part === undefined) {

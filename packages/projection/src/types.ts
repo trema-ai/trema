@@ -44,6 +44,10 @@ export interface ActivityPart {
     key: string;
     displayName: string;
     logoUrl?: string;
+    account?: {
+      label: string;
+      source: "personal" | "organization";
+    };
   };
   /** Streamed input accumulation (`tool-input-delta`), replaced by `tool-input`. */
   input?: string;
