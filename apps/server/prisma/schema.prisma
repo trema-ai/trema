@@ -268,6 +268,7 @@ model Org {
   runIntents            RunIntent[]
   runStops              RunStop[]
   runElicitations       RunElicitation[]
+  surfaceRealizations   SurfaceRealization[]
   schedules             Schedule[]
   scheduleFirings       ScheduleFiring[]
 }
@@ -994,48 +995,49 @@ model ConnectorOAuthState {
 /// One agent run: the unit the workflow engine schedules and the harness owns.
 /// The engine carries nothing but this row's id, so the record is here.
 model AgentRun {
-  id                String           @id
-  orgId             String
+  id                  String               @id
+  orgId               String
   /// The conversation the run serializes against. One run per thread at a time.
-  threadRef         String
-  state             RunState
-  trigger           RunTrigger
-  turnCount         Int              @default(0)
+  threadRef           String
+  state               RunState
+  trigger             RunTrigger
+  turnCount           Int                  @default(0)
   /// The highest event sequence number handed out for this run. An
   /// `UPDATE ... RETURNING` on this column allocates `seq` inside the same
   /// transaction as the event insert, which keeps the sequence dense.
-  lastEventSeq      Int              @default(0)
-  sessionId         String?
-  retryOfRunId      String?
+  lastEventSeq        Int                  @default(0)
+  sessionId           String?
+  retryOfRunId        String?
   /// One-based attempt number across a retry chain.
-  retryAttempt      Int?
-  usage             Json?
-  error             String?
+  retryAttempt        Int?
+  usage               Json?
+  error               String?
   /// Tool names a principal approved for the remainder of this run.
-  runGrants         String[]         @default([])
+  runGrants           String[]             @default([])
   /// Narrows the session's resolved tools for this run. It can never widen them.
-  toolAllowlist     String[]         @default([])
+  toolAllowlist       String[]             @default([])
   /// The provider explicitly selected for this run. Null follows the turns role.
-  modelProviderName String?
+  modelProviderName   String?
   /// The provider-specific model explicitly selected for this run.
-  modelModelId      String?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  org               Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  modelModelId        String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  org                 Org                  @relation(fields: [orgId], references: [id], onDelete: Cascade)
   /// NoAction, not SetNull: SET NULL on a compound key would null `orgId` too,
   /// and run visibility is pinned to the session's grant snapshot, so the
   /// session row must outlive its runs. NO ACTION checks at end of statement,
   /// which lets an org delete cascade both sides while refusing any delete
   /// that would leave a surviving run without its session.
-  session           ContextSession?  @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: NoAction)
-  retryOf           AgentRun?        @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
-  retries           AgentRun[]       @relation("AgentRunRetry")
-  turns             Turn[]
-  events            RunEvent[]
-  queuedInputs      RunQueuedInput[]
-  elicitations      RunElicitation[]
-  stop              RunStop?
-  firings           ScheduleFiring[]
+  session             ContextSession?      @relation(fields: [orgId, sessionId], references: [orgId, id], onDelete: NoAction)
+  retryOf             AgentRun?            @relation("AgentRunRetry", fields: [retryOfRunId], references: [id], onDelete: SetNull)
+  retries             AgentRun[]           @relation("AgentRunRetry")
+  turns               Turn[]
+  events              RunEvent[]
+  queuedInputs        RunQueuedInput[]
+  elicitations        RunElicitation[]
+  stop                RunStop?
+  firings             ScheduleFiring[]
+  surfaceRealizations SurfaceRealization[]
 
   @@unique([orgId, id])
   @@index([orgId, threadRef, createdAt])
@@ -1087,6 +1089,40 @@ model RunEvent {
 
   @@unique([runId, seq])
   @@index([orgId, runId, seq])
+}
+
+/// Durable applied state for one run on one external surface destination.
+/// The cursor advances only after a driver acknowledges its entire operation
+/// batch. The lease makes that advance single-writer across renderer workers.
+model SurfaceRealization {
+  id                 String    @id @default(uuid(7))
+  orgId              String
+  runId              String
+  surface            String
+  locationRef        String
+  /// Empty when the destination has no thread. Keeping it non-null makes the
+  /// destination uniqueness constraint behave consistently in Postgres.
+  threadRef          String    @default("")
+  renderedThroughSeq Int       @default(0)
+  segments           Json      @default("[]")
+  presentation       Json      @default("{}")
+  /// Optimistic revision. Every successful cursor commit increments it.
+  version            Int       @default(0)
+  leaseOwner         String?
+  leaseUntil         DateTime?
+  retryAttempt       Int       @default(0)
+  terminalFailure    Boolean   @default(false)
+  nextRetryAt        DateTime?
+  lastErrorCode      String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  org                Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run                AgentRun  @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([runId, surface, locationRef, threadRef])
+  @@index([orgId, runId])
+  @@index([leaseUntil])
+  @@index([nextRetryAt])
 }
 
 /// Input waiting for a turn boundary. Steering waits on a named run;

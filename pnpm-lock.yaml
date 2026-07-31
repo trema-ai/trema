@@ -72,6 +72,9 @@ importers:
       '@trema/models':
         specifier: workspace:*
         version: link:../../packages/models
+      '@trema/surfaces':
+        specifier: workspace:*
+        version: link:../../packages/surfaces
       aws4fetch:
         specifier: ^1.0.20
         version: 1.0.20
@@ -323,6 +326,25 @@ importers:
       '@trema/harness':
         specifier: workspace:*
         version: link:../harness
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jsdom@30.0.0(@noble/hashes@2.2.0))(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
+
+  packages/surfaces:
+    dependencies:
+      '@trema/harness':
+        specifier: workspace:*
+        version: link:../harness
+      '@trema/projection':
+        specifier: workspace:*
+        version: link:../projection
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

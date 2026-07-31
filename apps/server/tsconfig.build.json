@@ -18,6 +18,9 @@
     },
     {
       "path": "../../packages/models/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/surfaces/tsconfig.build.json"
     }
   ]
 }
