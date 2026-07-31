@@ -18,10 +18,12 @@ import {
   updateConnectorInstallation,
 } from "#server/services/connectors/index.js";
 import {
+  archiveConnectorInstallation,
   lockConnectorBindingMutations,
   lockConnectorConnectionBindings,
   provisionConnectorInstallation,
 } from "#server/services/connectors/installations.js";
+import { archiveItem } from "#server/services/items/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
@@ -771,6 +773,81 @@ integration("connector connections and installations", () => {
           enabledTools: "all",
         },
       });
+    },
+  );
+
+  it.each(["connector", "generic"] as const)(
+    "serializes the %s archive path with connector provisioning",
+    async (archivePath) => {
+      const org = await createOrg();
+      const connected = await connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "github",
+      });
+      const installation = await createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: org.principal.id,
+        scopeId: org.orgScope.id,
+        catalogKey: "github",
+        connectionId: connected.id,
+      });
+      let markProvisioningRead!: () => void;
+      const provisioningRead = new Promise<void>((resolve) => {
+        markProvisioningRead = resolve;
+      });
+      let releaseProvisioning!: () => void;
+      const provisioningRelease = new Promise<void>((resolve) => {
+        releaseProvisioning = resolve;
+      });
+      const provisioning = db.$transaction(async (transaction) => {
+        await lockConnectorBindingMutations(transaction, org.org.id);
+        await transaction.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        });
+        markProvisioningRead();
+        await provisioningRelease;
+        return provisionConnectorInstallation(transaction, {
+          orgId: org.org.id,
+          actorPrincipalId: org.principal.id,
+          scopeId: org.orgScope.id,
+          catalogKey: "github",
+          connectionId: connected.id,
+        });
+      });
+      await provisioningRead;
+
+      const archive =
+        archivePath === "connector"
+          ? archiveConnectorInstallation(db, {
+              orgId: org.org.id,
+              actorPrincipalId: org.principal.id,
+              installationItemId: installation.id,
+            })
+          : archiveItem(db, {
+              orgId: org.org.id,
+              actorPrincipalId: org.principal.id,
+              itemId: installation.id,
+            });
+      const stateBeforeProvisioningCommit = await Promise.race([
+        archive.then(() => "settled" as const),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
+      ]);
+      expect(stateBeforeProvisioningCommit).toBe("blocked");
+
+      releaseProvisioning();
+      await provisioning;
+      await archive;
+      await expect(
+        db.item.count({
+          where: {
+            orgId: org.org.id,
+            scopeId: org.orgScope.id,
+            kind: "connector",
+            status: "active",
+          },
+        }),
+      ).resolves.toBe(0);
     },
   );
 

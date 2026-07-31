@@ -264,6 +264,7 @@ export async function archiveConnectorInstallation(
   input: ArchiveConnectorInstallationInput,
 ) {
   const result = await db.$transaction(async (transaction) => {
+    await lockConnectorBindingMutations(transaction, input.orgId);
     const existing = await transaction.item.findFirst({
       where: {
         id: input.installationItemId,

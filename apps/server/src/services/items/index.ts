@@ -10,6 +10,7 @@ import { log } from "#server/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   connectorInstallationBodySchema,
+  lockConnectorBindingMutations,
 } from "#server/services/connectors/installations.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
 import { indexItemSafely } from "#server/services/search/index.js";
@@ -385,13 +386,19 @@ export interface TransitionItemInput {
 
 export async function transitionItem(db: Database, input: TransitionItemInput) {
   const updated = await db.$transaction(async (transaction) => {
-    const [item, actor] = await Promise.all([
-      transaction.item.findFirst({ where: { id: input.itemId, orgId: input.orgId } }),
-      transaction.principal.findFirst({
-        where: { id: input.actorPrincipalId, orgId: input.orgId },
-        select: { kind: true },
-      }),
-    ]);
+    let item = await transaction.item.findFirst({
+      where: { id: input.itemId, orgId: input.orgId },
+    });
+    if (item?.kind === "connector" && input.action === "archive") {
+      await lockConnectorBindingMutations(transaction, input.orgId);
+      item = await transaction.item.findFirst({
+        where: { id: input.itemId, orgId: input.orgId },
+      });
+    }
+    const actor = await transaction.principal.findFirst({
+      where: { id: input.actorPrincipalId, orgId: input.orgId },
+      select: { kind: true },
+    });
     if (!item) throw new ItemNotFoundError();
     // A transition is a person's act. Activation in particular is the confirm
     // step a `proposed` item exists for, so a run reaches it only by asking:
