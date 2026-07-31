@@ -185,13 +185,6 @@ export class ConnectorInstallationNotFoundError extends Error {
   }
 }
 
-export class ConnectorInstallationConflictError extends Error {
-  constructor(providerKey: string) {
-    super(`An active installation for provider '${providerKey}' already exists in this scope`);
-    this.name = "ConnectorInstallationConflictError";
-  }
-}
-
 function parseBody(body: unknown, catalog: ProviderCatalog): ConnectorInstallationBody {
   const parsed = createConnectorInstallationBodySchema(catalog).safeParse(body);
   if (!parsed.success) {

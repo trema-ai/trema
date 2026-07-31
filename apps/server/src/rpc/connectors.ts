@@ -13,7 +13,6 @@ import {
   ConnectorApprovalRequiredError,
   ConnectorCatalogDefectError,
   ConnectorConnectionNotFoundError,
-  ConnectorInstallationConflictError,
   ConnectorInstallationError,
   ConnectorInstallationNotFoundError,
   ConnectorInstallationValidationError,
@@ -226,10 +225,7 @@ function throwConnectorError(error: unknown): never {
       },
     });
   }
-  if (
-    error instanceof ClientRegistrationConflictError ||
-    error instanceof ConnectorInstallationConflictError
-  ) {
+  if (error instanceof ClientRegistrationConflictError) {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
   if (error instanceof CredentialVerificationError || error instanceof McpOAuthDiscoveryError) {

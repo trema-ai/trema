@@ -74,7 +74,6 @@ export {
   type ArchiveConnectorInstallationInput,
   archiveConnectorInstallation,
   type ConnectorInstallationBody,
-  ConnectorInstallationConflictError,
   ConnectorInstallationNotFoundError,
   ConnectorInstallationValidationError,
   type CreateConnectorInstallationInput,

@@ -480,7 +480,7 @@ integration("connector connections and installations", () => {
     ).resolves.toEqual([expect.objectContaining({ id: connected.id, installations: [] })]);
   });
 
-  it("allows only one active installation per provider in a scope", async () => {
+  it("repoints the single active provider installation in a scope", async () => {
     const org = await createOrg();
     const [firstConnection, secondConnection] = await Promise.all([
       connection({
@@ -513,10 +513,20 @@ integration("connector connections and installations", () => {
         },
         { context: org.context },
       ),
-    ).rejects.toMatchObject({
-      code: "CONFLICT",
-      message: expect.stringContaining("already exists in this scope"),
+    ).resolves.toMatchObject({
+      id: first.id,
+      body: expect.objectContaining({ connectionId: secondConnection.id }),
     });
+    await expect(
+      db.item.count({
+        where: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          status: "active",
+        },
+      }),
+    ).resolves.toBe(1);
 
     await call(
       connectorsRouter.installations.archive,
@@ -668,6 +678,7 @@ integration("connector connections and installations", () => {
     expect(switched.body).toEqual({
       catalogKey: "notion",
       connectionId: second.id,
+      access: { kind: "scope" },
       enabledTools: ["read_page"],
       syncPending: true,
     });

@@ -150,11 +150,6 @@ async function recordCall(db: Database, input: AuditInput): Promise<void> {
 }
 
 async function writeCallRecord(db: Database, input: AuditInput): Promise<void> {
-  const agent = await db.principal.findFirst({
-    where: { orgId: input.session.orgId, kind: "agent", deactivatedAt: null },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
   await db.auditLog.create({
     data: {
       orgId: input.session.orgId,
@@ -165,7 +160,7 @@ async function writeCallRecord(db: Database, input: AuditInput): Promise<void> {
       payload: {
         sessionId: input.session.id,
         scopeId: input.session.scopeId,
-        agentPrincipalId: agent?.id ?? null,
+        agentPrincipalId: input.session.agentPrincipalId,
         requesterPrincipalId: input.session.requesterPrincipalId,
         requesterExternalRef: input.session.requesterExternalRef,
         toolKey: input.toolKey,
