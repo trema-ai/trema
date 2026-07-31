@@ -446,6 +446,12 @@ const updateInstallation = installationScoped
           installationItemId: input.installationItemId,
           ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
           ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
+          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+            : {}),
+          ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
+          ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
+          ...(context.platformApps ? { platformApps: context.platformApps } : {}),
         }),
       );
     } catch (error) {

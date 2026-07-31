@@ -765,6 +765,9 @@ export interface UpdateConnectorInstallationInput extends EmbeddingOptions {
   connectionId?: string;
   enabledTools?: "all" | string[];
   catalog?: ProviderCatalog;
+  clientFactory?: McpClientFactory;
+  platformApps?: PlatformAppDirectory;
+  fetch?: ConnectorFetch;
 }
 
 export async function updateConnectorInstallation(
@@ -831,12 +834,6 @@ export async function updateConnectorInstallation(
           : {}),
       },
     });
-    if (changed) {
-      log.info("Connector installation updated", {
-        itemId: installation.id,
-        connectionId: body.connectionId,
-      });
-    }
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
@@ -851,18 +848,43 @@ export async function updateConnectorInstallation(
         },
       },
     });
-    return installation;
+    return {
+      installation,
+      changed,
+      connectionChanged: current.connectionId !== body.connectionId,
+    };
   });
-  await indexItemSafely(db, updated, input);
-  const { indexConnectorInstallationToolsSafely } = await import(
-    "#server/services/connectors/tool-search.js"
-  );
-  await indexConnectorInstallationToolsSafely(db, {
-    orgId: input.orgId,
-    installationItemId: updated.id,
-    ...(input.embedder ? { embedder: input.embedder } : {}),
-    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
-    catalog,
-  });
-  return updated;
+  if (updated.changed) {
+    const body = parseBody(updated.installation.body, catalog);
+    log.info("Connector installation updated", {
+      itemId: updated.installation.id,
+      connectionId: body.connectionId,
+    });
+  }
+  if (updated.connectionChanged) {
+    await finalizeConnectorInstallation(db, {
+      orgId: input.orgId,
+      actorPrincipalId: input.actorPrincipalId,
+      installation: updated.installation,
+      ...(input.embedder ? { embedder: input.embedder } : {}),
+      ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+      ...(input.clientFactory ? { clientFactory: input.clientFactory } : {}),
+      ...(input.platformApps ? { platformApps: input.platformApps } : {}),
+      ...(input.fetch ? { fetch: input.fetch } : {}),
+      catalog,
+    });
+  } else {
+    await indexItemSafely(db, updated.installation, input);
+    const { indexConnectorInstallationToolsSafely } = await import(
+      "#server/services/connectors/tool-search.js"
+    );
+    await indexConnectorInstallationToolsSafely(db, {
+      orgId: input.orgId,
+      installationItemId: updated.installation.id,
+      ...(input.embedder ? { embedder: input.embedder } : {}),
+      ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+      catalog,
+    });
+  }
+  return updated.installation;
 }

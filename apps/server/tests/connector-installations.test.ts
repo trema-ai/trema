@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { call } from "@orpc/server";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Role } from "#server/generated/prisma/client.js";
 import { createAuth } from "#server/lib/auth/index.js";
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
@@ -15,6 +15,7 @@ import {
   createConnectorInstallation,
   type McpClientFactory,
   syncConnectorInstallation,
+  updateConnectorInstallation,
 } from "#server/services/connectors/index.js";
 import { provisionConnectorInstallation } from "#server/services/connectors/installations.js";
 
@@ -580,19 +581,19 @@ integration("connector connections and installations", () => {
         },
       },
     });
-    const failingFactory: McpClientFactory = async () => {
+    const failingFactory = vi.fn(async () => {
       throw new Error("MCP unavailable");
-    };
+    }) satisfies McpClientFactory;
 
-    await createConnectorInstallation(db, {
+    await updateConnectorInstallation(db, {
       orgId: org.org.id,
       actorPrincipalId: org.principal.id,
-      scopeId: org.orgScope.id,
-      catalogKey: "notion",
+      installationItemId: installation.id,
       connectionId: second.id,
       clientFactory: failingFactory,
       masterKey,
     });
+    expect(failingFactory).toHaveBeenCalledOnce();
 
     const switched = await db.item.findUniqueOrThrow({
       where: { orgId_id: { orgId: org.org.id, id: installation.id } },
