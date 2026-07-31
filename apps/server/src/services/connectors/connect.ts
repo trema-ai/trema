@@ -11,6 +11,7 @@ import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { authorize } from "#server/services/authorize/index.js";
+import { connectorConnectionValidity } from "#server/services/connectors/health.js";
 import {
   finalizeConnectorInstallation,
   lockConnectorBindingMutations,
@@ -32,6 +33,8 @@ import {
   resolveStoredClientRegistration,
 } from "#server/services/connectors/registrations.js";
 import type { McpClientFactory } from "#server/services/connectors/sync.js";
+
+export { connectorConnectionValidity };
 
 const defaultCatalog = loadProviderCatalog();
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
@@ -1590,19 +1593,6 @@ export async function listConnectorConnections(
     installations: bindings.get(connection.id) ?? [],
     ...connectorConnectionValidity(connection, now),
   }));
-}
-
-export function connectorConnectionValidity(
-  connection: { revokedAt: Date | null; expiresAt: Date | null; refreshExhausted: boolean },
-  now = new Date(),
-) {
-  const isRevoked = connection.revokedAt !== null;
-  const isExpired = connection.expiresAt !== null && connection.expiresAt <= now;
-  return {
-    isRevoked,
-    isExpired,
-    isValid: !isRevoked && !isExpired && !connection.refreshExhausted,
-  };
 }
 
 export async function revokeConnectorConnection(

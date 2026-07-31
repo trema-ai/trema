@@ -5402,6 +5402,56 @@
         ]
       }
     },
+    "/member/connector-installations/health": {
+      "get": {
+        "operationId": "connectors.member.installations.health",
+        "summary": "List organization connector health for members",
+        "description": "List safe connection availability for organization connectors visible in personal settings.",
+        "tags": [
+          "Connectors"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "installationItemId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "status": {
+                        "enum": [
+                          "available",
+                          "revoked",
+                          "expired",
+                          "refresh_exhausted",
+                          "missing"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "installationItemId",
+                      "status"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/conversations": {
       "get": {
         "operationId": "conversations.list",

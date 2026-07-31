@@ -31,6 +31,7 @@ import {
   deleteClientRegistration,
   listClientRegistrations,
   listConnectorConnections,
+  listConnectorInstallationHealth,
   listConnectorInstallations,
   loadProviderCatalog,
   McpOAuthDiscoveryError,
@@ -136,6 +137,13 @@ const connectionSchema = z.object({
 });
 
 const connectionUpdateSchema = z.object({ id: z.uuid(), label: z.string().nullable() });
+const connectionHealthStatusSchema = z.enum([
+  "available",
+  "revoked",
+  "expired",
+  "refresh_exhausted",
+  "missing",
+]);
 
 type ListedConnection = Awaited<ReturnType<typeof listConnectorConnections>>[number];
 
@@ -939,6 +947,40 @@ const memberListConnections = orgScoped
     ).map(serializeConnection),
   );
 
+const memberListInstallationHealth = orgScoped
+  .route({
+    method: "GET",
+    path: "/member/connector-installations/health",
+    summary: "List organization connector health for members",
+    description:
+      "List safe connection availability for organization connectors visible in personal settings.",
+    tags: ["Connectors"],
+  })
+  .output(
+    z.array(
+      z.object({
+        installationItemId: z.uuid(),
+        status: connectionHealthStatusSchema,
+      }),
+    ),
+  )
+  .handler(async ({ context }) => {
+    const orgScope = await context.db.scope.findFirst({
+      where: { orgId: context.org.id, kind: "org" },
+      select: { id: true },
+    });
+    if (!orgScope) {
+      throw new ORPCError("NOT_FOUND", { message: "Organization scope not found" });
+    }
+    if (!(await authorize(context.principal, "read", orgScope.id, context.db))) {
+      throw new ORPCError("FORBIDDEN", { message: "Capability required: read" });
+    }
+    return listConnectorInstallationHealth(context.db, {
+      orgId: context.org.id,
+      scopeId: orgScope.id,
+    });
+  });
+
 const memberRevokeConnection = orgScoped
   .route({
     method: "POST",
@@ -1039,6 +1081,6 @@ export const connectorsRouter = {
   member: {
     connect: { startOAuth: memberStartOAuth },
     connections: { list: memberListConnections, revoke: memberRevokeConnection },
-    installations: { create: memberCreateInstallation },
+    installations: { create: memberCreateInstallation, health: memberListInstallationHealth },
   },
 };

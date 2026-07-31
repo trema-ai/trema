@@ -105,10 +105,17 @@ describe("connector identity UX", () => {
       lastUsedAt: null,
       version: 1,
     };
-    render(<OrganizationConnectionCard provider={provider} item={item} />);
+    const { rerender } = render(
+      <OrganizationConnectionCard provider={provider} item={item} health="available" />,
+    );
 
     expect(screen.getByText("Provided by your organization")).toBeTruthy();
+    expect(screen.getByText("Available")).toBeTruthy();
     expect(screen.getByText("1 tool")).toBeTruthy();
+
+    rerender(<OrganizationConnectionCard provider={provider} item={item} health="revoked" />);
+    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.queryByText("Available")).toBeNull();
   });
 
   it("keeps provider permissions out of the ordinary member connect flow", () => {

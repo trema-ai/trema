@@ -534,6 +534,55 @@ integration("connector connection flows", () => {
     ).resolves.toMatchObject({ id: ownConnection.id });
   });
 
+  it("reports organization installation health without exposing connection metadata", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "Health Member");
+    const connection = await storedConnection(org.org.id, org.agent.id, "slack");
+    const installation = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: org.orgScope.id,
+      catalogKey: "slack",
+      connectionId: connection.id,
+    });
+    const listHealth = () =>
+      call(connectorsRouter.member.installations.health, {}, { context: member.context });
+
+    await expect(listHealth()).resolves.toEqual([
+      {
+        installationItemId: installation.id,
+        status: "available",
+      },
+    ]);
+
+    await db.connectorConnection.update({
+      where: { id: connection.id },
+      data: { revokedAt: new Date() },
+    });
+    await expect(listHealth()).resolves.toEqual([
+      expect.objectContaining({ installationItemId: installation.id, status: "revoked" }),
+    ]);
+
+    await db.connectorConnection.update({
+      where: { id: connection.id },
+      data: { revokedAt: null, expiresAt: new Date(0), refreshExhausted: false },
+    });
+    await expect(listHealth()).resolves.toEqual([
+      expect.objectContaining({ installationItemId: installation.id, status: "expired" }),
+    ]);
+
+    await db.connectorConnection.update({
+      where: { id: connection.id },
+      data: { expiresAt: null, refreshExhausted: true },
+    });
+    await expect(listHealth()).resolves.toEqual([
+      expect.objectContaining({
+        installationItemId: installation.id,
+        status: "refresh_exhausted",
+      }),
+    ]);
+  });
+
   it("appends connected=<connectionId> to the safe callback redirect", async () => {
     const org = await createOrg();
     const returnTo = "https://app.trema.example/settings/connectors/github?from=list";

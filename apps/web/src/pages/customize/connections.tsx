@@ -31,6 +31,7 @@ import {
 import {
   type CatalogProvider,
   type ConnectorConnection,
+  type ConnectorInstallationHealth,
   messageFrom,
 } from "#web/pages/settings/connectors/shared.tsx";
 
@@ -74,11 +75,24 @@ export function ConnectionsTab({
     ...orpc.connectors.member.connections.list.queryOptions({ input: {} }),
     enabled: ownPersonal,
   });
+  const organizationInstallationHealth = useQuery({
+    ...orpc.connectors.member.installations.health.queryOptions({}),
+    enabled: ownPersonal,
+  });
   const entries = (catalog.data ?? []) as CatalogProvider[];
   const entryByKey = useMemo(() => new Map(entries.map((entry) => [entry.key, entry])), [entries]);
   const connectionRows = useMemo(
     () => (memberConnections.data ?? []) as ConnectorConnection[],
     [memberConnections.data],
+  );
+  const healthByInstallationId = useMemo(
+    () =>
+      new Map(
+        ((organizationInstallationHealth.data ?? []) as ConnectorInstallationHealth[]).map(
+          (health) => [health.installationItemId, health.status],
+        ),
+      ),
+    [organizationInstallationHealth.data],
   );
   const installations = items.filter(
     (item) => item.scopeId === scope.id && item.kind === "connector" && item.status !== "archived",
@@ -174,6 +188,9 @@ export function ConnectionsTab({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: orpc.connectors.member.connections.list.key() }),
       queryClient.invalidateQueries({
+        queryKey: orpc.connectors.member.installations.health.key(),
+      }),
+      queryClient.invalidateQueries({
         queryKey: orpc.items.list.queryOptions({ input: {} }).queryKey,
       }),
     ]);
@@ -204,7 +221,11 @@ export function ConnectionsTab({
     );
   }, [connectedId, invalidateConnections, ownPersonal, removeSearchParams, searchParams]);
 
-  if (loading || catalog.isPending || (ownPersonal && memberConnections.isPending)) {
+  if (
+    loading ||
+    catalog.isPending ||
+    (ownPersonal && (memberConnections.isPending || organizationInstallationHealth.isPending))
+  ) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {[1, 2, 3].map((key) => (
@@ -213,7 +234,9 @@ export function ConnectionsTab({
       </div>
     );
   }
-  const error = catalog.error ?? (ownPersonal ? memberConnections.error : null);
+  const error =
+    catalog.error ??
+    (ownPersonal ? (memberConnections.error ?? organizationInstallationHealth.error) : null);
   if (error) {
     return (
       <Alert variant="destructive">
@@ -292,7 +315,12 @@ export function ConnectionsTab({
                   const body = item.body as ConnectorBody;
                   const provider = entryByKey.get(body.catalogKey);
                   return provider ? (
-                    <OrganizationConnectionCard key={item.id} provider={provider} item={item} />
+                    <OrganizationConnectionCard
+                      key={item.id}
+                      provider={provider}
+                      item={item}
+                      health={healthByInstallationId.get(item.id) ?? "missing"}
+                    />
                   ) : null;
                 })}
               </div>
@@ -538,16 +566,19 @@ export function PersonalConnectionRow({
 export function OrganizationConnectionCard({
   provider,
   item,
+  health,
 }: {
   provider: CatalogProvider;
   item: Item;
+  health: ConnectorInstallationHealth["status"];
 }) {
   const body = item.body as ConnectorBody;
+  const status = organizationHealthBadge(health);
   return (
     <ConnectorCard
       provider={provider}
       identity={{ kind: "organization" }}
-      status={{ value: "connected", label: "Available" }}
+      status={status}
       detail={
         body.enabledTools === "all"
           ? "All available tools"
@@ -555,4 +586,22 @@ export function OrganizationConnectionCard({
       }
     />
   );
+}
+
+function organizationHealthBadge(health: ConnectorInstallationHealth["status"]): {
+  value: "connected" | "missing" | "expired";
+  label: string;
+} {
+  switch (health) {
+    case "available":
+      return { value: "connected", label: "Available" };
+    case "revoked":
+      return { value: "expired", label: "Disconnected" };
+    case "expired":
+      return { value: "expired", label: "Expired" };
+    case "refresh_exhausted":
+      return { value: "expired", label: "Reconnect needed" };
+    case "missing":
+      return { value: "missing", label: "Unavailable" };
+  }
 }
