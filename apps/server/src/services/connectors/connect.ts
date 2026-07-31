@@ -13,6 +13,7 @@ import { log } from "#server/lib/logger/index.js";
 import { authorize } from "#server/services/authorize/index.js";
 import {
   finalizeConnectorInstallation,
+  lockConnectorBindingMutations,
   lockConnectorConnectionBindings,
   provisionConnectorInstallation,
 } from "#server/services/connectors/installations.js";
@@ -679,6 +680,7 @@ async function assertConnectionUpdateAuthorized(
     connectionId: string;
   },
 ) {
+  await lockConnectorBindingMutations(db, input.orgId);
   await lockConnectorConnectionBindings(db, input.orgId, input.connectionId);
   const bindings = await db.item.findMany({
     where: {
@@ -817,6 +819,9 @@ async function persistOAuthProvisioning(
           actorPrincipalId: input.oauthState.initiatedByPrincipalId,
           connectionId,
         });
+      } else {
+        await lockConnectorBindingMutations(transaction, input.oauthState.orgId);
+        await lockConnectorConnectionBindings(transaction, input.oauthState.orgId, connectionId);
       }
     });
     const connection = stored.connection;

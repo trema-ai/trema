@@ -17,7 +17,11 @@ import {
   syncConnectorInstallation,
   updateConnectorInstallation,
 } from "#server/services/connectors/index.js";
-import { provisionConnectorInstallation } from "#server/services/connectors/installations.js";
+import {
+  lockConnectorBindingMutations,
+  lockConnectorConnectionBindings,
+  provisionConnectorInstallation,
+} from "#server/services/connectors/installations.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
@@ -669,6 +673,104 @@ integration("connector connections and installations", () => {
     });
     expect(invalidatedSibling.body).not.toHaveProperty("syncedTools");
   });
+
+  it.each(["provision", "update"] as const)(
+    "keeps a concurrent reconnect from restoring the source connection during %s",
+    async (operation) => {
+      const org = await createOrg();
+      const first = await connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "notion",
+      });
+      const second = await connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "notion",
+      });
+      const installation = await db.item.create({
+        data: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          title: "Notion",
+          body: {
+            catalogKey: "notion",
+            connectionId: first.id,
+            enabledTools: "all",
+            syncedTools: [{ name: "old_tool" }],
+          },
+          status: "active",
+          disclosure: "retrieved",
+          createdById: org.principal.id,
+          updatedById: org.principal.id,
+        },
+      });
+      let markReconnectRead!: () => void;
+      const reconnectRead = new Promise<void>((resolve) => {
+        markReconnectRead = resolve;
+      });
+      let releaseReconnect!: () => void;
+      const reconnectRelease = new Promise<void>((resolve) => {
+        releaseReconnect = resolve;
+      });
+      const reconnect = db.$transaction(async (transaction) => {
+        await lockConnectorBindingMutations(transaction, org.org.id);
+        await lockConnectorConnectionBindings(transaction, org.org.id, first.id);
+        const stale = await transaction.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        });
+        markReconnectRead();
+        await reconnectRelease;
+        const { syncedTools: _syncedTools, ...staleBody } = stale.body as Record<string, unknown>;
+        await transaction.item.update({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+          data: { body: { ...staleBody, syncPending: true } },
+        });
+      });
+      await reconnectRead;
+
+      const repoint =
+        operation === "provision"
+          ? db.$transaction((transaction) =>
+              provisionConnectorInstallation(transaction, {
+                orgId: org.org.id,
+                actorPrincipalId: org.principal.id,
+                scopeId: org.orgScope.id,
+                catalogKey: "notion",
+                connectionId: second.id,
+              }),
+            )
+          : updateConnectorInstallation(db, {
+              orgId: org.org.id,
+              actorPrincipalId: org.principal.id,
+              installationItemId: installation.id,
+              connectionId: second.id,
+              clientFactory: emptyMcpFactory,
+              masterKey,
+            });
+      const stateBeforeReconnectCommit = await Promise.race([
+        repoint.then(() => "settled" as const),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
+      ]);
+      expect(stateBeforeReconnectCommit).toBe("blocked");
+
+      releaseReconnect();
+      await reconnect;
+      await repoint;
+      await expect(
+        db.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        }),
+      ).resolves.toMatchObject({
+        body: {
+          catalogKey: "notion",
+          connectionId: second.id,
+          enabledTools: "all",
+        },
+      });
+    },
+  );
 
   it("rejects a delayed MCP sync result when the bound connection changed", async () => {
     const org = await createOrg();

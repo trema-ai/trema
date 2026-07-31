@@ -402,9 +402,25 @@ export interface ProvisionConnectorInstallationInput {
 export async function lockConnectorConnectionBindings(
   transaction: Prisma.TransactionClient,
   orgId: string,
-  connectionId: string,
+  connectionIds: string | readonly string[],
 ) {
-  const lockKey = `${orgId}:${connectionId}`;
+  const sortedConnectionIds = [
+    ...new Set(typeof connectionIds === "string" ? [connectionIds] : connectionIds),
+  ].sort();
+  for (const connectionId of sortedConnectionIds) {
+    const lockKey = `${orgId}:${connectionId}`;
+    await transaction.$queryRaw`
+      SELECT 1::int AS locked
+      FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))
+    `;
+  }
+}
+
+export async function lockConnectorBindingMutations(
+  transaction: Prisma.TransactionClient,
+  orgId: string,
+) {
+  const lockKey = `${orgId}:connector-bindings`;
   await transaction.$queryRaw`
     SELECT 1::int AS locked
     FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))
@@ -501,15 +517,33 @@ export async function provisionConnectorInstallation(
     );
   }
 
-  await lockConnectorConnectionBindings(transaction, input.orgId, input.connectionId);
-  // The expression index is the final concurrency guard. Serializing the
-  // read/update decision avoids turning an ordinary concurrent setup into a
-  // unique-constraint failure whose transaction can no longer recover.
-  const lockKey = `${input.orgId}:${input.scopeId}:${provider.key}`;
-  await transaction.$queryRaw`
-    SELECT 1::int AS locked
-    FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))
-  `;
+  // The expression index is the final uniqueness guard. Serializing binding
+  // mutations also lets us discover and lock both sides of a repoint without
+  // another transaction changing the source connection between those steps.
+  await lockConnectorBindingMutations(transaction, input.orgId);
+  const initialCandidates = await transaction.item.findMany({
+    where: {
+      orgId: input.orgId,
+      scopeId: input.scopeId,
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+  const initialExisting = initialCandidates.find((candidate) => {
+    try {
+      return parseBody(candidate.body, catalog).catalogKey === provider.key;
+    } catch {
+      return false;
+    }
+  });
+  const currentConnectionId = initialExisting
+    ? parseBody(initialExisting.body, catalog).connectionId
+    : undefined;
+  await lockConnectorConnectionBindings(transaction, input.orgId, [
+    ...(currentConnectionId ? [currentConnectionId] : []),
+    input.connectionId,
+  ]);
 
   const [scope, actor] = await Promise.all([
     validateBinding(transaction, {
@@ -776,20 +810,31 @@ export async function updateConnectorInstallation(
 ) {
   const catalog = input.catalog ?? defaultCatalog;
   const updated = await db.$transaction(async (transaction) => {
-    const existing = await transaction.item.findFirst({
+    await lockConnectorBindingMutations(transaction, input.orgId);
+    let existing = await transaction.item.findFirst({
       where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
     });
     if (!existing) {
       log.warn("Connector installation not found", { itemId: input.installationItemId });
       throw new ConnectorInstallationNotFoundError();
     }
-    const current = parseBody(existing.body, catalog);
-    const provider = catalog.find(({ key }) => key === current.catalogKey);
+    const initial = parseBody(existing.body, catalog);
+    const provider = catalog.find(({ key }) => key === initial.catalogKey);
     if (!provider) {
       throw new ConnectorInstallationValidationError(
-        `Unknown connector provider: ${current.catalogKey}`,
+        `Unknown connector provider: ${initial.catalogKey}`,
       );
     }
+    let current = parseBody(existing.body, catalog);
+    await lockConnectorConnectionBindings(transaction, input.orgId, [
+      current.connectionId,
+      ...(input.connectionId ? [input.connectionId] : []),
+    ]);
+    existing = await transaction.item.findFirst({
+      where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
+    });
+    if (!existing) throw new ConnectorInstallationNotFoundError();
+    current = parseBody(existing.body, catalog);
     const repointed =
       input.connectionId !== undefined
         ? repointInstallationBody(current, input.connectionId, provider, catalog)
@@ -801,7 +846,6 @@ export async function updateConnectorInstallation(
       },
       catalog,
     );
-    await lockConnectorConnectionBindings(transaction, input.orgId, body.connectionId);
     await validateBinding(transaction, {
       orgId: input.orgId,
       scopeId: existing.scopeId,
