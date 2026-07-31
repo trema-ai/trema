@@ -76,7 +76,7 @@ export type ConnectorInstallation = {
 
 export type ConnectorInstallationHealth = {
   installationItemId: string;
-  status: "available" | "revoked" | "expired" | "refresh_exhausted" | "missing";
+  status: "available" | "revoked" | "expired" | "refresh_exhausted" | "missing" | "setup_required";
 };
 
 export type ConnectorMeta = { callbackUrl: string };

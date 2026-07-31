@@ -136,6 +136,11 @@ describe("connector identity UX", () => {
     rerender(<OrganizationConnectionCard provider={provider} item={item} health="revoked" />);
     expect(screen.getByText("Disconnected")).toBeTruthy();
     expect(screen.queryByText("Available")).toBeNull();
+
+    rerender(
+      <OrganizationConnectionCard provider={provider} item={item} health="setup_required" />,
+    );
+    expect(screen.getByText("Setup needed")).toBeTruthy();
   });
 
   it("keeps provider permissions out of the ordinary member connect flow", () => {

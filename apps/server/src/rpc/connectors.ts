@@ -143,6 +143,7 @@ const connectionHealthStatusSchema = z.enum([
   "expired",
   "refresh_exhausted",
   "missing",
+  "setup_required",
 ]);
 
 type ListedConnection = Awaited<ReturnType<typeof listConnectorConnections>>[number];

@@ -6,6 +6,7 @@ import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { ConnectorFetch } from "#server/services/connectors/connect.js";
 import {
+  type ConnectorConnectionHealthStatus,
   connectorConnectionCanRefresh,
   connectorConnectionHealthStatus,
 } from "#server/services/connectors/health.js";
@@ -175,6 +176,20 @@ export function resolveInstallationTools(
   return available.filter((tool) => !enabled || enabled.has(tool.name));
 }
 
+export type ConnectorInstallationHealthStatus = ConnectorConnectionHealthStatus | "setup_required";
+
+export function connectorInstallationHealthStatus(
+  provider: ProviderDef,
+  body: ConnectorInstallationBody,
+  connectionStatus: ConnectorConnectionHealthStatus,
+): ConnectorInstallationHealthStatus {
+  if (connectionStatus !== "available") return connectionStatus;
+  if (provider.transport.type === "mcp" && resolveInstallationTools(provider, body).length === 0) {
+    return "setup_required";
+  }
+  return "available";
+}
+
 export class ConnectorInstallationValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -325,13 +340,22 @@ export async function listConnectorInstallationHealth(
     ]),
   );
 
-  return parsed.map((installation) => ({
-    installationItemId: installation.id,
-    status: connectorConnectionHealthStatus(
+  return parsed.map((installation) => {
+    const provider = defaultCatalog.find(({ key }) => key === installation.body.catalogKey);
+    if (!provider) {
+      throw new ConnectorInstallationValidationError(
+        `Unknown connector provider: ${installation.body.catalogKey}`,
+      );
+    }
+    const connectionStatus = connectorConnectionHealthStatus(
       connectionById.get(installation.body.connectionId),
       input.now,
-    ),
-  }));
+    );
+    return {
+      installationItemId: installation.id,
+      status: connectorInstallationHealthStatus(provider, installation.body, connectionStatus),
+    };
+  });
 }
 
 export interface ArchiveConnectorInstallationInput {

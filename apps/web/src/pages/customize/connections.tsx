@@ -633,6 +633,8 @@ function organizationHealthBadge(health: ConnectorInstallationHealth["status"]):
       return { value: "expired", label: "Expired" };
     case "refresh_exhausted":
       return { value: "expired", label: "Reconnect needed" };
+    case "setup_required":
+      return { value: "missing", label: "Setup needed" };
     case "missing":
       return { value: "missing", label: "Unavailable" };
   }
