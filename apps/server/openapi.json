@@ -4677,6 +4677,9 @@
                       "isExpired": {
                         "type": "boolean"
                       },
+                      "isCredentialUnavailable": {
+                        "type": "boolean"
+                      },
                       "isValid": {
                         "type": "boolean"
                       },
@@ -4718,6 +4721,7 @@
                       "updatedAt",
                       "isRevoked",
                       "isExpired",
+                      "isCredentialUnavailable",
                       "isValid",
                       "installations"
                     ]
@@ -5085,6 +5089,9 @@
                       "isExpired": {
                         "type": "boolean"
                       },
+                      "isCredentialUnavailable": {
+                        "type": "boolean"
+                      },
                       "isValid": {
                         "type": "boolean"
                       },
@@ -5126,6 +5133,7 @@
                       "updatedAt",
                       "isRevoked",
                       "isExpired",
+                      "isCredentialUnavailable",
                       "isValid",
                       "installations"
                     ]
@@ -5430,7 +5438,9 @@
                           "revoked",
                           "expired",
                           "refresh_exhausted",
-                          "missing"
+                          "unavailable",
+                          "missing",
+                          "setup_required"
                         ],
                         "type": "string"
                       }
