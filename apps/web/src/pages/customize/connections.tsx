@@ -84,12 +84,12 @@ export function ConnectionsTab({
   );
   const connectedId = searchParams.get("connected");
 
-  const removeSearchParam = useCallback(
-    (name: string) => {
+  const removeSearchParams = useCallback(
+    (names: readonly string[]) => {
       setSearchParams(
         (current) => {
           const next = new URLSearchParams(current);
-          next.delete(name);
+          for (const name of names) next.delete(name);
           return next;
         },
         { replace: true },
@@ -106,7 +106,6 @@ export function ConnectionsTab({
       }),
     ]);
   }, [queryClient]);
-
   const bind = useMutation({
     mutationFn: (input: { connectionId: string; catalogKey: string }) =>
       rpcClient.connectors.member.installations.create({
@@ -116,66 +115,36 @@ export function ConnectionsTab({
       }),
     onSuccess: async () => {
       await invalidateConnections();
-      removeSearchParam("connected");
       toast.success("Connection added to your personal scope");
     },
-    onError: (error) => {
-      removeSearchParam("connected");
-      toast.error(messageFrom(error));
-    },
+    onError: (error) => toast.error(messageFrom(error)),
   });
 
   useEffect(() => {
     const connectorError = searchParams.get("connector_error");
     if (!connectorError) return;
     toast.error(`Connection failed: ${connectorError.replaceAll("_", " ")}`);
-    removeSearchParam("connector_error");
-  }, [removeSearchParam, searchParams]);
+    removeSearchParams(["connector_error"]);
+  }, [removeSearchParams, searchParams]);
 
   useEffect(() => {
     if (!connectedId) {
       handledCallback.current = undefined;
       return;
     }
-    if (
-      !ownPersonal ||
-      memberConnections.isPending ||
-      memberConnections.isError ||
-      handledCallback.current === connectedId
-    ) {
-      return;
-    }
+    if (!ownPersonal || handledCallback.current === connectedId) return;
     handledCallback.current = connectedId;
-    const connection = connectionRows.find((candidate) => candidate.id === connectedId);
-    if (!connection) {
-      removeSearchParam("connected");
-      toast.error("Connected account was not found");
-      return;
-    }
-    if (connection.installations.some((installation) => installation.scopeId === scope.id)) {
-      removeSearchParam("connected");
-      toast.success(
-        `${entryByKey.get(connection.providerKey)?.displayName ?? "Connection"} reconnected`,
-      );
-      void invalidateConnections();
-      return;
-    }
-    bind.mutate({
-      connectionId: connection.id,
-      catalogKey: connection.providerKey,
-    });
-  }, [
-    connectedId,
-    bind.mutate,
-    connectionRows,
-    entryByKey,
-    invalidateConnections,
-    memberConnections.isError,
-    memberConnections.isPending,
-    ownPersonal,
-    removeSearchParam,
-    scope.id,
-  ]);
+    const setupStatus = searchParams.get("connector_status");
+    removeSearchParams(["connected", "connector_status"]);
+    void invalidateConnections();
+    toast.success(
+      setupStatus === "syncing"
+        ? "Connection added; connector tools are still syncing"
+        : setupStatus === "sync_failed"
+          ? "Connection added; connector tool sync needs attention"
+          : "Connection added to your personal scope",
+    );
+  }, [connectedId, invalidateConnections, ownPersonal, removeSearchParams, searchParams]);
 
   if (loading || catalog.isPending || (ownPersonal && memberConnections.isPending)) {
     return (
@@ -435,9 +404,6 @@ function PersonalConnectionRow({
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
-  const isBound = connection.installations.some(
-    (installation) => installation.scopeId === personalScopeId,
-  );
   const statusLabel = connection.isRevoked
     ? "Revoked"
     : connection.isExpired
@@ -445,6 +411,9 @@ function PersonalConnectionRow({
       : connection.refreshExhausted
         ? "Reconnect needed"
         : "Connected";
+  const isBound = connection.installations.some(
+    (installation) => installation.scopeId === personalScopeId,
+  );
 
   return (
     <>

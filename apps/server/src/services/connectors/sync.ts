@@ -12,6 +12,7 @@ import {
 } from "#server/services/connectors/installations.js";
 import {
   ConnectorReconnectRequiredError,
+  connectorCredentialGeneration,
   resolveConnectionCredential,
 } from "#server/services/connectors/refresh.js";
 import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
@@ -77,7 +78,12 @@ export function mergeSyncedTools(
     body.enabledTools === "all" ? "all" : body.enabledTools.filter((name) => fresh.has(name));
 
   return {
-    body: { ...body, enabledTools, syncedTools: [...fresh.values()] },
+    body: {
+      catalogKey: body.catalogKey,
+      connectionId: body.connectionId,
+      enabledTools,
+      syncedTools: [...fresh.values()],
+    },
     report: { added, removed, changed },
   };
 }
@@ -196,6 +202,7 @@ async function resolveBearerToken(
 ): Promise<{
   token: string | undefined;
   config: Record<string, string | number | boolean>;
+  credentialGeneration: string;
 }> {
   const resolved = await resolveConnectionCredential(db, {
     orgId,
@@ -209,6 +216,7 @@ async function resolveBearerToken(
   return {
     token: bearerToken(resolved.credential),
     config: resolved.config,
+    credentialGeneration: resolved.credentialGeneration,
   };
 }
 
@@ -283,6 +291,23 @@ export async function syncConnectorInstallation(
       const currentBody = parsedBody(current.body, catalog);
       if (currentBody.catalogKey !== provider.key) {
         throw new ConnectorSyncTransportError("Connector provider changed during tool sync");
+      }
+      if (currentBody.connectionId !== body.connectionId) {
+        throw new ConnectorSyncTransportError("Connector connection changed during tool sync");
+      }
+      const [currentConnection] = await transaction.$queryRaw<
+        Array<{ ciphertext: string }>
+      >`SELECT "ciphertext"
+        FROM "ConnectorConnection"
+        WHERE "id" = ${body.connectionId}
+          AND "orgId" = ${input.orgId}
+        FOR SHARE`;
+      if (
+        !currentConnection ||
+        connectorCredentialGeneration(currentConnection.ciphertext) !==
+          resolved.credentialGeneration
+      ) {
+        throw new ConnectorSyncTransportError("Connector credentials changed during tool sync");
       }
       const merged = mergeSyncedTools(currentBody, freshTools);
       const validated = parsedBody(merged.body, catalog);

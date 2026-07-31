@@ -75,6 +75,7 @@ const installationBodyShape = z
         message: "syncedTools cannot contain duplicate tool names",
       })
       .optional(),
+    syncPending: z.literal(true).optional(),
   })
   .strict();
 
@@ -99,8 +100,25 @@ export function createConnectorInstallationBodySchema(catalog: ProviderCatalog =
         message: "REST connector installations cannot contain syncedTools",
       });
     }
+    if (provider.transport.type === "rest" && body.syncPending !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["syncPending"],
+        message: "REST connector installations cannot be pending MCP sync",
+      });
+    }
+    if (body.syncPending && body.syncedTools !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["syncPending"],
+        message: "A pending MCP sync cannot expose synchronized tools",
+      });
+    }
 
-    if (Array.isArray(body.enabledTools)) {
+    if (
+      Array.isArray(body.enabledTools) &&
+      !(provider.transport.type === "mcp" && body.syncPending === true)
+    ) {
       const available = new Set(
         provider.transport.type === "rest"
           ? provider.toolManifest.map(({ name }) => name)
@@ -168,6 +186,32 @@ function jsonValue(body: ConnectorInstallationBody): Prisma.InputJsonValue {
   return body as Prisma.InputJsonValue;
 }
 
+function repointInstallationBody(
+  current: ConnectorInstallationBody,
+  connectionId: string,
+  provider: ProviderDef,
+  catalog: ProviderCatalog,
+  connectionCredentialsChanged = false,
+): ConnectorInstallationBody {
+  const requiresMcpSync =
+    provider.transport.type === "mcp" &&
+    (current.connectionId !== connectionId || connectionCredentialsChanged);
+  return parseBody(
+    {
+      catalogKey: current.catalogKey,
+      connectionId,
+      enabledTools: current.enabledTools,
+      ...(requiresMcpSync
+        ? { syncPending: true as const }
+        : {
+            ...(current.syncedTools !== undefined ? { syncedTools: current.syncedTools } : {}),
+            ...(current.syncPending ? { syncPending: current.syncPending } : {}),
+          }),
+    },
+    catalog,
+  );
+}
+
 export interface ListConnectorInstallationsInput {
   orgId: string;
   scopeId?: string;
@@ -221,6 +265,7 @@ export async function archiveConnectorInstallation(
   input: ArchiveConnectorInstallationInput,
 ) {
   const result = await db.$transaction(async (transaction) => {
+    await lockConnectorBindingMutations(transaction, input.orgId);
     const existing = await transaction.item.findFirst({
       where: {
         id: input.installationItemId,
@@ -341,9 +386,127 @@ async function validateBinding(
   return scope;
 }
 
-export async function createConnectorInstallation(
-  db: Database,
-  input: CreateConnectorInstallationInput,
+export interface ProvisionConnectorInstallationInput {
+  orgId: string;
+  actorPrincipalId: string;
+  scopeId: string;
+  catalogKey: string;
+  connectionId: string;
+  enabledTools?: "all" | string[];
+  credentialOwnerPrincipalId?: string;
+  connectionCredentialsChanged?: boolean;
+  catalog?: ProviderCatalog;
+}
+
+export async function lockConnectorConnectionBindings(
+  transaction: Prisma.TransactionClient,
+  orgId: string,
+  connectionIds: string | readonly string[],
+) {
+  const sortedConnectionIds = [
+    ...new Set(typeof connectionIds === "string" ? [connectionIds] : connectionIds),
+  ].sort();
+  for (const connectionId of sortedConnectionIds) {
+    const lockKey = `${orgId}:${connectionId}`;
+    await transaction.$queryRaw`
+      SELECT 1::int AS locked
+      FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))
+    `;
+  }
+}
+
+export async function lockConnectorBindingMutations(
+  transaction: Prisma.TransactionClient,
+  orgId: string,
+) {
+  const lockKey = `${orgId}:connector-bindings`;
+  await transaction.$queryRaw`
+    SELECT 1::int AS locked
+    FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))
+  `;
+}
+
+async function invalidateMcpConnectionInstallations(
+  transaction: Prisma.TransactionClient,
+  input: ProvisionConnectorInstallationInput,
+  provider: ProviderDef,
+  catalog: ProviderCatalog,
+) {
+  if (provider.transport.type !== "mcp" || !input.connectionCredentialsChanged) return [];
+
+  const candidates = await transaction.item.findMany({
+    where: {
+      orgId: input.orgId,
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+  const invalidated = [];
+  for (const candidate of candidates) {
+    let current: ConnectorInstallationBody;
+    try {
+      current = parseBody(candidate.body, catalog);
+    } catch {
+      continue;
+    }
+    if (current.catalogKey !== provider.key || current.connectionId !== input.connectionId)
+      continue;
+
+    const body = repointInstallationBody(current, input.connectionId, provider, catalog, true);
+    const changed = JSON.stringify(body) !== JSON.stringify(current);
+    let installation = candidate;
+    if (changed) {
+      await transaction.itemVersion.create({
+        data: {
+          orgId: input.orgId,
+          itemId: candidate.id,
+          version: candidate.version,
+          title: candidate.title,
+          body: candidate.body as Prisma.InputJsonValue,
+          authorId: candidate.updatedById ?? candidate.createdById,
+        },
+      });
+      installation = await transaction.item.update({
+        where: { orgId_id: { orgId: input.orgId, id: candidate.id } },
+        data: {
+          body: jsonValue(body),
+          version: { increment: 1 },
+          updatedById: input.actorPrincipalId,
+        },
+      });
+      await transaction.auditLog.create({
+        data: {
+          orgId: input.orgId,
+          actorPrincipalId: input.actorPrincipalId,
+          action: "connector.installation.update",
+          subject: installation.id,
+          payload: {
+            changed: true,
+            credentialsChanged: true,
+            scopeId: installation.scopeId,
+            catalogKey: provider.key,
+            connectionId: body.connectionId,
+            enabledTools: body.enabledTools,
+            version: installation.version,
+          },
+        },
+      });
+    }
+    invalidated.push(installation);
+  }
+  return invalidated;
+}
+
+/**
+ * Create the intended installation or repoint the scope's existing provider
+ * installation while retaining its tool configuration. The caller owns the
+ * surrounding transaction so credential and installation writes can commit
+ * together.
+ */
+export async function provisionConnectorInstallation(
+  transaction: Prisma.TransactionClient,
+  input: ProvisionConnectorInstallationInput,
 ) {
   const catalog = input.catalog ?? defaultCatalog;
   const provider = catalog.find(({ key }) => key === input.catalogKey);
@@ -352,29 +515,80 @@ export async function createConnectorInstallation(
       `Unknown connector provider: ${input.catalogKey}`,
     );
   }
-  const body = parseBody(
-    {
-      catalogKey: input.catalogKey,
-      connectionId: input.connectionId,
-      enabledTools: input.enabledTools ?? "all",
+
+  // The expression index is the final uniqueness guard. Serializing binding
+  // mutations also lets us discover and lock both sides of a repoint without
+  // another transaction changing the source connection between those steps.
+  await lockConnectorBindingMutations(transaction, input.orgId);
+  const initialCandidates = await transaction.item.findMany({
+    where: {
+      orgId: input.orgId,
+      scopeId: input.scopeId,
+      kind: "connector",
+      status: { not: "archived" },
     },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+  const initialExisting = initialCandidates.find((candidate) => {
+    try {
+      return parseBody(candidate.body, catalog).catalogKey === provider.key;
+    } catch {
+      return false;
+    }
+  });
+  const currentConnectionId = initialExisting
+    ? parseBody(initialExisting.body, catalog).connectionId
+    : undefined;
+  await lockConnectorConnectionBindings(transaction, input.orgId, [
+    ...(currentConnectionId ? [currentConnectionId] : []),
+    input.connectionId,
+  ]);
+
+  const [scope, actor] = await Promise.all([
+    validateBinding(transaction, {
+      orgId: input.orgId,
+      scopeId: input.scopeId,
+      connectionId: input.connectionId,
+      provider,
+    }),
+    transaction.principal.findFirst({
+      where: { id: input.actorPrincipalId, orgId: input.orgId },
+      select: { id: true },
+    }),
+  ]);
+  if (!actor) throw new ConnectorInstallationValidationError("Installation actor not found");
+  const invalidatedInstallations = await invalidateMcpConnectionInstallations(
+    transaction,
+    input,
+    provider,
     catalog,
   );
+  const candidates = await transaction.item.findMany({
+    where: {
+      orgId: input.orgId,
+      scopeId: input.scopeId,
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
 
-  const installation = await db.$transaction(async (transaction) => {
-    const [scope, actor] = await Promise.all([
-      validateBinding(transaction, {
-        orgId: input.orgId,
-        scopeId: input.scopeId,
+  const existing = candidates.find((candidate) => {
+    try {
+      return parseBody(candidate.body, catalog).catalogKey === provider.key;
+    } catch {
+      return false;
+    }
+  });
+  if (!existing) {
+    const body = parseBody(
+      {
+        catalogKey: provider.key,
         connectionId: input.connectionId,
-        provider,
-      }),
-      transaction.principal.findFirst({
-        where: { id: input.actorPrincipalId, orgId: input.orgId },
-        select: { id: true },
-      }),
-    ]);
-    if (!actor) throw new ConnectorInstallationValidationError("Installation actor not found");
+        enabledTools: input.enabledTools ?? "all",
+      },
+      catalog,
+    );
     const installation = await transaction.item.create({
       data: {
         orgId: input.orgId,
@@ -399,56 +613,181 @@ export async function createConnectorInstallation(
           catalogKey: provider.key,
           connectionId: body.connectionId,
           enabledTools: body.enabledTools,
+          ...(input.credentialOwnerPrincipalId
+            ? { credentialOwnerPrincipalId: input.credentialOwnerPrincipalId }
+            : {}),
         },
       },
     });
-    return installation;
-  });
-  log.info("Connector installation created", {
-    itemId: installation.id,
-    scopeId: installation.scopeId,
-    provider: provider.key,
-    connectionId: body.connectionId,
-  });
-  await indexItemSafely(db, installation, input);
-  const { indexConnectorInstallationToolsSafely } = await import(
-    "#server/services/connectors/tool-search.js"
-  );
-  await indexConnectorInstallationToolsSafely(db, {
-    orgId: input.orgId,
-    installationItemId: installation.id,
-    ...(input.embedder ? { embedder: input.embedder } : {}),
-    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+    return { installation, created: true, invalidatedInstallations };
+  }
+
+  const current = parseBody(existing.body, catalog);
+  const body = repointInstallationBody(
+    current,
+    input.connectionId,
+    provider,
     catalog,
-  });
-  if (provider.transport.type === "mcp") {
-    const { syncConnectorInstallation } = await import("#server/services/connectors/sync.js");
-    const sync = syncConnectorInstallation(db, {
+    input.connectionCredentialsChanged,
+  );
+  const changed = JSON.stringify(body) !== JSON.stringify(current);
+  if (changed) {
+    await transaction.itemVersion.create({
+      data: {
+        orgId: input.orgId,
+        itemId: existing.id,
+        version: existing.version,
+        title: existing.title,
+        body: existing.body as Prisma.InputJsonValue,
+        authorId: existing.updatedById ?? existing.createdById,
+      },
+    });
+  }
+  const installation = changed
+    ? await transaction.item.update({
+        where: { orgId_id: { orgId: input.orgId, id: existing.id } },
+        data: {
+          body: jsonValue(body),
+          version: { increment: 1 },
+          updatedById: actor.id,
+        },
+      })
+    : existing;
+  await transaction.auditLog.create({
+    data: {
       orgId: input.orgId,
-      actorPrincipalId: input.actorPrincipalId,
-      installationItemId: installation.id,
+      actorPrincipalId: actor.id,
+      action: "connector.installation.update",
+      subject: installation.id,
+      payload: {
+        changed,
+        provisioned: true,
+        scopeId: installation.scopeId,
+        catalogKey: provider.key,
+        connectionId: body.connectionId,
+        enabledTools: body.enabledTools,
+        version: installation.version,
+        ...(input.credentialOwnerPrincipalId
+          ? { credentialOwnerPrincipalId: input.credentialOwnerPrincipalId }
+          : {}),
+      },
+    },
+  });
+  return { installation, created: false, invalidatedInstallations };
+}
+
+export type ConnectorSetupStatus = "ready" | "syncing" | "sync_failed";
+
+export interface FinalizeConnectorInstallationInput extends EmbeddingOptions {
+  orgId: string;
+  actorPrincipalId: string;
+  installation: Awaited<ReturnType<typeof provisionConnectorInstallation>>["installation"];
+  masterKey?: string;
+  clientFactory?: McpClientFactory;
+  platformApps?: PlatformAppDirectory;
+  fetch?: ConnectorFetch;
+  catalog?: ProviderCatalog;
+}
+
+/**
+ * Best-effort replicas and network tool discovery run only after the
+ * provisioning transaction commits. A timeout reports that sync continues in
+ * the background; a failure leaves the committed installation inert until a
+ * later sync succeeds.
+ */
+export async function finalizeConnectorInstallation(
+  db: Database,
+  input: FinalizeConnectorInstallationInput,
+): Promise<ConnectorSetupStatus> {
+  const catalog = input.catalog ?? defaultCatalog;
+  const body = parseBody(input.installation.body, catalog);
+  const provider = catalog.find(({ key }) => key === body.catalogKey);
+  if (!provider) {
+    throw new ConnectorInstallationValidationError(
+      `Unknown connector provider: ${body.catalogKey}`,
+    );
+  }
+
+  await indexItemSafely(db, input.installation, input);
+  if (provider.transport.type !== "mcp") {
+    const { indexConnectorInstallationToolsSafely } = await import(
+      "#server/services/connectors/tool-search.js"
+    );
+    await indexConnectorInstallationToolsSafely(db, {
+      orgId: input.orgId,
+      installationItemId: input.installation.id,
+      ...(input.embedder ? { embedder: input.embedder } : {}),
       ...(input.masterKey ? { masterKey: input.masterKey } : {}),
-      ...(input.clientFactory ? { clientFactory: input.clientFactory } : {}),
-      ...(input.platformApps ? { platformApps: input.platformApps } : {}),
-      ...(input.fetch ? { fetch: input.fetch } : {}),
       catalog,
-    }).catch((error) => {
+    });
+    return "ready";
+  }
+
+  const { syncConnectorInstallation } = await import("#server/services/connectors/sync.js");
+  const pending = syncConnectorInstallation(db, {
+    orgId: input.orgId,
+    actorPrincipalId: input.actorPrincipalId,
+    installationItemId: input.installation.id,
+    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+    ...(input.clientFactory ? { clientFactory: input.clientFactory } : {}),
+    ...(input.platformApps ? { platformApps: input.platformApps } : {}),
+    ...(input.fetch ? { fetch: input.fetch } : {}),
+    catalog,
+  })
+    .then(() => "ready" as const)
+    .catch((error) => {
       log.warn("Connector installation sync failed", {
-        itemId: installation.id,
+        itemId: input.installation.id,
         provider: provider.key,
         error,
       });
-      return undefined;
+      return "sync_failed" as const;
     });
-    let syncTimer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      sync,
-      new Promise<void>((resolve) => {
-        syncTimer = setTimeout(resolve, 8000);
-      }),
-    ]);
-    clearTimeout(syncTimer);
-  }
+  let syncTimer: ReturnType<typeof setTimeout> | undefined;
+  const status = await Promise.race([
+    pending,
+    new Promise<"syncing">((resolve) => {
+      syncTimer = setTimeout(() => resolve("syncing"), 8000);
+    }),
+  ]);
+  if (syncTimer) clearTimeout(syncTimer);
+  return status;
+}
+
+export async function createConnectorInstallation(
+  db: Database,
+  input: CreateConnectorInstallationInput,
+) {
+  const catalog = input.catalog ?? defaultCatalog;
+  const { installation } = await db.$transaction((transaction) =>
+    provisionConnectorInstallation(transaction, {
+      orgId: input.orgId,
+      actorPrincipalId: input.actorPrincipalId,
+      scopeId: input.scopeId,
+      catalogKey: input.catalogKey,
+      connectionId: input.connectionId,
+      ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
+      catalog,
+    }),
+  );
+  const body = parseBody(installation.body, catalog);
+  log.info("Connector installation created", {
+    itemId: installation.id,
+    scopeId: installation.scopeId,
+    provider: body.catalogKey,
+    connectionId: body.connectionId,
+  });
+  await finalizeConnectorInstallation(db, {
+    orgId: input.orgId,
+    actorPrincipalId: input.actorPrincipalId,
+    installation,
+    ...(input.embedder ? { embedder: input.embedder } : {}),
+    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+    ...(input.clientFactory ? { clientFactory: input.clientFactory } : {}),
+    ...(input.platformApps ? { platformApps: input.platformApps } : {}),
+    ...(input.fetch ? { fetch: input.fetch } : {}),
+    catalog,
+  });
   return installation;
 }
 
@@ -459,6 +798,9 @@ export interface UpdateConnectorInstallationInput extends EmbeddingOptions {
   connectionId?: string;
   enabledTools?: "all" | string[];
   catalog?: ProviderCatalog;
+  clientFactory?: McpClientFactory;
+  platformApps?: PlatformAppDirectory;
+  fetch?: ConnectorFetch;
 }
 
 export async function updateConnectorInstallation(
@@ -467,24 +809,38 @@ export async function updateConnectorInstallation(
 ) {
   const catalog = input.catalog ?? defaultCatalog;
   const updated = await db.$transaction(async (transaction) => {
-    const existing = await transaction.item.findFirst({
+    await lockConnectorBindingMutations(transaction, input.orgId);
+    let existing = await transaction.item.findFirst({
       where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
     });
     if (!existing) {
       log.warn("Connector installation not found", { itemId: input.installationItemId });
       throw new ConnectorInstallationNotFoundError();
     }
-    const current = parseBody(existing.body, catalog);
-    const provider = catalog.find(({ key }) => key === current.catalogKey);
+    const initial = parseBody(existing.body, catalog);
+    const provider = catalog.find(({ key }) => key === initial.catalogKey);
     if (!provider) {
       throw new ConnectorInstallationValidationError(
-        `Unknown connector provider: ${current.catalogKey}`,
+        `Unknown connector provider: ${initial.catalogKey}`,
       );
     }
+    let current = parseBody(existing.body, catalog);
+    await lockConnectorConnectionBindings(transaction, input.orgId, [
+      current.connectionId,
+      ...(input.connectionId ? [input.connectionId] : []),
+    ]);
+    existing = await transaction.item.findFirst({
+      where: { id: input.installationItemId, orgId: input.orgId, kind: "connector" },
+    });
+    if (!existing) throw new ConnectorInstallationNotFoundError();
+    current = parseBody(existing.body, catalog);
+    const repointed =
+      input.connectionId !== undefined
+        ? repointInstallationBody(current, input.connectionId, provider, catalog)
+        : current;
     const body = parseBody(
       {
-        ...current,
-        ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
+        ...repointed,
         ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
       },
       catalog,
@@ -521,12 +877,6 @@ export async function updateConnectorInstallation(
           : {}),
       },
     });
-    if (changed) {
-      log.info("Connector installation updated", {
-        itemId: installation.id,
-        connectionId: body.connectionId,
-      });
-    }
     await transaction.auditLog.create({
       data: {
         orgId: input.orgId,
@@ -541,18 +891,43 @@ export async function updateConnectorInstallation(
         },
       },
     });
-    return installation;
+    return {
+      installation,
+      changed,
+      connectionChanged: current.connectionId !== body.connectionId,
+    };
   });
-  await indexItemSafely(db, updated, input);
-  const { indexConnectorInstallationToolsSafely } = await import(
-    "#server/services/connectors/tool-search.js"
-  );
-  await indexConnectorInstallationToolsSafely(db, {
-    orgId: input.orgId,
-    installationItemId: updated.id,
-    ...(input.embedder ? { embedder: input.embedder } : {}),
-    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
-    catalog,
-  });
-  return updated;
+  if (updated.changed) {
+    const body = parseBody(updated.installation.body, catalog);
+    log.info("Connector installation updated", {
+      itemId: updated.installation.id,
+      connectionId: body.connectionId,
+    });
+  }
+  if (updated.connectionChanged) {
+    await finalizeConnectorInstallation(db, {
+      orgId: input.orgId,
+      actorPrincipalId: input.actorPrincipalId,
+      installation: updated.installation,
+      ...(input.embedder ? { embedder: input.embedder } : {}),
+      ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+      ...(input.clientFactory ? { clientFactory: input.clientFactory } : {}),
+      ...(input.platformApps ? { platformApps: input.platformApps } : {}),
+      ...(input.fetch ? { fetch: input.fetch } : {}),
+      catalog,
+    });
+  } else {
+    await indexItemSafely(db, updated.installation, input);
+    const { indexConnectorInstallationToolsSafely } = await import(
+      "#server/services/connectors/tool-search.js"
+    );
+    await indexConnectorInstallationToolsSafely(db, {
+      orgId: input.orgId,
+      installationItemId: updated.installation.id,
+      ...(input.embedder ? { embedder: input.embedder } : {}),
+      ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+      catalog,
+    });
+  }
+  return updated.installation;
 }

@@ -4251,6 +4251,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
                   "providerKey": {
                     "type": "string",
                     "minLength": 1
@@ -4296,6 +4300,7 @@
                   }
                 },
                 "required": [
+                  "scopeId",
                   "providerKey"
                 ]
               }
@@ -4334,7 +4339,7 @@
       "post": {
         "operationId": "connectors.connect.createStatic",
         "summary": "Create a static connector connection",
-        "description": "Validate, verify, and encrypt an API-key or basic connection for the organization agent.",
+        "description": "Validate, verify, and encrypt an API-key or basic connection, then install it in the selected organization or shared scope.",
         "tags": [
           "Connectors"
         ],
@@ -4345,6 +4350,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
                   "providerKey": {
                     "type": "string",
                     "minLength": 1
@@ -4388,6 +4397,7 @@
                   }
                 },
                 "required": [
+                  "scopeId",
                   "providerKey",
                   "config",
                   "credentials"
@@ -4407,10 +4417,24 @@
                     "id": {
                       "type": "string",
                       "format": "uuid"
+                    },
+                    "installationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "setupStatus": {
+                      "enum": [
+                        "ready",
+                        "syncing",
+                        "sync_failed"
+                      ],
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "id"
+                    "id",
+                    "installationId",
+                    "setupStatus"
                   ]
                 }
               }

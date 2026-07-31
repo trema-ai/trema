@@ -70,9 +70,10 @@ function withConnectorError(url: string, code: string): string {
   return redirect.toString();
 }
 
-function withConnected(url: string, connectionId: string): string {
+function withConnected(url: string, connectionId: string, setupStatus: string): string {
   const redirect = new URL(url);
   redirect.searchParams.set("connected", connectionId);
+  redirect.searchParams.set("connector_status", setupStatus);
   return redirect.toString();
 }
 
@@ -210,11 +211,12 @@ export function createApp({
         authBaseUrl: env.TREMA_AUTH_BASE_URL,
         ...(env.TREMA_CREDENTIAL_MASTER_KEY ? { masterKey: env.TREMA_CREDENTIAL_MASTER_KEY } : {}),
         ...(connectorFetch ? { fetch: connectorFetch } : {}),
+        ...(mcpClientFactory ? { mcpClientFactory } : {}),
         ...(platformApps ? { platformApps } : {}),
       });
       returnTo = result.returnTo;
       const destination = safeConnectorReturnUrl(returnTo, env.TREMA_WEB_ORIGINS);
-      return context.redirect(withConnected(destination, result.connection.id));
+      return context.redirect(withConnected(destination, result.connection.id, result.setupStatus));
     } catch (error) {
       const code = connectorErrorCode(error);
       // An expired or replayed state is a user revisiting a stale callback link,

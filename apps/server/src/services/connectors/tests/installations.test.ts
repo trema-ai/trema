@@ -70,6 +70,14 @@ describe("connector installation body", () => {
     expect(
       bodySchema.safeParse({ catalogKey: "notion", connectionId, enabledTools: [] }).success,
     ).toBe(true);
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: ["before_resync"],
+        syncPending: true,
+      }).success,
+    ).toBe(true);
   });
 
   it("keeps connection config, provider scopes, and sensitivity overrides off installations", () => {

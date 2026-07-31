@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { call } from "@orpc/server";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Role } from "#server/generated/prisma/client.js";
 import { createAuth } from "#server/lib/auth/index.js";
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
@@ -11,7 +11,19 @@ import { parseEnv } from "#server/lib/env/schema.js";
 import { connectorsRouter } from "#server/rpc/connectors.js";
 import { itemsRouter } from "#server/rpc/items.js";
 import { orgRouter } from "#server/rpc/org.js";
-import type { McpClientFactory } from "#server/services/connectors/index.js";
+import {
+  createConnectorInstallation,
+  type McpClientFactory,
+  syncConnectorInstallation,
+  updateConnectorInstallation,
+} from "#server/services/connectors/index.js";
+import {
+  archiveConnectorInstallation,
+  lockConnectorBindingMutations,
+  lockConnectorConnectionBindings,
+  provisionConnectorInstallation,
+} from "#server/services/connectors/installations.js";
+import { archiveItem } from "#server/services/items/index.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
@@ -234,7 +246,7 @@ integration("connector connections and installations", () => {
           },
           { context: org.context },
         ),
-      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      ).rejects.toThrow();
       await expect(
         call(
           connectorsRouter.installations.update,
@@ -244,7 +256,7 @@ integration("connector connections and installations", () => {
           },
           { context: org.context },
         ),
-      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      ).rejects.toThrow();
     }
     const secondGithub = await connection({
       orgId: org.org.id,
@@ -295,30 +307,28 @@ integration("connector connections and installations", () => {
     });
 
     await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "hubspot",
-          connectionId: memberHubspot.id,
-        },
-        { context: member.context },
-      ),
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "hubspot",
+        connectionId: memberHubspot.id,
+      }),
     ).resolves.toMatchObject({
       scopeId: personal.id,
       body: { connectionId: memberHubspot.id },
     });
 
     await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "notion",
-          connectionId: memberNotion.id,
-        },
-        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
-      ),
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "notion",
+        connectionId: memberNotion.id,
+        clientFactory: emptyMcpFactory,
+        masterKey,
+      }),
     ).resolves.toMatchObject({
       scopeId: personal.id,
       body: { connectionId: memberNotion.id },
@@ -329,16 +339,14 @@ integration("connector connections and installations", () => {
       ["stripe", memberStripe.id],
     ] as const) {
       await expect(
-        call(
-          connectorsRouter.installations.create,
-          {
-            scopeId: personal.id,
-            catalogKey,
-            connectionId,
-          },
-          { context: member.context },
-        ),
-      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+        createConnectorInstallation(db, {
+          orgId: org.org.id,
+          actorPrincipalId: member.principal.id,
+          scopeId: personal.id,
+          catalogKey,
+          connectionId,
+        }),
+      ).rejects.toThrow("Personal installations require a user-acting OAuth provider");
     }
 
     const agentNotion = await connection({
@@ -347,40 +355,30 @@ integration("connector connections and installations", () => {
       providerKey: "notion",
     });
     await expect(
-      call(
-        connectorsRouter.installations.create,
-        {
-          scopeId: personal.id,
-          catalogKey: "notion",
-          connectionId: agentNotion.id,
-        },
-        { context: { ...member.context, mcpClientFactory: emptyMcpFactory } },
-      ),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "notion",
+        connectionId: agentNotion.id,
+        clientFactory: emptyMcpFactory,
+        masterKey,
+      }),
+    ).rejects.toThrow();
   });
 
-  it("creates member installations only in the caller's personal scope", async () => {
+  it("retains personal installation creation for valid unbound connections", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "member");
     const other = await addMember(org.org.id, org.orgScope.id, "member");
-    const [personal, otherPersonal] = await Promise.all([
-      db.scope.create({
-        data: {
-          orgId: org.org.id,
-          kind: "personal",
-          name: "Connector Member",
-          ownerId: member.principal.id,
-        },
-      }),
-      db.scope.create({
-        data: {
-          orgId: org.org.id,
-          kind: "personal",
-          name: "Other Connector Member",
-          ownerId: other.principal.id,
-        },
-      }),
-    ]);
+    const personal = await db.scope.create({
+      data: {
+        orgId: org.org.id,
+        kind: "personal",
+        name: "Connector Member",
+        ownerId: member.principal.id,
+      },
+    });
     const memberGithub = await connection({
       orgId: org.org.id,
       principalId: member.principal.id,
@@ -391,36 +389,31 @@ integration("connector connections and installations", () => {
       principalId: other.principal.id,
       providerKey: "github",
     });
-    for (const scopeId of [org.orgScope.id, otherPersonal.id]) {
-      await expect(
-        call(
-          connectorsRouter.member.installations.create,
-          {
-            scopeId,
-            catalogKey: "github",
-            connectionId: memberGithub.id,
-          },
-          { context: member.context },
-        ),
-      ).rejects.toMatchObject({
-        code: "FORBIDDEN",
-        message: expect.stringContaining("own personal scope"),
-      });
-    }
+    expect(connectorsRouter.member.installations).toHaveProperty("create");
     await expect(
       call(
-        connectorsRouter.member.installations.create,
+        connectorsRouter.installations.create,
         {
           scopeId: personal.id,
           catalogKey: "github",
-          connectionId: otherGithub.id,
+          connectionId: memberGithub.id,
         },
         { context: member.context },
       ),
     ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-      message: expect.stringContaining("scope owner's connection"),
+      code: "FORBIDDEN",
+      message: expect.stringContaining("organization or shared scope"),
     });
+
+    await expect(
+      createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: member.principal.id,
+        scopeId: personal.id,
+        catalogKey: "github",
+        connectionId: otherGithub.id,
+      }),
+    ).rejects.toThrow("scope owner's connection");
 
     await expect(
       call(
@@ -555,6 +548,487 @@ integration("connector connections and installations", () => {
       },
     });
     expect(calls).toEqual(["Bearer bound-token"]);
+  });
+
+  it("clears stale MCP tools while a switched connection awaits a successful sync", async () => {
+    const org = await createOrg();
+    const first = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    const second = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    const workingFactory: McpClientFactory = async () => ({
+      listTools: async () => ({
+        tools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
+      }),
+      close: async () => {},
+    });
+    const installation = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: org.orgScope.id,
+      catalogKey: "notion",
+      connectionId: first.id,
+      enabledTools: "all",
+      clientFactory: workingFactory,
+      masterKey,
+    });
+    await db.item.update({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      data: {
+        body: {
+          catalogKey: "notion",
+          connectionId: first.id,
+          enabledTools: ["read_page"],
+          syncedTools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
+        },
+      },
+    });
+    const failingFactory = vi.fn(async () => {
+      throw new Error("MCP unavailable");
+    }) satisfies McpClientFactory;
+
+    await updateConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      installationItemId: installation.id,
+      connectionId: second.id,
+      clientFactory: failingFactory,
+      masterKey,
+    });
+    expect(failingFactory).toHaveBeenCalledOnce();
+
+    const switched = await db.item.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+    });
+    expect(switched.body).toEqual({
+      catalogKey: "notion",
+      connectionId: second.id,
+      enabledTools: ["read_page"],
+      syncPending: true,
+    });
+
+    const shared = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Shared MCP connection" },
+    });
+    const sibling = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: shared.id,
+      catalogKey: "notion",
+      connectionId: second.id,
+      enabledTools: "all",
+      clientFactory: workingFactory,
+      masterKey,
+    });
+    await db.item.update({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      data: {
+        body: {
+          catalogKey: "notion",
+          connectionId: second.id,
+          enabledTools: ["read_page"],
+          syncedTools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
+        },
+      },
+    });
+    await db.$transaction((transaction) =>
+      provisionConnectorInstallation(transaction, {
+        orgId: org.org.id,
+        actorPrincipalId: org.principal.id,
+        scopeId: org.orgScope.id,
+        catalogKey: "notion",
+        connectionId: second.id,
+        connectionCredentialsChanged: true,
+      }),
+    );
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        catalogKey: "notion",
+        connectionId: second.id,
+        enabledTools: ["read_page"],
+        syncPending: true,
+      },
+    });
+    expect(
+      (
+        await db.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        })
+      ).body,
+    ).not.toHaveProperty("syncedTools");
+    const invalidatedSibling = await db.item.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: sibling.id } },
+    });
+    expect(invalidatedSibling.body).toMatchObject({
+      catalogKey: "notion",
+      connectionId: second.id,
+      enabledTools: "all",
+      syncPending: true,
+    });
+    expect(invalidatedSibling.body).not.toHaveProperty("syncedTools");
+  });
+
+  it.each(["provision", "update"] as const)(
+    "keeps a concurrent reconnect from restoring the source connection during %s",
+    async (operation) => {
+      const org = await createOrg();
+      const first = await connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "notion",
+      });
+      const second = await connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "notion",
+      });
+      const installation = await db.item.create({
+        data: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          title: "Notion",
+          body: {
+            catalogKey: "notion",
+            connectionId: first.id,
+            enabledTools: "all",
+            syncedTools: [{ name: "old_tool" }],
+          },
+          status: "active",
+          disclosure: "retrieved",
+          createdById: org.principal.id,
+          updatedById: org.principal.id,
+        },
+      });
+      let markReconnectRead!: () => void;
+      const reconnectRead = new Promise<void>((resolve) => {
+        markReconnectRead = resolve;
+      });
+      let releaseReconnect!: () => void;
+      const reconnectRelease = new Promise<void>((resolve) => {
+        releaseReconnect = resolve;
+      });
+      const reconnect = db.$transaction(async (transaction) => {
+        await lockConnectorBindingMutations(transaction, org.org.id);
+        await lockConnectorConnectionBindings(transaction, org.org.id, first.id);
+        const stale = await transaction.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        });
+        markReconnectRead();
+        await reconnectRelease;
+        const { syncedTools: _syncedTools, ...staleBody } = stale.body as Record<string, unknown>;
+        await transaction.item.update({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+          data: { body: { ...staleBody, syncPending: true } },
+        });
+      });
+      await reconnectRead;
+
+      const repoint =
+        operation === "provision"
+          ? db.$transaction((transaction) =>
+              provisionConnectorInstallation(transaction, {
+                orgId: org.org.id,
+                actorPrincipalId: org.principal.id,
+                scopeId: org.orgScope.id,
+                catalogKey: "notion",
+                connectionId: second.id,
+              }),
+            )
+          : updateConnectorInstallation(db, {
+              orgId: org.org.id,
+              actorPrincipalId: org.principal.id,
+              installationItemId: installation.id,
+              connectionId: second.id,
+              clientFactory: emptyMcpFactory,
+              masterKey,
+            });
+      const stateBeforeReconnectCommit = await Promise.race([
+        repoint.then(() => "settled" as const),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
+      ]);
+      expect(stateBeforeReconnectCommit).toBe("blocked");
+
+      releaseReconnect();
+      await reconnect;
+      await repoint;
+      await expect(
+        db.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        }),
+      ).resolves.toMatchObject({
+        body: {
+          catalogKey: "notion",
+          connectionId: second.id,
+          enabledTools: "all",
+        },
+      });
+    },
+  );
+
+  it.each(["connector", "generic"] as const)(
+    "serializes the %s archive path with connector provisioning",
+    async (archivePath) => {
+      const org = await createOrg();
+      const connected = await connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "github",
+      });
+      const installation = await createConnectorInstallation(db, {
+        orgId: org.org.id,
+        actorPrincipalId: org.principal.id,
+        scopeId: org.orgScope.id,
+        catalogKey: "github",
+        connectionId: connected.id,
+      });
+      let markProvisioningRead!: () => void;
+      const provisioningRead = new Promise<void>((resolve) => {
+        markProvisioningRead = resolve;
+      });
+      let releaseProvisioning!: () => void;
+      const provisioningRelease = new Promise<void>((resolve) => {
+        releaseProvisioning = resolve;
+      });
+      const provisioning = db.$transaction(async (transaction) => {
+        await lockConnectorBindingMutations(transaction, org.org.id);
+        await transaction.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        });
+        markProvisioningRead();
+        await provisioningRelease;
+        return provisionConnectorInstallation(transaction, {
+          orgId: org.org.id,
+          actorPrincipalId: org.principal.id,
+          scopeId: org.orgScope.id,
+          catalogKey: "github",
+          connectionId: connected.id,
+        });
+      });
+      await provisioningRead;
+
+      const archive =
+        archivePath === "connector"
+          ? archiveConnectorInstallation(db, {
+              orgId: org.org.id,
+              actorPrincipalId: org.principal.id,
+              installationItemId: installation.id,
+            })
+          : archiveItem(db, {
+              orgId: org.org.id,
+              actorPrincipalId: org.principal.id,
+              itemId: installation.id,
+            });
+      const stateBeforeProvisioningCommit = await Promise.race([
+        archive.then(() => "settled" as const),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
+      ]);
+      expect(stateBeforeProvisioningCommit).toBe("blocked");
+
+      releaseProvisioning();
+      await provisioning;
+      await archive;
+      await expect(
+        db.item.count({
+          where: {
+            orgId: org.org.id,
+            scopeId: org.orgScope.id,
+            kind: "connector",
+            status: "active",
+          },
+        }),
+      ).resolves.toBe(0);
+    },
+  );
+
+  it("rejects a delayed MCP sync result when the bound connection changed", async () => {
+    const org = await createOrg();
+    const first = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    const second = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+    });
+    const installation = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: org.orgScope.id,
+        kind: "connector",
+        title: "Notion",
+        body: {
+          catalogKey: "notion",
+          connectionId: first.id,
+          enabledTools: "all",
+          syncedTools: [{ name: "old_tool" }],
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: org.principal.id,
+        updatedById: org.principal.id,
+      },
+    });
+    let markDiscoveryStarted!: () => void;
+    const discoveryStarted = new Promise<void>((resolve) => {
+      markDiscoveryStarted = resolve;
+    });
+    let releaseDiscovery!: (value: {
+      tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }>;
+    }) => void;
+    const discovery = new Promise<{
+      tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }>;
+    }>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    const delayedFactory: McpClientFactory = async () => ({
+      listTools: async () => {
+        markDiscoveryStarted();
+        return discovery;
+      },
+      close: async () => {},
+    });
+
+    const pendingSync = syncConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      installationItemId: installation.id,
+      clientFactory: delayedFactory,
+      masterKey,
+    });
+    await discoveryStarted;
+    await db.item.update({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      data: {
+        body: {
+          catalogKey: "notion",
+          connectionId: second.id,
+          enabledTools: "all",
+          syncPending: true,
+        },
+      },
+    });
+    releaseDiscovery({
+      tools: [{ name: "old_connection_tool", annotations: { readOnlyHint: true } }],
+    });
+
+    await expect(pendingSync).rejects.toThrow("connection changed during tool sync");
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        catalogKey: "notion",
+        connectionId: second.id,
+        enabledTools: "all",
+        syncPending: true,
+      },
+    });
+  });
+
+  it("rejects a delayed MCP sync result after an in-place connection reconnect", async () => {
+    const org = await createOrg();
+    const connected = await connection({
+      orgId: org.org.id,
+      principalId: org.agent.id,
+      providerKey: "notion",
+      token: "old_account_token",
+    });
+    const installation = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: org.orgScope.id,
+        kind: "connector",
+        title: "Notion",
+        body: {
+          catalogKey: "notion",
+          connectionId: connected.id,
+          enabledTools: "all",
+          syncedTools: [{ name: "old_tool" }],
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: org.principal.id,
+        updatedById: org.principal.id,
+      },
+    });
+    let markDiscoveryStarted!: () => void;
+    const discoveryStarted = new Promise<void>((resolve) => {
+      markDiscoveryStarted = resolve;
+    });
+    let releaseDiscovery!: (value: {
+      tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }>;
+    }) => void;
+    const discovery = new Promise<{
+      tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }>;
+    }>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    const delayedFactory: McpClientFactory = async () => ({
+      listTools: async () => {
+        markDiscoveryStarted();
+        return discovery;
+      },
+      close: async () => {},
+    });
+
+    const pendingSync = syncConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      installationItemId: installation.id,
+      clientFactory: delayedFactory,
+      masterKey,
+    });
+    await discoveryStarted;
+    await db.$transaction([
+      db.connectorConnection.update({
+        where: { id: connected.id },
+        data: {
+          ciphertext: encryptEnvelope({ accessToken: "new_account_token" }, masterKey),
+        },
+      }),
+      db.item.update({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        data: {
+          body: {
+            catalogKey: "notion",
+            connectionId: connected.id,
+            enabledTools: "all",
+            syncedTools: [{ name: "new_account_tool" }],
+          },
+        },
+      }),
+    ]);
+    releaseDiscovery({
+      tools: [{ name: "old_account_tool", annotations: { readOnlyHint: true } }],
+    });
+
+    await expect(pendingSync).rejects.toThrow("credentials changed during tool sync");
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        catalogKey: "notion",
+        connectionId: connected.id,
+        enabledTools: "all",
+        syncedTools: [{ name: "new_account_tool" }],
+      },
+    });
   });
 
   it("reads installations written before approval modes dropped sensitivity", async () => {

@@ -290,6 +290,54 @@ integration("item envelope", () => {
     });
   });
 
+  it("prevents archived connector installations from using the generic restore path", async () => {
+    const org = await createOrg();
+    await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: org.orgScope.id,
+        kind: "connector",
+        title: "Current connector",
+        body: {
+          catalogKey: "notion",
+          connectionId: randomUUID(),
+          enabledTools: "all",
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: org.principal.id,
+      },
+    });
+    const archived = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: org.orgScope.id,
+        kind: "connector",
+        title: "Archived connector",
+        body: {
+          catalogKey: "notion",
+          connectionId: randomUUID(),
+          enabledTools: "all",
+        },
+        status: "archived",
+        disclosure: "retrieved",
+        createdById: org.principal.id,
+      },
+    });
+
+    await expect(
+      call(itemsRouter.restore, { id: archived.id }, { context: org.context }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("connector installation routes"),
+    });
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: archived.id } },
+      }),
+    ).resolves.toMatchObject({ status: "archived" });
+  });
+
   it("rejects later-phase kinds and malformed memory bodies", async () => {
     const org = await createOrg();
     for (const kind of ["skill", "conversation"] as const) {

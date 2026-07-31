@@ -10,6 +10,7 @@ import { log } from "#server/lib/logger/index.js";
 import {
   type ConnectorInstallationBody,
   connectorInstallationBodySchema,
+  lockConnectorBindingMutations,
 } from "#server/services/connectors/installations.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
 import { indexItemSafely } from "#server/services/search/index.js";
@@ -385,13 +386,19 @@ export interface TransitionItemInput {
 
 export async function transitionItem(db: Database, input: TransitionItemInput) {
   const updated = await db.$transaction(async (transaction) => {
-    const [item, actor] = await Promise.all([
-      transaction.item.findFirst({ where: { id: input.itemId, orgId: input.orgId } }),
-      transaction.principal.findFirst({
-        where: { id: input.actorPrincipalId, orgId: input.orgId },
-        select: { kind: true },
-      }),
-    ]);
+    let item = await transaction.item.findFirst({
+      where: { id: input.itemId, orgId: input.orgId },
+    });
+    if (item?.kind === "connector" && input.action === "archive") {
+      await lockConnectorBindingMutations(transaction, input.orgId);
+      item = await transaction.item.findFirst({
+        where: { id: input.itemId, orgId: input.orgId },
+      });
+    }
+    const actor = await transaction.principal.findFirst({
+      where: { id: input.actorPrincipalId, orgId: input.orgId },
+      select: { kind: true },
+    });
     if (!item) throw new ItemNotFoundError();
     // A transition is a person's act. Activation in particular is the confirm
     // step a `proposed` item exists for, so a run reaches it only by asking:
@@ -411,6 +418,11 @@ export async function transitionItem(db: Database, input: TransitionItemInput) {
     const status = transition[item.status];
     if (!status) {
       throw new ItemValidationError(`Cannot ${input.action} an item with status '${item.status}'`);
+    }
+    if (item.kind === "connector" && input.action === "restore") {
+      throw new ItemValidationError(
+        "Archived connector installations cannot be restored; configure the connector through the connector installation routes instead",
+      );
     }
     if (item.kind === "instruction" && status === "active") {
       await assertNoActiveInstruction(transaction, input.orgId, item.scopeId);

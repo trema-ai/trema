@@ -10,6 +10,13 @@ import type { ConnectorOAuthState, Prisma } from "#server/generated/prisma/clien
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
+import { authorize } from "#server/services/authorize/index.js";
+import {
+  finalizeConnectorInstallation,
+  lockConnectorBindingMutations,
+  lockConnectorConnectionBindings,
+  provisionConnectorInstallation,
+} from "#server/services/connectors/installations.js";
 import {
   buildMcpAuthorizationRequest,
   discoverMcpAuthServer,
@@ -24,6 +31,7 @@ import {
   resolveClientRegistration,
   resolveStoredClientRegistration,
 } from "#server/services/connectors/registrations.js";
+import type { McpClientFactory } from "#server/services/connectors/sync.js";
 
 const defaultCatalog = loadProviderCatalog();
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
@@ -178,6 +186,7 @@ export function connectorCallbackUrl(authBaseUrl: string): string {
 
 export interface StartOAuthConnectInput {
   orgId: string;
+  scopeId: string;
   ownerPrincipalId: string;
   initiatedByPrincipalId: string;
   providerKey: string;
@@ -239,7 +248,14 @@ export function buildOAuthAuthorizationUrl(input: BuildAuthorizationUrlInput): s
   return authorizationUrl.toString();
 }
 
-async function validateOAuthOwnership(db: Database, input: StartOAuthConnectInput) {
+type ProvisioningDatabase = Database | Prisma.TransactionClient;
+
+type OAuthOwnershipInput = Pick<
+  StartOAuthConnectInput,
+  "orgId" | "ownerPrincipalId" | "initiatedByPrincipalId"
+>;
+
+async function validateOAuthOwnership(db: ProvisioningDatabase, input: OAuthOwnershipInput) {
   const principals = await db.principal.findMany({
     where: {
       orgId: input.orgId,
@@ -262,6 +278,53 @@ async function validateOAuthOwnership(db: Database, input: StartOAuthConnectInpu
   return owner;
 }
 
+async function validateOAuthProvisioningIntent(
+  db: ProvisioningDatabase,
+  input: Pick<
+    StartOAuthConnectInput,
+    "orgId" | "scopeId" | "ownerPrincipalId" | "initiatedByPrincipalId"
+  >,
+  provider: ProviderDef,
+  owner: { id: string; kind: "human" | "agent" },
+) {
+  const scope = await db.scope.findFirst({
+    where: { id: input.scopeId, orgId: input.orgId },
+    select: { id: true, kind: true, ownerId: true },
+  });
+  if (!scope) throw new ConnectorInstallationError("Connector installation scope not found");
+
+  if (owner.kind === "human") {
+    if (
+      provider.oauthActor !== "user" ||
+      input.ownerPrincipalId !== input.initiatedByPrincipalId ||
+      scope.kind !== "personal" ||
+      scope.ownerId !== owner.id
+    ) {
+      throw new ConnectorInstallationError(
+        "Personal OAuth must target the caller's own personal scope",
+      );
+    }
+    return scope;
+  }
+
+  if (scope.kind !== "org" && scope.kind !== "shared") {
+    throw new ConnectorInstallationError(
+      "Organization OAuth must target an organization or shared scope",
+    );
+  }
+  const initiator = {
+    id: input.initiatedByPrincipalId,
+    orgId: input.orgId,
+    kind: "human" as const,
+  };
+  if (!(await authorize(initiator, "manage_connectors", scope.id, db))) {
+    throw new ConnectorInstallationError(
+      "OAuth initiator is no longer authorized for the target scope",
+    );
+  }
+  return scope;
+}
+
 export async function startOAuthConnect(db: Database, input: StartOAuthConnectInput) {
   const catalog = input.catalog ?? defaultCatalog;
   const provider = providerFrom(catalog, input.providerKey);
@@ -276,6 +339,7 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
       `Provider '${provider.key}' requires an organization-owned connection`,
     );
   }
+  await validateOAuthProvisioningIntent(db, input, provider, owner);
   if (provider.authMode === "mcp_oauth") {
     return startMcpOAuthConnect(db, provider, input);
   }
@@ -329,6 +393,7 @@ export async function startOAuthConnect(db: Database, input: StartOAuthConnectIn
   await db.connectorOAuthState.create({
     data: {
       orgId: input.orgId,
+      scopeId: input.scopeId,
       providerKey: input.providerKey,
       registrationId: registration.registrationId,
       ...(existing ? { connectionId: existing.id } : {}),
@@ -410,6 +475,7 @@ async function startMcpOAuthConnect(
   await db.connectorOAuthState.create({
     data: {
       orgId: input.orgId,
+      scopeId: input.scopeId,
       providerKey: input.providerKey,
       registrationId: client.registrationId,
       ...(existing ? { connectionId: existing.id } : {}),
@@ -543,7 +609,7 @@ function publicConnectionSelect() {
 // the provider explicitly declares stable identity fields and the response
 // supplies every one. Arbitrary token metadata is never account identity.
 async function sameAccountConnectionId(
-  db: Database,
+  db: ProvisioningDatabase,
   input: { orgId: string; providerKey: string; ownerPrincipalId: string },
   metadata: Record<string, unknown> | undefined,
   identityFields: readonly string[] | undefined,
@@ -578,22 +644,81 @@ async function sameAccountConnectionId(
   return match?.id;
 }
 
-async function storeConnection(
-  db: Database,
+interface StoreConnectionInput {
+  orgId: string;
+  providerKey: string;
+  ownerPrincipalId: string;
+  authMode: string;
+  config: Record<string, unknown>;
+  ciphertext: string;
+  connectionId?: string;
+  label?: string;
+  expiresAt?: Date;
+  providerScopes?: string[];
+  metadata?: Record<string, unknown>;
+  accountIdentityFields?: readonly string[];
+}
+
+interface ConnectionStoredEvent {
+  kind: "created" | "updated";
+  connectionId: string;
+  provider: string;
+}
+
+function logConnectionStored(event: ConnectionStoredEvent) {
+  log.info(
+    event.kind === "created" ? "Connector connection created" : "Connector connection updated",
+    { connectionId: event.connectionId, provider: event.provider },
+  );
+}
+
+async function assertConnectionUpdateAuthorized(
+  db: Prisma.TransactionClient,
   input: {
     orgId: string;
-    providerKey: string;
-    ownerPrincipalId: string;
-    authMode: string;
-    config: Record<string, unknown>;
-    ciphertext: string;
-    connectionId?: string;
-    label?: string;
-    expiresAt?: Date;
-    providerScopes?: string[];
-    metadata?: Record<string, unknown>;
-    accountIdentityFields?: readonly string[];
+    actorPrincipalId: string;
+    connectionId: string;
   },
+) {
+  await lockConnectorBindingMutations(db, input.orgId);
+  await lockConnectorConnectionBindings(db, input.orgId, input.connectionId);
+  const bindings = await db.item.findMany({
+    where: {
+      orgId: input.orgId,
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    select: { scopeId: true, body: true },
+  });
+  const boundScopeIds = new Set(
+    bindings.flatMap((binding) => {
+      const body = binding.body;
+      return typeof body === "object" &&
+        body !== null &&
+        !Array.isArray(body) &&
+        body.connectionId === input.connectionId
+        ? [binding.scopeId]
+        : [];
+    }),
+  );
+  const actor = {
+    id: input.actorPrincipalId,
+    orgId: input.orgId,
+    kind: "human" as const,
+  };
+  for (const scopeId of boundScopeIds) {
+    if (!(await authorize(actor, "manage_connectors", scopeId, db))) {
+      throw new ConnectorInstallationError(
+        "Connector credentials can only be updated by an initiator authorized for every bound scope",
+      );
+    }
+  }
+}
+
+async function storeConnection(
+  db: ProvisioningDatabase,
+  input: StoreConnectionInput,
+  beforeUpdate?: (connectionId: string) => Promise<void>,
 ) {
   const config = JSON.parse(
     JSON.stringify({ ...input.config, ...(input.metadata ?? {}) }),
@@ -602,6 +727,7 @@ async function storeConnection(
     input.connectionId ??
     (await sameAccountConnectionId(db, input, input.metadata, input.accountIdentityFields));
   if (connectionId) {
+    await beforeUpdate?.(connectionId);
     const updated = await db.connectorConnection.updateMany({
       where: {
         id: connectionId,
@@ -625,11 +751,18 @@ async function storeConnection(
       },
     });
     if (updated.count === 0) throw new ConnectorConnectionNotFoundError();
-    log.info("Connector connection updated", { connectionId, provider: input.providerKey });
-    return db.connectorConnection.findUniqueOrThrow({
+    const connection = await db.connectorConnection.findUniqueOrThrow({
       where: { id: connectionId },
       select: publicConnectionSelect(),
     });
+    return {
+      connection,
+      event: {
+        kind: "updated" as const,
+        connectionId,
+        provider: input.providerKey,
+      },
+    };
   }
   const created = await db.connectorConnection.create({
     data: {
@@ -645,11 +778,14 @@ async function storeConnection(
     },
     select: publicConnectionSelect(),
   });
-  log.info("Connector connection created", {
-    connectionId: created.id,
-    provider: input.providerKey,
-  });
-  return created;
+  return {
+    connection: created,
+    event: {
+      kind: "created" as const,
+      connectionId: created.id,
+      provider: input.providerKey,
+    },
+  };
 }
 
 export interface CompleteOAuthCallbackInput {
@@ -659,8 +795,130 @@ export interface CompleteOAuthCallbackInput {
   masterKey?: string;
   catalog?: ProviderCatalog;
   platformApps?: PlatformAppDirectory;
+  mcpClientFactory?: McpClientFactory;
   fetch?: ConnectorFetch;
   now?: Date;
+}
+
+async function persistOAuthProvisioning(
+  db: Database,
+  input: {
+    oauthState: ConnectorOAuthState;
+    provider: ProviderDef;
+    connection: StoreConnectionInput;
+    callback: CompleteOAuthCallbackInput;
+  },
+) {
+  const committed = await db.$transaction(async (transaction) => {
+    const owner = await validateOAuthOwnership(transaction, input.oauthState);
+    await validateOAuthProvisioningIntent(transaction, input.oauthState, input.provider, owner);
+    const stored = await storeConnection(transaction, input.connection, async (connectionId) => {
+      if (owner.kind === "agent") {
+        await assertConnectionUpdateAuthorized(transaction, {
+          orgId: input.oauthState.orgId,
+          actorPrincipalId: input.oauthState.initiatedByPrincipalId,
+          connectionId,
+        });
+      } else {
+        await lockConnectorBindingMutations(transaction, input.oauthState.orgId);
+        await lockConnectorConnectionBindings(transaction, input.oauthState.orgId, connectionId);
+      }
+    });
+    const connection = stored.connection;
+    if (input.oauthState.connectionId) {
+      const existingInstallations = await transaction.item.findMany({
+        where: {
+          orgId: input.oauthState.orgId,
+          kind: "connector",
+          status: { not: "archived" },
+        },
+        select: { scopeId: true, body: true },
+      });
+      const existingBindings = existingInstallations.filter((candidate) => {
+        const body = candidate.body;
+        return (
+          typeof body === "object" &&
+          body !== null &&
+          !Array.isArray(body) &&
+          body.catalogKey === input.oauthState.providerKey &&
+          body.connectionId === input.oauthState.connectionId
+        );
+      });
+      if (
+        existingBindings.length > 0 &&
+        !existingBindings.some((candidate) => candidate.scopeId === input.oauthState.scopeId)
+      ) {
+        throw new ConnectorInstallationError(
+          "OAuth reconnect scope must already be bound to the connection",
+        );
+      }
+    }
+    const provisioned = await provisionConnectorInstallation(transaction, {
+      orgId: input.oauthState.orgId,
+      actorPrincipalId: input.oauthState.initiatedByPrincipalId,
+      scopeId: input.oauthState.scopeId,
+      catalogKey: input.oauthState.providerKey,
+      connectionId: connection.id,
+      enabledTools: "all",
+      credentialOwnerPrincipalId: input.oauthState.ownerPrincipalId,
+      connectionCredentialsChanged: stored.event.kind === "updated",
+      catalog: input.callback.catalog ?? defaultCatalog,
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.oauthState.orgId,
+        actorPrincipalId: input.oauthState.initiatedByPrincipalId,
+        action: "connector.oauth.callback",
+        subject: connection.id,
+        payload: {
+          provider: input.oauthState.providerKey,
+          scopeId: input.oauthState.scopeId,
+          installationItemId: provisioned.installation.id,
+          credentialOwnerPrincipalId: input.oauthState.ownerPrincipalId,
+          initiatedByPrincipalId: input.oauthState.initiatedByPrincipalId,
+          reconnected: input.oauthState.connectionId !== null,
+        },
+      },
+    });
+    return {
+      connection,
+      installation: provisioned.installation,
+      installationsToFinalize: [
+        provisioned.installation,
+        ...provisioned.invalidatedInstallations.filter(
+          (installation) => installation.id !== provisioned.installation.id,
+        ),
+      ],
+      connectionEvent: stored.event,
+    };
+  });
+
+  logConnectionStored(committed.connectionEvent);
+  const setupStatus = (
+    await Promise.all(
+      committed.installationsToFinalize.map((installation) =>
+        finalizeConnectorInstallation(db, {
+          orgId: input.oauthState.orgId,
+          actorPrincipalId: input.oauthState.initiatedByPrincipalId,
+          installation,
+          ...(input.callback.masterKey ? { masterKey: input.callback.masterKey } : {}),
+          ...(input.callback.mcpClientFactory
+            ? { clientFactory: input.callback.mcpClientFactory }
+            : {}),
+          ...(input.callback.platformApps ? { platformApps: input.callback.platformApps } : {}),
+          ...(input.callback.fetch ? { fetch: input.callback.fetch } : {}),
+          catalog: input.callback.catalog ?? defaultCatalog,
+        }),
+      ),
+    )
+  )[0]!;
+  return {
+    connection: committed.connection,
+    installation: committed.installation,
+    setupStatus,
+    orgId: input.oauthState.orgId,
+    returnTo: input.oauthState.returnTo,
+  };
 }
 
 export async function completeOAuthCallback(db: Database, input: CompleteOAuthCallbackInput) {
@@ -760,23 +1018,27 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
     provider.auth.scopeSeparator,
   );
   const payload = { accessToken, ...(refreshToken ? { refreshToken } : {}), raw };
-  const connection = await storeConnection(db, {
-    orgId: oauthState.orgId,
-    providerKey: oauthState.providerKey,
-    ownerPrincipalId: oauthState.ownerPrincipalId,
-    authMode: provider.authMode,
-    config: connectionConfig(oauthState.config),
-    ciphertext: encryptEnvelope(payload, input.masterKey),
-    ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
-    ...(oauthState.label ? { label: oauthState.label } : {}),
-    providerScopes: grantedScopes,
-    ...(expiresAt ? { expiresAt } : {}),
-    metadata,
-    ...(provider.auth.accountIdentityFields
-      ? { accountIdentityFields: provider.auth.accountIdentityFields }
-      : {}),
+  return persistOAuthProvisioning(db, {
+    oauthState,
+    provider,
+    callback: input,
+    connection: {
+      orgId: oauthState.orgId,
+      providerKey: oauthState.providerKey,
+      ownerPrincipalId: oauthState.ownerPrincipalId,
+      authMode: provider.authMode,
+      config: connectionConfig(oauthState.config),
+      ciphertext: encryptEnvelope(payload, input.masterKey),
+      ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
+      ...(oauthState.label ? { label: oauthState.label } : {}),
+      providerScopes: grantedScopes,
+      ...(expiresAt ? { expiresAt } : {}),
+      metadata,
+      ...(provider.auth.accountIdentityFields
+        ? { accountIdentityFields: provider.auth.accountIdentityFields }
+        : {}),
+    },
   });
-  return { connection, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
 }
 
 // Complete an mcp_oauth callback: resolve the client identity recorded on the
@@ -854,23 +1116,27 @@ async function completeMcpOAuthCallback(
     tokens as Record<string, unknown>,
     connectionConfig(oauthState.config),
   );
-  const connection = await storeConnection(db, {
-    orgId: oauthState.orgId,
-    providerKey: oauthState.providerKey,
-    ownerPrincipalId: oauthState.ownerPrincipalId,
-    authMode: provider.authMode,
-    config: connectionConfig(oauthState.config),
-    ciphertext: encryptEnvelope(payload, input.masterKey),
-    ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
-    ...(oauthState.label ? { label: oauthState.label } : {}),
-    providerScopes: grantedScopes,
-    ...(expiresAt ? { expiresAt } : {}),
-    metadata,
-    ...(provider.auth.accountIdentityFields
-      ? { accountIdentityFields: provider.auth.accountIdentityFields }
-      : {}),
+  return persistOAuthProvisioning(db, {
+    oauthState,
+    provider,
+    callback: input,
+    connection: {
+      orgId: oauthState.orgId,
+      providerKey: oauthState.providerKey,
+      ownerPrincipalId: oauthState.ownerPrincipalId,
+      authMode: provider.authMode,
+      config: connectionConfig(oauthState.config),
+      ciphertext: encryptEnvelope(payload, input.masterKey),
+      ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
+      ...(oauthState.label ? { label: oauthState.label } : {}),
+      providerScopes: grantedScopes,
+      ...(expiresAt ? { expiresAt } : {}),
+      metadata,
+      ...(provider.auth.accountIdentityFields
+        ? { accountIdentityFields: provider.auth.accountIdentityFields }
+        : {}),
+    },
   });
-  return { connection, orgId: oauthState.orgId, returnTo: oauthState.returnTo };
 }
 
 function validateField(
@@ -965,8 +1231,28 @@ export interface CreateStaticConnectionInput {
   masterKey?: string;
   catalog?: ProviderCatalog;
   fetch?: ConnectorFetch;
+  installation?: {
+    actorPrincipalId: string;
+    scopeId: string;
+  };
 }
 
+type StoredConnection = Awaited<ReturnType<typeof storeConnection>>["connection"];
+type ProvisionedStaticConnection = StoredConnection & {
+  installation: Awaited<ReturnType<typeof provisionConnectorInstallation>>["installation"];
+  setupStatus: Awaited<ReturnType<typeof finalizeConnectorInstallation>>;
+};
+
+export function createStaticConnection(
+  db: Database,
+  input: CreateStaticConnectionInput & {
+    installation: NonNullable<CreateStaticConnectionInput["installation"]>;
+  },
+): Promise<ProvisionedStaticConnection>;
+export function createStaticConnection(
+  db: Database,
+  input: CreateStaticConnectionInput,
+): Promise<StoredConnection>;
 export async function createStaticConnection(db: Database, input: CreateStaticConnectionInput) {
   const provider = providerFrom(input.catalog ?? defaultCatalog, input.providerKey);
   if (provider.authMode !== "api_key" && provider.authMode !== "basic") {
@@ -1072,7 +1358,7 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
   }
 
   const payload = { ...credentials, raw: { ...credentials } };
-  return storeConnection(db, {
+  const connectionInput: StoreConnectionInput = {
     orgId: input.orgId,
     providerKey: input.providerKey,
     ownerPrincipalId: input.ownerPrincipalId,
@@ -1081,7 +1367,140 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
     ciphertext: encryptEnvelope(payload, input.masterKey),
     ...(input.label !== undefined ? { label: input.label } : {}),
     ...(existing ? { connectionId: existing.id } : {}),
+  };
+  const installationIntent = input.installation;
+  if (!installationIntent) {
+    const stored = await storeConnection(db, connectionInput);
+    logConnectionStored(stored.event);
+    return stored.connection;
+  }
+
+  const committed = await db.$transaction(async (transaction) => {
+    const [activeOwner, actor] = await Promise.all([
+      transaction.principal.findFirst({
+        where: {
+          id: input.ownerPrincipalId,
+          orgId: input.orgId,
+          kind: "agent",
+          deactivatedAt: null,
+        },
+        select: { id: true },
+      }),
+      transaction.principal.findFirst({
+        where: {
+          id: installationIntent.actorPrincipalId,
+          orgId: input.orgId,
+          kind: "human",
+          deactivatedAt: null,
+        },
+        select: { id: true, orgId: true, kind: true },
+      }),
+    ]);
+    if (!activeOwner) {
+      throw new StaticCredentialValidationError(
+        "Static connector credentials must be owned by the organization agent",
+      );
+    }
+    if (
+      !actor ||
+      !(await authorize(actor, "manage_connectors", installationIntent.scopeId, transaction))
+    ) {
+      throw new StaticCredentialValidationError(
+        "Static connector initiator is no longer authorized for the target scope",
+      );
+    }
+    const stored = await storeConnection(transaction, connectionInput, (connectionId) =>
+      assertConnectionUpdateAuthorized(transaction, {
+        orgId: input.orgId,
+        actorPrincipalId: installationIntent.actorPrincipalId,
+        connectionId,
+      }),
+    );
+    const connection = stored.connection;
+    const targetScopeId = installationIntent.scopeId;
+    if (input.reconnectConnectionId) {
+      const existingInstallations = await transaction.item.findMany({
+        where: {
+          orgId: input.orgId,
+          kind: "connector",
+          status: { not: "archived" },
+        },
+        select: { scopeId: true, body: true },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      });
+      const existingBindings = existingInstallations.filter((candidate) => {
+        const body = candidate.body;
+        return (
+          typeof body === "object" &&
+          body !== null &&
+          !Array.isArray(body) &&
+          body.catalogKey === input.providerKey &&
+          body.connectionId === input.reconnectConnectionId
+        );
+      });
+      const existingBinding = existingBindings.find(
+        (candidate) => candidate.scopeId === installationIntent.scopeId,
+      );
+      if (existingBindings.length > 0 && !existingBinding) {
+        throw new StaticCredentialValidationError(
+          "Static reconnect scope must already be bound to the connection",
+        );
+      }
+    }
+    const provisioned = await provisionConnectorInstallation(transaction, {
+      orgId: input.orgId,
+      actorPrincipalId: installationIntent.actorPrincipalId,
+      scopeId: targetScopeId,
+      catalogKey: input.providerKey,
+      connectionId: connection.id,
+      enabledTools: "all",
+      credentialOwnerPrincipalId: input.ownerPrincipalId,
+      connectionCredentialsChanged: stored.event.kind === "updated",
+      catalog: input.catalog ?? defaultCatalog,
+    });
+    await transaction.auditLog.create({
+      data: {
+        orgId: input.orgId,
+        actorPrincipalId: installationIntent.actorPrincipalId,
+        action: "connector.static.provision",
+        subject: connection.id,
+        payload: {
+          provider: input.providerKey,
+          scopeId: installationIntent.scopeId,
+          installationItemId: provisioned.installation.id,
+          credentialOwnerPrincipalId: input.ownerPrincipalId,
+          reconnected: existing !== undefined,
+        },
+      },
+    });
+    return {
+      connection,
+      installation: provisioned.installation,
+      installationsToFinalize: [
+        provisioned.installation,
+        ...provisioned.invalidatedInstallations.filter(
+          (installation) => installation.id !== provisioned.installation.id,
+        ),
+      ],
+      connectionEvent: stored.event,
+    };
   });
+  logConnectionStored(committed.connectionEvent);
+  const setupStatus = (
+    await Promise.all(
+      committed.installationsToFinalize.map((installation) =>
+        finalizeConnectorInstallation(db, {
+          orgId: input.orgId,
+          actorPrincipalId: installationIntent.actorPrincipalId,
+          installation,
+          ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+          ...(input.fetch ? { fetch: input.fetch } : {}),
+          catalog: input.catalog ?? defaultCatalog,
+        }),
+      ),
+    )
+  )[0]!;
+  return { ...committed.connection, installation: committed.installation, setupStatus };
 }
 
 export async function updateConnectorConnectionLabel(
