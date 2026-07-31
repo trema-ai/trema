@@ -309,10 +309,27 @@ export async function listConnectorInstallationHealth(
     select: { id: true, scopeId: true, body: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  const parsed = installations.map((installation) => ({
-    ...installation,
-    body: parseBody(installation.body, defaultCatalog),
-  }));
+  const parsed = installations.flatMap((installation) => {
+    const body = connectorInstallationBodySchema.safeParse(installation.body);
+    if (!body.success) {
+      // Active items can outlive a provider or the catalog schema that created
+      // them. One stale item must not hide every healthy connector from members.
+      log.debug("Invalid connector installation omitted from health", {
+        itemId: installation.id,
+      });
+      return [];
+    }
+    const provider = defaultCatalog.find(({ key }) => key === body.data.catalogKey);
+    if (provider === undefined) {
+      // The schema currently rejects this first; keep the listing boundary
+      // independently tolerant if catalog validation changes later.
+      log.debug("Unknown connector installation omitted from health", {
+        itemId: installation.id,
+      });
+      return [];
+    }
+    return [{ ...installation, body: body.data, provider }];
+  });
   const connections = await db.connectorConnection.findMany({
     where: {
       orgId: input.orgId,
@@ -342,19 +359,17 @@ export async function listConnectorInstallationHealth(
   );
 
   return parsed.map((installation) => {
-    const provider = defaultCatalog.find(({ key }) => key === installation.body.catalogKey);
-    if (!provider) {
-      throw new ConnectorInstallationValidationError(
-        `Unknown connector provider: ${installation.body.catalogKey}`,
-      );
-    }
     const connectionStatus = connectorConnectionHealthStatus(
       connectionById.get(installation.body.connectionId),
       input.now,
     );
     return {
       installationItemId: installation.id,
-      status: connectorInstallationHealthStatus(provider, installation.body, connectionStatus),
+      status: connectorInstallationHealthStatus(
+        installation.provider,
+        installation.body,
+        connectionStatus,
+      ),
     };
   });
 }

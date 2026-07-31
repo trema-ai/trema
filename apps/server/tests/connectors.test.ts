@@ -564,6 +564,41 @@ integration("connector connection flows", () => {
     const listHealth = () =>
       call(connectorsRouter.member.installations.health, {}, { context: member.context });
 
+    await Promise.all([
+      db.item.create({
+        data: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          title: "Retired provider",
+          body: {
+            catalogKey: "retired_provider",
+            connectionId: connection.id,
+            enabledTools: "all",
+          },
+          status: "active",
+          disclosure: "retrieved",
+          createdById: org.principal.id,
+        },
+      }),
+      db.item.create({
+        data: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          title: "Legacy provider body",
+          body: {
+            catalogKey: "github",
+            connectionId: connection.id,
+            enabledTools: ["removed_legacy_tool"],
+          },
+          status: "active",
+          disclosure: "retrieved",
+          createdById: org.principal.id,
+        },
+      }),
+    ]);
+
     await expect(listHealth()).resolves.toEqual([
       {
         installationItemId: installation.id,
