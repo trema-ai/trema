@@ -772,6 +772,7 @@ async function persistOAuthProvisioning(
       connectionId: connection.id,
       enabledTools: "all",
       credentialOwnerPrincipalId: input.oauthState.ownerPrincipalId,
+      connectionCredentialsChanged: stored.event.kind === "updated",
       catalog: input.callback.catalog ?? defaultCatalog,
     });
     await transaction.auditLog.create({
@@ -1345,6 +1346,7 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
       connectionId: connection.id,
       enabledTools: "all",
       credentialOwnerPrincipalId: input.ownerPrincipalId,
+      connectionCredentialsChanged: stored.event.kind === "updated",
       catalog: input.catalog ?? defaultCatalog,
     });
     await transaction.auditLog.create({

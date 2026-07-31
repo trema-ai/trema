@@ -190,15 +190,17 @@ function repointInstallationBody(
   connectionId: string,
   provider: ProviderDef,
   catalog: ProviderCatalog,
+  connectionCredentialsChanged = false,
 ): ConnectorInstallationBody {
-  const switchingMcpConnection =
-    provider.transport.type === "mcp" && current.connectionId !== connectionId;
+  const requiresMcpSync =
+    provider.transport.type === "mcp" &&
+    (current.connectionId !== connectionId || connectionCredentialsChanged);
   return parseBody(
     {
       catalogKey: current.catalogKey,
       connectionId,
       enabledTools: current.enabledTools,
-      ...(switchingMcpConnection
+      ...(requiresMcpSync
         ? { syncPending: true as const }
         : {
             ...(current.syncedTools !== undefined ? { syncedTools: current.syncedTools } : {}),
@@ -393,6 +395,7 @@ export interface ProvisionConnectorInstallationInput {
   connectionId: string;
   enabledTools?: "all" | string[];
   credentialOwnerPrincipalId?: string;
+  connectionCredentialsChanged?: boolean;
   catalog?: ProviderCatalog;
 }
 
@@ -496,7 +499,13 @@ export async function provisionConnectorInstallation(
   }
 
   const current = parseBody(existing.body, catalog);
-  const body = repointInstallationBody(current, input.connectionId, provider, catalog);
+  const body = repointInstallationBody(
+    current,
+    input.connectionId,
+    provider,
+    catalog,
+    input.connectionCredentialsChanged,
+  );
   const changed = JSON.stringify(body) !== JSON.stringify(current);
   if (changed) {
     await transaction.itemVersion.create({

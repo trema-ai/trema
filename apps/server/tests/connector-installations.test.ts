@@ -16,6 +16,7 @@ import {
   type McpClientFactory,
   syncConnectorInstallation,
 } from "#server/services/connectors/index.js";
+import { provisionConnectorInstallation } from "#server/services/connectors/installations.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
@@ -602,6 +603,47 @@ integration("connector connections and installations", () => {
       enabledTools: ["read_page"],
       syncPending: true,
     });
+
+    await db.item.update({
+      where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      data: {
+        body: {
+          catalogKey: "notion",
+          connectionId: second.id,
+          enabledTools: ["read_page"],
+          syncedTools: [{ name: "read_page", annotations: { readOnlyHint: true } }],
+        },
+      },
+    });
+    await db.$transaction((transaction) =>
+      provisionConnectorInstallation(transaction, {
+        orgId: org.org.id,
+        actorPrincipalId: org.principal.id,
+        scopeId: org.orgScope.id,
+        catalogKey: "notion",
+        connectionId: second.id,
+        connectionCredentialsChanged: true,
+      }),
+    );
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        catalogKey: "notion",
+        connectionId: second.id,
+        enabledTools: ["read_page"],
+        syncPending: true,
+      },
+    });
+    expect(
+      (
+        await db.item.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+        })
+      ).body,
+    ).not.toHaveProperty("syncedTools");
   });
 
   it("rejects a delayed MCP sync result when the bound connection changed", async () => {

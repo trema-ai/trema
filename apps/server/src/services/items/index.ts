@@ -412,6 +412,11 @@ export async function transitionItem(db: Database, input: TransitionItemInput) {
     if (!status) {
       throw new ItemValidationError(`Cannot ${input.action} an item with status '${item.status}'`);
     }
+    if (item.kind === "connector" && input.action === "restore") {
+      throw new ItemValidationError(
+        "Archived connector installations cannot be restored; configure the connector through the connector installation routes instead",
+      );
+    }
     if (item.kind === "instruction" && status === "active") {
       await assertNoActiveInstruction(transaction, input.orgId, item.scopeId);
     }
