@@ -399,6 +399,78 @@ export interface ProvisionConnectorInstallationInput {
   catalog?: ProviderCatalog;
 }
 
+async function invalidateMcpConnectionInstallations(
+  transaction: Prisma.TransactionClient,
+  input: ProvisionConnectorInstallationInput,
+  provider: ProviderDef,
+  catalog: ProviderCatalog,
+) {
+  if (provider.transport.type !== "mcp" || !input.connectionCredentialsChanged) return [];
+
+  const candidates = await transaction.item.findMany({
+    where: {
+      orgId: input.orgId,
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+  const invalidated = [];
+  for (const candidate of candidates) {
+    let current: ConnectorInstallationBody;
+    try {
+      current = parseBody(candidate.body, catalog);
+    } catch {
+      continue;
+    }
+    if (current.catalogKey !== provider.key || current.connectionId !== input.connectionId)
+      continue;
+
+    const body = repointInstallationBody(current, input.connectionId, provider, catalog, true);
+    const changed = JSON.stringify(body) !== JSON.stringify(current);
+    let installation = candidate;
+    if (changed) {
+      await transaction.itemVersion.create({
+        data: {
+          orgId: input.orgId,
+          itemId: candidate.id,
+          version: candidate.version,
+          title: candidate.title,
+          body: candidate.body as Prisma.InputJsonValue,
+          authorId: candidate.updatedById ?? candidate.createdById,
+        },
+      });
+      installation = await transaction.item.update({
+        where: { orgId_id: { orgId: input.orgId, id: candidate.id } },
+        data: {
+          body: jsonValue(body),
+          version: { increment: 1 },
+          updatedById: input.actorPrincipalId,
+        },
+      });
+      await transaction.auditLog.create({
+        data: {
+          orgId: input.orgId,
+          actorPrincipalId: input.actorPrincipalId,
+          action: "connector.installation.update",
+          subject: installation.id,
+          payload: {
+            changed: true,
+            credentialsChanged: true,
+            scopeId: installation.scopeId,
+            catalogKey: provider.key,
+            connectionId: body.connectionId,
+            enabledTools: body.enabledTools,
+            version: installation.version,
+          },
+        },
+      });
+    }
+    invalidated.push(installation);
+  }
+  return invalidated;
+}
+
 /**
  * Create the intended installation or repoint the scope's existing provider
  * installation while retaining its tool configuration. The caller owns the
@@ -426,7 +498,7 @@ export async function provisionConnectorInstallation(
     FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))
   `;
 
-  const [scope, actor, candidates] = await Promise.all([
+  const [scope, actor] = await Promise.all([
     validateBinding(transaction, {
       orgId: input.orgId,
       scopeId: input.scopeId,
@@ -437,17 +509,23 @@ export async function provisionConnectorInstallation(
       where: { id: input.actorPrincipalId, orgId: input.orgId },
       select: { id: true },
     }),
-    transaction.item.findMany({
-      where: {
-        orgId: input.orgId,
-        scopeId: input.scopeId,
-        kind: "connector",
-        status: { not: "archived" },
-      },
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    }),
   ]);
   if (!actor) throw new ConnectorInstallationValidationError("Installation actor not found");
+  const invalidatedInstallations = await invalidateMcpConnectionInstallations(
+    transaction,
+    input,
+    provider,
+    catalog,
+  );
+  const candidates = await transaction.item.findMany({
+    where: {
+      orgId: input.orgId,
+      scopeId: input.scopeId,
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
 
   const existing = candidates.find((candidate) => {
     try {
@@ -495,7 +573,7 @@ export async function provisionConnectorInstallation(
         },
       },
     });
-    return { installation, created: true };
+    return { installation, created: true, invalidatedInstallations };
   }
 
   const current = parseBody(existing.body, catalog);
@@ -549,7 +627,7 @@ export async function provisionConnectorInstallation(
       },
     },
   });
-  return { installation, created: false };
+  return { installation, created: false, invalidatedInstallations };
 }
 
 export type ConnectorSetupStatus = "ready" | "syncing" | "sync_failed";

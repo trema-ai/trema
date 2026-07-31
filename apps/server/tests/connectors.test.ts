@@ -813,6 +813,19 @@ integration("connector connection flows", () => {
       connectionId,
     );
 
+    const sharedScope = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Shared Notion" },
+    });
+    const sharedInstallation = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: sharedScope.id,
+      catalogKey: "notion",
+      connectionId: connectionId!,
+      enabledTools: "all",
+      clientFactory,
+      masterKey,
+    });
     const reconnectStarted = await startOAuthConnect(db, {
       orgId: org.org.id,
       scopeId: org.orgScope.id,
@@ -864,7 +877,25 @@ integration("connector connection flows", () => {
         },
       ],
     });
-    expect(clientFactory).toHaveBeenCalledTimes(3);
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: sharedInstallation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        catalogKey: "notion",
+        connectionId,
+        enabledTools: "all",
+        syncedTools: [
+          {
+            name: "notion-search",
+            description: "Search the connected Notion workspace",
+            annotations: { readOnlyHint: true },
+          },
+        ],
+      },
+    });
+    expect(clientFactory).toHaveBeenCalledTimes(5);
   });
 
   it("reconnects in place and clears revocation and refresh exhaustion", async () => {

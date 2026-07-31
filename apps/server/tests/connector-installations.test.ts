@@ -604,6 +604,19 @@ integration("connector connections and installations", () => {
       syncPending: true,
     });
 
+    const shared = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Shared MCP connection" },
+    });
+    const sibling = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: shared.id,
+      catalogKey: "notion",
+      connectionId: second.id,
+      enabledTools: "all",
+      clientFactory: workingFactory,
+      masterKey,
+    });
     await db.item.update({
       where: { orgId_id: { orgId: org.org.id, id: installation.id } },
       data: {
@@ -644,6 +657,16 @@ integration("connector connections and installations", () => {
         })
       ).body,
     ).not.toHaveProperty("syncedTools");
+    const invalidatedSibling = await db.item.findUniqueOrThrow({
+      where: { orgId_id: { orgId: org.org.id, id: sibling.id } },
+    });
+    expect(invalidatedSibling.body).toMatchObject({
+      catalogKey: "notion",
+      connectionId: second.id,
+      enabledTools: "all",
+      syncPending: true,
+    });
+    expect(invalidatedSibling.body).not.toHaveProperty("syncedTools");
   });
 
   it("rejects a delayed MCP sync result when the bound connection changed", async () => {

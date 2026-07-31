@@ -794,21 +794,35 @@ async function persistOAuthProvisioning(
     return {
       connection,
       installation: provisioned.installation,
+      installationsToFinalize: [
+        provisioned.installation,
+        ...provisioned.invalidatedInstallations.filter(
+          (installation) => installation.id !== provisioned.installation.id,
+        ),
+      ],
       connectionEvent: stored.event,
     };
   });
 
   logConnectionStored(committed.connectionEvent);
-  const setupStatus = await finalizeConnectorInstallation(db, {
-    orgId: input.oauthState.orgId,
-    actorPrincipalId: input.oauthState.initiatedByPrincipalId,
-    installation: committed.installation,
-    ...(input.callback.masterKey ? { masterKey: input.callback.masterKey } : {}),
-    ...(input.callback.mcpClientFactory ? { clientFactory: input.callback.mcpClientFactory } : {}),
-    ...(input.callback.platformApps ? { platformApps: input.callback.platformApps } : {}),
-    ...(input.callback.fetch ? { fetch: input.callback.fetch } : {}),
-    catalog: input.callback.catalog ?? defaultCatalog,
-  });
+  const setupStatus = (
+    await Promise.all(
+      committed.installationsToFinalize.map((installation) =>
+        finalizeConnectorInstallation(db, {
+          orgId: input.oauthState.orgId,
+          actorPrincipalId: input.oauthState.initiatedByPrincipalId,
+          installation,
+          ...(input.callback.masterKey ? { masterKey: input.callback.masterKey } : {}),
+          ...(input.callback.mcpClientFactory
+            ? { clientFactory: input.callback.mcpClientFactory }
+            : {}),
+          ...(input.callback.platformApps ? { platformApps: input.callback.platformApps } : {}),
+          ...(input.callback.fetch ? { fetch: input.callback.fetch } : {}),
+          catalog: input.callback.catalog ?? defaultCatalog,
+        }),
+      ),
+    )
+  )[0]!;
   return {
     connection: committed.connection,
     installation: committed.installation,
@@ -1367,18 +1381,30 @@ export async function createStaticConnection(db: Database, input: CreateStaticCo
     return {
       connection,
       installation: provisioned.installation,
+      installationsToFinalize: [
+        provisioned.installation,
+        ...provisioned.invalidatedInstallations.filter(
+          (installation) => installation.id !== provisioned.installation.id,
+        ),
+      ],
       connectionEvent: stored.event,
     };
   });
   logConnectionStored(committed.connectionEvent);
-  const setupStatus = await finalizeConnectorInstallation(db, {
-    orgId: input.orgId,
-    actorPrincipalId: installationIntent.actorPrincipalId,
-    installation: committed.installation,
-    ...(input.masterKey ? { masterKey: input.masterKey } : {}),
-    ...(input.fetch ? { fetch: input.fetch } : {}),
-    catalog: input.catalog ?? defaultCatalog,
-  });
+  const setupStatus = (
+    await Promise.all(
+      committed.installationsToFinalize.map((installation) =>
+        finalizeConnectorInstallation(db, {
+          orgId: input.orgId,
+          actorPrincipalId: installationIntent.actorPrincipalId,
+          installation,
+          ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+          ...(input.fetch ? { fetch: input.fetch } : {}),
+          catalog: input.catalog ?? defaultCatalog,
+        }),
+      ),
+    )
+  )[0]!;
   return { ...committed.connection, installation: committed.installation, setupStatus };
 }
 
