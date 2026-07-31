@@ -237,6 +237,70 @@ integration("approvals", () => {
     expect(claimed.executedAt).not.toBeNull();
   });
 
+  it("resolves distinct connector account labels without storing them on approvals", async () => {
+    const org = await createOrg();
+    const opened = await openSharedSession(org, { name: "Account Identity" });
+    const accounts = await Promise.all(
+      [
+        {
+          ownerPrincipalId: org.principal.id,
+          email: "personal@example.com",
+          source: "personal" as const,
+        },
+        {
+          ownerPrincipalId: org.agent.id,
+          email: "operations@example.com",
+          source: "organization" as const,
+        },
+      ].map(async (account, index) => {
+        const connection = await db.connectorConnection.create({
+          data: {
+            orgId: org.org.id,
+            ownerPrincipalId: account.ownerPrincipalId,
+            providerKey: "google_workspace",
+            authMode: "oauth2_code",
+            config: { email: account.email },
+            ciphertext: "not-read-by-approval-identity",
+          },
+        });
+        const requested = await requestApproval(db, {
+          orgId: org.org.id,
+          sessionId: opened.session.sessionId,
+          toolKey: "google_workspace:send_email",
+          mode: "ask",
+          args: { message: index },
+          reason: "Send the message",
+          executionBinding: {
+            installationItemId: randomUUID(),
+            connectionId: connection.id,
+          },
+        });
+        return { ...account, approval: requested.approval };
+      }),
+    );
+
+    for (const account of accounts) {
+      const approval = await call(
+        approvalsRouter.get,
+        { id: account.approval.id },
+        { context: org.context },
+      );
+      expect(approval.connectorAccount).toEqual({
+        label: account.email,
+        source: account.source,
+      });
+
+      const stored = await db.approval.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: account.approval.id } },
+      });
+      expect(JSON.stringify(stored)).not.toContain(account.email);
+      expect(stored.executionBinding).toEqual({
+        installationItemId: expect.any(String),
+        connectionId: expect.any(String),
+      });
+    }
+  });
+
   it("lets exactly one of many concurrent executors run the call", async () => {
     const org = await createOrg();
     const opened = await openSharedSession(org, { name: "Racing" });

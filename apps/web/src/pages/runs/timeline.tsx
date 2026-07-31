@@ -585,21 +585,31 @@ type ConnectorCatalogEntry = {
   logoUrl?: string;
 };
 
+type ConnectorAccountIdentity = {
+  label: string;
+  source: "personal" | "organization";
+};
+
 function connectorIdentity(
   activity: ActivityPart | undefined,
   catalog: readonly ConnectorCatalogEntry[],
+  resolvedAccount?: ConnectorAccountIdentity | null,
 ):
   | {
       name: string;
       logoUrl?: string;
-      account?: { source: "personal" | "organization" };
+      account?: { label?: string; source: "personal" | "organization" };
     }
   | undefined {
   if (activity?.connector !== undefined) {
     return {
       name: activity.connector.displayName,
       ...(activity.connector.logoUrl === undefined ? {} : { logoUrl: activity.connector.logoUrl }),
-      ...(activity.connector.account === undefined ? {} : { account: activity.connector.account }),
+      ...(resolvedAccount !== undefined && resolvedAccount !== null
+        ? { account: resolvedAccount }
+        : activity.connector.account === undefined
+          ? {}
+          : { account: activity.connector.account }),
     };
   }
   if (activity?.toolKind !== "connector") return undefined;
@@ -614,6 +624,9 @@ function connectorIdentity(
   return {
     name: provider.displayName,
     ...(provider.logoUrl === undefined ? {} : { logoUrl: provider.logoUrl }),
+    ...(resolvedAccount === undefined || resolvedAccount === null
+      ? {}
+      : { account: resolvedAccount }),
   };
 }
 
@@ -709,9 +722,20 @@ function LiveElicitation({
   const catalog = useQuery(
     orpc.connectors.catalog.list.queryOptions({ enabled: needsConnectorLookup }),
   );
+  const approvalId = part.reference?.approvalId;
+  const approval = useQuery(
+    orpc.approvals.get.queryOptions({
+      input: { id: approvalId ?? "00000000-0000-4000-8000-000000000000" },
+      enabled:
+        part.elicitationKind === "approval" &&
+        activity?.toolKind === "connector" &&
+        approvalId !== undefined,
+    }),
+  );
   const connector = connectorIdentity(
     activity,
     (catalog.data ?? []) as readonly ConnectorCatalogEntry[],
+    approval.data?.connectorAccount,
   );
   return (
     <ApprovalCard
