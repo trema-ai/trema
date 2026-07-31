@@ -5084,6 +5084,215 @@
         ]
       }
     },
+    "/member/connector-installations": {
+      "post": {
+        "operationId": "connectors.member.installations.create",
+        "summary": "Create a personal connector installation",
+        "description": "Bind one of the caller's connections into the caller's personal scope with all tools enabled.",
+        "tags": [
+          "Connectors"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "catalogKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "connectionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "scopeId",
+                  "catalogKey",
+                  "connectionId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kind": {
+                      "const": "connector"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "proposed",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string"
+                    },
+                    "disclosure": {
+                      "enum": [
+                        "standing",
+                        "retrieved"
+                      ],
+                      "type": "string"
+                    },
+                    "createdById": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "scopeId",
+                    "kind",
+                    "title",
+                    "body",
+                    "status",
+                    "disclosure",
+                    "createdById",
+                    "createdAt",
+                    "updatedAt",
+                    "version"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/conversations": {
       "get": {
         "operationId": "conversations.list",

@@ -365,7 +365,7 @@ integration("connector connections and installations", () => {
     ).rejects.toThrow();
   });
 
-  it("keeps personal installation creation inside the OAuth provisioning flow", async () => {
+  it("retains personal installation creation for valid unbound connections", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "member");
     const other = await addMember(org.org.id, org.orgScope.id, "member");
@@ -387,7 +387,7 @@ integration("connector connections and installations", () => {
       principalId: other.principal.id,
       providerKey: "github",
     });
-    expect(connectorsRouter.member).not.toHaveProperty("installations");
+    expect(connectorsRouter.member.installations).toHaveProperty("create");
     await expect(
       call(
         connectorsRouter.installations.create,
@@ -414,13 +414,15 @@ integration("connector connections and installations", () => {
     ).rejects.toThrow("scope owner's connection");
 
     await expect(
-      createConnectorInstallation(db, {
-        orgId: org.org.id,
-        actorPrincipalId: member.principal.id,
-        scopeId: personal.id,
-        catalogKey: "github",
-        connectionId: memberGithub.id,
-      }),
+      call(
+        connectorsRouter.member.installations.create,
+        {
+          scopeId: personal.id,
+          catalogKey: "github",
+          connectionId: memberGithub.id,
+        },
+        { context: member.context },
+      ),
     ).resolves.toMatchObject({
       scopeId: personal.id,
       body: {

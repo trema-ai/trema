@@ -106,6 +106,19 @@ export function ConnectionsTab({
       }),
     ]);
   }, [queryClient]);
+  const bind = useMutation({
+    mutationFn: (input: { connectionId: string; catalogKey: string }) =>
+      rpcClient.connectors.member.installations.create({
+        scopeId: scope.id,
+        catalogKey: input.catalogKey,
+        connectionId: input.connectionId,
+      }),
+    onSuccess: async () => {
+      await invalidateConnections();
+      toast.success("Connection added to your personal scope");
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
 
   useEffect(() => {
     const connectorError = searchParams.get("connector_error");
@@ -177,7 +190,14 @@ export function ConnectionsTab({
                   key={connection.id}
                   provider={provider}
                   connection={connection}
+                  personalScopeId={scope.id}
                   onReconnect={() => setSelection({ provider, reconnect: connection })}
+                  onBind={() =>
+                    bind.mutate({
+                      connectionId: connection.id,
+                      catalogKey: connection.providerKey,
+                    })
+                  }
                   onChanged={invalidateConnections}
                 />
               ) : null;
@@ -361,12 +381,16 @@ function AvailableConnectionCard({
 function PersonalConnectionRow({
   provider,
   connection,
+  personalScopeId,
   onReconnect,
+  onBind,
   onChanged,
 }: {
   provider: CatalogProvider;
   connection: ConnectorConnection;
+  personalScopeId: string;
   onReconnect: () => void;
+  onBind: () => void;
   onChanged: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState(false);
@@ -387,6 +411,9 @@ function PersonalConnectionRow({
       : connection.refreshExhausted
         ? "Reconnect needed"
         : "Connected";
+  const isBound = connection.installations.some(
+    (installation) => installation.scopeId === personalScopeId,
+  );
 
   return (
     <>
@@ -421,6 +448,11 @@ function PersonalConnectionRow({
             ) : null}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            {connection.isValid && !isBound ? (
+              <Button size="xs" variant="outline" onClick={onBind}>
+                Finish setup
+              </Button>
+            ) : null}
             {!connection.isValid ? (
               <Button size="xs" variant="outline" onClick={onReconnect}>
                 <RefreshCw />

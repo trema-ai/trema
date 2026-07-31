@@ -437,7 +437,7 @@ integration("connector connection flows", () => {
     expect(byKey.get("stripe")?.supportsPersonalOAuth).toBe(false);
     expect(connectorsRouter).not.toHaveProperty("providers");
     expect(connectorsRouter.member.connect).not.toHaveProperty("createStatic");
-    expect(connectorsRouter.member).not.toHaveProperty("installations");
+    expect(connectorsRouter.member.installations).toHaveProperty("create");
   });
 
   it("enforces organization ownership for app OAuth and static credentials", async () => {
@@ -590,6 +590,62 @@ integration("connector connection flows", () => {
     await expect(
       db.item.count({ where: { orgId: org.org.id, scopeId: shared.id, kind: "connector" } }),
     ).resolves.toBe(0);
+  });
+
+  it("rejects an OAuth reconnect that targets another connection's bound scope", async () => {
+    const org = await createOrg();
+    const shared = await db.scope.create({
+      data: { orgId: org.org.id, kind: "shared", name: "Support" },
+    });
+    const orgConnection = await storedConnection(org.org.id, org.agent.id);
+    const sharedConnection = await storedConnection(org.org.id, org.agent.id);
+    await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: org.orgScope.id,
+      catalogKey: "github",
+      connectionId: orgConnection.id,
+    });
+    const sharedInstallation = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: shared.id,
+      catalogKey: "github",
+      connectionId: sharedConnection.id,
+    });
+    const started = await startOAuthConnect(db, {
+      orgId: org.org.id,
+      scopeId: shared.id,
+      ownerPrincipalId: org.agent.id,
+      initiatedByPrincipalId: org.principal.id,
+      providerKey: "github",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      catalog: oauthCatalog,
+      reconnectConnectionId: orgConnection.id,
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+
+    await expect(
+      completeOAuthCallback(db, {
+        state,
+        code: "authorization-code",
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: oauthCatalog,
+        fetch: tokenFetch(),
+      }),
+    ).rejects.toThrow("OAuth reconnect scope must already be bound");
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: sharedInstallation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        catalogKey: "github",
+        connectionId: sharedConnection.id,
+      },
+    });
   });
 
   it("does not activate an installation when the OAuth callback fails", async () => {

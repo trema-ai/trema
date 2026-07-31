@@ -825,6 +825,34 @@ async function persistOAuthProvisioning(
       }
     });
     const connection = stored.connection;
+    if (input.oauthState.connectionId) {
+      const existingInstallations = await transaction.item.findMany({
+        where: {
+          orgId: input.oauthState.orgId,
+          kind: "connector",
+          status: { not: "archived" },
+        },
+        select: { scopeId: true, body: true },
+      });
+      const existingBindings = existingInstallations.filter((candidate) => {
+        const body = candidate.body;
+        return (
+          typeof body === "object" &&
+          body !== null &&
+          !Array.isArray(body) &&
+          body.catalogKey === input.oauthState.providerKey &&
+          body.connectionId === input.oauthState.connectionId
+        );
+      });
+      if (
+        existingBindings.length > 0 &&
+        !existingBindings.some((candidate) => candidate.scopeId === input.oauthState.scopeId)
+      ) {
+        throw new ConnectorInstallationError(
+          "OAuth reconnect scope must already be bound to the connection",
+        );
+      }
+    }
     const provisioned = await provisionConnectorInstallation(transaction, {
       orgId: input.oauthState.orgId,
       actorPrincipalId: input.oauthState.initiatedByPrincipalId,

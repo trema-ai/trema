@@ -197,7 +197,7 @@ export function SettingsConnectorDetailPage() {
           .map((installation) => installation.scopeId)
       : [],
   );
-  const staticScopeRows =
+  const reconnectScopeRows =
     reconnectScopeIds.size > 0
       ? scopeRows.filter((scope) => reconnectScopeIds.has(scope.id))
       : scopeRows;
@@ -244,7 +244,7 @@ export function SettingsConnectorDetailPage() {
         <OAuthConnectionDialog
           provider={provider}
           reconnect={reconnect}
-          scopes={scopeRows}
+          scopes={reconnectScopeRows}
           defaultScopeId={
             reconnect
               ? installationRows.find((installation) => installation.connectionId === reconnect.id)
@@ -261,7 +261,7 @@ export function SettingsConnectorDetailPage() {
       <StaticConnectionDialog
         provider={provider}
         reconnect={reconnect}
-        scopes={staticScopeRows}
+        scopes={reconnectScopeRows}
         defaultScopeId={
           reconnect
             ? installationRows.find((installation) => installation.connectionId === reconnect.id)
