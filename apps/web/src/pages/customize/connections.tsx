@@ -303,6 +303,10 @@ function ReadOnlyConnections({
                     </CardDescription>
                   ) : null}
                   <p className="mt-2 text-meta text-muted-foreground">
+                    {body.access.kind === "scope"
+                      ? "Scope-wide access"
+                      : `${body.access.role} or higher`}{" "}
+                    ·{" "}
                     {body.enabledTools === "all"
                       ? "All tools"
                       : `${body.enabledTools.length} enabled tools`}

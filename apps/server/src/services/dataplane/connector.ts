@@ -20,12 +20,14 @@ import {
   requireApproval,
 } from "#server/services/approvals/index.js";
 import {
+  ConnectorAccessDeniedError,
   ConnectorApprovalRequiredError,
   type ConnectorCallAuthority,
   ConnectorConnectionNotFoundError,
   type ConnectorFetch,
   ConnectorProviderNotFoundError,
   ConnectorReconnectRequiredError,
+  type ConnectorResolutionAuditBinding,
   ConnectorSsrfRejectedError,
   ConnectorToolNotAvailableError,
   ConnectorToolValidationError,
@@ -107,12 +109,14 @@ interface AuditInput {
   argsHash: string;
   outcome: ConnectorCallOutcome;
   resolved?: ResolvedConnectorTool;
+  binding?: ConnectorResolutionAuditBinding;
   /** The effective mode the gate resolved for this call, once it resolved one. */
   mode?: ApprovalMode;
   /** What let an executed call run. */
   authority?: ConnectorCallAuthority;
   approvalId?: string;
   errorCode?: string;
+  accessOutcome: string;
   durationMs: number;
 }
 
@@ -146,23 +150,37 @@ async function recordCall(db: Database, input: AuditInput): Promise<void> {
 }
 
 async function writeCallRecord(db: Database, input: AuditInput): Promise<void> {
+  const agent = await db.principal.findFirst({
+    where: { orgId: input.session.orgId, kind: "agent", deactivatedAt: null },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
   await db.auditLog.create({
     data: {
       orgId: input.session.orgId,
       actorPrincipalId: input.session.agentPrincipalId,
       action: "dataplane.use_connector",
-      subject: input.resolved?.installationItemId ?? input.session.id,
+      subject:
+        input.resolved?.installationItemId ?? input.binding?.installationItemId ?? input.session.id,
       payload: {
         sessionId: input.session.id,
         scopeId: input.session.scopeId,
+        agentPrincipalId: agent?.id ?? null,
         requesterPrincipalId: input.session.requesterPrincipalId,
         requesterExternalRef: input.session.requesterExternalRef,
         toolKey: input.toolKey,
-        connector: input.resolved?.connectorKey ?? null,
+        connector: input.resolved?.connectorKey ?? input.binding?.connectorKey ?? null,
         tool: input.resolved?.toolName ?? null,
         mode: input.mode ?? null,
         authority: input.authority ?? null,
-        installationItemId: input.resolved?.installationItemId ?? null,
+        installationItemId:
+          input.resolved?.installationItemId ?? input.binding?.installationItemId ?? null,
+        connectionId: input.resolved?.connectionId ?? input.binding?.connectionId ?? null,
+        credentialOwnerPrincipalId:
+          input.resolved?.credentialOwnerPrincipalId ??
+          input.binding?.credentialOwnerPrincipalId ??
+          null,
+        accessOutcome: input.accessOutcome,
         argsHash: input.argsHash,
         outcome: input.outcome,
         approvalId: input.approvalId ?? null,
@@ -190,6 +208,32 @@ function failureCode(error: unknown): string {
   return describeConnectorFailure(error)?.code ?? "unknown";
 }
 
+function deniedAccessOutcome(error: unknown): string {
+  if (error instanceof ConnectorAccessDeniedError) return `denied:${error.reason}`;
+  if (error instanceof ConnectorReconnectRequiredError) {
+    return `denied:credential_${error.reason}`;
+  }
+  return "denied:unresolved";
+}
+
+function resolutionAuditBinding(error: unknown): ConnectorResolutionAuditBinding | undefined {
+  if (typeof error !== "object" || error === null || !("auditBinding" in error)) {
+    return undefined;
+  }
+  const binding = error.auditBinding;
+  if (
+    typeof binding !== "object" ||
+    binding === null ||
+    !("installationItemId" in binding) ||
+    !("connectionId" in binding) ||
+    !("credentialOwnerPrincipalId" in binding) ||
+    !("connectorKey" in binding)
+  ) {
+    return undefined;
+  }
+  return binding as ConnectorResolutionAuditBinding;
+}
+
 /**
  * Every refusal on this path, as a code the harness can switch on and a message
  * the model can act on. Returns nothing for a failure nobody classified, which
@@ -201,6 +245,7 @@ export function describeConnectorFailure(
 ): { code: string; message: string } | undefined {
   if (
     error instanceof DataPlaneToolError ||
+    error instanceof ConnectorAccessDeniedError ||
     error instanceof ConnectorToolNotAvailableError ||
     error instanceof ConnectorToolValidationError ||
     error instanceof ConnectorSsrfRejectedError ||
@@ -252,7 +297,7 @@ interface ExecutionBinding {
 function executionBinding(resolved: ResolvedConnectorTool): ExecutionBinding {
   return {
     installationItemId: resolved.installationItemId,
-    connectionId: resolved.body.connectionId,
+    connectionId: resolved.connectionId,
   };
 }
 
@@ -326,8 +371,8 @@ export async function useConnector(
     const engineInput = {
       orgId: session.orgId,
       scopeChain: session.scopeChain,
-      sessionScopeKind: session.scopeKind,
-      principalId: session.agentPrincipalId,
+      scopeKind: session.scopeKind,
+      requesterPrincipalId: session.requesterPrincipalId,
       toolKey,
       args,
       ...(input.masterKey ? { masterKey: input.masterKey } : {}),
@@ -460,6 +505,7 @@ export async function useConnector(
         resolved,
         mode,
         approvalId: requested.approval.id,
+        accessOutcome: "granted",
         durationMs: elapsed(),
       });
       return {
@@ -489,6 +535,7 @@ export async function useConnector(
       resolved,
       mode,
       authority,
+      accessOutcome: "granted",
       ...(approvalId ? { approvalId } : {}),
       durationMs: elapsed(),
     });
@@ -504,16 +551,19 @@ export async function useConnector(
     // recorded once. A claimed approval is deliberately not released: the
     // request left this process, so nothing here can prove the provider did
     // not act on it.
+    const deniedBinding = resolved ? undefined : resolutionAuditBinding(error);
     await recordCall(db, {
       session,
       toolKey,
       argsHash,
       outcome: "failed",
       ...(resolved ? { resolved } : {}),
+      ...(deniedBinding ? { binding: deniedBinding } : {}),
       ...(mode ? { mode } : {}),
       ...(authority ? { authority } : {}),
       ...(approvalId ? { approvalId } : {}),
       errorCode: failureCode(error),
+      accessOutcome: resolved ? "granted" : deniedAccessOutcome(error),
       durationMs: elapsed(),
     });
     log.warn("Connector proxy call failed", {

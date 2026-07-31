@@ -305,10 +305,13 @@ integration("acceptance", () => {
     const orgScope = await db.scope.findFirstOrThrow({
       where: { orgId: org.id, kind: "org" },
     });
+    const agent = await db.principal.findFirstOrThrow({
+      where: { orgId: org.id, kind: "agent" },
+    });
     const connection = await db.connectorConnection.create({
       data: {
         orgId: org.id,
-        ownerPrincipalId: principal.id,
+        ownerPrincipalId: agent.id,
         providerKey: "google_workspace",
         authMode: "oauth2_code",
         config: {},
@@ -328,7 +331,7 @@ integration("acceptance", () => {
         } satisfies Prisma.InputJsonObject,
         status: "active",
         disclosure: "retrieved",
-        createdById: principal.id,
+        createdById: agent.id,
       },
     });
 

@@ -52,13 +52,26 @@ function fakeDb(toolAllowlist: string[]): Database {
         {
           id: "installation-1",
           scopeId: "scope-1",
+          scope: { kind: "org", ownerId: null },
           body: {
             catalogKey: "github",
             connectionId: "00000000-0000-4000-8000-000000000001",
+            access: { kind: "scope" },
             enabledTools: "all",
           },
         },
       ],
+    },
+    connectorConnection: {
+      findFirst: async () => ({
+        id: "00000000-0000-4000-8000-000000000001",
+        providerKey: "github",
+        authMode: "oauth2_code",
+        ownerPrincipalId: "agent-1",
+        revokedAt: null,
+        refreshExhausted: false,
+        owner: { id: "agent-1", kind: "agent", deactivatedAt: null },
+      }),
     },
     capabilityRoute: {
       findMany: async () => [],

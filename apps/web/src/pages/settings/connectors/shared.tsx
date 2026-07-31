@@ -61,6 +61,9 @@ export type ConnectorInstallation = {
   scopeId: string;
   catalogKey: string;
   connectionId: string;
+  access:
+    | { kind: "scope" }
+    | { kind: "minimum_role"; role: "owner" | "admin" | "member" | "viewer" };
   enabledTools: "all" | string[];
   syncedTools: Array<{
     name: string;

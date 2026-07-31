@@ -12,6 +12,32 @@ const notion = catalog.find(({ key }) => key === "notion")!;
 const connectionId = "00000000-0000-4000-8000-000000000001";
 
 describe("connector installation body", () => {
+  it("defaults legacy bodies to scope-wide access and validates role restrictions", () => {
+    expect(
+      bodySchema.parse({
+        catalogKey: "github",
+        connectionId,
+        enabledTools: "all",
+      }).access,
+    ).toEqual({ kind: "scope" });
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "github",
+        connectionId,
+        access: { kind: "minimum_role", role: "member" },
+        enabledTools: "all",
+      }).success,
+    ).toBe(true);
+    expect(
+      bodySchema.safeParse({
+        catalogKey: "github",
+        connectionId,
+        access: { kind: "minimum_role", role: "superadmin" },
+        enabledTools: "all",
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts valid REST and pre/post-sync MCP bodies", () => {
     expect(
       bodySchema.safeParse({ catalogKey: "github", connectionId, enabledTools: ["get_issue"] })

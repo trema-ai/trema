@@ -39,6 +39,9 @@ export type ConnectorTool = {
 export type ConnectorBody = {
   catalogKey: string;
   connectionId: string;
+  access:
+    | { kind: "scope" }
+    | { kind: "minimum_role"; role: "owner" | "admin" | "member" | "viewer" };
   enabledTools: "all" | string[];
   syncedTools?: ConnectorTool[];
 };

@@ -480,6 +480,65 @@ integration("connector connections and installations", () => {
     ).resolves.toEqual([expect.objectContaining({ id: connected.id, installations: [] })]);
   });
 
+  it("allows only one active installation per provider in a scope", async () => {
+    const org = await createOrg();
+    const [firstConnection, secondConnection] = await Promise.all([
+      connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "github",
+      }),
+      connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "github",
+      }),
+    ]);
+    const first = await call(
+      connectorsRouter.installations.create,
+      {
+        scopeId: org.orgScope.id,
+        catalogKey: "github",
+        connectionId: firstConnection.id,
+      },
+      { context: org.context },
+    );
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: org.orgScope.id,
+          catalogKey: "github",
+          connectionId: secondConnection.id,
+        },
+        { context: org.context },
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("already exists in this scope"),
+    });
+
+    await call(
+      connectorsRouter.installations.archive,
+      { installationItemId: first.id },
+      { context: org.context },
+    );
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: org.orgScope.id,
+          catalogKey: "github",
+          connectionId: secondConnection.id,
+          access: { kind: "minimum_role", role: "admin" },
+        },
+        { context: org.context },
+      ),
+    ).resolves.toMatchObject({
+      body: { access: { kind: "minimum_role", role: "admin" } },
+    });
+  });
+
   it("syncs from exactly the bound connection and preserves no-fallback semantics", async () => {
     const org = await createOrg();
     const bound = await connection({
@@ -1083,6 +1142,7 @@ integration("connector connections and installations", () => {
         scopeId: org.orgScope.id,
         catalogKey: "notion",
         connectionId: bound.id,
+        access: { kind: "scope" },
         enabledTools: ["read_page"],
         syncedTools: [
           {
