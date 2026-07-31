@@ -7,7 +7,10 @@ import {
   PersonalConnectionRow,
 } from "#web/pages/customize/connections.tsx";
 import type { Item } from "#web/pages/customize/types.ts";
-import { OAuthConnectionDialog } from "#web/pages/settings/connectors/connection-dialogs.tsx";
+import {
+  OAuthConnectionDialog,
+  providerScopesForOAuthConnect,
+} from "#web/pages/settings/connectors/connection-dialogs.tsx";
 import { ProviderCard, type ProviderRow } from "#web/pages/settings/connectors/index.tsx";
 import type {
   CatalogProvider,
@@ -71,6 +74,7 @@ describe("connector identity UX", () => {
       <PersonalConnectionRow
         provider={provider}
         connection={connection}
+        personalScopeId="personal-1"
         onReconnect={vi.fn()}
         onChanged={vi.fn()}
       />,
@@ -80,6 +84,22 @@ describe("connector identity UX", () => {
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
     expect(screen.queryByText(/scope|installation|provider permissions/i)).toBeNull();
     expect(document.querySelector('[data-slot="connector-card"]')).toBeTruthy();
+  });
+
+  it("offers a recovery action when a valid personal account is no longer installed", () => {
+    renderWithQuery(
+      <PersonalConnectionRow
+        provider={provider}
+        connection={{ ...connection, installations: [] }}
+        personalScopeId="personal-1"
+        onReconnect={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Setup needed")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Finish setup" })).toBeTruthy();
+    expect(document.querySelector('[data-status="missing"]')).toBeTruthy();
   });
 
   it("identifies an inherited connector as organization-provided", () => {
@@ -149,6 +169,26 @@ describe("connector identity UX", () => {
         "Reconnect Acme Linear. Trema will use this account for connector calls in your personal chats.",
       ),
     ).toBeTruthy();
+  });
+
+  it("preserves stored provider scopes during a member reconnect", () => {
+    const selectedScopes = ["read", "write"];
+
+    expect(
+      providerScopesForOAuthConnect({
+        audience: "member",
+        provider,
+        reconnect: { ...connection, providerScopes: selectedScopes },
+        selectedScopes,
+      }),
+    ).toEqual(selectedScopes);
+    expect(
+      providerScopesForOAuthConnect({
+        audience: "member",
+        provider,
+        selectedScopes: provider.defaultScopes,
+      }),
+    ).toBeUndefined();
   });
 
   it("keeps connected catalog cards focused on provider identity and health", () => {

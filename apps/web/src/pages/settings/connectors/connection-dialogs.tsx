@@ -242,12 +242,16 @@ export function OAuthConnectionDialog({
   }, [open, targetScopeReset]);
   const start = useMutation({
     mutationFn: (config: Record<string, string>) => {
+      const providerScopes = providerScopesForOAuthConnect({
+        audience,
+        provider,
+        reconnect,
+        selectedScopes,
+      });
       const sharedInput = {
         providerKey: provider.key,
         ...(Object.keys(config).length > 0 ? { config } : {}),
-        ...(audience === "admin" && provider.availableScopes
-          ? { providerScopes: selectedScopes }
-          : {}),
+        ...(providerScopes === undefined ? {} : { providerScopes }),
         ...(reconnect ? { reconnectConnectionId: reconnect.id } : {}),
         returnTo: returnUrl(),
       };
@@ -365,4 +369,19 @@ export function OAuthConnectionDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+export function providerScopesForOAuthConnect({
+  audience,
+  provider,
+  reconnect,
+  selectedScopes,
+}: {
+  audience: "admin" | "member";
+  provider: CatalogProvider;
+  reconnect?: ConnectorConnection | undefined;
+  selectedScopes: string[];
+}) {
+  if (!provider.availableScopes) return undefined;
+  return audience === "admin" || reconnect ? selectedScopes : undefined;
 }

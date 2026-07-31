@@ -295,6 +295,7 @@ export function ConnectionsTab({
                         key={connection.id}
                         provider={provider}
                         connection={connection}
+                        personalScopeId={scope.id}
                         onReconnect={() => setSelection({ provider, reconnect: connection })}
                         onChanged={invalidateConnections}
                       />
@@ -474,15 +475,30 @@ function AvailableConnectionCard({
 export function PersonalConnectionRow({
   provider,
   connection,
+  personalScopeId,
   onReconnect,
   onChanged,
 }: {
   provider: CatalogProvider;
   connection: ConnectorConnection;
+  personalScopeId: string;
   onReconnect: () => void;
   onChanged: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState(false);
+  const install = useMutation({
+    mutationFn: () =>
+      rpcClient.connectors.member.installations.create({
+        scopeId: personalScopeId,
+        catalogKey: connection.providerKey,
+        connectionId: connection.id,
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      toast.success(`${provider.displayName} is available in your personal chats`);
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
   const revoke = useMutation({
     mutationFn: () =>
       rpcClient.connectors.member.connections.revoke({ connectionId: connection.id }),
@@ -493,13 +509,19 @@ export function PersonalConnectionRow({
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
-  const statusLabel = connection.isRevoked
-    ? "Revoked"
-    : connection.isExpired
-      ? "Expired"
-      : connection.refreshExhausted
-        ? "Reconnect needed"
-        : "Connected";
+  const isInstalled = connection.installations.some(
+    (installation) => installation.scopeId === personalScopeId,
+  );
+  const statusLabel =
+    connection.isValid && !isInstalled
+      ? "Setup needed"
+      : connection.isRevoked
+        ? "Revoked"
+        : connection.isExpired
+          ? "Expired"
+          : connection.refreshExhausted
+            ? "Reconnect needed"
+            : "Connected";
   const accountLabel = connection.label ?? provider.displayName;
 
   return (
@@ -508,7 +530,7 @@ export function PersonalConnectionRow({
         provider={provider}
         identity={{ kind: "personal", accountLabel }}
         status={{
-          value: connection.isValid ? "connected" : "expired",
+          value: connection.isValid ? (isInstalled ? "connected" : "missing") : "expired",
           label: statusLabel,
         }}
         detail={
@@ -528,6 +550,16 @@ export function PersonalConnectionRow({
               <Button size="xs" variant="outline" onClick={onReconnect}>
                 <RefreshCw />
                 Reconnect
+              </Button>
+            ) : null}
+            {connection.isValid && !isInstalled ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={install.isPending}
+                onClick={() => install.mutate()}
+              >
+                {install.isPending ? "Finishing…" : "Finish setup"}
               </Button>
             ) : null}
             {!connection.isRevoked ? (
