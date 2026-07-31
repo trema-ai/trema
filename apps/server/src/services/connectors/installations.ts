@@ -5,7 +5,10 @@ import type { Prisma, Role } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { ConnectorFetch } from "#server/services/connectors/connect.js";
-import { connectorConnectionHealthStatus } from "#server/services/connectors/health.js";
+import {
+  connectorConnectionCanRefresh,
+  connectorConnectionHealthStatus,
+} from "#server/services/connectors/health.js";
 import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
 import type { McpClientFactory } from "#server/services/connectors/sync.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
@@ -272,6 +275,7 @@ export async function listConnectorInstallations(
 export interface ListConnectorInstallationHealthInput {
   orgId: string;
   scopeId: string;
+  masterKey?: string;
   now?: Date;
 }
 
@@ -299,9 +303,27 @@ export async function listConnectorInstallationHealth(
       orgId: input.orgId,
       id: { in: parsed.map((installation) => installation.body.connectionId) },
     },
-    select: { id: true, revokedAt: true, expiresAt: true, refreshExhausted: true },
+    select: {
+      id: true,
+      authMode: true,
+      ciphertext: true,
+      revokedAt: true,
+      expiresAt: true,
+      refreshExhausted: true,
+    },
   });
-  const connectionById = new Map(connections.map((connection) => [connection.id, connection]));
+  const connectionById = new Map(
+    connections.map(({ ciphertext, ...connection }) => [
+      connection.id,
+      {
+        ...connection,
+        canRefresh: connectorConnectionCanRefresh(
+          { authMode: connection.authMode, ciphertext },
+          input.masterKey,
+        ),
+      },
+    ]),
+  );
 
   return parsed.map((installation) => ({
     installationItemId: installation.id,

@@ -11,7 +11,10 @@ import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { authorize } from "#server/services/authorize/index.js";
-import { connectorConnectionValidity } from "#server/services/connectors/health.js";
+import {
+  connectorConnectionCanRefresh,
+  connectorConnectionValidity,
+} from "#server/services/connectors/health.js";
 import {
   finalizeConnectorInstallation,
   lockConnectorBindingMutations,
@@ -1549,6 +1552,7 @@ export async function listConnectorConnections(
   providerKey?: string,
   now = new Date(),
   ownerPrincipalId?: string,
+  masterKey?: string,
   catalog: ProviderCatalog = defaultCatalog,
 ) {
   const [connections, installations] = await Promise.all([
@@ -1558,7 +1562,7 @@ export async function listConnectorConnections(
         ...(providerKey ? { providerKey } : {}),
         ...(ownerPrincipalId ? { ownerPrincipalId } : {}),
       },
-      select: { ...publicConnectionSelect(), config: true },
+      select: { ...publicConnectionSelect(), config: true, ciphertext: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     // No principal filter here: bindings only surface when their connectionId
@@ -1584,15 +1588,21 @@ export async function listConnectorConnections(
     current.push({ id: installation.id, scopeId: installation.scopeId });
     bindings.set(connectionId, current);
   }
-  return connections.map(({ config, ...connection }) => ({
-    ...connection,
-    label:
-      connection.label ??
-      connectorConnectionMetadataLabel(catalog, connection.providerKey, config) ??
-      null,
-    installations: bindings.get(connection.id) ?? [],
-    ...connectorConnectionValidity(connection, now),
-  }));
+  return connections.map(({ config, ciphertext, ...connection }) => {
+    const canRefresh = connectorConnectionCanRefresh(
+      { authMode: connection.authMode, ciphertext },
+      masterKey,
+    );
+    return {
+      ...connection,
+      label:
+        connection.label ??
+        connectorConnectionMetadataLabel(catalog, connection.providerKey, config) ??
+        null,
+      installations: bindings.get(connection.id) ?? [],
+      ...connectorConnectionValidity({ ...connection, canRefresh }, now),
+    };
+  });
 }
 
 export async function revokeConnectorConnection(

@@ -807,6 +807,7 @@ const listConnections = requireCapability("manage_connectors")
         // Personal connections are managed by their owners in the main view;
         // the admin area lists the agent's connections only.
         await orgAgentPrincipalId(context.db, context.org.id),
+        context.env.TREMA_CREDENTIAL_MASTER_KEY,
       )
     ).map(serializeConnection),
   );
@@ -943,6 +944,7 @@ const memberListConnections = orgScoped
         input.providerKey,
         new Date(),
         context.principal.id,
+        context.env.TREMA_CREDENTIAL_MASTER_KEY,
       )
     ).map(serializeConnection),
   );
@@ -978,6 +980,9 @@ const memberListInstallationHealth = orgScoped
     return listConnectorInstallationHealth(context.db, {
       orgId: context.org.id,
       scopeId: orgScope.id,
+      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+        : {}),
     });
   });
 

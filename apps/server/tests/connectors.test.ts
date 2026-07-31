@@ -23,6 +23,7 @@ import {
   createStaticConnection,
   hashOAuthState,
   listConnectorConnections,
+  listConnectorInstallationHealth,
   type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
@@ -325,19 +326,34 @@ integration("connector connection flows", () => {
       refreshToken: "refresh-token",
       raw: { access_token: "access-token", account_name: "octo-org" },
     });
+    await db.connectorConnection.update({
+      where: { id: stored.id },
+      data: { expiresAt: new Date("2026-07-31T11:00:00.000Z") },
+    });
 
     // The list derives a display label from the hoisted account name without
     // leaking config; an explicit rename overrides it.
+    const now = new Date("2026-07-31T12:00:00.000Z");
     const [listed] = await listConnectorConnections(
       db,
       org.org.id,
       "github",
-      new Date(),
+      now,
       undefined,
+      masterKey,
       oauthCatalog,
     );
     expect(listed?.label).toBe("octo-org");
+    expect(listed).toMatchObject({ isExpired: false, isValid: true });
     expect(JSON.stringify(listed)).not.toMatch(/"config"|account_name/);
+    await expect(
+      listConnectorInstallationHealth(db, {
+        orgId: org.org.id,
+        scopeId: org.orgScope.id,
+        masterKey,
+        now,
+      }),
+    ).resolves.toEqual([{ installationItemId: completed.installation.id, status: "available" }]);
     const renamed = await call(
       connectorsRouter.connections.update,
       { connectionId: completed.connection.id, label: "Primary org" },
@@ -1130,6 +1146,7 @@ integration("connector connection flows", () => {
         "google_workspace",
         new Date(),
         undefined,
+        masterKey,
         googleWorkspaceOAuthCatalog,
       ),
     ).resolves.toEqual([
