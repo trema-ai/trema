@@ -167,7 +167,6 @@ function applyEvent(draft: Draft, event: RunEventData, seq: number): void {
                 ? {}
                 : {
                     account: {
-                      label: event.connector.account.label,
                       source: event.connector.account.source,
                     },
                   }),

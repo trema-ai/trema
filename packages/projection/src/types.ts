@@ -45,7 +45,6 @@ export interface ActivityPart {
     displayName: string;
     logoUrl?: string;
     account?: {
-      label: string;
       source: "personal" | "organization";
     };
   };

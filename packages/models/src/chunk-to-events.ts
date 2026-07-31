@@ -37,13 +37,27 @@ function setProviderMeta(target: { providerMeta?: unknown }, metadata?: Provider
 
 function toolStart(callId: string, name: string, tools: readonly ToolDef[]): RunEventData {
   const definition = tools.find((tool) => tool.name === name);
+  const connector = definition?.connector;
+  // Tool definitions may carry an account label for live UI identity. Run
+  // events are durable, so persist only non-sensitive account provenance.
   return {
     type: "tool-start",
     callId,
     name,
     title: definition?.title ?? name,
     kind: definition?.kind ?? "other",
-    ...(definition?.connector === undefined ? {} : { connector: definition.connector }),
+    ...(connector === undefined
+      ? {}
+      : {
+          connector: {
+            key: connector.key,
+            displayName: connector.displayName,
+            ...(connector.logoUrl === undefined ? {} : { logoUrl: connector.logoUrl }),
+            ...(connector.account === undefined
+              ? {}
+              : { account: { source: connector.account.source } }),
+          },
+        }),
   };
 }
 

@@ -592,7 +592,7 @@ function connectorIdentity(
   | {
       name: string;
       logoUrl?: string;
-      account?: { label: string; source: "personal" | "organization" };
+      account?: { source: "personal" | "organization" };
     }
   | undefined {
   if (activity?.connector !== undefined) {

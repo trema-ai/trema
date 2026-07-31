@@ -33,7 +33,6 @@ type ApprovalCardProps = {
     name: string;
     logoUrl?: string;
     account?: {
-      label: string;
       source: "personal" | "organization";
     };
   };
@@ -153,10 +152,9 @@ function ApprovalCard({
 
       {connector?.account !== undefined && (
         <p className="mt-2 text-meta text-muted-foreground">
-          Using <span className="font-medium text-foreground">{connector.account.label}</span> ·{" "}
           {connector.account.source === "personal"
-            ? "Connected as you"
-            : "Provided by your organization"}
+            ? "Using your connected account"
+            : "Using an organization-provided account"}
         </p>
       )}
 

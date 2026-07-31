@@ -78,7 +78,6 @@ const ToolStartEventSchema = z.object({
       logoUrl: z.string().optional(),
       account: z
         .object({
-          label: z.string(),
           source: z.enum(["personal", "organization"]),
         })
         .optional(),

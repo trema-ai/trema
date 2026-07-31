@@ -468,16 +468,17 @@ describe("SDK full-stream golden transcripts", () => {
   });
 
   it("carries connector identity into the tool-start event", async () => {
+    const connectorIdentity = {
+      key: "linear",
+      displayName: "Linear",
+      logoUrl: "/connector-logos/linear.svg",
+      account: { label: "owner@example.com", source: "personal" as const },
+    };
     const connectorLookup: ToolDef = {
       ...lookup,
       name: "linear_list_issues",
       kind: "connector",
-      connector: {
-        key: "linear",
-        displayName: "Linear",
-        logoUrl: "/connector-logos/linear.svg",
-        account: { label: "Acme Linear", source: "personal" },
-      },
+      connector: connectorIdentity,
     };
     const actual = await collect(
       [
@@ -494,8 +495,14 @@ describe("SDK full-stream golden transcripts", () => {
 
     expect(actual.events[0]).toMatchObject({
       type: "tool-start",
-      connector: connectorLookup.connector,
+      connector: {
+        key: "linear",
+        displayName: "Linear",
+        logoUrl: "/connector-logos/linear.svg",
+        account: { source: "personal" },
+      },
     });
+    expect(JSON.stringify(actual.events[0])).not.toContain("owner@example.com");
   });
 
   it("keeps parallel tool streams distinct and interleaved", async () => {

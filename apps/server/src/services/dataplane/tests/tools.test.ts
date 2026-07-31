@@ -91,7 +91,7 @@ describe("data-plane tool registry", () => {
           id: "00000000-0000-4000-8000-000000000001",
           providerKey: "notion",
           authMode: "mcp_oauth",
-          label: "Acme workspace",
+          label: "owner@example.com",
           config: {},
           ownerPrincipalId: "agent-1",
           revokedAt: null,
@@ -111,7 +111,7 @@ describe("data-plane tool registry", () => {
         key: "notion",
         displayName: "Notion",
         logoUrl: "/connector-logos/notion.svg",
-        account: { label: "Acme workspace", source: "organization" },
+        account: { label: "owner@example.com", source: "organization" },
       },
       description: "Search workspace pages",
       schema: {
