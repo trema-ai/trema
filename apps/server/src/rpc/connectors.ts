@@ -132,6 +132,7 @@ const connectionSchema = z.object({
   updatedAt: z.string(),
   isRevoked: z.boolean(),
   isExpired: z.boolean(),
+  isCredentialUnavailable: z.boolean(),
   isValid: z.boolean(),
   installations: z.array(z.object({ id: z.uuid(), scopeId: z.uuid() })),
 });
@@ -142,6 +143,7 @@ const connectionHealthStatusSchema = z.enum([
   "revoked",
   "expired",
   "refresh_exhausted",
+  "unavailable",
   "missing",
   "setup_required",
 ]);

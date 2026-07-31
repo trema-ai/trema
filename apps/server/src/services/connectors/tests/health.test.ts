@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import {
-  connectorConnectionCanRefresh,
+  connectorConnectionCredentialHealth,
   connectorConnectionHealthStatus,
   connectorConnectionValidity,
 } from "#server/services/connectors/health.js";
@@ -24,6 +24,17 @@ describe("connector connection health", () => {
         now,
       ),
     ).toBe("refresh_exhausted");
+    expect(
+      connectorConnectionHealthStatus(
+        {
+          revokedAt: null,
+          expiresAt: null,
+          refreshExhausted: false,
+          credentialAvailable: false,
+        },
+        now,
+      ),
+    ).toBe("unavailable");
     expect(
       connectorConnectionHealthStatus(
         {
@@ -63,48 +74,70 @@ describe("connector connection health", () => {
         { revokedAt: null, expiresAt: now, refreshExhausted: false },
         now,
       ),
-    ).toEqual({ isRevoked: false, isExpired: true, isValid: false });
+    ).toEqual({
+      isRevoked: false,
+      isExpired: true,
+      isCredentialUnavailable: false,
+      isValid: false,
+    });
     expect(
       connectorConnectionValidity(
         { revokedAt: null, expiresAt: now, refreshExhausted: false, canRefresh: true },
         now,
       ),
-    ).toEqual({ isRevoked: false, isExpired: false, isValid: true });
+    ).toEqual({
+      isRevoked: false,
+      isExpired: false,
+      isCredentialUnavailable: false,
+      isValid: true,
+    });
+    expect(
+      connectorConnectionValidity(
+        {
+          revokedAt: null,
+          expiresAt: now,
+          refreshExhausted: false,
+          canRefresh: true,
+          lastRefreshFailure: now,
+        },
+        now,
+      ),
+    ).toMatchObject({ isExpired: true, isValid: false });
   });
 
   it("detects refresh capability without exposing credential material", () => {
     expect(
-      connectorConnectionCanRefresh(
+      connectorConnectionCredentialHealth(
         {
           authMode: "oauth2_code",
           ciphertext: encryptEnvelope({ refreshToken: "refresh-direct" }, masterKey),
         },
         masterKey,
       ),
-    ).toBe(true);
+    ).toEqual({ canRefresh: true, credentialAvailable: true });
     expect(
-      connectorConnectionCanRefresh(
+      connectorConnectionCredentialHealth(
         {
           authMode: "mcp_oauth",
           ciphertext: encryptEnvelope({ raw: { refresh_token: "refresh-nested" } }, masterKey),
         },
         masterKey,
       ),
-    ).toBe(true);
+    ).toEqual({ canRefresh: true, credentialAvailable: true });
     expect(
-      connectorConnectionCanRefresh(
+      connectorConnectionCredentialHealth(
         {
           authMode: "oauth2_code",
           ciphertext: encryptEnvelope({ accessToken: "access-only" }, masterKey),
         },
         masterKey,
       ),
-    ).toBe(false);
+    ).toEqual({ canRefresh: false, credentialAvailable: true });
     expect(
-      connectorConnectionCanRefresh(
+      connectorConnectionCredentialHealth(
         { authMode: "api_key", ciphertext: "not-an-envelope" },
         masterKey,
       ),
-    ).toBe(false);
+    ).toEqual({ canRefresh: false, credentialAvailable: false });
   });
 });

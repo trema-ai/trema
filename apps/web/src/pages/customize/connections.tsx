@@ -517,11 +517,13 @@ export function PersonalConnectionRow({
       ? "Setup needed"
       : connection.isRevoked
         ? "Revoked"
-        : connection.isExpired
-          ? "Expired"
-          : connection.refreshExhausted
+        : connection.refreshExhausted
+          ? "Reconnect needed"
+          : connection.isCredentialUnavailable
             ? "Reconnect needed"
-            : "Connected";
+            : connection.isExpired
+              ? "Expired"
+              : "Connected";
   const accountLabel = connection.label ?? provider.displayName;
 
   return (
@@ -633,6 +635,8 @@ function organizationHealthBadge(health: ConnectorInstallationHealth["status"]):
       return { value: "expired", label: "Expired" };
     case "refresh_exhausted":
       return { value: "expired", label: "Reconnect needed" };
+    case "unavailable":
+      return { value: "missing", label: "Unavailable" };
     case "setup_required":
       return { value: "missing", label: "Setup needed" };
     case "missing":

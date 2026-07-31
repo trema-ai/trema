@@ -12,7 +12,7 @@ import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { authorize } from "#server/services/authorize/index.js";
 import {
-  connectorConnectionCanRefresh,
+  connectorConnectionCredentialHealth,
   connectorConnectionValidity,
 } from "#server/services/connectors/health.js";
 import {
@@ -1589,7 +1589,7 @@ export async function listConnectorConnections(
     bindings.set(connectionId, current);
   }
   return connections.map(({ config, ciphertext, ...connection }) => {
-    const canRefresh = connectorConnectionCanRefresh(
+    const credentialHealth = connectorConnectionCredentialHealth(
       { authMode: connection.authMode, ciphertext },
       masterKey,
     );
@@ -1600,7 +1600,7 @@ export async function listConnectorConnections(
         connectorConnectionMetadataLabel(catalog, connection.providerKey, config) ??
         null,
       installations: bindings.get(connection.id) ?? [],
-      ...connectorConnectionValidity({ ...connection, canRefresh }, now),
+      ...connectorConnectionValidity({ ...connection, ...credentialHealth }, now),
     };
   });
 }

@@ -5,6 +5,8 @@ export type ConnectorConnectionHealth = {
   expiresAt: Date | null;
   refreshExhausted: boolean;
   canRefresh?: boolean;
+  credentialAvailable?: boolean;
+  lastRefreshFailure?: Date | null;
 };
 
 export type ConnectorConnectionHealthStatus =
@@ -12,6 +14,7 @@ export type ConnectorConnectionHealthStatus =
   | "revoked"
   | "expired"
   | "refresh_exhausted"
+  | "unavailable"
   | "missing";
 
 export function connectorConnectionValidity(
@@ -19,12 +22,17 @@ export function connectorConnectionValidity(
   now = new Date(),
 ) {
   const isRevoked = connection.revokedAt !== null;
+  const isCredentialUnavailable = connection.credentialAvailable === false;
   const isExpired =
-    connection.expiresAt !== null && connection.expiresAt <= now && !connection.canRefresh;
+    connection.expiresAt !== null &&
+    connection.expiresAt <= now &&
+    (!connection.canRefresh ||
+      (connection.lastRefreshFailure !== undefined && connection.lastRefreshFailure !== null));
   return {
     isRevoked,
     isExpired,
-    isValid: !isRevoked && !isExpired && !connection.refreshExhausted,
+    isCredentialUnavailable,
+    isValid: !isRevoked && !isExpired && !isCredentialUnavailable && !connection.refreshExhausted,
   };
 }
 
@@ -36,6 +44,7 @@ export function connectorConnectionHealthStatus(
   const validity = connectorConnectionValidity(connection, now);
   if (validity.isRevoked) return "revoked";
   if (connection.refreshExhausted) return "refresh_exhausted";
+  if (validity.isCredentialUnavailable) return "unavailable";
   if (validity.isExpired) return "expired";
   return "available";
 }
@@ -51,10 +60,19 @@ function credentialHasRefreshToken(value: unknown): boolean {
   return typeof nested === "string" && nested.length > 0;
 }
 
-export function connectorConnectionCanRefresh(
+export function connectorConnectionCredentialHealth(
   connection: { authMode: string; ciphertext: string },
   masterKey?: string,
-): boolean {
-  if (connection.authMode !== "oauth2_code" && connection.authMode !== "mcp_oauth") return false;
-  return credentialHasRefreshToken(decryptEnvelope<unknown>(connection.ciphertext, masterKey));
+): { canRefresh: boolean; credentialAvailable: boolean } {
+  try {
+    const credential = decryptEnvelope<unknown>(connection.ciphertext, masterKey);
+    return {
+      canRefresh:
+        (connection.authMode === "oauth2_code" || connection.authMode === "mcp_oauth") &&
+        credentialHasRefreshToken(credential),
+      credentialAvailable: true,
+    };
+  } catch {
+    return { canRefresh: false, credentialAvailable: false };
+  }
 }

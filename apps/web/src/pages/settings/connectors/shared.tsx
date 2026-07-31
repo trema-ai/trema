@@ -47,6 +47,7 @@ export type ConnectorConnection = {
   providerScopes: string[];
   isRevoked: boolean;
   isExpired: boolean;
+  isCredentialUnavailable: boolean;
   isValid: boolean;
   refreshExhausted: boolean;
   expiresAt: string | null;
@@ -76,7 +77,14 @@ export type ConnectorInstallation = {
 
 export type ConnectorInstallationHealth = {
   installationItemId: string;
-  status: "available" | "revoked" | "expired" | "refresh_exhausted" | "missing" | "setup_required";
+  status:
+    | "available"
+    | "revoked"
+    | "expired"
+    | "refresh_exhausted"
+    | "unavailable"
+    | "missing"
+    | "setup_required";
 };
 
 export type ConnectorMeta = { callbackUrl: string };

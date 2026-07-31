@@ -59,6 +59,7 @@ const connection: ConnectorConnection = {
   providerScopes: ["read"],
   isRevoked: false,
   isExpired: false,
+  isCredentialUnavailable: false,
   isValid: true,
   refreshExhausted: false,
   expiresAt: null,

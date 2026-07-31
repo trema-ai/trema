@@ -7,7 +7,7 @@ import { log } from "#server/lib/logger/index.js";
 import type { ConnectorFetch } from "#server/services/connectors/connect.js";
 import {
   type ConnectorConnectionHealthStatus,
-  connectorConnectionCanRefresh,
+  connectorConnectionCredentialHealth,
   connectorConnectionHealthStatus,
 } from "#server/services/connectors/health.js";
 import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
@@ -324,6 +324,7 @@ export async function listConnectorInstallationHealth(
       ciphertext: true,
       revokedAt: true,
       expiresAt: true,
+      lastRefreshFailure: true,
       refreshExhausted: true,
     },
   });
@@ -332,7 +333,7 @@ export async function listConnectorInstallationHealth(
       connection.id,
       {
         ...connection,
-        canRefresh: connectorConnectionCanRefresh(
+        ...connectorConnectionCredentialHealth(
           { authMode: connection.authMode, ciphertext },
           input.masterKey,
         ),
