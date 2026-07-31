@@ -63,16 +63,12 @@ export {
   ConnectorApprovalRequiredError,
   type ConnectorCallAuthority,
   ConnectorSsrfRejectedError,
-  ConnectorToolNotAvailableError,
-  ConnectorToolValidationError,
   ConnectorTransportError,
   type ExecuteConnectorToolInput,
   executeConnectorTool,
   type McpConnectorToolResult,
   type ResolveConnectorToolInput,
-  type ResolvedConnectorTool,
   type RestConnectorToolResult,
-  resolveConnectorTool,
 } from "#server/services/connectors/execute.js";
 export {
   type ArchiveConnectorInstallationInput,
@@ -84,6 +80,8 @@ export {
   connectorInstallationBodySchema,
   createConnectorInstallation,
   createConnectorInstallationBodySchema,
+  type InstallationAccess,
+  installationAccessSchema,
   type ListConnectorInstallationsInput,
   listConnectorInstallations,
   type ResolvedInstallationTool,
@@ -135,6 +133,19 @@ export {
   resolveStoredClientRegistration,
   validateRegistrationFields,
 } from "#server/services/connectors/registrations.js";
+export {
+  type ConnectorAccessDenialReason,
+  ConnectorAccessDeniedError,
+  type ConnectorResolutionAuditBinding,
+  type ConnectorResolutionContext,
+  ConnectorToolNotAvailableError,
+  ConnectorToolValidationError,
+  type ResolvedConnectorInstallation,
+  type ResolvedConnectorTool,
+  resolveConnectorInstallation,
+  resolveConnectorInstallations,
+  resolveConnectorTool,
+} from "#server/services/connectors/resolution.js";
 export {
   ConnectorSyncTransportError,
   createStreamableHttpMcpClient,

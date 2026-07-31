@@ -45,7 +45,13 @@ const freshTools = [{ name: "kept", description: "new" }, { name: "added" }];
 describe("MCP tool drift merge", () => {
   it("keeps all-tools intent so new tools become enabled", () => {
     const merged = mergeSyncedTools(
-      { catalogKey: "notion", connectionId, enabledTools: "all", syncedTools: initialTools },
+      {
+        catalogKey: "notion",
+        connectionId,
+        access: { kind: "scope" },
+        enabledTools: "all",
+        syncedTools: initialTools,
+      },
       freshTools,
     );
     expect(merged.body.enabledTools).toBe("all");
@@ -62,6 +68,7 @@ describe("MCP tool drift merge", () => {
       {
         catalogKey: "notion",
         connectionId,
+        access: { kind: "scope" },
         enabledTools: ["kept", "removed"],
         syncedTools: initialTools,
       },
@@ -76,6 +83,7 @@ describe("MCP tool drift merge", () => {
       {
         catalogKey: "notion",
         connectionId,
+        access: { kind: "scope" },
         enabledTools: ["kept", "removed"],
         syncPending: true,
       },
@@ -84,6 +92,7 @@ describe("MCP tool drift merge", () => {
     expect(merged.body).toEqual({
       catalogKey: "notion",
       connectionId,
+      access: { kind: "scope" },
       enabledTools: ["kept"],
       syncedTools: freshTools,
     });
@@ -94,6 +103,7 @@ describe("MCP tool drift merge", () => {
       {
         catalogKey: "notion",
         connectionId,
+        access: { kind: "scope" },
         enabledTools: "all",
         syncedTools: [{ name: "kept", annotations: { readOnlyHint: true } }],
       },

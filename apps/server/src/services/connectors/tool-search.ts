@@ -7,6 +7,7 @@ import {
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
 } from "#server/services/connectors/installations.js";
+import { resolveConnectorInstallations } from "#server/services/connectors/resolution.js";
 import type { DataPlaneSession } from "#server/services/dataplane/index.js";
 import {
   connectorToolDef,
@@ -205,20 +206,28 @@ async function reconcileReachableInstallations(
   session: DataPlaneSession,
   options: ToolSearchOptions,
 ): Promise<void> {
-  const reachableKinds =
-    session.scopeKind === "personal" ? (["personal"] as const) : (["org", "shared"] as const);
-  const installations = await db.item.findMany({
-    where: {
+  const catalog = options.catalog ?? loadProviderCatalog();
+  const installations = await resolveConnectorInstallations(
+    db,
+    {
       orgId: session.orgId,
-      scopeId: { in: session.scopeChain },
-      kind: "connector",
-      status: "active",
-      scope: { kind: { in: [...reachableKinds] } },
+      scopeChain: session.scopeChain,
+      scopeKind: session.scopeKind,
+      requesterPrincipalId: session.requesterPrincipalId,
     },
-    select: { id: true, orgId: true, body: true, status: true },
-  });
+    catalog,
+  );
   for (const installation of installations) {
-    await reconcileInstallation(db, installation, options);
+    await reconcileInstallation(
+      db,
+      {
+        id: installation.installationItemId,
+        orgId: session.orgId,
+        body: installation.body,
+        status: "active",
+      },
+      { ...options, catalog },
+    );
   }
 }
 

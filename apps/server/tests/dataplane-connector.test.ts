@@ -369,6 +369,9 @@ integration("data plane connector proxy", () => {
       mode: "full",
       authority: "mode_full",
       installationItemId: narrowItem.id,
+      connectionId: narrow.id,
+      credentialOwnerPrincipalId: owner.agent.id,
+      accessOutcome: "granted",
       argsHash: hashApprovalArgs({}),
       requesterPrincipalId: owner.human.id,
       requesterExternalRef: null,
@@ -440,7 +443,7 @@ integration("data plane connector proxy", () => {
     });
   });
 
-  it("keeps personal installations out of a shared session and org ones out of a personal session", async () => {
+  it("commits to credential eligibility without crossing owner/session boundaries", async () => {
     const owner = await fixture();
     const orgConnection = await connection({
       orgId: owner.org.id,
@@ -468,23 +471,39 @@ integration("data plane connector proxy", () => {
     // Full mode everywhere, so the isolation answer is resolution's alone.
     await allowFullMode(owner.org.id, owner.orgScope.id);
 
-    // A shared session reaching into a personal scope is refused by kind, not
-    // merely by the chain: the filter holds even when the chain names it.
+    // Once the chain names a narrower personal installation, the resolver
+    // commits to it. Its human credential is ineligible in a shared session,
+    // and the org installation is not a fallback.
     const shared = await openTestSession(owner, {
       scope: owner.sharedScope,
       agentPrincipalId: owner.agent.id,
       approvalMode: "full",
       scopeChain: [owner.orgScope.id, owner.personalScope.id, owner.sharedScope.id],
     });
-    const fromShared = await useConnector(db, shared.session, {
-      toolKey: READ_TOOL,
-      args: {},
-      reason: "Read the shared inbox",
-      masterKey,
-      fetch,
+    await expect(
+      useConnector(db, shared.session, {
+        toolKey: READ_TOOL,
+        args: {},
+        reason: "Read the shared inbox",
+        masterKey,
+        fetch,
+      }),
+    ).rejects.toMatchObject({
+      code: "connector_access_denied",
+      reason: "credential_ineligible",
     });
-    expect(fromShared).toMatchObject({ status: "executed" });
-    expect(authorizationOf(fetch)).toBe("Bearer org-token");
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(auditEntries(owner.org.id)).resolves.toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          accessOutcome: "denied:credential_ineligible",
+          installationItemId: expect.any(String),
+          connectionId: personalConnection.id,
+          credentialOwnerPrincipalId: owner.human.id,
+          requesterPrincipalId: null,
+        }),
+      }),
+    ]);
 
     // A personal session sees its own installation and nothing wider.
     fetch.mockClear();
@@ -504,7 +523,8 @@ integration("data plane connector proxy", () => {
     expect(fromPersonal).toMatchObject({ status: "executed" });
     expect(authorizationOf(fetch)).toBe("Bearer personal-token");
 
-    // With the personal installation gone, the org one is not a fallback.
+    // With the personal installation gone, agent-owned user OAuth still
+    // cannot cross into a personal session.
     fetch.mockClear();
     await db.item.deleteMany({ where: { orgId: owner.org.id, scopeId: owner.personalScope.id } });
     await expect(
@@ -515,7 +535,10 @@ integration("data plane connector proxy", () => {
         masterKey,
         fetch,
       }),
-    ).rejects.toMatchObject({ code: "connector_tool_not_available" });
+    ).rejects.toMatchObject({
+      code: "connector_access_denied",
+      reason: "credential_ineligible",
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 

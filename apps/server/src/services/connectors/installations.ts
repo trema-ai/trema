@@ -1,7 +1,7 @@
 import type { ProviderDef } from "@trema/connectors";
 import { loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 import { z } from "zod";
-import type { Prisma } from "#server/generated/prisma/client.js";
+import type { Prisma, Role } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { ConnectorFetch } from "#server/services/connectors/connect.js";
@@ -58,10 +58,21 @@ export const syncedToolSchema = z
   })
   .strict();
 
+export const installationAccessSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("scope") }).strict(),
+  z
+    .object({
+      kind: z.literal("minimum_role"),
+      role: z.enum(["owner", "admin", "member", "viewer"]),
+    })
+    .strict(),
+]);
+
 const installationBodyShape = z
   .object({
     catalogKey: z.string().trim().min(1),
     connectionId: z.uuid(),
+    access: installationAccessSchema.default({ kind: "scope" }),
     enabledTools: z.union([
       z.literal("all"),
       z.array(z.string().trim().min(1)).refine((names) => new Set(names).size === names.length, {
@@ -141,13 +152,15 @@ export const connectorInstallationBodySchema = createConnectorInstallationBodySc
 
 export type ToolAnnotations = z.infer<typeof toolAnnotationsSchema>;
 export type SyncedTool = z.infer<typeof syncedToolSchema>;
-export type ConnectorInstallationBody = z.infer<typeof installationBodyShape>;
+export type InstallationAccess = { kind: "scope" } | { kind: "minimum_role"; role: Role };
+export type ConnectorInstallationBody = z.output<typeof installationBodyShape>;
+type ConnectorInstallationBodyInput = z.input<typeof installationBodyShape>;
 
 export interface ResolvedInstallationTool extends SyncedTool {}
 
 export function resolveInstallationTools(
   provider: ProviderDef,
-  body: ConnectorInstallationBody,
+  body: ConnectorInstallationBodyInput,
 ): ResolvedInstallationTool[] {
   const available: SyncedTool[] =
     provider.transport.type === "rest"
@@ -200,6 +213,7 @@ function repointInstallationBody(
     {
       catalogKey: current.catalogKey,
       connectionId,
+      access: current.access,
       enabledTools: current.enabledTools,
       ...(requiresMcpSync
         ? { syncPending: true as const }
@@ -245,6 +259,7 @@ export async function listConnectorInstallations(
       scopeId: installation.scopeId,
       catalogKey: body.catalogKey,
       connectionId: body.connectionId,
+      access: body.access,
       enabledTools: body.enabledTools,
       syncedTools: body.syncedTools ?? [],
       status: installation.status,
@@ -323,6 +338,7 @@ export interface CreateConnectorInstallationInput extends EmbeddingOptions {
   scopeId: string;
   catalogKey: string;
   connectionId: string;
+  access?: InstallationAccess;
   enabledTools?: "all" | string[];
   clientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
@@ -392,6 +408,7 @@ export interface ProvisionConnectorInstallationInput {
   scopeId: string;
   catalogKey: string;
   connectionId: string;
+  access?: InstallationAccess;
   enabledTools?: "all" | string[];
   credentialOwnerPrincipalId?: string;
   connectionCredentialsChanged?: boolean;
@@ -585,6 +602,7 @@ export async function provisionConnectorInstallation(
       {
         catalogKey: provider.key,
         connectionId: input.connectionId,
+        access: input.access ?? { kind: "scope" },
         enabledTools: input.enabledTools ?? "all",
       },
       catalog,
@@ -612,6 +630,7 @@ export async function provisionConnectorInstallation(
           scopeId: installation.scopeId,
           catalogKey: provider.key,
           connectionId: body.connectionId,
+          access: body.access,
           enabledTools: body.enabledTools,
           ...(input.credentialOwnerPrincipalId
             ? { credentialOwnerPrincipalId: input.credentialOwnerPrincipalId }
@@ -623,12 +642,19 @@ export async function provisionConnectorInstallation(
   }
 
   const current = parseBody(existing.body, catalog);
-  const body = repointInstallationBody(
+  const repointed = repointInstallationBody(
     current,
     input.connectionId,
     provider,
     catalog,
     input.connectionCredentialsChanged,
+  );
+  const body = parseBody(
+    {
+      ...repointed,
+      ...(input.access !== undefined ? { access: input.access } : {}),
+    },
+    catalog,
   );
   const changed = JSON.stringify(body) !== JSON.stringify(current);
   if (changed) {
@@ -665,6 +691,7 @@ export async function provisionConnectorInstallation(
         scopeId: installation.scopeId,
         catalogKey: provider.key,
         connectionId: body.connectionId,
+        access: body.access,
         enabledTools: body.enabledTools,
         version: installation.version,
         ...(input.credentialOwnerPrincipalId
@@ -766,6 +793,7 @@ export async function createConnectorInstallation(
       scopeId: input.scopeId,
       catalogKey: input.catalogKey,
       connectionId: input.connectionId,
+      ...(input.access !== undefined ? { access: input.access } : {}),
       ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
       catalog,
     }),
@@ -796,6 +824,7 @@ export interface UpdateConnectorInstallationInput extends EmbeddingOptions {
   actorPrincipalId: string;
   installationItemId: string;
   connectionId?: string;
+  access?: InstallationAccess;
   enabledTools?: "all" | string[];
   catalog?: ProviderCatalog;
   clientFactory?: McpClientFactory;
@@ -841,6 +870,7 @@ export async function updateConnectorInstallation(
     const body = parseBody(
       {
         ...repointed,
+        ...(input.access !== undefined ? { access: input.access } : {}),
         ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
       },
       catalog,
@@ -885,6 +915,7 @@ export async function updateConnectorInstallation(
         subject: installation.id,
         payload: {
           changed,
+          access: body.access,
           enabledTools: body.enabledTools,
           connectionId: body.connectionId,
           version: installation.version,

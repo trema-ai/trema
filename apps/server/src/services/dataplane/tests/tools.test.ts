@@ -64,9 +64,11 @@ describe("data-plane tool registry", () => {
           {
             id: "installation-1",
             scopeId: "scope-1",
+            scope: { kind: "org", ownerId: null },
             body: {
               catalogKey: "notion",
               connectionId: "00000000-0000-4000-8000-000000000001",
+              access: { kind: "scope" },
               enabledTools: "all",
               syncedTools: [
                 {
@@ -83,6 +85,17 @@ describe("data-plane tool registry", () => {
             },
           },
         ],
+      },
+      connectorConnection: {
+        findFirst: async () => ({
+          id: "00000000-0000-4000-8000-000000000001",
+          providerKey: "notion",
+          authMode: "mcp_oauth",
+          ownerPrincipalId: "agent-1",
+          revokedAt: null,
+          refreshExhausted: false,
+          owner: { id: "agent-1", kind: "agent", deactivatedAt: null },
+        }),
       },
     } as unknown as Database;
 

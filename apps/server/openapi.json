@@ -2960,6 +2960,42 @@
                     "type": "string",
                     "format": "uuid"
                   },
+                  "access": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "scope"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "minimum_role"
+                          },
+                          "role": {
+                            "enum": [
+                              "owner",
+                              "admin",
+                              "member",
+                              "viewer"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "role"
+                        ]
+                      }
+                    ]
+                  },
                   "enabledTools": {
                     "anyOf": [
                       {
@@ -3208,6 +3244,42 @@
                         "type": "string",
                         "format": "uuid"
                       },
+                      "access": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "scope"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "minimum_role"
+                              },
+                              "role": {
+                                "enum": [
+                                  "owner",
+                                  "admin",
+                                  "member",
+                                  "viewer"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "role"
+                            ]
+                          }
+                        ]
+                      },
                       "enabledTools": {
                         "anyOf": [
                           {
@@ -3267,6 +3339,7 @@
                       "scopeId",
                       "catalogKey",
                       "connectionId",
+                      "access",
                       "enabledTools",
                       "syncedTools",
                       "status",
@@ -3314,6 +3387,42 @@
                   "connectionId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "access": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "scope"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "minimum_role"
+                          },
+                          "role": {
+                            "enum": [
+                              "owner",
+                              "admin",
+                              "member",
+                              "viewer"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "role"
+                        ]
+                      }
+                    ]
                   },
                   "enabledTools": {
                     "anyOf": [

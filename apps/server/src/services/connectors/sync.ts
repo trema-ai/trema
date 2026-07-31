@@ -81,6 +81,7 @@ export function mergeSyncedTools(
     body: {
       catalogKey: body.catalogKey,
       connectionId: body.connectionId,
+      access: body.access,
       enabledTools,
       syncedTools: [...fresh.values()],
     },

@@ -616,6 +616,9 @@ function BindingRow({
       ? (provider.toolManifest?.length ?? 0)
       : installation.syncedTools.length;
   const summary = [
+    installation.access.kind === "scope"
+      ? "Scope-wide access"
+      : `${installation.access.role.replaceAll("_", " ")} or higher`,
     installation.enabledTools === "all"
       ? "All tools"
       : `${installation.enabledTools.length} of ${total} tools`,
@@ -653,7 +656,7 @@ function BindingRow({
         <div className="flex items-center gap-2">
           <Button size="xs" variant="outline" onClick={() => setConfigure(true)}>
             <Settings2 />
-            Configure tools
+            Configure
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -725,6 +728,10 @@ function ConfigureToolsDialog({
     provider.transport.type === "rest" ? (provider.toolManifest ?? []) : installation.syncedTools;
   const [search, setSearch] = useState("");
   const [allTools, setAllTools] = useState(installation.enabledTools === "all");
+  const [accessKind, setAccessKind] = useState<"scope" | "minimum_role">(installation.access.kind);
+  const [minimumRole, setMinimumRole] = useState<"owner" | "admin" | "member" | "viewer">(
+    installation.access.kind === "minimum_role" ? installation.access.role : "member",
+  );
   const [enabled, setEnabled] = useState<string[]>(
     installation.enabledTools === "all"
       ? available.map((tool) => tool.name)
@@ -733,6 +740,10 @@ function ConfigureToolsDialog({
   useEffect(() => {
     if (!open) return;
     setSearch("");
+    setAccessKind(installation.access.kind);
+    setMinimumRole(
+      installation.access.kind === "minimum_role" ? installation.access.role : "member",
+    );
     setAllTools(installation.enabledTools === "all");
     setEnabled(
       installation.enabledTools === "all"
@@ -747,6 +758,8 @@ function ConfigureToolsDialog({
     mutationFn: () =>
       rpcClient.connectors.installations.update({
         installationItemId: installation.id,
+        access:
+          accessKind === "scope" ? { kind: "scope" } : { kind: "minimum_role", role: minimumRole },
         enabledTools: allTools ? "all" : enabled,
       }),
     onSuccess: async () => {
@@ -760,13 +773,45 @@ function ConfigureToolsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Configure tools</DialogTitle>
+          <DialogTitle>Configure connector</DialogTitle>
           <DialogDescription>
-            Tool choices apply only to this scope binding. Whether a call pauses for approval is the
-            session&apos;s approval mode, bounded by policy.
+            Access and tool choices apply only to this scope binding. Approval policy still governs
+            whether an allowed call pauses.
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
+          <div className="space-y-3 rounded-md border p-4">
+            <div className="space-y-1">
+              <Label htmlFor={`connector-access-${installation.id}`}>Installation access</Label>
+              <p className="text-meta text-muted-foreground">
+                Scope-wide access also supports shared surfaces and unattended automations.
+              </p>
+            </div>
+            <select
+              id={`connector-access-${installation.id}`}
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+              value={accessKind}
+              onChange={(event) => setAccessKind(event.target.value as "scope" | "minimum_role")}
+            >
+              <option value="scope">Any valid session in this scope</option>
+              <option value="minimum_role">Require a linked requester role</option>
+            </select>
+            {accessKind === "minimum_role" ? (
+              <select
+                aria-label="Minimum requester role"
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                value={minimumRole}
+                onChange={(event) =>
+                  setMinimumRole(event.target.value as "owner" | "admin" | "member" | "viewer")
+                }
+              >
+                <option value="viewer">Viewer or higher</option>
+                <option value="member">Member or higher</option>
+                <option value="admin">Admin or higher</option>
+                <option value="owner">Owner only</option>
+              </select>
+            ) : null}
+          </div>
           <div className="rounded-md border">
             <SettingRow
               label="All tools"

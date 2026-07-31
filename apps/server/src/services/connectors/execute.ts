@@ -1,15 +1,8 @@
 import type { ProviderDef, RestTransport, ToolDefinition } from "@trema/connectors";
 import { interpolate, loadProviderCatalog, type ProviderCatalog } from "@trema/connectors";
 
-import type { ScopeKind } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
-import {
-  type ConnectorInstallationBody,
-  createConnectorInstallationBodySchema,
-  resolveInstallationTools,
-  type ToolAnnotations,
-} from "#server/services/connectors/installations.js";
 import {
   ConnectorReconnectRequiredError,
   collectCredentialStrings,
@@ -17,6 +10,13 @@ import {
   resolveConnectionCredential,
 } from "#server/services/connectors/refresh.js";
 import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
+import {
+  type ConnectorResolutionContext,
+  ConnectorToolNotAvailableError,
+  ConnectorToolValidationError,
+  type ResolvedConnectorTool,
+  resolveConnectorTool,
+} from "#server/services/connectors/resolution.js";
 import {
   createStreamableHttpMcpClient,
   type McpClientFactory,
@@ -31,18 +31,6 @@ const REDACTED = "[REDACTED]";
 type JsonRecord = Record<string, unknown>;
 type Clock = () => Date;
 
-export class ConnectorToolNotAvailableError extends Error {
-  readonly code = "connector_tool_not_available";
-
-  constructor(
-    readonly toolKey: string,
-    readonly installationItemId?: string,
-  ) {
-    super(`Connector tool '${toolKey}' is not available`);
-    this.name = "ConnectorToolNotAvailableError";
-  }
-}
-
 export class ConnectorApprovalRequiredError extends Error {
   readonly code = "approval_required";
 
@@ -52,15 +40,6 @@ export class ConnectorApprovalRequiredError extends Error {
   ) {
     super(`Connector tool '${toolKey}' requires approval`);
     this.name = "ConnectorApprovalRequiredError";
-  }
-}
-
-export class ConnectorToolValidationError extends Error {
-  readonly code = "connector_tool_validation_failed";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "ConnectorToolValidationError";
   }
 }
 
@@ -113,30 +92,12 @@ export type ConnectorCallAuthority =
   | "delegated_proceed"
   | "approval_claimed";
 
-export interface ResolveConnectorToolInput {
-  orgId: string;
-  /**
-   * Scope IDs in resolution order, **widest first** — the order
-   * `ContextSession.scopeChain` stores and `resolveDecisions` reads. Narrowest
-   * wins here, so resolution walks the chain backwards; the order is stated by
-   * the type rather than assumed at a call site.
-   */
-  scopeChain: readonly string[];
-  /**
-   * The kind of scope the calling session sits in. It isolates installations
-   * both ways: a personal session resolves only installations in personal
-   * scopes, and an org or shared session never resolves one
-   * ([06-connectors.md](../../../../../wiki/docs/specs/context/06-connectors.md)).
-   * Every session-serving caller passes it; absent, resolution spans the
-   * chain's scopes unfiltered.
-   */
-  sessionScopeKind?: ScopeKind;
+export interface ResolveConnectorToolInput extends ConnectorResolutionContext {
   toolKey: string;
   catalog?: ProviderCatalog;
 }
 
 export interface ExecuteConnectorToolInput extends ResolveConnectorToolInput {
-  principalId: string;
   args: unknown;
   masterKey?: string;
   platformApps?: PlatformAppDirectory;
@@ -163,21 +124,6 @@ export interface RestConnectorToolResult {
 }
 
 export type McpConnectorToolResult = McpToolCallResult;
-
-/** One connector tool, resolved to the installation that will serve it. */
-export interface ResolvedConnectorTool {
-  /** The `Item(kind=connector)` that won the narrowest-wins selection. */
-  installationItemId: string;
-  toolKey: string;
-  connectorKey: string;
-  toolName: string;
-  /** The tool's description, as the provider declared it. Classifier signal. */
-  description?: string;
-  /** The provider's own MCP annotations, verbatim. Classifier signal only. */
-  annotations?: ToolAnnotations;
-  body: ConnectorInstallationBody;
-  provider: ProviderDef;
-}
 
 interface ParsedResponseBody {
   body: unknown;
@@ -261,125 +207,6 @@ function currentDate(now: ExecuteConnectorToolInput["now"]): Date {
 
 function defaultSleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function parseToolKey(toolKey: string): { catalogKey: string; toolName: string } {
-  const separator = toolKey.indexOf(":");
-  if (separator <= 0 || separator === toolKey.length - 1) {
-    throw new ConnectorToolValidationError(
-      "Connector toolKey must use the 'catalogKey:toolName' format",
-    );
-  }
-  return {
-    catalogKey: toolKey.slice(0, separator),
-    toolName: toolKey.slice(separator + 1),
-  };
-}
-
-function rawCatalogKey(value: unknown): string | undefined {
-  const body = recordValue(value);
-  return typeof body?.catalogKey === "string" ? body.catalogKey : undefined;
-}
-
-function providerExposesTool(
-  provider: ProviderDef,
-  body: ConnectorInstallationBody,
-  toolName: string,
-): boolean {
-  return provider.transport.type === "rest"
-    ? provider.toolManifest.some((tool) => tool.name === toolName)
-    : (body.syncedTools ?? []).some((tool) => tool.name === toolName);
-}
-
-/**
- * The scope kinds a session of this kind may reach an installation in.
- *
- * A personal installation binds a member's own connection, so it serves that
- * member's sessions and nothing else; the inverse holds because a shared thread
- * acting through one person's credential would attribute their access to a room
- * they share with others. Both directions are a lookup, never a judgement.
- */
-function reachableScopeKinds(sessionScopeKind: ScopeKind): ScopeKind[] {
-  return sessionScopeKind === "personal" ? ["personal"] : ["org", "shared"];
-}
-
-/**
- * Pick the installation that serves one tool call.
- *
- * Resolution commits to the narrowest scope in the chain that holds any active
- * installation of the provider, and never leaves it. Inside that scope its
- * installations are tried in order and the first that both exposes the tool and
- * has it enabled wins; if none serves the call, the call fails. A wider scope
- * is not consulted, because it holds a different connection, and the
- * no-fallback credential rule is what stops a narrow installation's gap from
- * silently escalating a call onto a broader credential
- * ([06-connectors.md](../../../../../wiki/docs/specs/context/06-connectors.md)).
- */
-export async function resolveConnectorTool(
-  db: Database,
-  input: ResolveConnectorToolInput,
-): Promise<ResolvedConnectorTool> {
-  const catalog = input.catalog ?? defaultCatalog;
-  if (input.scopeChain.length === 0) {
-    throw new ConnectorToolValidationError("At least one connector scope is required");
-  }
-  const { catalogKey, toolName } = parseToolKey(input.toolKey);
-  const provider = catalog.find((candidate) => candidate.key === catalogKey);
-  if (!provider) throw new ConnectorToolNotAvailableError(input.toolKey);
-
-  const installations = await db.item.findMany({
-    where: {
-      orgId: input.orgId,
-      scopeId: { in: [...new Set(input.scopeChain)] },
-      kind: "connector",
-      status: "active",
-      ...(input.sessionScopeKind
-        ? { scope: { kind: { in: reachableScopeKinds(input.sessionScopeKind) } } }
-        : {}),
-    },
-    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-    select: { id: true, scopeId: true, body: true },
-  });
-
-  // Narrowest wins, and the chain arrives widest first.
-  for (const scopeId of [...input.scopeChain].reverse()) {
-    const atScope = installations.filter(
-      (installation) =>
-        installation.scopeId === scopeId && rawCatalogKey(installation.body) === catalogKey,
-    );
-    // The first scope holding this provider at all is the one that serves the
-    // call, whether or not it can. Everything below decides between that
-    // scope's own installations.
-    if (atScope.length === 0) continue;
-
-    for (const installation of atScope) {
-      const parsed = createConnectorInstallationBodySchema(catalog).safeParse(installation.body);
-      if (!parsed.success) {
-        throw new ConnectorToolValidationError("Connector installation body is invalid");
-      }
-      // A sibling at the same scope is a legitimate alternative — same scope,
-      // same reach — so both an unexposed tool and a disabled one move on to
-      // the next installation here, and to nothing at all beyond this scope.
-      if (!providerExposesTool(provider, parsed.data, toolName)) continue;
-      const effective = resolveInstallationTools(provider, parsed.data).find(
-        (tool) => tool.name === toolName,
-      );
-      if (!effective) continue;
-
-      return {
-        installationItemId: installation.id,
-        toolKey: input.toolKey,
-        connectorKey: provider.key,
-        toolName,
-        ...(effective.description ? { description: effective.description } : {}),
-        ...(effective.annotations ? { annotations: effective.annotations } : {}),
-        body: parsed.data,
-        provider,
-      };
-    }
-    throw new ConnectorToolNotAvailableError(input.toolKey, atScope[0]?.id);
-  }
-  throw new ConnectorToolNotAvailableError(input.toolKey);
 }
 
 function pathParameterNames(path: string): string[] {
@@ -803,7 +630,7 @@ async function resolveCredential(
 ): Promise<ResolvedConnectionCredential> {
   const resolved = await resolveConnectionCredential(db, {
     orgId: input.orgId,
-    connectionId: installation.body.connectionId,
+    connectionId: installation.connectionId,
     ...(input.masterKey ? { masterKey: input.masterKey } : {}),
     catalog,
     ...(input.platformApps ? { platformApps: input.platformApps } : {}),

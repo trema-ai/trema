@@ -183,7 +183,8 @@ integration("connector tool execution", () => {
     await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id, owner.sharedScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "google_workspace:search_messages",
       args: {},
       masterKey,
@@ -203,7 +204,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id, owner.sharedScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "google_workspace:search_messages",
         args: {},
         masterKey,
@@ -248,7 +250,8 @@ integration("connector tool execution", () => {
     const failure = await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id, owner.sharedScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "google_workspace:get_message",
       args: { id: "gmail-id" },
       masterKey,
@@ -282,7 +285,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "google_workspace:create_draft",
         args: { message: { raw: "body" } },
         masterKey,
@@ -297,7 +301,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "google_workspace:search_messages",
         args: {},
         masterKey,
@@ -311,7 +316,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "google_workspace:search_messages",
         args: {},
         masterKey,
@@ -323,7 +329,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "google_workspace:create_draft",
         args: { message: { raw: "body" } },
         masterKey,
@@ -353,7 +360,8 @@ integration("connector tool execution", () => {
     await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "google_workspace:get_message",
       args: { id: "a/b", format: "metadata" },
       masterKey,
@@ -368,7 +376,8 @@ integration("connector tool execution", () => {
     await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "google_workspace:create_event",
       args: {
         calendarId: "team/calendar",
@@ -409,7 +418,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "google_workspace:get_message",
         args: { format: "full" },
         masterKey,
@@ -471,7 +481,8 @@ integration("connector tool execution", () => {
       await executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: testCase.toolKey,
         args: testCase.args,
         masterKey,
@@ -507,7 +518,8 @@ integration("connector tool execution", () => {
     const failure = await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "gamma:list_folders",
       args: {},
       masterKey,
@@ -550,7 +562,8 @@ integration("connector tool execution", () => {
     await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "zendesk:search",
       args: { query: "type:ticket" },
       masterKey,
@@ -594,7 +607,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "zendesk:search",
         args: { query: "all" },
         masterKey,
@@ -640,7 +654,8 @@ integration("connector tool execution", () => {
     const failure = await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "google_workspace:search_messages",
       args: {},
       masterKey,
@@ -684,7 +699,8 @@ integration("connector tool execution", () => {
     const result = await executeConnectorTool(db, {
       orgId: owner.org.id,
       scopeChain: [owner.orgScope.id],
-      principalId: owner.principal.id,
+      scopeKind: "shared",
+      requesterPrincipalId: null,
       toolKey: "google_workspace:search_messages",
       args: {},
       masterKey,
@@ -727,7 +743,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "google_workspace:search_messages",
         args: {},
         masterKey,
@@ -791,7 +808,8 @@ integration("connector tool execution", () => {
       executeConnectorTool(db, {
         orgId: owner.org.id,
         scopeChain: [owner.orgScope.id],
-        principalId: owner.principal.id,
+        scopeKind: "shared",
+        requesterPrincipalId: null,
         toolKey: "notion:search_pages",
         args: { query: "roadmap" },
         masterKey,

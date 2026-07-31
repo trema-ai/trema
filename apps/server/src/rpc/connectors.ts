@@ -47,6 +47,13 @@ import { OrgAgentNotFoundError, requireOrgAgent } from "#server/services/org/ind
 
 const sourceSchema = z.enum(["platform", "customer", "dynamic"]);
 const enabledToolsSchema = z.union([z.literal("all"), z.array(z.string().trim().min(1))]);
+const installationAccessSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("scope") }),
+  z.object({
+    kind: z.literal("minimum_role"),
+    role: z.enum(["owner", "admin", "member", "viewer"]),
+  }),
+]);
 const configSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
 
 const registrationSchema = z.object({
@@ -374,6 +381,7 @@ const createInstallation = requireCapability("manage_connectors", {
       scopeId: z.uuid(),
       catalogKey: z.string().trim().min(1),
       connectionId: z.uuid(),
+      access: installationAccessSchema.optional(),
       enabledTools: enabledToolsSchema.optional(),
     }),
   )
@@ -400,6 +408,7 @@ const createInstallation = requireCapability("manage_connectors", {
           scopeId: input.scopeId,
           catalogKey: input.catalogKey,
           connectionId: input.connectionId,
+          ...(input.access !== undefined ? { access: input.access } : {}),
           ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
           ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
             ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
@@ -427,11 +436,16 @@ const updateInstallation = installationScoped
       .object({
         installationItemId: z.uuid(),
         connectionId: z.uuid().optional(),
+        access: installationAccessSchema.optional(),
         enabledTools: enabledToolsSchema.optional(),
       })
-      .refine((input) => input.connectionId !== undefined || input.enabledTools !== undefined, {
-        message: "At least one editable field is required",
-      }),
+      .refine(
+        (input) =>
+          input.connectionId !== undefined ||
+          input.access !== undefined ||
+          input.enabledTools !== undefined,
+        { message: "At least one editable field is required" },
+      ),
   )
   .output(installationSchema)
   .handler(async ({ context, input }) => {
@@ -442,6 +456,7 @@ const updateInstallation = installationScoped
           actorPrincipalId: context.principal.id,
           installationItemId: input.installationItemId,
           ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}),
+          ...(input.access !== undefined ? { access: input.access } : {}),
           ...(input.enabledTools !== undefined ? { enabledTools: input.enabledTools } : {}),
           ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
             ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
@@ -461,6 +476,7 @@ const listedInstallationSchema = z.object({
   scopeId: z.uuid(),
   catalogKey: z.string(),
   connectionId: z.uuid(),
+  access: installationAccessSchema,
   enabledTools: enabledToolsSchema,
   syncedTools: z.array(
     z.object({

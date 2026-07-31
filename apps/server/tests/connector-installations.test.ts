@@ -480,6 +480,75 @@ integration("connector connections and installations", () => {
     ).resolves.toEqual([expect.objectContaining({ id: connected.id, installations: [] })]);
   });
 
+  it("repoints the single active provider installation in a scope", async () => {
+    const org = await createOrg();
+    const [firstConnection, secondConnection] = await Promise.all([
+      connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "github",
+      }),
+      connection({
+        orgId: org.org.id,
+        principalId: org.agent.id,
+        providerKey: "github",
+      }),
+    ]);
+    const first = await call(
+      connectorsRouter.installations.create,
+      {
+        scopeId: org.orgScope.id,
+        catalogKey: "github",
+        connectionId: firstConnection.id,
+      },
+      { context: org.context },
+    );
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: org.orgScope.id,
+          catalogKey: "github",
+          connectionId: secondConnection.id,
+        },
+        { context: org.context },
+      ),
+    ).resolves.toMatchObject({
+      id: first.id,
+      body: expect.objectContaining({ connectionId: secondConnection.id }),
+    });
+    await expect(
+      db.item.count({
+        where: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          status: "active",
+        },
+      }),
+    ).resolves.toBe(1);
+
+    await call(
+      connectorsRouter.installations.archive,
+      { installationItemId: first.id },
+      { context: org.context },
+    );
+    await expect(
+      call(
+        connectorsRouter.installations.create,
+        {
+          scopeId: org.orgScope.id,
+          catalogKey: "github",
+          connectionId: secondConnection.id,
+          access: { kind: "minimum_role", role: "admin" },
+        },
+        { context: org.context },
+      ),
+    ).resolves.toMatchObject({
+      body: { access: { kind: "minimum_role", role: "admin" } },
+    });
+  });
+
   it("syncs from exactly the bound connection and preserves no-fallback semantics", async () => {
     const org = await createOrg();
     const bound = await connection({
@@ -609,6 +678,7 @@ integration("connector connections and installations", () => {
     expect(switched.body).toEqual({
       catalogKey: "notion",
       connectionId: second.id,
+      access: { kind: "scope" },
       enabledTools: ["read_page"],
       syncPending: true,
     });
@@ -1083,6 +1153,7 @@ integration("connector connections and installations", () => {
         scopeId: org.orgScope.id,
         catalogKey: "notion",
         connectionId: bound.id,
+        access: { kind: "scope" },
         enabledTools: ["read_page"],
         syncedTools: [
           {

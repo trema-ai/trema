@@ -8,10 +8,8 @@ import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { CapabilityKey } from "#server/services/capabilities/index.js";
 import { fetchUrlInputSchema, searchWebInputSchema } from "#server/services/capabilities/web.js";
-import {
-  createConnectorInstallationBodySchema,
-  resolveInstallationTools,
-} from "#server/services/connectors/installations.js";
+import type { ResolvedInstallationTool } from "#server/services/connectors/installations.js";
+import { resolveConnectorInstallations } from "#server/services/connectors/resolution.js";
 import {
   type DataPlaneSession,
   SEARCH_CONTEXT_DEFAULT_LIMIT,
@@ -268,15 +266,9 @@ export function connectorModelToolName(toolKey: string): string {
   return `${prefixed.slice(0, MODEL_TOOL_NAME_LIMIT - suffix.length)}${suffix}`;
 }
 
-function rawCatalogKey(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const key = (value as Record<string, unknown>).catalogKey;
-  return typeof key === "string" ? key : undefined;
-}
-
 function connectorSchema(
   provider: ProviderCatalog[number],
-  tool: ReturnType<typeof resolveInstallationTools>[number],
+  tool: ResolvedInstallationTool,
 ): Record<string, unknown> {
   if (provider.transport.type === "rest") {
     return (
@@ -292,7 +284,7 @@ function connectorSchema(
 /** Convert one currently enabled installation operation into its model definition. */
 export function connectorToolDef(
   provider: ProviderCatalog[number],
-  tool: ReturnType<typeof resolveInstallationTools>[number],
+  tool: ResolvedInstallationTool,
 ): ToolDef {
   const key = `${provider.key}:${tool.name}`;
   return {
@@ -317,9 +309,8 @@ export function connectorToolDef(
 /**
  * Resolve first-class connector definitions from the session's current scope.
  *
- * The same no-fallback rule as execution applies: the narrowest scope holding a
- * provider owns its tools. Sibling installations at that scope contribute a
- * union, matching the executor's ability to try siblings without widening.
+ * The central resolver applies the same pinned installation, credential, role,
+ * and enabled-tool checks execution uses.
  */
 export async function resolveConnectorToolDefs(
   db: Database,
@@ -327,55 +318,21 @@ export async function resolveConnectorToolDefs(
   catalog: ProviderCatalog = loadProviderCatalog(),
   limit = Number.MAX_SAFE_INTEGER,
 ): Promise<ToolDef[]> {
-  const reachableKinds =
-    session.scopeKind === "personal" ? (["personal"] as const) : (["org", "shared"] as const);
-  const installations = await db.item.findMany({
-    where: {
+  const installations = await resolveConnectorInstallations(
+    db,
+    {
       orgId: session.orgId,
-      scopeId: { in: [...new Set(session.scopeChain)] },
-      kind: "connector",
-      status: "active",
-      scope: { kind: { in: [...reachableKinds] } },
+      scopeChain: session.scopeChain,
+      scopeKind: session.scopeKind,
+      requesterPrincipalId: session.requesterPrincipalId,
     },
-    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-    select: { id: true, scopeId: true, body: true },
-  });
-
-  const claimedProviders = new Set<string>();
+    catalog,
+  );
   const definitions = new Map<string, ToolDef>();
-  for (const scopeId of [...session.scopeChain].reverse()) {
-    const atScope = installations.filter(({ scopeId: candidate }) => candidate === scopeId);
-    const providerKeys = [
-      ...new Set(
-        atScope
-          .map(({ body }) => rawCatalogKey(body))
-          .filter((key): key is string => key !== undefined),
-      ),
-    ];
-    for (const providerKey of providerKeys) {
-      if (claimedProviders.has(providerKey)) continue;
-      claimedProviders.add(providerKey);
-      const provider = catalog.find(({ key }) => key === providerKey);
-      if (provider === undefined) continue;
-
-      for (const installation of atScope.filter(
-        ({ body }) => rawCatalogKey(body) === providerKey,
-      )) {
-        const parsed = createConnectorInstallationBodySchema(catalog).safeParse(installation.body);
-        if (!parsed.success) {
-          log.warn("Connector installation omitted from live tool resolution", {
-            itemId: installation.id,
-            connector: providerKey,
-            reason: "invalid_body",
-          });
-          continue;
-        }
-        for (const tool of resolveInstallationTools(provider, parsed.data)) {
-          const key = `${provider.key}:${tool.name}`;
-          if (definitions.has(key)) continue;
-          definitions.set(key, connectorToolDef(provider, tool));
-        }
-      }
+  for (const installation of installations) {
+    for (const tool of installation.tools) {
+      const key = `${installation.provider.key}:${tool.name}`;
+      definitions.set(key, connectorToolDef(installation.provider, tool));
     }
   }
 
