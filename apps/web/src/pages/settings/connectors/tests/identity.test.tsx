@@ -6,7 +6,7 @@ import {
   OrganizationConnectionCard,
   PersonalConnectionRow,
 } from "#web/pages/customize/connections.tsx";
-import type { Item } from "#web/pages/customize/types.ts";
+import type { ConnectorBody } from "#web/pages/customize/types.ts";
 import {
   OAuthConnectionDialog,
   providerScopesForOAuthConnect,
@@ -104,42 +104,26 @@ describe("connector identity UX", () => {
   });
 
   it("identifies an inherited connector as organization-provided", () => {
-    const item: Item = {
-      id: "installation-org",
-      scopeId: "org-1",
-      kind: "connector",
-      title: "Linear",
-      body: {
-        catalogKey: "linear",
-        connectionId: "connection-org",
-        access: { kind: "scope" },
-        enabledTools: ["list_issues"],
-      },
-      status: "active",
-      disclosure: "standing",
-      createdById: "admin-1",
-      sourceSessionId: null,
-      confirmedById: null,
-      updatedById: null,
-      createdAt: "2026-07-31T12:00:00.000Z",
-      updatedAt: "2026-07-31T12:00:00.000Z",
-      lastUsedAt: null,
-      version: 1,
+    const body: ConnectorBody = {
+      catalogKey: "linear",
+      connectionId: "connection-org",
+      access: { kind: "scope" },
+      enabledTools: ["list_issues"],
     };
     const { rerender } = render(
-      <OrganizationConnectionCard provider={provider} item={item} health="available" />,
+      <OrganizationConnectionCard provider={provider} body={body} health="available" />,
     );
 
     expect(screen.getByText("Provided by your organization")).toBeTruthy();
     expect(screen.getByText("Available")).toBeTruthy();
     expect(screen.getByText("1 tool")).toBeTruthy();
 
-    rerender(<OrganizationConnectionCard provider={provider} item={item} health="revoked" />);
+    rerender(<OrganizationConnectionCard provider={provider} body={body} health="revoked" />);
     expect(screen.getByText("Disconnected")).toBeTruthy();
     expect(screen.queryByText("Available")).toBeNull();
 
     rerender(
-      <OrganizationConnectionCard provider={provider} item={item} health="setup_required" />,
+      <OrganizationConnectionCard provider={provider} body={body} health="setup_required" />,
     );
     expect(screen.getByText("Setup needed")).toBeTruthy();
   });

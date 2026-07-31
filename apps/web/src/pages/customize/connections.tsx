@@ -19,7 +19,12 @@ import {
 import { Button } from "#web/components/ui/button.tsx";
 import { Skeleton } from "#web/components/ui/skeleton.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
-import type { ConnectorBody, Item, Scope } from "#web/pages/customize/types.ts";
+import {
+  type ConnectorBody,
+  type Item,
+  normalizeConnectorBody,
+  type Scope,
+} from "#web/pages/customize/types.ts";
 import { useAuthenticatedSession } from "#web/pages/home.tsx";
 import { ConnectorCard } from "#web/pages/settings/connectors/card.tsx";
 import { OAuthConnectionDialog } from "#web/pages/settings/connectors/connection-dialogs.tsx";
@@ -94,24 +99,30 @@ export function ConnectionsTab({
       ),
     [organizationInstallationHealth.data],
   );
-  const installations = items.filter(
-    (item) => item.scopeId === scope.id && item.kind === "connector" && item.status !== "archived",
-  );
+  const installations = items.flatMap((item) => {
+    if (item.scopeId !== scope.id || item.kind !== "connector" || item.status === "archived") {
+      return [];
+    }
+    const body = normalizeConnectorBody(item.body);
+    return body === undefined ? [] : [{ item, body }];
+  });
   const organizationInstallations =
     scope.kind === "personal" && orgScope
-      ? items.filter((item) => {
+      ? items.flatMap((item) => {
           if (
             item.scopeId !== orgScope.id ||
             item.kind !== "connector" ||
             item.status === "archived"
           ) {
-            return false;
+            return [];
           }
-          const body = item.body as ConnectorBody;
+          const body = normalizeConnectorBody(item.body);
+          if (body === undefined) return [];
           const provider = entryByKey.get(body.catalogKey);
+          if (provider === undefined || provider.supportsPersonalOAuth) return [];
           const allowed =
             body.access.kind === "scope" || roleRank[session.role] >= roleRank[body.access.role];
-          return provider !== undefined && !provider.supportsPersonalOAuth && allowed;
+          return allowed ? [{ item, body, provider }] : [];
         })
       : [];
   const eligibleConnections = connectionRows.filter(
@@ -137,8 +148,7 @@ export function ConnectionsTab({
           rows: organizationInstallations,
           search,
           category,
-          providerOf: (item) =>
-            entryByKey.get((item.body as ConnectorBody).catalogKey) as CatalogProvider,
+          providerOf: (installation) => installation.provider,
           extraFieldsOf: () => ["organization provided"],
         })
       : [];
@@ -157,10 +167,7 @@ export function ConnectionsTab({
       const provider = entryByKey.get(connection.providerKey);
       return provider ? [provider] : [];
     }),
-    ...organizationInstallations.flatMap((item) => {
-      const provider = entryByKey.get((item.body as ConnectorBody).catalogKey);
-      return provider ? [provider] : [];
-    }),
+    ...organizationInstallations.map((installation) => installation.provider),
     ...available,
   ];
   const filtersActive = search.trim() !== "" || category !== "all" || source !== "all";
@@ -312,18 +319,14 @@ export function ConnectionsTab({
               description="These organization-managed connectors are also available in your personal chats."
             >
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredOrganizationInstallations.map((item) => {
-                  const body = item.body as ConnectorBody;
-                  const provider = entryByKey.get(body.catalogKey);
-                  return provider ? (
-                    <OrganizationConnectionCard
-                      key={item.id}
-                      provider={provider}
-                      item={item}
-                      health={healthByInstallationId.get(item.id) ?? "missing"}
-                    />
-                  ) : null;
-                })}
+                {filteredOrganizationInstallations.map(({ item, body, provider }) => (
+                  <OrganizationConnectionCard
+                    key={item.id}
+                    provider={provider}
+                    body={body}
+                    health={healthByInstallationId.get(item.id) ?? "missing"}
+                  />
+                ))}
               </div>
             </ConnectionSection>
           ) : null}
@@ -379,7 +382,7 @@ function ReadOnlyConnections({
   scope,
 }: {
   entries: Map<string, CatalogProvider>;
-  installations: Item[];
+  installations: Array<{ item: Item; body: ConnectorBody }>;
   scope: Scope;
 }) {
   return (
@@ -405,8 +408,7 @@ function ReadOnlyConnections({
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {installations.map((item) => {
-            const body = item.body as ConnectorBody;
+          {installations.map(({ item, body }) => {
             const provider = entries.get(body.catalogKey);
             if (!provider) return null;
             return (
@@ -599,14 +601,13 @@ export function PersonalConnectionRow({
 
 export function OrganizationConnectionCard({
   provider,
-  item,
+  body,
   health,
 }: {
   provider: CatalogProvider;
-  item: Item;
+  body: ConnectorBody;
   health: ConnectorInstallationHealth["status"];
 }) {
-  const body = item.body as ConnectorBody;
   const status = organizationHealthBadge(health);
   return (
     <ConnectorCard

@@ -46,6 +46,68 @@ export type ConnectorBody = {
   syncedTools?: ConnectorTool[];
 };
 
+const connectorRoles = new Set(["owner", "admin", "member", "viewer"]);
+
+/**
+ * Normalize connector bodies read through the generic item API. That API
+ * returns durable JSON verbatim, including installations created before the
+ * access field existed, so a type assertion alone cannot make the field real.
+ */
+export function normalizeConnectorBody(value: unknown): ConnectorBody | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const body = value as Record<string, unknown>;
+  if (
+    typeof body.catalogKey !== "string" ||
+    body.catalogKey.trim() === "" ||
+    typeof body.connectionId !== "string" ||
+    body.connectionId.trim() === ""
+  ) {
+    return undefined;
+  }
+
+  const enabledTools =
+    body.enabledTools === "all"
+      ? "all"
+      : Array.isArray(body.enabledTools) &&
+          body.enabledTools.every((tool): tool is string => typeof tool === "string")
+        ? body.enabledTools
+        : undefined;
+  if (enabledTools === undefined) return undefined;
+
+  let access: ConnectorBody["access"];
+  if (body.access === undefined) {
+    access = { kind: "scope" };
+  } else if (
+    typeof body.access === "object" &&
+    body.access !== null &&
+    !Array.isArray(body.access) &&
+    (body.access as Record<string, unknown>).kind === "scope"
+  ) {
+    access = { kind: "scope" };
+  } else if (
+    typeof body.access === "object" &&
+    body.access !== null &&
+    !Array.isArray(body.access) &&
+    (body.access as Record<string, unknown>).kind === "minimum_role" &&
+    typeof (body.access as Record<string, unknown>).role === "string" &&
+    connectorRoles.has((body.access as Record<string, unknown>).role as string)
+  ) {
+    access = {
+      kind: "minimum_role",
+      role: (body.access as { role: "owner" | "admin" | "member" | "viewer" }).role,
+    };
+  } else {
+    return undefined;
+  }
+
+  return {
+    catalogKey: body.catalogKey,
+    connectionId: body.connectionId,
+    access,
+    enabledTools,
+  };
+}
+
 export type SkillBody = { source?: string; files?: Record<string, string> };
 
 export type CatalogEntry = {
