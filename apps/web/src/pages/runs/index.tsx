@@ -1,220 +1,163 @@
 import { useQuery } from "@tanstack/react-query";
-import { ScrollText } from "lucide-react";
+import { LockKeyhole, ScrollText } from "lucide-react";
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { useNavigate } from "react-router";
 
+import { DataTable, type DataTableColumn } from "#web/components/trema/data-table.tsx";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
-import { ErrorItem } from "#web/components/trema/error-item.tsx";
+import { FilterBar, FilterSelect } from "#web/components/trema/filter-bar.tsx";
 import { IdChip } from "#web/components/trema/id-chip.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
-import { RunStateBadge } from "#web/components/trema/run-state-badge.tsx";
-import { Tabs, TabsList, TabsTrigger } from "#web/components/ui/tabs.tsx";
-import { useRunStream } from "#web/hooks/use-run-stream.ts";
+import { type RunState, RunStateBadge } from "#web/components/trema/run-state-badge.tsx";
 import { orpc, type rpcClient } from "#web/lib/api.ts";
-import { isTerminalRunState, parseUsage } from "#web/lib/run-timeline.ts";
-import { cn } from "#web/lib/utils.ts";
-import { FeedbackControls, RetryControl } from "#web/pages/runs/controls.tsx";
-import { GrantSnapshotPanel, Panel, ThreadPanel, UsagePanel } from "#web/pages/runs/panels.tsx";
-import { RunTimeline } from "#web/pages/runs/timeline.tsx";
 
-type RunRead = Awaited<ReturnType<typeof rpcClient.runs.get>>;
-type FullRun = Extract<RunRead, { access: "full" }>;
-type MetadataRun = Extract<RunRead, { access: "metadata" }>;
+type RunList = Awaited<ReturnType<typeof rpcClient.runs.list>>;
+type RunSummary = RunList["runs"][number];
 
-const triggerPhrase: Record<RunRead["trigger"], string> = {
-  message: "a message",
-  api: "the API",
-  schedule: "a schedule",
-  retry: "a retry",
-  resume: "a resume",
+type Trigger = RunSummary["trigger"];
+
+const stateOptions = [
+  { value: "all", label: "All states" },
+  { value: "queued", label: "Queued" },
+  { value: "running", label: "Running" },
+  { value: "awaiting_approval", label: "Awaiting approval" },
+  { value: "awaiting_input", label: "Awaiting input" },
+  { value: "completed", label: "Completed" },
+  { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "stale", label: "Stale" },
+] as const;
+
+const triggerOptions = [
+  { value: "all", label: "All triggers" },
+  { value: "message", label: "Message" },
+  { value: "api", label: "API" },
+  { value: "schedule", label: "Schedule" },
+  { value: "retry", label: "Retry" },
+  { value: "resume", label: "Resume" },
+] as const;
+
+const triggerLabels: Record<Trigger, string> = {
+  message: "Message",
+  api: "API",
+  schedule: "Schedule",
+  retry: "Retry",
+  resume: "Resume",
 };
 
-/** The canonical run view: everything the log knows about one run. */
-export function RunPage() {
-  const { id = "" } = useParams();
-  const runQuery = useQuery(orpc.runs.get.queryOptions({ input: { id } }));
-
-  if (runQuery.isPending) {
+function sourceLabel(run: RunSummary) {
+  if (run.access === "metadata") {
     return (
-      <main className="mx-auto w-full max-w-[1240px] space-y-4 p-4 sm:p-6 lg:p-8">
-        <div className="h-16 animate-pulse rounded-lg bg-muted/50" />
-        {[1, 2, 3].map((key) => (
-          <div key={key} className="h-24 animate-pulse rounded-lg border bg-muted/30" />
-        ))}
-      </main>
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        <LockKeyhole className="size-3.5" />
+        Personal scope
+      </span>
     );
   }
-  if (runQuery.error) {
-    return (
-      <main className="mx-auto w-full max-w-3xl p-4 sm:p-6 lg:p-8">
-        <EmptyState
-          icon={ScrollText}
-          title="Could not load this run"
-          description={runQuery.error.message}
-        />
-      </main>
-    );
-  }
-  const run = runQuery.data;
-  if (run.access === "metadata") return <MetadataRunView run={run} />;
-  // Keyed so navigating between runs remounts the stream from scratch.
-  return <FullRunView key={run.id} run={run} />;
-}
-
-/** The connector and location, said plainly; the web location is just "Web". */
-function sourceLabel(run: FullRun) {
   if (run.surface === "web") return "Web";
   return (
-    <>
-      {run.surface} <span className="font-mono">{run.locationRef}</span>
-    </>
+    <span>
+      {run.surface}{" "}
+      <span className="font-mono text-meta text-muted-foreground">{run.locationRef}</span>
+    </span>
   );
 }
 
-function FullRunView({ run }: { run: FullRun }) {
-  const stream = useRunStream(run.id, run.state);
-  const [tab, setTab] = useState<"timeline" | "details">("timeline");
-  const terminal = isTerminalRunState(run.state);
-  // The run read's totals are authoritative once present; the projection's
-  // usage covers the moment the tail has seen `run-finished` first.
-  const usage = parseUsage(run.usage) ?? parseUsage(stream.projection.usage);
+const columns: DataTableColumn<RunSummary>[] = [
+  {
+    key: "run",
+    header: "Run",
+    width: "190px",
+    render: (run) => <IdChip id={run.id} visibleChars={14} />,
+  },
+  {
+    key: "state",
+    header: "State",
+    width: "150px",
+    render: (run) => <RunStateBadge state={run.state} />,
+  },
+  {
+    key: "trigger",
+    header: "Trigger",
+    width: "120px",
+    render: (run) => triggerLabels[run.trigger],
+  },
+  {
+    key: "source",
+    header: "Source",
+    render: sourceLabel,
+  },
+  {
+    key: "updated",
+    header: "Updated",
+    width: "150px",
+    render: (run) => <RelativeTime date={run.updatedAt} />,
+  },
+];
 
-  const panels = (
-    <>
-      <GrantSnapshotPanel grantSnapshot={run.grantSnapshot} />
-      <UsagePanel usage={usage} turnCount={run.turnCount} settled={terminal} />
-      <ThreadPanel runId={run.id} threadRef={run.threadRef} surface={run.surface} />
-      {(run.retryOfRunId !== null || run.error !== null) && (
-        <Panel title="Lineage">
-          <div className="space-y-2 text-meta">
-            {run.retryOfRunId !== null && (
-              <p>
-                Retry
-                {run.retryAttempt !== null && <> attempt {run.retryAttempt}</>} of{" "}
-                <Link to={`/runs/${run.retryOfRunId}`} className="text-moss hover:underline">
-                  <span className="font-mono">{run.retryOfRunId.slice(0, 8)}…</span>
-                </Link>
-              </p>
-            )}
-            {run.error !== null && (
-              <p className="font-mono break-all text-destructive">{run.error}</p>
-            )}
-          </div>
-        </Panel>
-      )}
-    </>
+export function RunsPage() {
+  const navigate = useNavigate();
+  const [state, setState] = useState<RunState | "all">("all");
+  const [trigger, setTrigger] = useState<Trigger | "all">("all");
+  const runs = useQuery(
+    orpc.runs.list.queryOptions({
+      input: {
+        ...(state === "all" ? {} : { state }),
+        ...(trigger === "all" ? {} : { trigger }),
+      },
+    }),
   );
 
   return (
-    <main className="mx-auto w-full max-w-[1240px] p-4 sm:p-6 lg:p-8">
+    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
       <PageHeader
-        title="Run"
-        description={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <IdChip id={run.id} visibleChars={14} />
-            <span>
-              Started by {triggerPhrase[run.trigger]} · {sourceLabel(run)} · created{" "}
-              <RelativeTime date={run.createdAt} /> · updated <RelativeTime date={run.updatedAt} />
-            </span>
-          </span>
-        }
-        actions={
-          <span className="flex items-center gap-4">
-            <RunStateBadge state={run.state} />
-            {/* Retry exists only where the server admits it; anywhere else
-                the control is hidden, never a disabled ghost. */}
-            {(run.state === "failed" || run.state === "stale") && <RetryControl runId={run.id} />}
-          </span>
-        }
+        title="Runs"
+        description="Inspect execution history, live activity, approvals, and failures."
       />
-      {run.error !== null && <ErrorItem className="mb-4" title="Run failed" message={run.error} />}
-      <Tabs
-        value={tab}
-        onValueChange={(value) => setTab(value === "details" ? "details" : "timeline")}
-        className="mb-4 min-[1200px]:hidden"
-      >
-        <TabsList>
-          <TabsTrigger value="timeline">Timeline</TabsTrigger>
-          <TabsTrigger value="details">Details</TabsTrigger>
-        </TabsList>
-      </Tabs>
-      <div className="flex items-start gap-8">
-        {/* The timeline stays mounted while the details tab covers it, so
-            expanded outputs and the live tail survive tab flips. */}
-        <div
-          className={cn(
-            "min-w-0 max-w-215 flex-1",
-            tab === "details" && "hidden min-[1200px]:block",
-          )}
-        >
-          <RunTimeline
-            runId={run.id}
-            runCreatedAt={run.createdAt}
-            snapshot={stream}
-            queuedInput={run.queuedInput}
-            runSettled={terminal}
-          />
-          {terminal && (
-            <div className="mt-6">
-              <FeedbackControls runId={run.id} />
-            </div>
-          )}
-        </div>
-        {tab === "details" && (
-          <div className="min-w-0 flex-1 space-y-6 min-[1200px]:hidden">{panels}</div>
-        )}
-        <aside className="hidden w-80 shrink-0 space-y-6 min-[1200px]:block">{panels}</aside>
-      </div>
-    </main>
-  );
-}
-
-/**
- * The audit view: an org admin looking at a run in another person's personal
- * scope sees that it happened and what it touched, never its content.
- */
-function MetadataRunView({ run }: { run: MetadataRun }) {
-  const usage = parseUsage(run.usage);
-  return (
-    <main className="mx-auto w-full max-w-3xl p-4 sm:p-6 lg:p-8">
-      <PageHeader
-        title="Run"
-        description={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <IdChip id={run.id} visibleChars={14} />
-            <span>
-              Started by {triggerPhrase[run.trigger]} · created{" "}
-              <RelativeTime date={run.createdAt} /> · updated <RelativeTime date={run.updatedAt} />
-            </span>
-          </span>
-        }
-        actions={<RunStateBadge state={run.state} />}
-      />
-      <p className="mb-6 text-chrome text-muted-foreground">
-        This run belongs to another person's personal scope. You can see that it ran and which tools
-        it called, not what it did.
-      </p>
-      <div className="grid items-start gap-6 sm:grid-cols-2">
-        <UsagePanel
-          usage={usage}
-          turnCount={run.turnCount}
-          settled={isTerminalRunState(run.state)}
+      <FilterBar className="mb-3">
+        <FilterSelect
+          label="State"
+          value={state}
+          onValueChange={(value) => setState(value as RunState | "all")}
+          options={[...stateOptions]}
         />
-        <Panel title="Tools called">
-          {run.toolNames.length === 0 ? (
-            <p className="text-meta text-muted-foreground">No tool calls recorded.</p>
-          ) : (
-            <ul className="space-y-1">
-              {run.toolNames.map((name) => (
-                <li key={name} className="font-mono text-meta break-all">
-                  {name}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-      </div>
+        <FilterSelect
+          label="Trigger"
+          value={trigger}
+          onValueChange={(value) => setTrigger(value as Trigger | "all")}
+          options={[...triggerOptions]}
+        />
+      </FilterBar>
+      {runs.error ? (
+        <div className="rounded-md border bg-card">
+          <EmptyState
+            icon={ScrollText}
+            title="Could not load runs"
+            description={runs.error.message}
+          />
+        </div>
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={runs.data?.runs ?? []}
+          rowKey={(run) => run.id}
+          onRowClick={(run) => void navigate(`/runs/${run.id}`)}
+          loading={runs.isPending}
+          pageSize={25}
+          empty={
+            <EmptyState
+              icon={ScrollText}
+              title={state === "all" && trigger === "all" ? "No runs yet" : "No matching runs"}
+              description={
+                state === "all" && trigger === "all"
+                  ? "Runs started from configured integrations, automations, and the API appear here."
+                  : "Change the filters to see other runs."
+              }
+            />
+          }
+        />
+      )}
     </main>
   );
 }

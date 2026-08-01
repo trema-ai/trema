@@ -14,7 +14,6 @@ import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
 import { Button } from "#web/components/ui/button.tsx";
 import { Input } from "#web/components/ui/input.tsx";
 import { Label } from "#web/components/ui/label.tsx";
-import { useWebThreads } from "#web/hooks/use-web-threads.ts";
 import { authClient, orpc, rpcClient } from "#web/lib/api.ts";
 
 type ViewerRole = "owner" | "admin" | "member" | "viewer";
@@ -114,14 +113,9 @@ export function AuthenticatedProvider({
 
 export function AuthenticatedAppShell({ children }: { children: ReactNode }) {
   const session = useAuthenticatedSession();
-  // The sidebar's chat list rides the shell so every page carries it; the
-  // read is the member's own web conversations plus just-created chats held
-  // in view state until their conversation rows land.
-  const threads = useWebThreads();
   return (
     <AppShell
       orgName={session.membership.org.name}
-      threads={threads}
       sidebar={{
         organizations: session.memberships.map(({ org }) => org),
         activeOrgId: session.activeOrgId,

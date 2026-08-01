@@ -1,9 +1,10 @@
 import {
   BookOpen,
+  Brain,
   Check,
   ChevronsUpDown,
   LogOut,
-  MessageSquarePlus,
+  ScrollText,
   Search,
   Settings,
   SlidersHorizontal,
@@ -33,13 +34,12 @@ import {
 } from "#web/components/ui/sidebar.tsx";
 
 type Organization = { id: string; name: string };
-type ThreadSummary = { threadRef: string; title: string };
 
 const navItems = [
-  { label: "New chat", icon: MessageSquarePlus, href: "/" },
+  { label: "Runs", icon: ScrollText, href: "/runs" },
   { label: "Search", icon: Search },
   { label: "Automations", icon: Zap, href: "/automations" },
-  { label: "Customize", icon: SlidersHorizontal, href: "/customize" },
+  { label: "Context", icon: Brain, href: "/customize" },
 ] as const;
 
 export type AppSidebarProps = {
@@ -48,13 +48,12 @@ export type AppSidebarProps = {
   name: string;
   email: string;
   role: string;
-  threads?: ThreadSummary[];
   onSearch: () => void;
   onSwitch: (id: string) => void;
   onSignOut: () => void;
 };
 
-export function AppSidebar({ threads = [], ...props }: AppSidebarProps) {
+export function AppSidebar(props: AppSidebarProps) {
   const location = useLocation();
   const active =
     props.organizations.find((org) => org.id === props.activeOrgId) ?? props.organizations[0];
@@ -94,7 +93,14 @@ export function AppSidebar({ threads = [], ...props }: AppSidebarProps) {
               {navItems.map((item) => (
                 <SidebarMenuItem key={item.label}>
                   {"href" in item ? (
-                    <SidebarMenuButton asChild isActive={location.pathname === item.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={
+                        item.href === "/runs"
+                          ? location.pathname.startsWith("/runs")
+                          : location.pathname === item.href
+                      }
+                    >
                       <Link to={item.href} className="text-(length:--text-chrome)">
                         <item.icon />
                         <span>{item.label}</span>
@@ -115,33 +121,23 @@ export function AppSidebar({ threads = [], ...props }: AppSidebarProps) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Chats</SidebarGroupLabel>
-          <SidebarGroupContent>
-            {threads.length === 0 ? (
-              <p className="px-2 py-1.5 text-meta text-muted-foreground">No chats yet</p>
-            ) : (
+        {(props.role === "owner" || props.role === "admin") && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Administration</SidebarGroupLabel>
+            <SidebarGroupContent>
               <SidebarMenu>
-                {threads.map((thread) => (
-                  <SidebarMenuItem key={thread.threadRef}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={location.pathname === `/chat/${thread.threadRef}`}
-                    >
-                      <Link
-                        to={`/chat/${thread.threadRef}`}
-                        className="text-(length:--text-chrome)"
-                        title={thread.title}
-                      >
-                        <span className="truncate">{thread.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname.startsWith("/settings/")}>
+                    <Link to="/settings/general" className="text-(length:--text-chrome)">
+                      <SlidersHorizontal />
+                      <span>Organization settings</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
-            )}
-          </SidebarGroupContent>
-        </SidebarGroup>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -198,5 +194,3 @@ export function AppSidebar({ threads = [], ...props }: AppSidebarProps) {
     </Sidebar>
   );
 }
-
-export type { ThreadSummary };

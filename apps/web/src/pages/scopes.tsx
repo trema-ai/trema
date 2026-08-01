@@ -552,8 +552,7 @@ function NewBindingDialog({
 }) {
   const queryClient = useQueryClient();
   const surfaces = useQuery(orpc.surfaces.list.queryOptions());
-  // Web chat is available but has no location to pick: it always resolves to
-  // the member's own personal scope, so it never appears here.
+  // Only integrations whose locations can be bound to a scope appear here.
   const availableSurfaces = useMemo(
     () =>
       ((surfaces.data ?? []) as Surface[]).filter(

@@ -12,8 +12,6 @@ import { Fragment } from "react";
 
 import { ActivityCard, type ActivityState } from "#web/components/trema/activity-card.tsx";
 import { ApprovalCard } from "#web/components/trema/approval-card.tsx";
-import { ChainOfThought } from "#web/components/trema/chain-of-thought.tsx";
-import { ChatBubble } from "#web/components/trema/chat-bubble.tsx";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { ErrorItem } from "#web/components/trema/error-item.tsx";
 import { Markdown } from "#web/components/trema/markdown.tsx";
@@ -37,11 +35,9 @@ import {
 import type { RunStreamSnapshot } from "#web/hooks/use-run-stream.ts";
 import { orpc } from "#web/lib/api.ts";
 import {
-  formatDuration,
   isTerminalProjection,
   type PrincipalLike,
   parkDetail,
-  partsTiming,
   principalLabel,
   projectionWaitingForDecision,
   steeringSeq,
@@ -136,32 +132,21 @@ export function RunTimeline({
 }
 
 /**
- * The folded segments with their boundary dividers — the rendering the run
- * view and the chat thread share, so a run can never read differently on the
- * two screens. The chat opts into collapsing machinery chunks and suppressing
- * output expansion; the run view keeps the flat, complete record.
+ * The folded segments with their boundary dividers. The run view keeps the
+ * flat, complete record, including output expansion.
  */
-export function ProjectionSegments({
+function ProjectionSegments({
   runId,
   runCreatedAt,
   projection,
   meta,
   resolvable,
-  expandOutputs = true,
-  collapseChain = false,
-  partVocabulary = "run",
-  chainWorkingFor,
 }: {
   runId: string;
   runCreatedAt: string;
   projection: Projection;
   meta: TimelineMeta;
   resolvable: boolean;
-  expandOutputs?: boolean;
-  collapseChain?: boolean;
-  partVocabulary?: "run" | "chat";
-  /** The active chain's ticking elapsed time. */
-  chainWorkingFor?: string;
 }) {
   const activityByCallId = new Map<string, ActivityPart>();
   for (const segment of projection.segments) {
@@ -187,50 +172,11 @@ export function ProjectionSegments({
     <>
       {projection.segments.map((segment, segmentIndex) => {
         const detail = dividerDetail.get(segment.index);
-        const chunks = chunkParts(segment.parts, collapseChain);
+        const chunks = chunkParts(segment.parts);
         return (
           <Fragment key={segment.index}>
-            {chunks.map((chunk, chunkIndex) => {
+            {chunks.map((chunk) => {
               if (chunk.kind === "machinery") {
-                if (collapseChain) {
-                  const streaming =
-                    resolvable &&
-                    !isTerminalProjection(projection.status) &&
-                    segmentIndex === projection.segments.length - 1 &&
-                    chunkIndex === chunks.length - 1;
-                  const timing = partsTiming(projection, meta, chunk.parts);
-                  const from = timing === undefined ? Number.NaN : Date.parse(timing.firstAt);
-                  const to = timing === undefined ? Number.NaN : Date.parse(timing.lastAt);
-                  const workedFor =
-                    Number.isFinite(from) && Number.isFinite(to) && to >= from
-                      ? formatDuration(to - from)
-                      : undefined;
-                  return (
-                    <ChainOfThought
-                      key={chunk.key}
-                      streaming={streaming}
-                      {...(workedFor === undefined ? {} : { workedFor })}
-                      {...(!streaming || chainWorkingFor === undefined
-                        ? {}
-                        : { workingFor: chainWorkingFor })}
-                    >
-                      {chunk.parts.map((part) => (
-                        <TimelinePart
-                          key={`${part.kind}:${part.id}`}
-                          runId={runId}
-                          runCreatedAt={runCreatedAt}
-                          part={part}
-                          meta={meta}
-                          resolvable={resolvable}
-                          expandOutputs={expandOutputs}
-                          projectionLive={!isTerminalProjection(projection.status)}
-                          partVocabulary={partVocabulary}
-                          activityByCallId={activityByCallId}
-                        />
-                      ))}
-                    </ChainOfThought>
-                  );
-                }
                 return (
                   <div key={chunk.key} className="space-y-0.5">
                     {chunk.parts.map((part) => (
@@ -241,9 +187,7 @@ export function ProjectionSegments({
                         part={part}
                         meta={meta}
                         resolvable={resolvable}
-                        expandOutputs={expandOutputs}
                         projectionLive={!isTerminalProjection(projection.status)}
-                        partVocabulary={partVocabulary}
                         activityByCallId={activityByCallId}
                       />
                     ))}
@@ -258,9 +202,7 @@ export function ProjectionSegments({
                   part={chunk.part}
                   meta={meta}
                   resolvable={resolvable}
-                  expandOutputs={expandOutputs}
                   projectionLive={!isTerminalProjection(projection.status)}
-                  partVocabulary={partVocabulary}
                   activityByCallId={activityByCallId}
                 />
               );
@@ -284,7 +226,7 @@ export function ProjectionSegments({
 }
 
 /**
- * The hierarchy of the timeline: conversation (steering, text, elicitations)
+ * The hierarchy of the timeline: run content (steering, text, elicitations)
  * reads at full contrast with room around it; machinery (tools, reasoning,
  * data, errors) is muted and consecutive rows stack tight, so a burst of
  * activity reads as one recessed group between the words.
@@ -293,7 +235,7 @@ type PartChunk =
   | { kind: "prose"; part: Part; key: string }
   | { kind: "machinery"; parts: Part[]; key: string };
 
-function chunkParts(parts: readonly Part[], errorsAtConversationLevel = false): PartChunk[] {
+function chunkParts(parts: readonly Part[]): PartChunk[] {
   const machinery = new Set<Part["kind"]>([
     "activity",
     "reasoning",
@@ -305,9 +247,7 @@ function chunkParts(parts: readonly Part[], errorsAtConversationLevel = false): 
   // card at conversation level until its resolution arrives on the tail,
   // then collapses into a history line inside the machinery group.
   const isMachinery = (part: Part) =>
-    machinery.has(part.kind) &&
-    !(errorsAtConversationLevel && part.kind === "error") &&
-    !(part.kind === "elicitation" && part.resolution === undefined);
+    machinery.has(part.kind) && !(part.kind === "elicitation" && part.resolution === undefined);
   const chunks: PartChunk[] = [];
   for (const part of parts) {
     const last = chunks[chunks.length - 1];
@@ -322,50 +262,13 @@ function chunkParts(parts: readonly Part[], errorsAtConversationLevel = false): 
   return chunks;
 }
 
-/**
- * Whether the collapsed-chain rendering would produce at least one chain —
- * the same chunking rule `collapseChain` renders with. The chat uses it to
- * decide which line carries the worked-for duration: a chain when one
- * exists, the footer otherwise.
- */
-export function projectionHasChain(projection: Projection): boolean {
-  return projection.segments.some((segment) =>
-    chunkParts(segment.parts, true).some((chunk) => chunk.kind === "machinery"),
-  );
-}
-
-/**
- * Whether the streaming chain is the projection's live edge — the same rule
- * the collapsed rendering uses to put "Working" on a chain trigger. The chat
- * uses it to hand the live line to the chain and silence the footer's copy.
- */
-export function projectionChainStreaming(projection: Projection): boolean {
-  const lastSegment = projection.segments.at(-1);
-  if (lastSegment === undefined) return false;
-  return chunkParts(lastSegment.parts, true).at(-1)?.kind === "machinery";
-}
-
-/** Timestamp at which the machinery burst currently on the live edge began. */
-export function projectionStreamingChainStartedAt(
-  projection: Projection,
-  meta: TimelineMeta,
-): string | undefined {
-  const lastSegment = projection.segments.at(-1);
-  if (lastSegment === undefined) return undefined;
-  const lastChunk = chunkParts(lastSegment.parts, true).at(-1);
-  if (lastChunk?.kind !== "machinery") return undefined;
-  return partsTiming(projection, meta, lastChunk.parts)?.firstAt;
-}
-
 function TimelinePart({
   runId,
   runCreatedAt,
   part,
   meta,
   resolvable,
-  expandOutputs,
   projectionLive,
-  partVocabulary,
   activityByCallId,
 }: {
   runId: string;
@@ -373,9 +276,7 @@ function TimelinePart({
   part: Part;
   meta: TimelineMeta;
   resolvable: boolean;
-  expandOutputs: boolean;
   projectionLive: boolean;
-  partVocabulary: "run" | "chat";
   activityByCallId: ReadonlyMap<string, ActivityPart>;
 }) {
   switch (part.kind) {
@@ -391,13 +292,9 @@ function TimelinePart({
         </ReasoningBlock>
       );
     case "activity":
-      return <ActivityView runId={runId} part={part} expandOutputs={expandOutputs} />;
+      return <ActivityView runId={runId} part={part} />;
     case "steering":
-      return partVocabulary === "chat" ? (
-        <ChatBubble part="steering">{part.text}</ChatBubble>
-      ) : (
-        <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />
-      );
+      return <SteeringView part={part} meta={meta} runCreatedAt={runCreatedAt} />;
     case "elicitation":
       return (
         <ElicitationView
@@ -422,15 +319,7 @@ function TimelinePart({
   }
 }
 
-function ActivityView({
-  runId,
-  part,
-  expandOutputs,
-}: {
-  runId: string;
-  part: ActivityPart;
-  expandOutputs: boolean;
-}) {
+function ActivityView({ runId, part }: { runId: string; part: ActivityPart }) {
   const state: ActivityState | undefined =
     part.result !== undefined
       ? part.result.status === "ok"
@@ -439,8 +328,7 @@ function ActivityView({
       : part.status === "streaming"
         ? "running"
         : undefined;
-  const outputRef =
-    expandOutputs || part.name === "search_web" ? part.result?.outputRef : undefined;
+  const outputRef = part.result?.outputRef;
 
   if (part.name === "search_web") {
     return (

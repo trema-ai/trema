@@ -183,9 +183,7 @@ describe("connector identity UX", () => {
     );
 
     expect(
-      screen.getByText(
-        "Choose the Linear account you want Trema to use for connector calls in your personal chats.",
-      ),
+      screen.getByText("Choose the Linear account you want Trema to use when acting as you."),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Connect Linear" })).toBeTruthy();
     expect(screen.queryByText("Advanced provider access")).toBeNull();
@@ -204,9 +202,7 @@ describe("connector identity UX", () => {
     );
 
     expect(
-      screen.getByText(
-        "Reconnect Acme Linear. Trema will use this account for connector calls in your personal chats.",
-      ),
+      screen.getByText("Reconnect Acme Linear. Trema will use this account when acting as you."),
     ).toBeTruthy();
   });
 

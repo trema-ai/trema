@@ -283,7 +283,7 @@ export function ConnectionsTab({
           (filteredConnections.length > 0 || !filtersActive) ? (
             <ConnectionSection
               title="Your connections"
-              description="Accounts you connected for connector calls in your personal chats."
+              description="Accounts Trema can use when acting as you."
             >
               {filteredConnections.length === 0 ? (
                 <div className="rounded-md border bg-card">
@@ -324,7 +324,7 @@ export function ConnectionsTab({
           {filteredOrganizationInstallations.length > 0 ? (
             <ConnectionSection
               title="Provided by your organization"
-              description="These organization-managed connectors are also available in your personal chats."
+              description="These organization-managed connectors are also available in your personal scope."
             >
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredOrganizationInstallations.map(({ item, body, provider }) => (
@@ -507,7 +507,7 @@ export function PersonalConnectionRow({
       }),
     onSuccess: async () => {
       await onChanged();
-      toast.success(`${provider.displayName} is available in your personal chats`);
+      toast.success(`${provider.displayName} is available in your personal scope`);
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -591,8 +591,8 @@ export function PersonalConnectionRow({
           <AlertDialogHeader>
             <AlertDialogTitle>Disconnect {accountLabel}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Trema will stop using this {provider.displayName} account in your personal chats. You
-              can reconnect it later.
+              Trema will stop using this {provider.displayName} account when acting as you. You can
+              reconnect it later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

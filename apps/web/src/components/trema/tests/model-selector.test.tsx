@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ModelSelector } from "#web/components/trema/model-selector.tsx";
-import { modelSelectionValue, resolveModelSelection } from "#web/lib/model-selection.ts";
+import { modelSelectionValue } from "#web/lib/model-selection.ts";
 
 afterEach(cleanup);
 beforeAll(() => {
@@ -23,13 +23,6 @@ describe("ModelSelector", () => {
     { providerName: "openai", modelId: "gpt-5" },
     { providerName: "anthropic", modelId: "claude-opus" },
   ];
-
-  it("drops a persisted model that is no longer offered", () => {
-    expect(resolveModelSelection(offered[0]!, offered)).toEqual(offered[0]);
-    expect(
-      resolveModelSelection({ providerName: "removed", modelId: "old" }, offered),
-    ).toBeUndefined();
-  });
 
   it("selects a searched model and closes the list", () => {
     const onValueChange = vi.fn();

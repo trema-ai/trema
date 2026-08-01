@@ -11994,6 +11994,224 @@
         ]
       }
     },
+    "/runs": {
+      "get": {
+        "operationId": "runs.list",
+        "summary": "List recent runs",
+        "description": "List the organization's most recent runs the caller may discover. Runs in readable scopes include their source and thread. Another person's personal-scope run appears only as audit metadata to an org admin or owner and stays hidden from everyone else.",
+        "tags": [
+          "Runs"
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "queued",
+                "running",
+                "awaiting_approval",
+                "awaiting_input",
+                "completed",
+                "failed",
+                "cancelled",
+                "stale"
+              ],
+              "type": "string",
+              "description": "Only list runs in this lifecycle state."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "trigger",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "message",
+                "api",
+                "schedule",
+                "retry",
+                "resume"
+              ],
+              "type": "string",
+              "description": "Only list runs started by this trigger."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100,
+              "description": "How many of the organization's most recent matching runs to consider. Defaults to 100."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "access": {
+                                "const": "full",
+                                "description": "The caller may open the run's content."
+                              },
+                              "id": {
+                                "type": "string",
+                                "description": "The run's unique ID."
+                              },
+                              "state": {
+                                "enum": [
+                                  "queued",
+                                  "running",
+                                  "awaiting_approval",
+                                  "awaiting_input",
+                                  "completed",
+                                  "failed",
+                                  "cancelled",
+                                  "stale"
+                                ],
+                                "type": "string",
+                                "description": "Where the run is in its lifecycle."
+                              },
+                              "trigger": {
+                                "enum": [
+                                  "message",
+                                  "api",
+                                  "schedule",
+                                  "retry",
+                                  "resume"
+                                ],
+                                "type": "string",
+                                "description": "Why the run exists."
+                              },
+                              "threadRef": {
+                                "type": "string",
+                                "description": "The thread the run serializes against."
+                              },
+                              "surface": {
+                                "type": "string",
+                                "description": "The integration surface the run's session belongs to."
+                              },
+                              "locationRef": {
+                                "type": "string",
+                                "description": "The surface-specific location the session was opened at."
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "description": "When the run was created. An ISO 8601 date-time."
+                              },
+                              "updatedAt": {
+                                "type": "string",
+                                "description": "When the run last changed. An ISO 8601 date-time."
+                              }
+                            },
+                            "required": [
+                              "access",
+                              "id",
+                              "state",
+                              "trigger",
+                              "threadRef",
+                              "surface",
+                              "locationRef",
+                              "createdAt",
+                              "updatedAt"
+                            ],
+                            "description": "One recent run whose content the caller may read."
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "access": {
+                                "const": "metadata",
+                                "description": "The caller sees that the run happened, never its content."
+                              },
+                              "id": {
+                                "type": "string",
+                                "description": "The run's unique ID."
+                              },
+                              "state": {
+                                "enum": [
+                                  "queued",
+                                  "running",
+                                  "awaiting_approval",
+                                  "awaiting_input",
+                                  "completed",
+                                  "failed",
+                                  "cancelled",
+                                  "stale"
+                                ],
+                                "type": "string",
+                                "description": "Where the run is in its lifecycle."
+                              },
+                              "trigger": {
+                                "enum": [
+                                  "message",
+                                  "api",
+                                  "schedule",
+                                  "retry",
+                                  "resume"
+                                ],
+                                "type": "string",
+                                "description": "Why the run exists."
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "description": "When the run was created. An ISO 8601 date-time."
+                              },
+                              "updatedAt": {
+                                "type": "string",
+                                "description": "When the run last changed. An ISO 8601 date-time."
+                              }
+                            },
+                            "required": [
+                              "access",
+                              "id",
+                              "state",
+                              "trigger",
+                              "createdAt",
+                              "updatedAt"
+                            ],
+                            "description": "One recent personal-scope run visible only as audit metadata."
+                          }
+                        ]
+                      },
+                      "description": "The recent runs the caller may discover, newest first."
+                    }
+                  },
+                  "required": [
+                    "runs"
+                  ],
+                  "description": "The caller's recent-run index."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
     "/runs/{id}": {
       "get": {
         "operationId": "runs.get",

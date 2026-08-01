@@ -37,6 +37,10 @@ const OPENING_EVENT_WINDOW = 50;
 export const THREAD_RUN_LIST_SIZE = 100;
 /** The largest thread list served. */
 export const THREAD_RUN_LIST_LIMIT = 200;
+/** Default number of recent runs the console lists. */
+export const RUN_LIST_SIZE = 100;
+/** The largest recent-run list served. */
+export const RUN_LIST_LIMIT = 200;
 
 const runStateSchema = z
   .enum([
@@ -128,6 +132,35 @@ const metadataRunSchema = z
   })
   .describe("The audit view of a run in someone else's personal scope.");
 
+const fullRunSummarySchema = z
+  .object({
+    access: z.literal("full").describe("The caller may open the run's content."),
+    id: z.string().describe("The run's unique ID."),
+    state: runStateSchema,
+    trigger: runTriggerSchema,
+    threadRef: z.string().describe("The thread the run serializes against."),
+    surface: z.string().describe("The integration surface the run's session belongs to."),
+    locationRef: z.string().describe("The surface-specific location the session was opened at."),
+    createdAt: z.string().describe("When the run was created. An ISO 8601 date-time."),
+    updatedAt: z.string().describe("When the run last changed. An ISO 8601 date-time."),
+  })
+  .describe("One recent run whose content the caller may read.");
+
+const metadataRunSummarySchema = z
+  .object({
+    access: z
+      .literal("metadata")
+      .describe("The caller sees that the run happened, never its content."),
+    id: z.string().describe("The run's unique ID."),
+    state: runStateSchema,
+    trigger: runTriggerSchema,
+    createdAt: z.string().describe("When the run was created. An ISO 8601 date-time."),
+    updatedAt: z.string().describe("When the run last changed. An ISO 8601 date-time."),
+  })
+  .describe("One recent personal-scope run visible only as audit metadata.");
+
+type RunSummary = z.infer<typeof fullRunSummarySchema> | z.infer<typeof metadataRunSummarySchema>;
+
 /**
  * The one refusal for a run the caller may not read, byte-identical to a run
  * that does not exist: a distinct refusal would disclose that another
@@ -152,6 +185,87 @@ function metadataView(run: AgentRun) {
 function messageText(message: TranscriptMessage): string {
   return message.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 }
+
+const list = orgScoped
+  .route({
+    method: "GET",
+    path: "/runs",
+    summary: "List recent runs",
+    description:
+      "List the organization's most recent runs the caller may discover. Runs in readable scopes include their source and thread. Another person's personal-scope run appears only as audit metadata to an org admin or owner and stays hidden from everyone else.",
+    tags: ["Runs"],
+  })
+  .input(
+    z.object({
+      state: runStateSchema.optional().describe("Only list runs in this lifecycle state."),
+      trigger: runTriggerSchema.optional().describe("Only list runs started by this trigger."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(RUN_LIST_LIMIT)
+        .default(RUN_LIST_SIZE)
+        .describe(
+          `How many of the organization's most recent matching runs to consider. Defaults to ${RUN_LIST_SIZE}.`,
+        ),
+    }),
+  )
+  .output(
+    z
+      .object({
+        runs: z
+          .array(z.discriminatedUnion("access", [fullRunSummarySchema, metadataRunSummarySchema]))
+          .describe("The recent runs the caller may discover, newest first."),
+      })
+      .describe("The caller's recent-run index."),
+  )
+  .handler(async ({ context, input }) => {
+    const rows = await context.db.agentRun.findMany({
+      where: {
+        orgId: context.org.id,
+        ...(input.state === undefined ? {} : { state: input.state }),
+        ...(input.trigger === undefined ? {} : { trigger: input.trigger }),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: input.limit,
+    });
+    const verdicts = await resolveRunsAccess({
+      db: context.db,
+      orgId: context.org.id,
+      principal: context.principal,
+      runs: rows,
+    });
+
+    const runs: RunSummary[] = [];
+    for (const verdict of verdicts) {
+      if (verdict.access === "none") continue;
+      const summary = metadataView(verdict.run);
+      if (verdict.access === "metadata") {
+        runs.push({
+          access: "metadata",
+          id: summary.id,
+          state: summary.state,
+          trigger: summary.trigger,
+          createdAt: summary.createdAt,
+          updatedAt: summary.updatedAt,
+        });
+        continue;
+      }
+      if (verdict.session === null) continue;
+      runs.push({
+        access: "full",
+        id: summary.id,
+        state: summary.state,
+        trigger: summary.trigger,
+        threadRef: verdict.run.threadRef,
+        surface: verdict.session.surface,
+        locationRef: verdict.session.locationRef,
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+      });
+    }
+    return { runs };
+  });
 
 /** The distinct tool names a run's log records, in first-call order. */
 async function distinctToolNames(db: Database, orgId: string, runId: string): Promise<string[]> {
@@ -565,4 +679,4 @@ const listByThread = orgScoped
     return { runs };
   });
 
-export const runsRouter = { get, events, output, listByThread };
+export const runsRouter = { list, get, events, output, listByThread };

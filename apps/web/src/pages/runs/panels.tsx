@@ -102,19 +102,10 @@ export function UsagePanel({
 }
 
 /**
- * Where this run sits on its thread, with prev/next hops: a conversation is
- * usually many runs, and debugging follows the thread.
+ * Where this run sits on its thread, with prev/next hops. A thread usually
+ * holds many runs, and debugging follows their order.
  */
-export function ThreadPanel({
-  runId,
-  threadRef,
-  surface,
-}: {
-  runId: string;
-  threadRef: string;
-  /** The run's surface; a web run links back to its chat thread. */
-  surface?: string;
-}) {
+export function ThreadPanel({ runId, threadRef }: { runId: string; threadRef: string }) {
   // The API caps this read at 200 runs; past that the current run can fall
   // outside the page and navigation degrades to the thread id alone. Precise
   // neighbors for arbitrarily long threads need a dedicated read.
@@ -126,15 +117,6 @@ export function ThreadPanel({
   return (
     <Panel title="Thread">
       <KeyValueList items={[{ label: "Thread", value: <IdChip id={threadRef} /> }]} />
-      {/* The back-link to a web thread is its URL, derived from the ref —
-          never a persisted realization ref (web 06). */}
-      {surface === "web" && (
-        <p className="mt-2 text-meta">
-          <Link to={`/chat/${threadRef}`} className="text-moss hover:underline">
-            Open in chat
-          </Link>
-        </p>
-      )}
       {position >= 0 && (
         <p className="mt-2 text-meta text-muted-foreground">
           Run {position + 1} of {runs.length} on this thread
