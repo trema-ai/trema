@@ -501,6 +501,7 @@ const listedInstallationSchema = z.object({
         .optional(),
     }),
   ),
+  health: z.enum(["available", "setup_required"]),
   status: z.enum(["proposed", "active", "archived"]),
   updatedAt: z.string(),
 });
@@ -956,9 +957,9 @@ const memberListInstallationHealth = orgScoped
   .route({
     method: "GET",
     path: "/member/connector-installations/health",
-    summary: "List organization connector health for members",
+    summary: "List connector installation health for members",
     description:
-      "List safe connection availability for organization connectors visible in personal settings.",
+      "List safe installation availability for the caller's personal and organization connectors.",
     tags: ["Connectors"],
   })
   .output(
@@ -970,19 +971,36 @@ const memberListInstallationHealth = orgScoped
     ),
   )
   .handler(async ({ context }) => {
-    const orgScope = await context.db.scope.findFirst({
-      where: { orgId: context.org.id, kind: "org" },
-      select: { id: true },
+    const scopes = await context.db.scope.findMany({
+      where: {
+        orgId: context.org.id,
+        OR: [
+          { kind: { in: ["org", "shared"] } },
+          { kind: "personal", ownerId: context.principal.id },
+        ],
+      },
+      select: { id: true, kind: true },
+      orderBy: [{ kind: "asc" }, { id: "asc" }],
     });
+    const orgScope = scopes.find((scope) => scope.kind === "org");
     if (!orgScope) {
       throw new ORPCError("NOT_FOUND", { message: "Organization scope not found" });
     }
     if (!(await authorize(context.principal, "read", orgScope.id, context.db))) {
       throw new ORPCError("FORBIDDEN", { message: "Capability required: read" });
     }
+    const readable = await Promise.all(
+      scopes.map(async (scope) => ({
+        ...scope,
+        canRead:
+          scope.id === orgScope.id ||
+          (await authorize(context.principal, "read", scope.id, context.db)),
+      })),
+    );
+    const scopeIds = readable.filter((scope) => scope.canRead).map((scope) => scope.id);
     return listConnectorInstallationHealth(context.db, {
       orgId: context.org.id,
-      scopeId: orgScope.id,
+      scopeIds,
       ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
         ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
         : {}),

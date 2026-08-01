@@ -3442,6 +3442,13 @@
                           ]
                         }
                       },
+                      "health": {
+                        "enum": [
+                          "available",
+                          "setup_required"
+                        ],
+                        "type": "string"
+                      },
                       "status": {
                         "enum": [
                           "proposed",
@@ -3462,6 +3469,7 @@
                       "access",
                       "enabledTools",
                       "syncedTools",
+                      "health",
                       "status",
                       "updatedAt"
                     ]
@@ -5533,8 +5541,8 @@
     "/member/connector-installations/health": {
       "get": {
         "operationId": "connectors.member.installations.health",
-        "summary": "List organization connector health for members",
-        "description": "List safe connection availability for organization connectors visible in personal settings.",
+        "summary": "List connector installation health for members",
+        "description": "List safe installation availability for the caller's personal and organization connectors.",
         "tags": [
           "Connectors"
         ],

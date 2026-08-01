@@ -297,18 +297,20 @@ export function ConnectionsTab({
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {filteredConnections.map((connection) => {
                     const provider = entryByKey.get(connection.providerKey);
-                    const installationBody = installations.find(
-                      ({ body }) =>
-                        body.catalogKey === connection.providerKey &&
-                        body.connectionId === connection.id,
-                    )?.body;
+                    const personalInstallation = connection.installations.find(
+                      (installation) => installation.scopeId === scope.id,
+                    );
                     return provider ? (
                       <PersonalConnectionRow
                         key={connection.id}
                         provider={provider}
                         connection={connection}
                         personalScopeId={scope.id}
-                        installationBody={installationBody}
+                        installationHealth={
+                          personalInstallation
+                            ? healthByInstallationId.get(personalInstallation.id)
+                            : undefined
+                        }
                         onReconnect={() => setSelection({ provider, reconnect: connection })}
                         onChanged={invalidateConnections}
                       />
@@ -484,14 +486,14 @@ export function PersonalConnectionRow({
   provider,
   connection,
   personalScopeId,
-  installationBody,
+  installationHealth,
   onReconnect,
   onChanged,
 }: {
   provider: CatalogProvider;
   connection: ConnectorConnection;
   personalScopeId: string;
-  installationBody?: ConnectorBody | undefined;
+  installationHealth: ConnectorInstallationHealth["status"] | undefined;
   onReconnect: () => void;
   onChanged: () => Promise<void>;
 }) {
@@ -522,15 +524,7 @@ export function PersonalConnectionRow({
   const isInstalled = connection.installations.some(
     (installation) => installation.scopeId === personalScopeId,
   );
-  const installationReady =
-    provider.transport.type !== "mcp" ||
-    (installationBody !== undefined &&
-      installationBody.syncedTools !== undefined &&
-      (installationBody.enabledTools === "all"
-        ? installationBody.syncedTools.length > 0
-        : installationBody.enabledTools.some((name) =>
-            installationBody.syncedTools?.some((tool) => tool.name === name),
-          )));
+  const installationReady = installationHealth === "available";
   const needsSetup = !isInstalled || !installationReady;
   const statusLabel =
     connection.isValid && needsSetup

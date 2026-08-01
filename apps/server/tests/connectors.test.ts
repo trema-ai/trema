@@ -350,7 +350,7 @@ integration("connector connection flows", () => {
     await expect(
       listConnectorInstallationHealth(db, {
         orgId: org.org.id,
-        scopeId: org.orgScope.id,
+        scopeIds: [org.orgScope.id],
         masterKey,
         now,
       }),
@@ -609,6 +609,62 @@ integration("connector connection flows", () => {
       },
     });
     expect(clientFactory).toHaveBeenCalledOnce();
+  });
+
+  it("reports and repairs a stale personal REST installation", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "REST Repair Member");
+    const connection = await storedConnection(org.org.id, member.principal.id);
+    const installation = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: member.personalScope.id,
+        kind: "connector",
+        title: githubProvider.displayName,
+        body: {
+          catalogKey: githubProvider.key,
+          connectionId: connection.id,
+          access: { kind: "minimum_role", role: "member" },
+          enabledTools: ["removed_legacy_tool"],
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: member.principal.id,
+      },
+    });
+
+    await expect(
+      call(connectorsRouter.member.installations.health, {}, { context: member.context }),
+    ).resolves.toEqual([]);
+    await expect(
+      call(connectorsRouter.member.connections.list, {}, { context: member.context }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: connection.id,
+        installations: [{ id: installation.id, scopeId: member.personalScope.id }],
+      }),
+    ]);
+
+    await expect(
+      call(
+        connectorsRouter.member.installations.create,
+        {
+          scopeId: member.personalScope.id,
+          catalogKey: githubProvider.key,
+          connectionId: connection.id,
+        },
+        { context: member.context },
+      ),
+    ).resolves.toMatchObject({
+      id: installation.id,
+      body: {
+        access: { kind: "minimum_role", role: "member" },
+        enabledTools: "all",
+      },
+    });
+    await expect(
+      call(connectorsRouter.member.installations.health, {}, { context: member.context }),
+    ).resolves.toEqual([{ installationItemId: installation.id, status: "available" }]);
   });
 
   it("reports organization installation health without exposing connection metadata", async () => {

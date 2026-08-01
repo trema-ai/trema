@@ -227,7 +227,10 @@ function providerStatus(row: ProviderRow) {
   if (row.needsSetup) return "setup";
   const active = row.connections.filter((connection) => !connection.isRevoked);
   if (active.length === 0) return "disconnected";
-  return active.every((connection) => connection.isValid) ? "healthy" : "attention";
+  return active.every((connection) => connection.isValid) &&
+    row.installations.every((installation) => installation.health === "available")
+    ? "healthy"
+    : "attention";
 }
 
 function CatalogSection({
@@ -258,7 +261,7 @@ function CatalogSection({
 export function ProviderCard({ row, onOpen }: { row: ProviderRow; onOpen: () => void }) {
   const { provider } = row;
   const active = row.connections.filter((connection) => !connection.isRevoked);
-  const healthy = active.length > 0 && active.every((connection) => connection.isValid);
+  const healthy = providerStatus(row) === "healthy";
   return (
     <ConnectorCard
       provider={provider}

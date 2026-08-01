@@ -1163,6 +1163,7 @@ integration("connector connections and installations", () => {
           },
           { name: "write_page" },
         ],
+        health: "available",
         status: "active",
         updatedAt: expect.anything(),
       },

@@ -76,6 +76,7 @@ describe("connector identity UX", () => {
         provider={provider}
         connection={connection}
         personalScopeId="personal-1"
+        installationHealth="available"
         onReconnect={vi.fn()}
         onChanged={vi.fn()}
       />,
@@ -93,6 +94,7 @@ describe("connector identity UX", () => {
         provider={provider}
         connection={{ ...connection, installations: [] }}
         personalScopeId="personal-1"
+        installationHealth={undefined}
         onReconnect={vi.fn()}
         onChanged={vi.fn()}
       />,
@@ -109,12 +111,7 @@ describe("connector identity UX", () => {
         provider={{ ...provider, transport: { type: "mcp" } }}
         connection={connection}
         personalScopeId="personal-1"
-        installationBody={{
-          catalogKey: "linear",
-          connectionId: connection.id,
-          access: { kind: "scope" },
-          enabledTools: "all",
-        }}
+        installationHealth="setup_required"
         onReconnect={vi.fn()}
         onChanged={vi.fn()}
       />,
@@ -123,6 +120,22 @@ describe("connector identity UX", () => {
     expect(screen.getByText("Setup needed")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry setup" })).toBeTruthy();
     expect(document.querySelector('[data-status="missing"]')).toBeTruthy();
+  });
+
+  it("offers a REST setup retry when server validation rejects the installed body", () => {
+    renderWithQuery(
+      <PersonalConnectionRow
+        provider={provider}
+        connection={connection}
+        personalScopeId="personal-1"
+        installationHealth={undefined}
+        onReconnect={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Setup needed")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry setup" })).toBeTruthy();
   });
 
   it("identifies an inherited connector as organization-provided", () => {
@@ -216,6 +229,32 @@ describe("connector identity UX", () => {
     expect(screen.queryByText(/Credential:/)).toBeNull();
     expect(screen.queryByText(/Available in:/)).toBeNull();
     expect(document.querySelector('[data-slot="connector-card"]')).toBeTruthy();
+  });
+
+  it("marks a provider unhealthy when an MCP installation needs setup", () => {
+    const row: ProviderRow = {
+      provider: { ...provider, transport: { type: "mcp" } },
+      connections: [connection],
+      installations: [
+        {
+          id: "installation-1",
+          scopeId: "org-1",
+          catalogKey: provider.key,
+          connectionId: connection.id,
+          access: { kind: "scope" },
+          enabledTools: "all",
+          syncedTools: [],
+          health: "setup_required",
+          status: "active",
+          updatedAt: "2026-07-31T12:00:00.000Z",
+        },
+      ],
+      needsSetup: false,
+    };
+    render(<ProviderCard row={row} onOpen={vi.fn()} />);
+
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+    expect(screen.queryByText("Healthy")).toBeNull();
   });
 
   it("replaces the disconnected status with a connect action", () => {

@@ -71,6 +71,7 @@ export type ConnectorInstallation = {
     description?: string;
     annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
   }>;
+  health: "available" | "setup_required";
   status: "proposed" | "active" | "archived";
   updatedAt: string;
 };
