@@ -23,16 +23,16 @@ const AutomationsPage = lazy(() =>
 const BootstrapPage = lazy(() =>
   import("#web/pages/bootstrap.tsx").then((m) => ({ default: m.BootstrapPage })),
 );
-const ChatPage = lazy(() =>
-  import("#web/pages/chat/index.tsx").then((m) => ({ default: m.ChatPage })),
-);
 const CustomizePage = lazy(() =>
   import("#web/pages/customize/index.tsx").then((m) => ({ default: m.CustomizePage })),
 );
 const Gallery = lazy(() => import("#web/pages/gallery.tsx").then((m) => ({ default: m.Gallery })));
 const JoinPage = lazy(() => import("#web/pages/join.tsx").then((m) => ({ default: m.JoinPage })));
 const RunPage = lazy(() =>
-  import("#web/pages/runs/index.tsx").then((m) => ({ default: m.RunPage })),
+  import("#web/pages/runs/detail.tsx").then((m) => ({ default: m.RunPage })),
+);
+const RunsPage = lazy(() =>
+  import("#web/pages/runs/index.tsx").then((m) => ({ default: m.RunsPage })),
 );
 const ScopesPage = lazy(() =>
   import("#web/pages/scopes.tsx").then((m) => ({ default: m.ScopesPage })),
@@ -155,6 +155,7 @@ function AppRoutes() {
         <Route path="/join" element={<JoinPage />} />
         <Route path="/gallery" element={shell(<Gallery />)} />
         <Route path="/automations" element={shell(<AutomationsPage />)} />
+        <Route path="/runs" element={shell(<RunsPage />)} />
         <Route path="/runs/:id" element={shell(<RunPage />)} />
         <Route path="/customize" element={shell(<CustomizePage />)} />
         <Route path="/context" element={<Navigate to="/customize" replace />} />
@@ -184,10 +185,8 @@ function AppRoutes() {
           element={settings(<SettingsModelProviderPage />, true)}
         />
         <Route path="/settings/*" element={settings(<Navigate to="/settings/profile" replace />)} />
-        {/* The chat is the main view: `/` is a new chat, each thread a URL. */}
-        <Route path="/" element={shell(<ChatPage />)} />
-        <Route path="/chat/:threadRef" element={shell(<ChatPage />)} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/" element={<Navigate to="/runs" replace />} />
+        <Route path="*" element={<Navigate to="/runs" replace />} />
       </Routes>
     </Suspense>
   );

@@ -421,8 +421,7 @@ function ScopePolicy({ scope, scopeNames }: { scope: Scope; scopeNames: Map<stri
           </div>
         </div>
         <p className="mt-2 text-meta text-muted-foreground">
-          Changes apply to new conversations. Anything already running keeps the rules it started
-          with.
+          Changes apply to new runs. Anything already running keeps the rules it started with.
         </p>
       </section>
 

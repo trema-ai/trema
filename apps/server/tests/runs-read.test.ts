@@ -111,14 +111,24 @@ integration("run reads", () => {
     sessionId: string;
     threadRef: string;
     createdAt?: Date;
+    state?:
+      | "queued"
+      | "running"
+      | "awaiting_approval"
+      | "awaiting_input"
+      | "completed"
+      | "failed"
+      | "cancelled"
+      | "stale";
+    trigger?: "message" | "api" | "schedule" | "retry" | "resume";
   }) {
     return db.agentRun.create({
       data: {
         id: `run-${randomUUID()}`,
         orgId: options.orgId,
         threadRef: options.threadRef,
-        state: "completed",
-        trigger: "message",
+        state: options.state ?? "completed",
+        trigger: options.trigger ?? "message",
         sessionId: options.sessionId,
         ...(options.createdAt === undefined ? {} : { createdAt: options.createdAt }),
       },
@@ -157,6 +167,166 @@ integration("run reads", () => {
     });
     return { org, alice, bob, scope, session, run };
   }
+
+  describe("GET /runs", () => {
+    it("backs the recent-run ordering with a composite database index", async () => {
+      const indexes = await db.$queryRaw<Array<{ indexdef: string }>>`
+        SELECT indexdef
+        FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND tablename = 'AgentRun'
+          AND indexname = 'AgentRun_orgId_createdAt_id_idx'
+      `;
+
+      expect(indexes).toHaveLength(1);
+      expect(indexes[0]?.indexdef).toContain('("orgId", "createdAt", id)');
+    });
+
+    it("lists discoverable runs newest first at the caller's permitted depth", async () => {
+      const { org, alice, bob, session, run } = await setup();
+      const newer = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 1000),
+        state: "running",
+        trigger: "api",
+      });
+
+      const owned = await call(runsRouter.list, {}, { context: alice.context });
+      expect(owned.runs).toEqual([
+        expect.objectContaining({
+          access: "full",
+          id: newer.id,
+          surface: "web",
+          locationRef: "member-1",
+        }),
+        expect.objectContaining({ access: "full", id: run.id }),
+      ]);
+
+      const audited = await call(runsRouter.list, {}, { context: org.context });
+      expect(audited.runs).toEqual([
+        expect.objectContaining({ access: "metadata", id: newer.id }),
+        expect.objectContaining({ access: "metadata", id: run.id }),
+      ]);
+      expect(audited.runs[0]).not.toHaveProperty("surface");
+      expect(audited.runs[0]).not.toHaveProperty("threadRef");
+
+      const hidden = await call(runsRouter.list, {}, { context: bob.context });
+      expect(hidden).toEqual({ runs: [], nextCursor: null });
+    });
+
+    it("filters the recent index by state and trigger", async () => {
+      const { org, alice, session, run } = await setup();
+      const running = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 1000),
+        state: "running",
+        trigger: "api",
+      });
+
+      const listed = await call(
+        runsRouter.list,
+        { state: "running", trigger: "api" },
+        { context: alice.context },
+      );
+
+      expect(listed.runs.map(({ id }) => id)).toEqual([running.id]);
+    });
+
+    it("pages through visible runs with no duplicates", async () => {
+      const { org, alice, session, run } = await setup();
+      const middle = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 1000),
+      });
+      const newest = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 2000),
+      });
+
+      const first = await call(runsRouter.list, { limit: 2 }, { context: alice.context });
+      expect(first.runs.map(({ id }) => id)).toEqual([newest.id, middle.id]);
+      expect(first.nextCursor).toBe(middle.id);
+
+      const second = await call(
+        runsRouter.list,
+        { limit: 2, cursor: first.nextCursor ?? undefined },
+        { context: alice.context },
+      );
+      expect(second.runs.map(({ id }) => id)).toEqual([run.id]);
+      expect(second.nextCursor).toBeNull();
+    });
+
+    it("rejects a cursor for a run the caller cannot discover", async () => {
+      const { bob, run } = await setup();
+
+      await expect(
+        call(runsRouter.list, { cursor: run.id }, { context: bob.context }),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    });
+
+    it("keeps a state-filtered cursor valid when its run changes state", async () => {
+      const { org, alice, session, run } = await setup();
+      const older = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 1000),
+        state: "running",
+      });
+      const boundary = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 2000),
+        state: "running",
+      });
+
+      const first = await call(
+        runsRouter.list,
+        { state: "running", limit: 1 },
+        { context: alice.context },
+      );
+      expect(first.runs.map(({ id }) => id)).toEqual([boundary.id]);
+      expect(first.nextCursor).toBe(boundary.id);
+
+      await db.agentRun.update({
+        where: { orgId_id: { orgId: org.org.id, id: boundary.id } },
+        data: { state: "completed" },
+      });
+
+      const second = await call(
+        runsRouter.list,
+        { state: "running", limit: 1, cursor: boundary.id },
+        { context: alice.context },
+      );
+      expect(second.runs.map(({ id }) => id)).toEqual([older.id]);
+      expect(second.nextCursor).toBeNull();
+    });
+
+    it("applies the limit after removing runs the caller cannot discover", async () => {
+      const { org, bob, run } = await setup();
+      const scope = await personalScope(org.org.id, bob.principal);
+      const session = await openSession(org.org.id, scope.id, org.agent);
+      const visible = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:bob",
+        createdAt: new Date(run.createdAt.getTime() - 1000),
+      });
+
+      const listed = await call(runsRouter.list, { limit: 1 }, { context: bob.context });
+
+      expect(listed.runs.map(({ id }) => id)).toEqual([visible.id]);
+    });
+  });
 
   describe("GET /runs/{id}", () => {
     it("gives the owner the full record: grant snapshot and queued input included", async () => {

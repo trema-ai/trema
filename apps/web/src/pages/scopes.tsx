@@ -552,8 +552,8 @@ function NewBindingDialog({
 }) {
   const queryClient = useQueryClient();
   const surfaces = useQuery(orpc.surfaces.list.queryOptions());
-  // Web chat resolves implicitly, while Slack has an installation-aware
-  // binding flow under Messaging. Neither belongs in this generic dialog.
+  // Only bindable integrations appear here. Slack uses the installation-aware
+  // binding flow under Messaging instead of this generic dialog.
   const availableSurfaces = useMemo(
     () =>
       ((surfaces.data ?? []) as Surface[]).filter(
