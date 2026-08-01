@@ -58,6 +58,8 @@ interface SlackStreamResponse {
 }
 
 const SLACK_SECTION_TEXT_LIMIT = 3_000;
+const SLACK_MRKDWN_TOKEN =
+  /```[\s\S]*?```|`[^`\n]*`|<[^>\n]+>|\*(?=\S)[^*\n]*\S\*|_(?=\S)[^_\n]*\S_|~(?=\S)[^~\n]*\S~/gu;
 
 export class SlackDriver implements SurfaceRenderDriver {
   readonly capabilities = slackCapabilities;
@@ -151,7 +153,7 @@ export class SlackDriver implements SurfaceRenderDriver {
         text: realized.text,
         token: this.#options.token,
         ts: messageRef,
-        ...(realized.blocks === undefined ? {} : { blocks: realized.blocks }),
+        blocks: realized.blocks ?? [],
         ...(this.#options.apiUrl === undefined ? {} : { apiUrl: this.#options.apiUrl }),
         fetch: request,
       }),
@@ -261,14 +263,7 @@ function realizeMessage(content: MessageContent): RealizedMessage {
 }
 
 function slackMarkdownSections(text: string): unknown[] {
-  const characters = Array.from(text);
-  const blocks: unknown[] = [];
-  for (let offset = 0; offset < characters.length; offset += SLACK_SECTION_TEXT_LIMIT) {
-    blocks.push(
-      slackMarkdownSection(characters.slice(offset, offset + SLACK_SECTION_TEXT_LIMIT).join("")),
-    );
-  }
-  return blocks;
+  return splitSlackMrkdwn(text).map(slackMarkdownSection);
 }
 
 function slackMarkdownSection(text: string): unknown {
@@ -277,20 +272,92 @@ function slackMarkdownSection(text: string): unknown {
 
 function realizeElicitation(elicitation: ElicitationContent): unknown[] {
   const prompt = toSlackMrkdwn(elicitation.prompt);
-  const characters = Array.from(prompt);
-  const firstPrompt = characters.slice(0, SLACK_SECTION_TEXT_LIMIT).join("");
+  const [firstPrompt = "", ...remainingPrompt] = splitSlackMrkdwn(prompt);
   const generated = inputRequestToSlackBlocks({
     prompt: firstPrompt,
     requestId: elicitation.id,
     options: elicitation.options,
   });
   const promptBlock = generated[0];
-  if (promptBlock === undefined || characters.length <= SLACK_SECTION_TEXT_LIMIT) return generated;
-  return [
-    promptBlock,
-    ...slackMarkdownSections(characters.slice(SLACK_SECTION_TEXT_LIMIT).join("")),
-    ...generated.slice(1),
-  ];
+  if (promptBlock === undefined || remainingPrompt.length === 0) return generated;
+  return [promptBlock, ...remainingPrompt.map(slackMarkdownSection), ...generated.slice(1)];
+}
+
+function splitSlackMrkdwn(text: string, limit = SLACK_SECTION_TEXT_LIMIT): string[] {
+  const sections: string[] = [];
+  let current = "";
+  let currentLength = 0;
+
+  const flush = (): void => {
+    if (currentLength === 0) return;
+    sections.push(current);
+    current = "";
+    currentLength = 0;
+  };
+  const appendPlain = (plain: string): void => {
+    for (const character of plain) {
+      if (currentLength === limit) flush();
+      current += character;
+      currentLength += 1;
+    }
+  };
+  const appendToken = (token: string): void => {
+    const tokenLength = Array.from(token).length;
+    if (tokenLength > limit) {
+      flush();
+      sections.push(...splitOversizedSlackToken(token, limit));
+      return;
+    }
+    if (currentLength + tokenLength > limit) flush();
+    current += token;
+    currentLength += tokenLength;
+  };
+
+  let offset = 0;
+  for (const match of text.matchAll(SLACK_MRKDWN_TOKEN)) {
+    const index = match.index;
+    appendPlain(text.slice(offset, index));
+    appendToken(match[0]);
+    offset = index + match[0].length;
+  }
+  appendPlain(text.slice(offset));
+  flush();
+  return sections;
+}
+
+function splitOversizedSlackToken(token: string, limit: number): string[] {
+  const delimiter = slackTokenDelimiter(token);
+  if (delimiter === undefined)
+    return splitSlackPlainText(escapeSlackControlCharacters(token), limit);
+
+  const delimiterLength = Array.from(delimiter).length;
+  const contentLimit = limit - delimiterLength * 2;
+  if (contentLimit < 1) return splitSlackPlainText(token, limit);
+  const content = token.slice(delimiter.length, -delimiter.length);
+  return splitSlackMrkdwn(content, contentLimit).map(
+    (section) => `${delimiter}${section}${delimiter}`,
+  );
+}
+
+function slackTokenDelimiter(token: string): string | undefined {
+  if (token.startsWith("```") && token.endsWith("```")) return "```";
+  const delimiter = token[0];
+  return delimiter !== undefined && "`*_~".includes(delimiter) && token.endsWith(delimiter)
+    ? delimiter
+    : undefined;
+}
+
+function escapeSlackControlCharacters(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function splitSlackPlainText(text: string, limit: number): string[] {
+  const characters = Array.from(text);
+  const sections: string[] = [];
+  for (let offset = 0; offset < characters.length; offset += limit) {
+    sections.push(characters.slice(offset, offset + limit).join(""));
+  }
+  return sections;
 }
 
 function toSlackMrkdwn(markdown: string): string {

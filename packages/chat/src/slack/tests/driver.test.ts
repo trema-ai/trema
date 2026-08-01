@@ -135,6 +135,7 @@ describe("SlackDriver", () => {
     expect(slack.calls[0]?.method).toBe("chat.update");
     expect(params.get("ts")).toBe("1800000001.000001");
     expect(params.get("text")).toBe("*Complete*");
+    expect(params.get("blocks")).toBe("[]");
   });
 
   it("splits elicitation content across Slack-sized section blocks", async () => {
@@ -165,6 +166,41 @@ describe("SlackDriver", () => {
     }>;
     expect(blocks.slice(0, 4).map((block) => Array.from(block.text?.text ?? "").length)).toEqual([
       3_000, 1, 3_000, 1,
+    ]);
+    expect(blocks[4]?.type).toBe("actions");
+  });
+
+  it("keeps mrkdwn tokens intact across Slack section boundaries", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+
+    await driver({ fetch: slack.fetch }).apply(
+      [
+        {
+          type: "post",
+          operationId: "op-token-boundary",
+          content: {
+            markdown: `${"a".repeat(2_998)} @U2`,
+            elicitation: {
+              id: "approval-token-boundary",
+              prompt: `${"p".repeat(2_999)}**Deploy**`,
+              options: [{ id: "continue", label: "Continue", style: "primary" }],
+            },
+          },
+        },
+      ],
+      surface,
+    );
+
+    const params = new URLSearchParams(slack.calls[0]?.body);
+    const blocks = JSON.parse(params.get("blocks") ?? "[]") as Array<{
+      text?: { text: string; type: string };
+      type: string;
+    }>;
+    expect(blocks.slice(0, 4).map((block) => block.text?.text)).toEqual([
+      `${"a".repeat(2_998)} `,
+      "<@U2>",
+      "p".repeat(2_999),
+      "*Deploy*",
     ]);
     expect(blocks[4]?.type).toBe("actions");
   });
