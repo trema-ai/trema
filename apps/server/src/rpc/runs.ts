@@ -192,7 +192,7 @@ const list = orgScoped
     path: "/runs",
     summary: "List recent runs",
     description:
-      "List the organization's most recent runs the caller may discover. Runs in readable scopes include their source and thread. Another person's personal-scope run appears only as audit metadata to an org admin or owner and stays hidden from everyone else.",
+      "List the organization's most recent runs the caller may discover. Pass the returned cursor to read the next page. Runs in readable scopes include their source and thread. Another person's personal-scope run appears only as audit metadata to an org admin or owner and stays hidden from everyone else.",
     tags: ["Runs"],
   })
   .input(
@@ -206,6 +206,12 @@ const list = orgScoped
         .max(RUN_LIST_LIMIT)
         .default(RUN_LIST_SIZE)
         .describe(`How many visible matching runs to return. Defaults to ${RUN_LIST_SIZE}.`),
+      cursor: z
+        .string()
+        .trim()
+        .min(1)
+        .optional()
+        .describe("The `nextCursor` of the previous page. Omit for the first page."),
     }),
   )
   .output(
@@ -214,15 +220,36 @@ const list = orgScoped
         runs: z
           .array(z.discriminatedUnion("access", [fullRunSummarySchema, metadataRunSummarySchema]))
           .describe("The recent runs the caller may discover, newest first."),
+        nextCursor: z
+          .string()
+          .nullable()
+          .describe("The cursor for the next page, or null when this is the last page."),
       })
       .describe("The caller's recent-run index."),
   )
   .handler(async ({ context, input }) => {
-    const runs: RunSummary[] = [];
-    const scanSize = Math.max(input.limit, RUN_LIST_SIZE);
-    let cursorId: string | undefined;
+    if (input.cursor !== undefined) {
+      const cursor = await resolveRunAccess({
+        db: context.db,
+        orgId: context.org.id,
+        principal: context.principal,
+        runId: input.cursor,
+      });
+      if (
+        cursor.access === "none" ||
+        (input.state !== undefined && cursor.run.state !== input.state) ||
+        (input.trigger !== undefined && cursor.run.trigger !== input.trigger)
+      ) {
+        throw new ORPCError("BAD_REQUEST", { message: "Invalid run cursor" });
+      }
+    }
 
-    while (runs.length < input.limit) {
+    const runs: RunSummary[] = [];
+    const targetCount = input.limit + 1;
+    const scanSize = Math.max(targetCount, RUN_LIST_SIZE);
+    let cursorId = input.cursor;
+
+    while (runs.length < targetCount) {
       const rows = await context.db.agentRun.findMany({
         where: {
           orgId: context.org.id,
@@ -272,12 +299,16 @@ const list = orgScoped
             updatedAt: summary.updatedAt,
           });
         }
-        if (runs.length === input.limit) break;
+        if (runs.length === targetCount) break;
       }
 
       if (rows.length < scanSize) break;
     }
-    return { runs };
+    const page = runs.slice(0, input.limit);
+    return {
+      runs: page,
+      nextCursor: runs.length > input.limit ? (page.at(-1)?.id ?? null) : null,
+    };
   });
 
 /** The distinct tool names a run's log records, in first-call order. */

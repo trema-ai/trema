@@ -11789,7 +11789,7 @@
       "get": {
         "operationId": "runs.list",
         "summary": "List recent runs",
-        "description": "List the organization's most recent runs the caller may discover. Runs in readable scopes include their source and thread. Another person's personal-scope run appears only as audit metadata to an org admin or owner and stays hidden from everyone else.",
+        "description": "List the organization's most recent runs the caller may discover. Pass the returned cursor to read the next page. Runs in readable scopes include their source and thread. Another person's personal-scope run appears only as audit metadata to an org admin or owner and stays hidden from everyone else.",
         "tags": [
           "Runs"
         ],
@@ -11840,6 +11840,17 @@
               "maximum": 200,
               "default": 100,
               "description": "How many visible matching runs to return. Defaults to 100."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The `nextCursor` of the previous page. Omit for the first page."
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -11985,10 +11996,22 @@
                         ]
                       },
                       "description": "The recent runs the caller may discover, newest first."
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The cursor for the next page, or null when this is the last page."
                     }
                   },
                   "required": [
-                    "runs"
+                    "runs",
+                    "nextCursor"
                   ],
                   "description": "The caller's recent-run index."
                 }

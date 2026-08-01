@@ -10,12 +10,16 @@ import { IdChip } from "#web/components/trema/id-chip.tsx";
 import { PageHeader } from "#web/components/trema/page-header.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
 import { type RunState, RunStateBadge } from "#web/components/trema/run-state-badge.tsx";
+import { Button } from "#web/components/ui/button.tsx";
 import { orpc, type rpcClient } from "#web/lib/api.ts";
 
 type RunList = Awaited<ReturnType<typeof rpcClient.runs.list>>;
 type RunSummary = RunList["runs"][number];
 
 type Trigger = RunSummary["trigger"];
+
+export const RUN_LIST_REFETCH_INTERVAL = 5_000;
+export const RUN_LIST_PAGE_SIZE = 25;
 
 const stateOptions = [
   { value: "all", label: "All states" },
@@ -100,14 +104,24 @@ export function RunsPage() {
   const navigate = useNavigate();
   const [state, setState] = useState<RunState | "all">("all");
   const [trigger, setTrigger] = useState<Trigger | "all">("all");
+  const [page, setPage] = useState(0);
+  const [pageCursors, setPageCursors] = useState<Array<string | undefined>>([undefined]);
+  const cursor = pageCursors[page];
   const runs = useQuery(
     orpc.runs.list.queryOptions({
       input: {
         ...(state === "all" ? {} : { state }),
         ...(trigger === "all" ? {} : { trigger }),
+        ...(cursor === undefined ? {} : { cursor }),
+        limit: RUN_LIST_PAGE_SIZE,
       },
+      refetchInterval: RUN_LIST_REFETCH_INTERVAL,
     }),
   );
+  const resetPage = () => {
+    setPage(0);
+    setPageCursors([undefined]);
+  };
 
   return (
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
@@ -119,13 +133,19 @@ export function RunsPage() {
         <FilterSelect
           label="State"
           value={state}
-          onValueChange={(value) => setState(value as RunState | "all")}
+          onValueChange={(value) => {
+            setState(value as RunState | "all");
+            resetPage();
+          }}
           options={[...stateOptions]}
         />
         <FilterSelect
           label="Trigger"
           value={trigger}
-          onValueChange={(value) => setTrigger(value as Trigger | "all")}
+          onValueChange={(value) => {
+            setTrigger(value as Trigger | "all");
+            resetPage();
+          }}
           options={[...triggerOptions]}
         />
       </FilterBar>
@@ -144,7 +164,6 @@ export function RunsPage() {
           rowKey={(run) => run.id}
           onRowClick={(run) => void navigate(`/runs/${run.id}`)}
           loading={runs.isPending}
-          pageSize={25}
           empty={
             <EmptyState
               icon={ScrollText}
@@ -158,6 +177,34 @@ export function RunsPage() {
           }
         />
       )}
+      {page > 0 || runs.data?.nextCursor ? (
+        <div className="mt-3 flex items-center justify-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page === 0 || runs.isPending}
+            onClick={() => setPage((current) => Math.max(0, current - 1))}
+          >
+            Previous
+          </Button>
+          <span className="text-meta text-muted-foreground">Page {page + 1}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!runs.data?.nextCursor || runs.isPending}
+            onClick={() => {
+              const nextCursor = runs.data?.nextCursor;
+              if (!nextCursor) return;
+              setPageCursors((current) => [...current.slice(0, page + 1), nextCursor]);
+              setPage((current) => current + 1);
+            }}
+          >
+            Next
+          </Button>
+        </div>
+      ) : null}
     </main>
   );
 }

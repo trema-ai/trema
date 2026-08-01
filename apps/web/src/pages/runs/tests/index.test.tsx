@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunsPage } from "#web/pages/runs/index.tsx";
 
 const query = vi.hoisted(() => ({
+  options: undefined as unknown,
   result: {} as {
     isPending: boolean;
     error: Error | null;
     data?: {
+      nextCursor: string | null;
       runs: Array<{
         access: "full" | "metadata";
         id: string;
@@ -25,11 +27,14 @@ const query = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => query.result,
+  useQuery: (options: unknown) => {
+    query.options = options;
+    return query.result;
+  },
 }));
 
 vi.mock("#web/lib/api.ts", () => ({
-  orpc: { runs: { list: { queryOptions: ({ input }: { input: unknown }) => ({ input }) } } },
+  orpc: { runs: { list: { queryOptions: (options: unknown) => options } } },
 }));
 
 function Location() {
@@ -46,6 +51,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  query.options = undefined;
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -54,6 +60,7 @@ beforeEach(() => {
     isPending: false,
     error: null,
     data: {
+      nextCursor: "run-002",
       runs: [
         {
           access: "full",
@@ -92,6 +99,26 @@ describe("RunsPage", () => {
     expect(screen.queryByRole("button", { name: /send|new run|new chat/i })).toBeNull();
   });
 
+  it("refreshes the run index while the console remains open", () => {
+    renderPage();
+
+    expect(query.options).toMatchObject({
+      input: { limit: 25 },
+      refetchInterval: 5_000,
+    });
+  });
+
+  it("uses the API cursor to page beyond the first response", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(query.options).toMatchObject({ input: { cursor: "run-002", limit: 25 } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    expect(query.options).toMatchObject({ input: { limit: 25 } });
+    expect((query.options as { input: object }).input).not.toHaveProperty("cursor");
+  });
+
   it("opens a selected run", () => {
     renderPage();
 
@@ -115,7 +142,7 @@ describe("RunsPage", () => {
   });
 
   it("keeps an operational empty state", () => {
-    query.result = { isPending: false, error: null, data: { runs: [] } };
+    query.result = { isPending: false, error: null, data: { runs: [], nextCursor: null } };
     renderPage();
 
     expect(screen.getByText("No runs yet")).toBeTruthy();
