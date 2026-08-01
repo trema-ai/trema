@@ -15,12 +15,18 @@ export const slackProvider = {
     authorizationUrl: "https://slack.com/oauth/v2/authorize",
     tokenUrl: "https://slack.com/api/oauth.v2.access",
     defaultScopes: [
+      "app_mentions:read",
       "channels:read",
       "channels:history",
       "chat:write",
+      "groups:read",
+      "groups:history",
+      "im:read",
+      "im:history",
+      "im:write",
+      "mpim:read",
+      "mpim:history",
       "users:read",
-      // reactions:write powers add_reaction; channels:join powers join_channel.
-      // Both are present in availableScopes below.
       "reactions:write",
       "channels:join",
     ],
@@ -154,9 +160,20 @@ export const slackProvider = {
       "workflow.steps:execute",
     ],
     scopeSeparator: ",",
+    tokenRequestAuthMethod: "body",
     // Slack's v2 OAuth flow does not support PKCE.
     pkce: false,
-    tokenResponseMetadata: ["bot_user_id"],
+    // These non-secret fields make an installation inspectable and allow an
+    // inbound request to resolve its workspace without decrypting credentials.
+    tokenResponseMetadata: [
+      "team.name",
+      "enterprise.id",
+      "enterprise.name",
+      "bot_user_id",
+      "app_id",
+      "authed_user.id",
+      "is_enterprise_install",
+    ],
     accountIdentityFields: ["team.id"],
   },
   configFields: {},

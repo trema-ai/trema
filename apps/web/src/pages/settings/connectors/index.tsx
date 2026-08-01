@@ -52,7 +52,12 @@ export function SettingsConnectorsPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
-  const providers = (catalog.data ?? []) as CatalogProvider[];
+  // Slack is both a connector transport and a user-facing conversation
+  // surface. Its installation and scope bindings live under Messaging so
+  // admins do not have two competing places to configure the same app.
+  const providers = ((catalog.data ?? []) as CatalogProvider[]).filter(
+    ({ key }) => key !== "slack",
+  );
   const connectionRows = (connections.data ?? []) as ConnectorConnection[];
   const installationRows = (installations.data ?? []) as ConnectorInstallation[];
   const scopeRows = ((scopes.data ?? []) as Scope[]).filter(

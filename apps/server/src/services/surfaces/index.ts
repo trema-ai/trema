@@ -6,7 +6,7 @@ export const surfaceCatalog = [
   // The service endpoint scripts and internal systems call. Its locations bind
   // to scopes exactly as a chat surface's do.
   { id: "api", name: "API", status: "available", builtIn: true, locationBindable: true },
-  { id: "slack", name: "Slack", status: "planned", builtIn: false, locationBindable: true },
+  { id: "slack", name: "Slack", status: "available", builtIn: false, locationBindable: true },
   { id: "linear", name: "Linear", status: "planned", builtIn: false, locationBindable: true },
   { id: "github", name: "GitHub", status: "planned", builtIn: false, locationBindable: true },
   { id: "email", name: "Email", status: "planned", builtIn: false, locationBindable: true },

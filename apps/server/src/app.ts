@@ -17,6 +17,7 @@ import { router } from "./router.js";
 import { createRunStreamHandler, type RunStreamTiming } from "./routes/run-stream.js";
 import type { RpcContext } from "./rpc/builders.js";
 import {
+  ConnectorAccountConflictError,
   type ConnectorFetch,
   completeOAuthCallback,
   consumeOAuthState,
@@ -28,6 +29,7 @@ import {
   type PlatformAppDirectory,
 } from "./services/connectors/index.js";
 import { handleDataPlaneRequest } from "./services/dataplane/mcp.js";
+import { SLACK_EVENTS_PATH, SLACK_INTERACTIONS_PATH } from "./services/messaging/index.js";
 
 export interface AppDependencies {
   db: Database;
@@ -58,6 +60,7 @@ export function safeConnectorReturnUrl(
 }
 
 function connectorErrorCode(error: unknown): string {
+  if (error instanceof ConnectorAccountConflictError) return error.code;
   if (error instanceof OAuthStateExpiredError) return error.code;
   if (error instanceof OAuthStateSingleUseError) return error.code;
   if (error instanceof OAuthTokenExchangeError) return error.code;
@@ -185,6 +188,17 @@ export function createApp({
       return context.json({ ok: false }, 503);
     }
   });
+
+  // DEV-93 reserves the public Slack ingress URLs carried by the generated
+  // app manifest. DEV-94 replaces these explicit closed responses with signed
+  // event and interaction ingestion; accepting unverified payloads here would
+  // turn an installation feature into an authentication bypass.
+  app.post(SLACK_EVENTS_PATH, (context) =>
+    context.json({ error: "Slack event ingestion is not enabled" }, 501),
+  );
+  app.post(SLACK_INTERACTIONS_PATH, (context) =>
+    context.json({ error: "Slack interaction ingestion is not enabled" }, 501),
+  );
 
   app.get("/connect/callback", async (context) => {
     const state = context.req.query("state");

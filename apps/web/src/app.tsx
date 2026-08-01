@@ -69,6 +69,11 @@ const SettingsGeneralPage = lazy(() =>
 const SettingsMembersPage = lazy(() =>
   import("#web/pages/settings/members.tsx").then((m) => ({ default: m.SettingsMembersPage })),
 );
+const SettingsMessagingPage = lazy(() =>
+  import("#web/pages/settings/messaging/index.tsx").then((m) => ({
+    default: m.SettingsMessagingPage,
+  })),
+);
 const SettingsModelProviderPage = lazy(() =>
   import("#web/pages/settings/models/detail.tsx").then((m) => ({
     default: m.SettingsModelProviderPage,
@@ -159,6 +164,7 @@ function AppRoutes() {
         <Route path="/settings/appearance" element={settings(<SettingsAppearancePage />)} />
         <Route path="/settings/general" element={settings(<SettingsGeneralPage />, true)} />
         <Route path="/settings/members" element={settings(<SettingsMembersPage />, true)} />
+        <Route path="/settings/messaging" element={settings(<SettingsMessagingPage />, true)} />
         <Route path="/settings/scopes" element={settings(<ScopesPage />, true)} />
         <Route path="/settings/connectors" element={settings(<SettingsConnectorsPage />, true)} />
         <Route
