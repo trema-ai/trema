@@ -490,7 +490,7 @@ model MessageSearchDoc {
 }
 
 /// Connector provider uniqueness is enforced by the partial expression index
-/// `Item_one_active_connector_provider_per_scope` on
+/// `Item_one_active_connector_per_scope_provider` on
 /// (orgId, scopeId, body->>'catalogKey') for active connector rows. Prisma
 /// cannot represent that index directly.
 model Item {

@@ -3,7 +3,6 @@ import { call } from "@orpc/server";
 import {
   githubProvider,
   googleWorkspaceProvider,
-  linearProvider,
   loadProviderCatalog,
   slackProvider,
 } from "@trema/connectors";
@@ -454,7 +453,7 @@ integration("connector connection flows", () => {
     expect(byKey.get("stripe")?.supportsPersonalOAuth).toBe(false);
     expect(connectorsRouter).not.toHaveProperty("providers");
     expect(connectorsRouter.member.connect).not.toHaveProperty("createStatic");
-    expect(connectorsRouter.member.installations).toHaveProperty("create");
+    expect(connectorsRouter.member).not.toHaveProperty("installations");
   });
 
   it("enforces organization ownership for app OAuth and static credentials", async () => {
@@ -551,67 +550,7 @@ integration("connector connection flows", () => {
     ).resolves.toMatchObject({ id: ownConnection.id });
   });
 
-  it("lets a member retry tool sync for an existing personal MCP installation", async () => {
-    const org = await createOrg();
-    const member = await addMember(org.org.id, org.orgScope.id, "MCP Retry Member");
-    const connection = await db.connectorConnection.create({
-      data: {
-        orgId: org.org.id,
-        ownerPrincipalId: member.principal.id,
-        providerKey: linearProvider.key,
-        authMode: linearProvider.authMode,
-        config: {},
-        ciphertext: encryptEnvelope({ accessToken: "linear-token" }, masterKey),
-      },
-    });
-    const installation = await db.item.create({
-      data: {
-        orgId: org.org.id,
-        scopeId: member.personalScope.id,
-        kind: "connector",
-        title: linearProvider.displayName,
-        body: {
-          catalogKey: linearProvider.key,
-          connectionId: connection.id,
-          access: { kind: "scope" },
-          enabledTools: "all",
-        },
-        status: "active",
-        disclosure: "retrieved",
-        createdById: member.principal.id,
-      },
-    });
-    const clientFactory = vi.fn(async () => ({
-      listTools: async () => ({
-        tools: [{ name: "list_issues", description: "List Linear issues" }],
-      }),
-      close: async () => {},
-    })) satisfies McpClientFactory;
-
-    await expect(
-      call(
-        connectorsRouter.member.installations.create,
-        {
-          scopeId: member.personalScope.id,
-          catalogKey: linearProvider.key,
-          connectionId: connection.id,
-        },
-        { context: { ...member.context, mcpClientFactory: clientFactory } },
-      ),
-    ).resolves.toMatchObject({ id: installation.id });
-    await expect(
-      db.item.findUniqueOrThrow({
-        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
-      }),
-    ).resolves.toMatchObject({
-      body: {
-        syncedTools: [{ name: "list_issues", description: "List Linear issues" }],
-      },
-    });
-    expect(clientFactory).toHaveBeenCalledOnce();
-  });
-
-  it("reports and repairs a stale personal REST installation", async () => {
+  it("reports a stale personal REST connection for reconnect", async () => {
     const org = await createOrg();
     const member = await addMember(org.org.id, org.orgScope.id, "REST Repair Member");
     const connection = await storedConnection(org.org.id, member.principal.id);
@@ -634,7 +573,7 @@ integration("connector connection flows", () => {
     });
 
     await expect(
-      call(connectorsRouter.member.installations.health, {}, { context: member.context }),
+      call(connectorsRouter.member.availability.list, {}, { context: member.context }),
     ).resolves.toEqual([]);
     await expect(
       call(connectorsRouter.member.connections.list, {}, { context: member.context }),
@@ -645,26 +584,7 @@ integration("connector connection flows", () => {
       }),
     ]);
 
-    await expect(
-      call(
-        connectorsRouter.member.installations.create,
-        {
-          scopeId: member.personalScope.id,
-          catalogKey: githubProvider.key,
-          connectionId: connection.id,
-        },
-        { context: member.context },
-      ),
-    ).resolves.toMatchObject({
-      id: installation.id,
-      body: {
-        access: { kind: "minimum_role", role: "member" },
-        enabledTools: "all",
-      },
-    });
-    await expect(
-      call(connectorsRouter.member.installations.health, {}, { context: member.context }),
-    ).resolves.toEqual([{ installationItemId: installation.id, status: "available" }]);
+    expect(connectorsRouter.member).not.toHaveProperty("installations");
   });
 
   it("reports organization installation health without exposing connection metadata", async () => {
@@ -679,7 +599,7 @@ integration("connector connection flows", () => {
       connectionId: connection.id,
     });
     const listHealth = () =>
-      call(connectorsRouter.member.installations.health, {}, { context: member.context });
+      call(connectorsRouter.member.availability.list, {}, { context: member.context });
 
     await Promise.all([
       db.item.create({
@@ -718,7 +638,7 @@ integration("connector connection flows", () => {
 
     await expect(listHealth()).resolves.toEqual([
       {
-        installationItemId: installation.id,
+        itemId: installation.id,
         status: "available",
       },
     ]);
@@ -728,7 +648,7 @@ integration("connector connection flows", () => {
       data: { revokedAt: new Date() },
     });
     await expect(listHealth()).resolves.toEqual([
-      expect.objectContaining({ installationItemId: installation.id, status: "revoked" }),
+      expect.objectContaining({ itemId: installation.id, status: "revoked" }),
     ]);
 
     await db.connectorConnection.update({
@@ -736,7 +656,7 @@ integration("connector connection flows", () => {
       data: { revokedAt: null, expiresAt: new Date(0), refreshExhausted: false },
     });
     await expect(listHealth()).resolves.toEqual([
-      expect.objectContaining({ installationItemId: installation.id, status: "expired" }),
+      expect.objectContaining({ itemId: installation.id, status: "expired" }),
     ]);
 
     await db.connectorConnection.update({
@@ -745,7 +665,7 @@ integration("connector connection flows", () => {
     });
     await expect(listHealth()).resolves.toEqual([
       expect.objectContaining({
-        installationItemId: installation.id,
+        itemId: installation.id,
         status: "refresh_exhausted",
       }),
     ]);

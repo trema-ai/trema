@@ -35,8 +35,8 @@ import {
 } from "#web/pages/settings/connectors/filters.tsx";
 import {
   type CatalogProvider,
+  type ConnectorAvailability,
   type ConnectorConnection,
-  type ConnectorInstallationHealth,
   messageFrom,
 } from "#web/pages/settings/connectors/shared.tsx";
 
@@ -80,8 +80,8 @@ export function ConnectionsTab({
     ...orpc.connectors.member.connections.list.queryOptions({ input: {} }),
     enabled: ownPersonal,
   });
-  const organizationInstallationHealth = useQuery({
-    ...orpc.connectors.member.installations.health.queryOptions({}),
+  const connectorAvailability = useQuery({
+    ...orpc.connectors.member.availability.list.queryOptions({}),
     enabled: ownPersonal,
   });
   const entries = (catalog.data ?? []) as CatalogProvider[];
@@ -93,11 +93,12 @@ export function ConnectionsTab({
   const healthByInstallationId = useMemo(
     () =>
       new Map(
-        ((organizationInstallationHealth.data ?? []) as ConnectorInstallationHealth[]).map(
-          (health) => [health.installationItemId, health.status],
-        ),
+        ((connectorAvailability.data ?? []) as ConnectorAvailability[]).map((availability) => [
+          availability.itemId,
+          availability.status,
+        ]),
       ),
-    [organizationInstallationHealth.data],
+    [connectorAvailability.data],
   );
   const installations = items.flatMap((item) => {
     if (item.scopeId !== scope.id || item.kind !== "connector" || item.status === "archived") {
@@ -195,7 +196,7 @@ export function ConnectionsTab({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: orpc.connectors.member.connections.list.key() }),
       queryClient.invalidateQueries({
-        queryKey: orpc.connectors.member.installations.health.key(),
+        queryKey: orpc.connectors.member.availability.list.key(),
       }),
       queryClient.invalidateQueries({
         queryKey: orpc.items.list.queryOptions({ input: {} }).queryKey,
@@ -231,7 +232,7 @@ export function ConnectionsTab({
   if (
     loading ||
     catalog.isPending ||
-    (ownPersonal && (memberConnections.isPending || organizationInstallationHealth.isPending))
+    (ownPersonal && (memberConnections.isPending || connectorAvailability.isPending))
   ) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -243,7 +244,7 @@ export function ConnectionsTab({
   }
   const error =
     catalog.error ??
-    (ownPersonal ? (memberConnections.error ?? organizationInstallationHealth.error) : null);
+    (ownPersonal ? (memberConnections.error ?? connectorAvailability.error) : null);
   if (error) {
     return (
       <Alert variant="destructive">
@@ -493,24 +494,11 @@ export function PersonalConnectionRow({
   provider: CatalogProvider;
   connection: ConnectorConnection;
   personalScopeId: string;
-  installationHealth: ConnectorInstallationHealth["status"] | undefined;
+  installationHealth: ConnectorAvailability["status"] | undefined;
   onReconnect: () => void;
   onChanged: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState(false);
-  const install = useMutation({
-    mutationFn: () =>
-      rpcClient.connectors.member.installations.create({
-        scopeId: personalScopeId,
-        catalogKey: connection.providerKey,
-        connectionId: connection.id,
-      }),
-    onSuccess: async () => {
-      await onChanged();
-      toast.success(`${provider.displayName} is available in your personal scope`);
-    },
-    onError: (error) => toast.error(messageFrom(error)),
-  });
   const revoke = useMutation({
     mutationFn: () =>
       rpcClient.connectors.member.connections.revoke({ connectionId: connection.id }),
@@ -562,20 +550,10 @@ export function PersonalConnectionRow({
         }
         footer={
           <>
-            {!connection.isValid ? (
+            {!connection.isValid || needsSetup ? (
               <Button size="xs" variant="outline" onClick={onReconnect}>
                 <RefreshCw />
                 Reconnect
-              </Button>
-            ) : null}
-            {connection.isValid && needsSetup ? (
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={install.isPending}
-                onClick={() => install.mutate()}
-              >
-                {install.isPending ? "Finishing…" : isInstalled ? "Retry setup" : "Finish setup"}
               </Button>
             ) : null}
             {!connection.isRevoked ? (
@@ -618,7 +596,7 @@ export function OrganizationConnectionCard({
 }: {
   provider: CatalogProvider;
   body: ConnectorBody;
-  health: ConnectorInstallationHealth["status"];
+  health: ConnectorAvailability["status"];
 }) {
   const status = organizationHealthBadge(health);
   return (
@@ -635,7 +613,7 @@ export function OrganizationConnectionCard({
   );
 }
 
-function organizationHealthBadge(health: ConnectorInstallationHealth["status"]): {
+function organizationHealthBadge(health: ConnectorAvailability["status"]): {
   value: "connected" | "missing" | "expired";
   label: string;
 } {

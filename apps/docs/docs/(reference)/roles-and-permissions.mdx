@@ -141,10 +141,10 @@ The member routes carry no capability check: any active member, whatever their r
 | Start a personal OAuth connection | `POST /member/connector-connections/oauth` | Membership; user-acting OAuth support |
 | List your connections | `GET /member/connector-connections` | Membership |
 | Revoke one of your connections | `POST /member/connector-connections/{connectionId}/revoke` | Owning the connection |
-| Create a personal installation | `POST /member/connector-installations` | Membership; user-acting OAuth support |
+| List your connector availability | `GET /member/connectors/availability` | Membership and readable scopes |
 
 - Ownership gates listing, reconnecting, and revocation.
-- A member may install connectors only in their own personal scope; any other scope is refused.
+- A personal OAuth callback creates or updates the caller's personal installation. There is no separate installation command.
 
 ### Capabilities
 

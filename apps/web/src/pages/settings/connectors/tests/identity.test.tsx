@@ -103,19 +103,21 @@ describe("connector identity UX", () => {
   });
 
   it("offers a recovery action when a valid personal account is no longer installed", () => {
+    const onReconnect = vi.fn();
     renderWithQuery(
       <PersonalConnectionRow
         provider={provider}
         connection={{ ...connection, installations: [] }}
         personalScopeId="personal-1"
         installationHealth={undefined}
-        onReconnect={vi.fn()}
+        onReconnect={onReconnect}
         onChanged={vi.fn()}
       />,
     );
 
     expect(screen.getByText("Setup needed")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Finish setup" })).toBeTruthy();
+    screen.getByRole("button", { name: "Reconnect" }).click();
+    expect(onReconnect).toHaveBeenCalledOnce();
     expect(document.querySelector('[data-status="missing"]')).toBeTruthy();
   });
 
@@ -132,7 +134,7 @@ describe("connector identity UX", () => {
     );
 
     expect(screen.getByText("Setup needed")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry setup" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy();
     expect(document.querySelector('[data-status="missing"]')).toBeTruthy();
   });
 
@@ -149,7 +151,7 @@ describe("connector identity UX", () => {
     );
 
     expect(screen.getByText("Setup needed")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry setup" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy();
   });
 
   it("identifies an inherited connector as organization-provided", () => {
