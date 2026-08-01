@@ -3,6 +3,7 @@ import { call } from "@orpc/server";
 import {
   githubProvider,
   googleWorkspaceProvider,
+  linearProvider,
   loadProviderCatalog,
   slackProvider,
 } from "@trema/connectors";
@@ -548,6 +549,66 @@ integration("connector connection flows", () => {
         { context: member.context },
       ),
     ).resolves.toMatchObject({ id: ownConnection.id });
+  });
+
+  it("lets a member retry tool sync for an existing personal MCP installation", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "MCP Retry Member");
+    const connection = await db.connectorConnection.create({
+      data: {
+        orgId: org.org.id,
+        ownerPrincipalId: member.principal.id,
+        providerKey: linearProvider.key,
+        authMode: linearProvider.authMode,
+        config: {},
+        ciphertext: encryptEnvelope({ accessToken: "linear-token" }, masterKey),
+      },
+    });
+    const installation = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: member.personalScope.id,
+        kind: "connector",
+        title: linearProvider.displayName,
+        body: {
+          catalogKey: linearProvider.key,
+          connectionId: connection.id,
+          access: { kind: "scope" },
+          enabledTools: "all",
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: member.principal.id,
+      },
+    });
+    const clientFactory = vi.fn(async () => ({
+      listTools: async () => ({
+        tools: [{ name: "list_issues", description: "List Linear issues" }],
+      }),
+      close: async () => {},
+    })) satisfies McpClientFactory;
+
+    await expect(
+      call(
+        connectorsRouter.member.installations.create,
+        {
+          scopeId: member.personalScope.id,
+          catalogKey: linearProvider.key,
+          connectionId: connection.id,
+        },
+        { context: { ...member.context, mcpClientFactory: clientFactory } },
+      ),
+    ).resolves.toMatchObject({ id: installation.id });
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        syncedTools: [{ name: "list_issues", description: "List Linear issues" }],
+      },
+    });
+    expect(clientFactory).toHaveBeenCalledOnce();
   });
 
   it("reports organization installation health without exposing connection metadata", async () => {

@@ -26,4 +26,22 @@ describe("connector body normalization", () => {
     expect(normalizeConnectorBody({ ...base, access: { kind: "minimum_role" } })).toBeUndefined();
     expect(normalizeConnectorBody({ ...base, enabledTools: 3 })).toBeUndefined();
   });
+
+  it("retains synchronized tool names used for MCP readiness", () => {
+    expect(
+      normalizeConnectorBody({
+        ...base,
+        syncedTools: [
+          {
+            name: "send_message",
+            description: "Send a message",
+            inputSchema: { type: "object" },
+          },
+        ],
+      }),
+    ).toMatchObject({ syncedTools: [{ name: "send_message" }] });
+    expect(
+      normalizeConnectorBody({ ...base, syncedTools: [{ description: "Missing name" }] }),
+    ).toBe(undefined);
+  });
 });

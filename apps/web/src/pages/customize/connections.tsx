@@ -297,12 +297,18 @@ export function ConnectionsTab({
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {filteredConnections.map((connection) => {
                     const provider = entryByKey.get(connection.providerKey);
+                    const installationBody = installations.find(
+                      ({ body }) =>
+                        body.catalogKey === connection.providerKey &&
+                        body.connectionId === connection.id,
+                    )?.body;
                     return provider ? (
                       <PersonalConnectionRow
                         key={connection.id}
                         provider={provider}
                         connection={connection}
                         personalScopeId={scope.id}
+                        installationBody={installationBody}
                         onReconnect={() => setSelection({ provider, reconnect: connection })}
                         onChanged={invalidateConnections}
                       />
@@ -478,12 +484,14 @@ export function PersonalConnectionRow({
   provider,
   connection,
   personalScopeId,
+  installationBody,
   onReconnect,
   onChanged,
 }: {
   provider: CatalogProvider;
   connection: ConnectorConnection;
   personalScopeId: string;
+  installationBody?: ConnectorBody | undefined;
   onReconnect: () => void;
   onChanged: () => Promise<void>;
 }) {
@@ -514,8 +522,18 @@ export function PersonalConnectionRow({
   const isInstalled = connection.installations.some(
     (installation) => installation.scopeId === personalScopeId,
   );
+  const installationReady =
+    provider.transport.type !== "mcp" ||
+    (installationBody !== undefined &&
+      installationBody.syncedTools !== undefined &&
+      (installationBody.enabledTools === "all"
+        ? installationBody.syncedTools.length > 0
+        : installationBody.enabledTools.some((name) =>
+            installationBody.syncedTools?.some((tool) => tool.name === name),
+          )));
+  const needsSetup = !isInstalled || !installationReady;
   const statusLabel =
-    connection.isValid && !isInstalled
+    connection.isValid && needsSetup
       ? "Setup needed"
       : connection.isRevoked
         ? "Revoked"
@@ -534,7 +552,7 @@ export function PersonalConnectionRow({
         provider={provider}
         identity={{ kind: "personal", accountLabel }}
         status={{
-          value: connection.isValid ? (isInstalled ? "connected" : "missing") : "expired",
+          value: connection.isValid ? (needsSetup ? "missing" : "connected") : "expired",
           label: statusLabel,
         }}
         detail={
@@ -556,14 +574,14 @@ export function PersonalConnectionRow({
                 Reconnect
               </Button>
             ) : null}
-            {connection.isValid && !isInstalled ? (
+            {connection.isValid && needsSetup ? (
               <Button
                 size="xs"
                 variant="outline"
                 disabled={install.isPending}
                 onClick={() => install.mutate()}
               >
-                {install.isPending ? "Finishing…" : "Finish setup"}
+                {install.isPending ? "Finishing…" : isInstalled ? "Retry setup" : "Finish setup"}
               </Button>
             ) : null}
             {!connection.isRevoked ? (

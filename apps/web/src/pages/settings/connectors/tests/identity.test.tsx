@@ -103,6 +103,28 @@ describe("connector identity UX", () => {
     expect(document.querySelector('[data-status="missing"]')).toBeTruthy();
   });
 
+  it("offers an MCP setup retry when the installed account has no usable tools", () => {
+    renderWithQuery(
+      <PersonalConnectionRow
+        provider={{ ...provider, transport: { type: "mcp" } }}
+        connection={connection}
+        personalScopeId="personal-1"
+        installationBody={{
+          catalogKey: "linear",
+          connectionId: connection.id,
+          access: { kind: "scope" },
+          enabledTools: "all",
+        }}
+        onReconnect={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Setup needed")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry setup" })).toBeTruthy();
+    expect(document.querySelector('[data-status="missing"]')).toBeTruthy();
+  });
+
   it("identifies an inherited connector as organization-provided", () => {
     const body: ConnectorBody = {
       catalogKey: "linear",

@@ -74,6 +74,28 @@ export function normalizeConnectorBody(value: unknown): ConnectorBody | undefine
         : undefined;
   if (enabledTools === undefined) return undefined;
 
+  let syncedTools: ConnectorTool[] | undefined;
+  if (body.syncedTools !== undefined) {
+    if (
+      !Array.isArray(body.syncedTools) ||
+      !body.syncedTools.every(
+        (tool) =>
+          typeof tool === "object" &&
+          tool !== null &&
+          !Array.isArray(tool) &&
+          typeof (tool as Record<string, unknown>).name === "string" &&
+          ((tool as Record<string, unknown>).name as string).trim() !== "",
+      )
+    ) {
+      return undefined;
+    }
+    // The member card only needs tool names to determine whether an MCP
+    // installation is usable; richer schemas remain server-owned.
+    syncedTools = body.syncedTools.map((tool) => ({
+      name: (tool as Record<string, unknown>).name as string,
+    }));
+  }
+
   let access: ConnectorBody["access"];
   if (body.access === undefined) {
     access = { kind: "scope" };
@@ -105,6 +127,7 @@ export function normalizeConnectorBody(value: unknown): ConnectorBody | undefine
     connectionId: body.connectionId,
     access,
     enabledTools,
+    ...(syncedTools === undefined ? {} : { syncedTools }),
   };
 }
 
