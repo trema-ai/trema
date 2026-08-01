@@ -3,6 +3,7 @@ import type { Part, Projection, Segment } from "@trema/projection";
 import type {
   ApplyResult,
   CapabilityDescriptor,
+  PlanRenderOptions,
   RealizedMessage,
   RealizedSegment,
   RenderContent,
@@ -21,10 +22,19 @@ export function planRender(
   projection: Projection,
   realization: Pick<SurfaceRealization, "runId" | "renderedThroughSeq" | "segments" | "version">,
   capabilities: CapabilityDescriptor,
+  options: PlanRenderOptions = {},
 ): RenderPlan {
   if (projection.runId !== realization.runId) {
     throw new Error(
       `projection run ${projection.runId} does not match realization run ${realization.runId}`,
+    );
+  }
+  if (
+    projection.lastSeq < realization.renderedThroughSeq &&
+    options.allowCursorRegression !== true
+  ) {
+    throw new Error(
+      `projection cursor regressed from ${realization.renderedThroughSeq} to ${projection.lastSeq}`,
     );
   }
   if (!Number.isSafeInteger(capabilities.budgets.messageChars)) {
@@ -49,15 +59,24 @@ export function planRender(
   const existingById = new Map(realization.segments.map((segment) => [segment.id, segment]));
   const operations: RenderOperation[] = [];
   const nextSegments: RealizedSegment[] = [];
+  let deferred = false;
 
   for (const segment of projection.segments) {
-    // An append-only destination cannot correct an in-flight message. Wait for
-    // its semantic boundary, then deliver the settled snapshot once.
-    if (capabilities.mutation === "append-only" && segment.end === undefined && !terminal) {
+    const segmentId = segmentIdentity(projection.runId, segment.index);
+    // Immutable and non-streaming destinations wait for a semantic boundary,
+    // then receive the settled snapshot once.
+    if (
+      (capabilities.mutation === "append-only" || capabilities.streaming === "none") &&
+      segment.end === undefined &&
+      !terminal
+    ) {
+      deferred = true;
+      const existing = existingById.get(segmentId);
+      if (existing !== undefined) nextSegments.push(existing);
+      existingById.delete(segmentId);
       continue;
     }
 
-    const segmentId = segmentIdentity(projection.runId, segment.index);
     const existing = existingById.get(segmentId);
     const planned = realizeSegment(segment, segmentId, capabilities.budgets.messageChars, terminal);
     const messages: RealizedMessage[] =
@@ -65,24 +84,28 @@ export function planRender(
 
     for (const target of planned) {
       if (capabilities.mutation === "append-only") {
-        const applied = existing?.messages.find(
-          (message) =>
-            (message.id === target.id || message.id.startsWith(`${target.id}:revision:`)) &&
-            message.contentHash === target.contentHash &&
-            message.finalized === target.finalized,
-        );
-        if (applied !== undefined) continue;
+        const latest = existing?.messages
+          .filter(
+            (message) =>
+              message.id === target.id || message.id.startsWith(`${target.id}:revision:`),
+          )
+          .reduce<RealizedMessage | undefined>(
+            (newest, message) =>
+              newest === undefined || message.index > newest.index ? message : newest,
+            undefined,
+          );
+        if (latest?.contentHash === target.contentHash && latest.finalized === target.finalized) {
+          continue;
+        }
 
-        const hasPrior = existing?.messages.some(
-          (message) => message.id === target.id || message.id.startsWith(`${target.id}:revision:`),
-        );
-        const immutableTarget = hasPrior
-          ? {
-              ...target,
-              id: `${target.id}:revision:${target.contentHash}`,
-              index: messages.length,
-            }
-          : target;
+        const immutableTarget =
+          latest === undefined
+            ? target
+            : {
+                ...target,
+                id: `${target.id}:revision:${messages.length}`,
+                index: messages.length,
+              };
         operations.push({
           ...operationIdentity(immutableTarget, "create", realization.version),
           type: "create",
@@ -107,11 +130,13 @@ export function planRender(
           content: target.content,
           finalized: target.finalized,
         });
-      } else if (target.text !== prior.text) {
+      } else if (target.contentHash !== prior.contentHash) {
         if (
+          target.text !== prior.text &&
           !target.finalized &&
           capabilities.streaming === "delta" &&
           projection.lastSeq === realization.renderedThroughSeq + 1 &&
+          target.content.parts.every((part) => part.kind === "text") &&
           target.text.startsWith(prior.text)
         ) {
           operations.push({
@@ -186,7 +211,7 @@ export function planRender(
   nextSegments.sort((left, right) => left.index - right.index);
   return {
     fromCursor: realization.renderedThroughSeq,
-    toCursor: projection.lastSeq,
+    toCursor: deferred ? realization.renderedThroughSeq : projection.lastSeq,
     operations,
     nextSegments,
   };
@@ -227,7 +252,7 @@ function realizeSegment(
   budget: number,
   terminal: boolean,
 ): PlannedMessage[] {
-  const content = segment.parts.map((part) => ({ part, text: partText(part) })).filter(hasText);
+  const content = segment.parts.map((part) => ({ part, text: partText(part) }));
   const chunks = chunkContent(content, budget);
   const finalized = terminal || segment.end !== undefined;
   return chunks.map((renderContent, index) => {
@@ -236,15 +261,11 @@ function realizeSegment(
       id,
       index,
       text: renderContent.text,
-      contentHash: fingerprint(renderContent.text),
+      contentHash: fingerprint(stableSerialize(renderContent)),
       finalized,
       content: renderContent,
     };
   });
-}
-
-function hasText(value: { part: Part; text: string }): boolean {
-  return value.text.length > 0;
 }
 
 function partText(part: Part): string {
@@ -275,6 +296,7 @@ function partText(part: Part): string {
 
 function chunkContent(content: { part: Part; text: string }[], budget: number): RenderContent[] {
   const chunks: RenderContent[] = [];
+  const pendingParts: Part[] = [];
   let current: RenderContent | undefined;
 
   const flush = (): void => {
@@ -284,6 +306,12 @@ function chunkContent(content: { part: Part; text: string }[], budget: number): 
   };
 
   for (const { part, text } of content) {
+    if (text.length === 0) {
+      if (current === undefined) pendingParts.push(part);
+      else current = { ...current, parts: [...current.parts, part] };
+      continue;
+    }
+
     const separator = current === undefined ? "" : "\n\n";
     if (current !== undefined && characterCount(`${current.text}${separator}${text}`) <= budget) {
       current = { text: `${current.text}${separator}${text}`, parts: [...current.parts, part] };
@@ -294,12 +322,22 @@ function chunkContent(content: { part: Part; text: string }[], budget: number): 
     const fragments = splitMarkdownAtBudget(text, budget);
     for (const [index, fragment] of fragments.entries()) {
       const fragmentPart = partFragment(part, fragment, fragments.length, index);
-      const next = { text: fragment, parts: fragmentPart === undefined ? [] : [fragmentPart] };
+      const next = {
+        text: fragment,
+        parts: [
+          ...(index === 0 ? pendingParts.splice(0) : []),
+          ...(fragmentPart === undefined ? [] : [fragmentPart]),
+        ],
+      };
       if (index === fragments.length - 1) current = next;
       else chunks.push(next);
     }
   }
 
+  if (pendingParts.length > 0) {
+    if (current === undefined) current = { text: "", parts: pendingParts };
+    else current = { ...current, parts: [...current.parts, ...pendingParts] };
+  }
   flush();
   return chunks;
 }
@@ -479,6 +517,19 @@ function fingerprint(value: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function stableSerialize(value: unknown): string {
+  return (
+    JSON.stringify(value, (_key, nested: unknown) => {
+      if (nested === null || typeof nested !== "object" || Array.isArray(nested)) return nested;
+      return Object.fromEntries(
+        Object.entries(nested as Record<string, unknown>).sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0,
+        ),
+      );
+    }) ?? "undefined"
+  );
 }
 
 function isTerminal(status: Projection["status"]): boolean {

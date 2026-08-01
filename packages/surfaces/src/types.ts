@@ -143,6 +143,11 @@ export interface RenderPlan {
   nextSegments: RealizedSegment[];
 }
 
+export interface PlanRenderOptions {
+  /** Set only after confirming the projection cursor is the run's authoritative truncated end. */
+  allowCursorRegression?: boolean;
+}
+
 export interface SurfaceApplyContext {
   runId: string;
   ref: SurfaceRef;

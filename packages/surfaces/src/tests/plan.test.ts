@@ -105,6 +105,27 @@ describe("planRender", () => {
     expect(replay.toCursor).toBe(1);
   });
 
+  it("rejects stale cursor regression unless authoritative truncation was confirmed", () => {
+    const first = planRender(projection("Hello", { lastSeq: 3 }), realization(), deltaCapabilities);
+    const segments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: [{ messageId: "run-1:segment:0:message:0", remoteRef: "remote-1" }],
+    });
+    const current = realization({ renderedThroughSeq: 3, segments, version: 1 });
+    const regressed = projection("Hallo", { lastSeq: 2 });
+
+    expect(() => planRender(regressed, current, deltaCapabilities)).toThrow(
+      "projection cursor regressed",
+    );
+    const reconciled = planRender(regressed, current, deltaCapabilities, {
+      allowCursorRegression: true,
+    });
+    expect(reconciled).toMatchObject({ fromCursor: 3, toCursor: 2 });
+    expect(reconciled.operations).toEqual([
+      expect.objectContaining({ type: "replace", remoteRef: "remote-1" }),
+    ]);
+  });
+
   it("keeps a create idempotency key stable when the projection cursor advances", () => {
     const first = planRender(projection("Hello"), realization(), deltaCapabilities);
     const retried = planRender(
@@ -186,6 +207,47 @@ describe("planRender", () => {
     expect(creates.map(({ content }) => content.parts.map((part) => part.id))).toEqual([
       ["text-1"],
       ["text-2"],
+    ]);
+  });
+
+  it("preserves rich data parts and replaces them when their payload changes", () => {
+    const withData = (value: number, lastSeq: number): Projection => ({
+      ...projection("unused", { lastSeq }),
+      segments: [
+        {
+          index: 0,
+          parts: [{ kind: "data", id: "chart-1", name: "chart", data: { value } }],
+        },
+      ],
+    });
+    const first = planRender(withData(1, 1), realization(), deltaCapabilities);
+    expect(first.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        content: {
+          text: "",
+          parts: [expect.objectContaining({ kind: "data", data: { value: 1 } })],
+        },
+      }),
+    ]);
+
+    const segments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: [{ messageId: first.operations[0]!.messageId, remoteRef: "remote-data" }],
+    });
+    const changed = planRender(
+      withData(2, 2),
+      realization({ renderedThroughSeq: 1, segments, version: 1 }),
+      deltaCapabilities,
+    );
+    expect(changed.operations).toEqual([
+      expect.objectContaining({
+        type: "replace",
+        remoteRef: "remote-data",
+        content: expect.objectContaining({
+          parts: [expect.objectContaining({ kind: "data", data: { value: 2 } })],
+        }),
+      }),
     ]);
   });
 
@@ -295,6 +357,66 @@ describe("planRender", () => {
       }),
     ]);
     expect(changed.nextSegments[0]?.messages).toHaveLength(2);
+  });
+
+  it("compares append-only content with the latest logical-message revision", () => {
+    const capabilities: CapabilityDescriptor = {
+      ...deltaCapabilities,
+      mutation: "append-only",
+      streaming: "none",
+    };
+    const first = planRender(projection("A", { ended: true }), realization(), capabilities);
+    const firstSegments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: [{ messageId: first.operations[0]!.messageId, remoteRef: "remote-a-1" }],
+    });
+    const second = planRender(
+      projection("B", { lastSeq: 2, ended: true }),
+      realization({ renderedThroughSeq: 1, segments: firstSegments, version: 1 }),
+      capabilities,
+    );
+    const secondSegments = acknowledge(second, {
+      appliedOperationIds: second.operations.map(({ id }) => id),
+      messages: [{ messageId: second.operations[0]!.messageId, remoteRef: "remote-b" }],
+    });
+
+    const reverted = planRender(
+      projection("A", { lastSeq: 3, ended: true }),
+      realization({ renderedThroughSeq: 2, segments: secondSegments, version: 2 }),
+      capabilities,
+    );
+    expect(reverted.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        messageId: expect.stringContaining(":revision:2"),
+      }),
+    ]);
+    const retried = planRender(
+      projection("A", { lastSeq: 3, ended: true }),
+      realization({ renderedThroughSeq: 2, segments: secondSegments, version: 2 }),
+      capabilities,
+    );
+    expect(retried.operations[0]?.id).toBe(reverted.operations[0]?.id);
+    expect(reverted.nextSegments[0]?.messages).toHaveLength(3);
+  });
+
+  it("defers unfinished segments when the driver does not support streaming", () => {
+    const capabilities: CapabilityDescriptor = {
+      ...deltaCapabilities,
+      streaming: "none",
+    };
+    const pending = planRender(projection("Hello", { lastSeq: 3 }), realization(), capabilities);
+    expect(pending).toMatchObject({ toCursor: 0, operations: [] });
+
+    const settled = planRender(
+      projection("Hello", { lastSeq: 4, ended: true }),
+      realization(),
+      capabilities,
+    );
+    expect(settled.operations).toEqual([
+      expect.objectContaining({ type: "create", finalized: true }),
+    ]);
+    expect(settled.toCursor).toBe(4);
   });
 
   it("requires complete acknowledgement before state can commit", () => {

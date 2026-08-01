@@ -4,6 +4,7 @@ export type {
   AppliedMessage,
   ApplyResult,
   CapabilityDescriptor,
+  PlanRenderOptions,
   RealizedMessage,
   RealizedSegment,
   RenderContent,

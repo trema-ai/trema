@@ -8,6 +8,7 @@
     "declarationMap": true
   },
   "include": ["src/**/*.ts"],
+  "exclude": ["src/**/tests/**"],
   "references": [
     {
       "path": "../harness/tsconfig.build.json"
