@@ -12,7 +12,6 @@ import {
   ConnectorToolNotAvailableError,
   ConnectorToolValidationError,
   connectorConnectionCredentialHealth,
-  connectorConnectionValidity,
   emptyPlatformAppDirectory,
   listConnectorConnections,
   resolveClientRegistration,
@@ -544,7 +543,14 @@ export async function createSlackBinding(
 
 export async function listSlackBindings(db: Database, orgId: string) {
   const bindings = await db.binding.findMany({
-    where: { orgId, surface: SLACK_PROVIDER_KEY },
+    // Personal-DM bindings are implicit audit metadata, not administrator-
+    // managed routing rules. Keeping them out also avoids exposing another
+    // member's personal scope in the Messaging settings response.
+    where: {
+      orgId,
+      surface: SLACK_PROVIDER_KEY,
+      scope: { kind: { in: ["org", "shared"] } },
+    },
     include: { scope: { select: { name: true, kind: true } } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
@@ -686,6 +692,8 @@ export interface ResolveSlackRequestInput {
   userId: string;
   directMessage?: boolean;
   masterKey?: string;
+  platformApps?: Parameters<typeof resolveConnectionCredential>[1]["platformApps"];
+  fetch?: typeof globalThis.fetch;
   now?: Date;
 }
 
@@ -708,8 +716,6 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
       ciphertext: true,
       config: true,
       revokedAt: true,
-      expiresAt: true,
-      lastRefreshFailure: true,
       refreshExhausted: true,
       ownerPrincipalId: true,
     },
@@ -729,20 +735,30 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("ambiguous_installation");
   }
   const connection = candidates[0]!;
-  const health = connectorConnectionValidity(
-    {
-      ...connection,
-      ...connectorConnectionCredentialHealth(connection, input.masterKey),
-    },
-    input.now ?? new Date(),
-  );
-  if (!health.isValid) throw new SlackRequestRejectedError("installation_unavailable");
   const storedEnterpriseId = stringField(connection.config, "enterprise.id");
   if (input.enterpriseId && storedEnterpriseId && input.enterpriseId !== storedEnterpriseId) {
     log.warn("Slack enterprise did not match installation", { workspaceId });
     throw new SlackRequestRejectedError("enterprise_mismatch");
   }
-
+  const credentialHealth = connectorConnectionCredentialHealth(connection, input.masterKey);
+  if (!credentialHealth.credentialAvailable || connection.refreshExhausted) {
+    throw new SlackRequestRejectedError("installation_unavailable");
+  }
+  try {
+    await resolveConnectionCredential(db, {
+      orgId: connection.orgId,
+      connectionId: connection.id,
+      ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+      ...(input.platformApps ? { platformApps: input.platformApps } : {}),
+      ...(input.fetch ? { fetch: input.fetch } : {}),
+      ...(input.now ? { now: input.now } : {}),
+    });
+  } catch (error) {
+    if (error instanceof ConnectorReconnectRequiredError) {
+      throw new SlackRequestRejectedError("installation_unavailable");
+    }
+    throw error;
+  }
   const locationRef = slackLocationRef(workspaceId, channelId);
   const externalUserId = slackExternalUserRef(workspaceId, userId);
   const identity = await db.identityLink.findUnique({

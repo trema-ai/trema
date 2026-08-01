@@ -261,6 +261,107 @@ integration("Slack installation and conversation bindings", () => {
     ).rejects.toMatchObject({ code: "P2002" });
   });
 
+  it("keeps implicit personal DM bindings out of the administrator binding list", async () => {
+    const fixture = await setup();
+    const personalScope = await db.scope.create({
+      data: {
+        orgId: fixture.org.id,
+        kind: "personal",
+        name: "Ada",
+        ownerId: fixture.member.id,
+      },
+    });
+    await db.binding.create({
+      data: {
+        orgId: fixture.org.id,
+        surface: "slack",
+        locationRef: `${fixture.workspaceId}:D123ABC`,
+        scopeId: personalScope.id,
+      },
+    });
+    const managed = await createSlackBinding(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      connectionId: fixture.connection.id,
+      workspaceId: fixture.workspaceId,
+      channelId: "C123ABC",
+      scopeId: fixture.sharedScope.id,
+    });
+
+    await expect(listSlackBindings(db, fixture.org.id)).resolves.toMatchObject([
+      { id: managed.id, scope: { kind: "shared" } },
+    ]);
+  });
+
+  it("retries a refreshable Slack credential before rejecting an expired installation", async () => {
+    const fixture = await setup();
+    const now = new Date("2026-08-01T16:00:00.000Z");
+    await createSlackBinding(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      connectionId: fixture.connection.id,
+      workspaceId: fixture.workspaceId,
+      channelId: "C123ABC",
+      scopeId: fixture.sharedScope.id,
+    });
+    await setSlackIdentityLink(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      workspaceId: fixture.workspaceId,
+      userId: "U123ABC",
+      principalId: fixture.member.id,
+    });
+    await db.connectorConnection.update({
+      where: { id: fixture.connection.id },
+      data: {
+        ciphertext: encryptEnvelope(
+          {
+            accessToken: "expired-bot-access",
+            refreshToken: "retryable-bot-refresh",
+            raw: { access_token: "expired-bot-access" },
+          },
+          masterKey,
+        ),
+        expiresAt: new Date(now.getTime() - 1_000),
+        lastRefreshFailure: new Date(now.getTime() - 60_000),
+        refreshFailureStartedAt: new Date(now.getTime() - 120_000),
+        refreshAttempts: 1,
+      },
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({
+        ok: true,
+        access_token: "refreshed-bot-access",
+        refresh_token: "refreshed-bot-refresh",
+        expires_in: 43_200,
+        token_type: "bot",
+      }),
+    );
+
+    await expect(
+      resolveSlackRequest(db, {
+        workspaceId: fixture.workspaceId,
+        channelId: "C123ABC",
+        userId: "U123ABC",
+        masterKey,
+        fetch,
+        now,
+      }),
+    ).resolves.toMatchObject({
+      connectionId: fixture.connection.id,
+      scopeId: fixture.sharedScope.id,
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: fixture.connection.id } }),
+    ).resolves.toMatchObject({
+      refreshAttempts: 0,
+      lastRefreshFailure: null,
+      refreshFailureStartedAt: null,
+      refreshExhausted: false,
+    });
+  });
+
   it("audits bindings, requester links, and a remote app uninstall without token material", async () => {
     const fixture = await setup();
     await createSlackBinding(db, {
