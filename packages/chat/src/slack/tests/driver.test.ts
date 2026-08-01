@@ -205,6 +205,97 @@ describe("SlackDriver", () => {
     expect(blocks[4]?.type).toBe("actions");
   });
 
+  it("keeps colon emoji intact across Slack section boundaries", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+
+    await driver({ fetch: slack.fetch }).apply(
+      [
+        {
+          type: "post",
+          operationId: "op-emoji-boundary",
+          content: {
+            markdown: `${"a".repeat(2_999)}:white_check_mark:`,
+            elicitation: {
+              id: "approval-emoji-boundary",
+              prompt: "Continue?",
+              options: [{ id: "continue", label: "Continue" }],
+            },
+          },
+        },
+      ],
+      surface,
+    );
+
+    const params = new URLSearchParams(slack.calls[0]?.body);
+    const blocks = JSON.parse(params.get("blocks") ?? "[]") as Array<{
+      text?: { text: string; type: string };
+    }>;
+    expect(blocks.slice(0, 2).map((block) => block.text?.text)).toEqual([
+      "a".repeat(2_999),
+      ":white_check_mark:",
+    ]);
+  });
+
+  it("enforces Slack button limits without corrupting elicitation identifiers", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+
+    await driver({ fetch: slack.fetch }).apply(
+      [
+        {
+          type: "post",
+          operationId: "op-button-limits",
+          content: {
+            markdown: "Choose",
+            elicitation: {
+              id: "request",
+              prompt: "Choose an option",
+              options: [{ id: "v".repeat(2_000), label: "l".repeat(76) }],
+            },
+          },
+        },
+      ],
+      surface,
+    );
+
+    const params = new URLSearchParams(slack.calls[0]?.body);
+    const blocks = JSON.parse(params.get("blocks") ?? "[]") as Array<{
+      elements?: Array<{ action_id: string; text: { text: string }; value: string }>;
+    }>;
+    const button = blocks.at(-1)?.elements?.[0];
+    expect(button?.action_id).toBe("input:request:button:0");
+    expect(button?.text.text).toBe("l".repeat(75));
+    expect(button?.value).toBe("v".repeat(2_000));
+
+    for (const elicitation of [
+      {
+        id: "r".repeat(241),
+        prompt: "Too long action ID",
+        options: [{ id: "valid", label: "Valid" }],
+      },
+      {
+        id: "request",
+        prompt: "Too long value",
+        options: [{ id: "v".repeat(2_001), label: "Invalid" }],
+      },
+    ]) {
+      const error = await driver({ fetch: slack.fetch })
+        .apply(
+          [
+            {
+              type: "post",
+              operationId: "op-invalid-button",
+              content: { markdown: "Choose", elicitation },
+            },
+          ],
+          surface,
+        )
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(SurfaceDriverError);
+      expect(error).toMatchObject({ category: "invalid-request", retryable: false });
+    }
+    expect(slack.calls).toHaveLength(1);
+  });
+
   it("starts, appends, and stops Slack native streaming", async () => {
     const slack = fakeSlack([
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },

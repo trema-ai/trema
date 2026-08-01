@@ -59,7 +59,10 @@ interface SlackStreamResponse {
 
 const SLACK_SECTION_TEXT_LIMIT = 3_000;
 const SLACK_MRKDWN_TOKEN =
-  /```[\s\S]*?```|`[^`\n]*`|<[^>\n]+>|\*(?=\S)[^*\n]*\S\*|_(?=\S)[^_\n]*\S_|~(?=\S)[^~\n]*\S~/gu;
+  /```[\s\S]*?```|`[^`\n]*`|<[^>\n]+>|:[A-Za-z0-9_+-]+:|\*(?=\S)[^*\n]*\S\*|_(?=\S)[^_\n]*\S_|~(?=\S)[^~\n]*\S~/gu;
+const SLACK_ACTION_ID_LIMIT = 255;
+const SLACK_BUTTON_TEXT_LIMIT = 75;
+const SLACK_BUTTON_VALUE_LIMIT = 2_000;
 
 export class SlackDriver implements SurfaceRenderDriver {
   readonly capabilities = slackCapabilities;
@@ -271,6 +274,9 @@ function slackMarkdownSection(text: string): unknown {
 }
 
 function realizeElicitation(elicitation: ElicitationContent): unknown[] {
+  for (const option of elicitation.options) {
+    validateSlackField(option.id, SLACK_BUTTON_VALUE_LIMIT, "button value");
+  }
   const prompt = toSlackMrkdwn(elicitation.prompt);
   const [firstPrompt = "", ...remainingPrompt] = splitSlackMrkdwn(prompt);
   const generated = inputRequestToSlackBlocks({
@@ -278,9 +284,37 @@ function realizeElicitation(elicitation: ElicitationContent): unknown[] {
     requestId: elicitation.id,
     options: elicitation.options,
   });
+  validateSlackInputBlocks(generated);
   const promptBlock = generated[0];
   if (promptBlock === undefined || remainingPrompt.length === 0) return generated;
   return [promptBlock, ...remainingPrompt.map(slackMarkdownSection), ...generated.slice(1)];
+}
+
+function validateSlackInputBlocks(blocks: readonly Record<string, unknown>[]): void {
+  for (const block of blocks) {
+    if (!Array.isArray(block.elements)) continue;
+    for (const element of block.elements) {
+      if (!isRecord(element)) continue;
+      validateSlackField(element.action_id, SLACK_ACTION_ID_LIMIT, "action ID");
+      validateSlackField(element.value, SLACK_BUTTON_VALUE_LIMIT, "button value");
+      if (isRecord(element.text)) {
+        validateSlackField(element.text.text, SLACK_BUTTON_TEXT_LIMIT, "button text");
+      }
+    }
+  }
+}
+
+function validateSlackField(value: unknown, limit: number, field: string): void {
+  if (typeof value === "string" && value.length > limit) {
+    throw new SurfaceDriverError(`Slack ${field} exceeds the ${limit}-character limit`, {
+      category: "invalid-request",
+      retryable: false,
+    });
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function splitSlackMrkdwn(text: string, limit = SLACK_SECTION_TEXT_LIMIT): string[] {
