@@ -41,7 +41,7 @@ function driver(): SlackIngressDriver {
   });
 }
 
-describe("SlackIngressDriver", () => {
+describe("Slack ingress driver", () => {
   it("verifies and normalizes an app mention without leaking Slack payload types", async () => {
     const body = JSON.stringify({
       api_app_id: "A1",

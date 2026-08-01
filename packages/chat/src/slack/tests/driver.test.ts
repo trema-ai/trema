@@ -137,6 +137,38 @@ describe("SlackDriver", () => {
     expect(params.get("text")).toBe("*Complete*");
   });
 
+  it("splits elicitation content across Slack-sized section blocks", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+
+    await driver({ fetch: slack.fetch }).apply(
+      [
+        {
+          type: "post",
+          operationId: "op-long",
+          content: {
+            markdown: "a".repeat(3_001),
+            elicitation: {
+              id: "approval-long",
+              prompt: "p".repeat(3_001),
+              options: [{ id: "continue", label: "Continue", style: "primary" }],
+            },
+          },
+        },
+      ],
+      surface,
+    );
+
+    const params = new URLSearchParams(slack.calls[0]?.body);
+    const blocks = JSON.parse(params.get("blocks") ?? "[]") as Array<{
+      text?: { text: string; type: string };
+      type: string;
+    }>;
+    expect(blocks.slice(0, 4).map((block) => Array.from(block.text?.text ?? "").length)).toEqual([
+      3_000, 1, 3_000, 1,
+    ]);
+    expect(blocks[4]?.type).toBe("actions");
+  });
+
   it("starts, appends, and stops Slack native streaming", async () => {
     const slack = fakeSlack([
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },

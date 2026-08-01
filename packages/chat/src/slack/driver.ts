@@ -57,6 +57,8 @@ interface SlackStreamResponse {
   [key: string]: unknown;
 }
 
+const SLACK_SECTION_TEXT_LIMIT = 3_000;
+
 export class SlackDriver implements SurfaceRenderDriver {
   readonly capabilities = slackCapabilities;
   readonly #options: SlackDriverOptions;
@@ -250,10 +252,7 @@ function realizeMessage(content: MessageContent): RealizedMessage {
   if (content.elicitation === undefined) return { text };
 
   const elicitationBlocks = realizeElicitation(content.elicitation);
-  const blocks =
-    text.length === 0
-      ? elicitationBlocks
-      : [{ type: "section", text: { type: "mrkdwn", text } }, ...elicitationBlocks];
+  const blocks = [...slackMarkdownSections(text), ...elicitationBlocks];
   const optionText = content.elicitation.options.map((option) => option.label).join(", ");
   const fallback = [text, toSlackMrkdwn(content.elicitation.prompt), optionText]
     .filter(Boolean)
@@ -261,12 +260,37 @@ function realizeMessage(content: MessageContent): RealizedMessage {
   return { blocks, text: fallback };
 }
 
+function slackMarkdownSections(text: string): unknown[] {
+  const characters = Array.from(text);
+  const blocks: unknown[] = [];
+  for (let offset = 0; offset < characters.length; offset += SLACK_SECTION_TEXT_LIMIT) {
+    blocks.push(
+      slackMarkdownSection(characters.slice(offset, offset + SLACK_SECTION_TEXT_LIMIT).join("")),
+    );
+  }
+  return blocks;
+}
+
+function slackMarkdownSection(text: string): unknown {
+  return { type: "section", text: { type: "mrkdwn", text } };
+}
+
 function realizeElicitation(elicitation: ElicitationContent): unknown[] {
-  return inputRequestToSlackBlocks({
-    prompt: toSlackMrkdwn(elicitation.prompt),
+  const prompt = toSlackMrkdwn(elicitation.prompt);
+  const characters = Array.from(prompt);
+  const firstPrompt = characters.slice(0, SLACK_SECTION_TEXT_LIMIT).join("");
+  const generated = inputRequestToSlackBlocks({
+    prompt: firstPrompt,
     requestId: elicitation.id,
     options: elicitation.options,
   });
+  const promptBlock = generated[0];
+  if (promptBlock === undefined || characters.length <= SLACK_SECTION_TEXT_LIMIT) return generated;
+  return [
+    promptBlock,
+    ...slackMarkdownSections(characters.slice(SLACK_SECTION_TEXT_LIMIT).join("")),
+    ...generated.slice(1),
+  ];
 }
 
 function toSlackMrkdwn(markdown: string): string {
