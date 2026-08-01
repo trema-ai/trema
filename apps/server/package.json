@@ -47,6 +47,7 @@
     "@trema/connectors": "workspace:*",
     "@trema/harness": "workspace:*",
     "@trema/models": "workspace:*",
+    "@trema/surfaces": "workspace:*",
     "aws4fetch": "^1.0.20",
     "better-auth": "^1.6.23",
     "ddg-search": "^2026.2.16",
