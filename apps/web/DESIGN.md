@@ -1,14 +1,12 @@
 # Web app design system
 
 The rulebook for `apps/web`. Read this before you add or change UI.
-The app is one shell with three areas: chat, the run view, and admin.
+The app is one shell with a run index, the run view, context, and administration.
 
 ## Direction
 
 The app reads as a precision instrument. The register is calm, dense,
-and flat. The chat thread is a quiet reading column; settings are
-cards of label-and-control rows; the chrome, tables, and logs are
-flat, bordered, and information-dense.
+and flat. The run timeline is a quiet reading column. Settings use cards of label-and-control rows. Chrome, tables, and logs are flat, bordered, and information-dense.
 
 Rules:
 
@@ -27,10 +25,7 @@ Rules:
    section headings and other UI labels.
 4. **Status is a dot plus a word.** Color carries state information
    only. Do not use status colors as decoration.
-5. **Chat is calm.** Agent messages are plain text on the surface — no
-   bubble. User messages get a `muted` rounded bubble. The composer is
-   the default assistant-ui shape: a rounded shell with the input on
-   top and an action row below.
+5. **Run content is calm.** Agent text is plain on the surface. Steering renders as an attributed note. Activity stays visually secondary to the result.
 6. **Light and dark ship together.** Never hardcode a color. Use the
    semantic tokens; both themes derive from them. Dark mode is the
    `.dark` class on the root element.
@@ -57,8 +52,7 @@ All tokens live in [src/styles/globals.css](src/styles/globals.css).
 - Status pairs: `go`/`go-soft` (success), `wait`/`wait-soft`
   (pending, paused), `destructive`/`destructive-soft` (failed),
   `moss`/`moss-soft` (running). Neutral states use `muted`.
-- Type: `text-chrome` (13px UI), `text-meta` (12px descriptions),
-  `text-chat` (15px chat prose), `text-log` (12.5px log lines).
+- Type: `text-chrome` (13px UI), `text-meta` (12px descriptions), `text-chat` (15px run prose), `text-log` (12.5px log lines).
 - Fonts: Inter (`font-sans`) for UI, JetBrains Mono (`font-mono`) for
   the spec register. Do not add other fonts.
 - Radius: `rounded-sm` badges and inputs, `rounded-md` buttons and
@@ -76,7 +70,7 @@ use `text-chrome` and `text-meta` directly.
 - **App shell.** Collapsible left sidebar (260px): scope switcher on
   top, nav groups, user menu at the bottom. Top bar: breadcrumb entity
   switchers and page tabs. Content scrolls independently.
-- **Thread.** Centered 740px column on `card` background.
+- **Run index.** Filter controls sit above a paginated table. A row opens the canonical run view.
 - **Run view.** 860px timeline column plus a right panel rail; the
   rail collapses into tabs under 1200px.
 - **Timeline items.** Flat collapsible rows on the page background —
@@ -100,11 +94,7 @@ use `text-chrome` and `text-meta` directly.
 - `src/components/ui/` — vendored shadcn components. Theme through
   tokens; keep upstream APIs so updates stay cheap. Do not hand-roll
   a primitive shadcn already ships.
-- `src/components/assistant-ui/` — chat components built on
-  `@assistant-ui/react`.
-- `src/components/trema/` — product components (badges, approval card,
-  timeline pieces, settings grammar, shell). These compose the two
-  sets above.
+- `src/components/trema/` — product components (badges, approval card, timeline pieces, settings grammar, shell). These compose the primitives above.
 
 ## Verification
 

@@ -1,15 +1,15 @@
 import { rpcClient } from "#web/lib/api.ts";
 
 /**
- * The shared write seam for every web intent: one submit helper and the small
- * error readers the acknowledgement rules depend on. Used by the run-view
- * controls and the chat composer alike — one endpoint, one client wrapper.
+ * The shared write seam for run controls: one submit helper and the small
+ * error readers the acknowledgement rules depend on.
  */
 
 export type SubmitIntentInput = Parameters<typeof rpcClient.intents.submit>[0];
+export type RunControlIntent = Exclude<SubmitIntentInput["intent"], { type: "message" }>;
 
 /** Submits one intent under a freshly minted id. */
-export function submitIntent(intent: SubmitIntentInput["intent"]) {
+export function submitIntent(intent: RunControlIntent) {
   return rpcClient.intents.submit({ intentId: crypto.randomUUID(), intent });
 }
 

@@ -1040,6 +1040,7 @@ model AgentRun {
   surfaceRealizations SurfaceRealization[]
 
   @@unique([orgId, id])
+  @@index([orgId, createdAt, id])
   @@index([orgId, threadRef, createdAt])
   @@index([orgId, state])
   @@index([orgId, sessionId])

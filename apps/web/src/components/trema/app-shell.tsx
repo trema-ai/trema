@@ -1,8 +1,8 @@
-import { Brain, MessageSquarePlus, Settings, Zap } from "lucide-react";
+import { Brain, ScrollText, Settings, Zap } from "lucide-react";
 import { type ComponentProps, type ReactNode, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AppSidebar, type ThreadSummary } from "#web/components/trema/app-sidebar.tsx";
+import { AppSidebar } from "#web/components/trema/app-sidebar.tsx";
 import { TopBar } from "#web/components/trema/top-bar.tsx";
 import {
   CommandDialog,
@@ -11,25 +11,23 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-  CommandSeparator,
 } from "#web/components/ui/command.tsx";
 import { SidebarInset, SidebarProvider } from "#web/components/ui/sidebar.tsx";
 
 type AppShellProps = {
   children: ReactNode;
-  sidebar: Omit<ComponentProps<typeof AppSidebar>, "onSearch" | "threads">;
+  sidebar: Omit<ComponentProps<typeof AppSidebar>, "onSearch">;
   orgName: string;
-  threads?: ThreadSummary[];
 };
 
 const destinations = [
-  { label: "New chat", href: "/", icon: MessageSquarePlus },
+  { label: "Runs", href: "/runs", icon: ScrollText },
   { label: "Automations", href: "/automations", icon: Zap },
-  { label: "Context", href: "/context", icon: Brain },
+  { label: "Context", href: "/customize", icon: Brain },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-function AppShell({ children, sidebar, orgName, threads = [] }: AppShellProps) {
+function AppShell({ children, sidebar, orgName }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -52,18 +50,18 @@ function AppShell({ children, sidebar, orgName, threads = [] }: AppShellProps) {
 
   return (
     <SidebarProvider>
-      <AppSidebar {...sidebar} threads={threads} onSearch={() => setSearchOpen(true)} />
+      <AppSidebar {...sidebar} onSearch={() => setSearchOpen(true)} />
       <SidebarInset className="h-svh overflow-hidden">
-        <TopBar orgName={orgName} />
+        <TopBar orgName={orgName} onSearch={() => setSearchOpen(true)} />
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       </SidebarInset>
       <CommandDialog
         open={searchOpen}
         onOpenChange={setSearchOpen}
         title="Search Trema"
-        description="Go to a page or recent session."
+        description="Go to a console page."
       >
-        <CommandInput placeholder="Search pages and sessions" />
+        <CommandInput placeholder="Search pages" />
         <CommandList>
           <CommandEmpty>No results</CommandEmpty>
           <CommandGroup heading="Go to">
@@ -77,26 +75,6 @@ function AppShell({ children, sidebar, orgName, threads = [] }: AppShellProps) {
                 {destination.label}
               </CommandItem>
             ))}
-          </CommandGroup>
-          <CommandSeparator />
-          <CommandGroup heading="Recent chats">
-            {threads.length === 0 ? (
-              <CommandItem disabled value="No chats yet">
-                No chats yet
-              </CommandItem>
-            ) : (
-              threads.map((thread) => (
-                <CommandItem
-                  key={thread.threadRef}
-                  // The ref keeps values unique when two chats share a title;
-                  // matching still runs on the visible words.
-                  value={`${thread.title} ${thread.threadRef}`}
-                  onSelect={() => goTo(`/chat/${thread.threadRef}`)}
-                >
-                  <span className="truncate">{thread.title}</span>
-                </CommandItem>
-              ))
-            )}
           </CommandGroup>
         </CommandList>
       </CommandDialog>

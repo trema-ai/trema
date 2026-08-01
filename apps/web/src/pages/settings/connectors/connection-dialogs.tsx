@@ -282,8 +282,8 @@ export function OAuthConnectionDialog({
             <DialogDescription>
               {audience === "member"
                 ? reconnect
-                  ? `Reconnect ${reconnect.label ?? provider.displayName}. Trema will use this account for connector calls in your personal chats.`
-                  : `Choose the ${provider.displayName} account you want Trema to use for connector calls in your personal chats.`
+                  ? `Reconnect ${reconnect.label ?? provider.displayName}. Trema will use this account when acting as you.`
+                  : `Choose the ${provider.displayName} account you want Trema to use when acting as you.`
                 : reconnect
                   ? `Authorize ${reconnect.label ?? provider.displayName} again for shared use.`
                   : `Choose an organization-controlled ${provider.displayName} account for this location.`}

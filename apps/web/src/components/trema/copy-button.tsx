@@ -8,7 +8,7 @@ type CopyButtonProps = Omit<React.ComponentProps<typeof Button>, "children" | "o
   value: string;
 };
 
-function CopyButton({ value, className, ...props }: CopyButtonProps) {
+function CopyButton({ value, className, onKeyDown, ...props }: CopyButtonProps) {
   const [copied, setCopied] = React.useState(false);
   const timeoutRef = React.useRef<number | undefined>(undefined);
 
@@ -20,7 +20,8 @@ function CopyButton({ value, className, ...props }: CopyButtonProps) {
     };
   }, []);
 
-  const handleCopy = () => {
+  const handleCopy = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     void navigator.clipboard.writeText(value).then(() => {
       setCopied(true);
       if (timeoutRef.current !== undefined) {
@@ -38,6 +39,10 @@ function CopyButton({ value, className, ...props }: CopyButtonProps) {
       size="icon-sm"
       aria-label={copied ? "Copied" : "Copy"}
       onClick={handleCopy}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        onKeyDown?.(event);
+      }}
       className={cn("text-muted-foreground", className)}
       {...props}
     >
