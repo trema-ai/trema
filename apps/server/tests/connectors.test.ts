@@ -3,6 +3,7 @@ import { call } from "@orpc/server";
 import {
   githubProvider,
   googleWorkspaceProvider,
+  linearProvider,
   loadProviderCatalog,
   slackProvider,
 } from "@trema/connectors";
@@ -23,6 +24,7 @@ import {
   createStaticConnection,
   hashOAuthState,
   listConnectorConnections,
+  listConnectorInstallationHealth,
   type McpClientFactory,
   OAuthStateExpiredError,
   OAuthStateSingleUseError,
@@ -325,19 +327,34 @@ integration("connector connection flows", () => {
       refreshToken: "refresh-token",
       raw: { access_token: "access-token", account_name: "octo-org" },
     });
+    await db.connectorConnection.update({
+      where: { id: stored.id },
+      data: { expiresAt: new Date("2026-07-31T11:00:00.000Z") },
+    });
 
     // The list derives a display label from the hoisted account name without
     // leaking config; an explicit rename overrides it.
+    const now = new Date("2026-07-31T12:00:00.000Z");
     const [listed] = await listConnectorConnections(
       db,
       org.org.id,
       "github",
-      new Date(),
+      now,
       undefined,
+      masterKey,
       oauthCatalog,
     );
     expect(listed?.label).toBe("octo-org");
+    expect(listed).toMatchObject({ isExpired: false, isValid: true });
     expect(JSON.stringify(listed)).not.toMatch(/"config"|account_name/);
+    await expect(
+      listConnectorInstallationHealth(db, {
+        orgId: org.org.id,
+        scopeIds: [org.orgScope.id],
+        masterKey,
+        now,
+      }),
+    ).resolves.toEqual([{ installationItemId: completed.installation.id, status: "available" }]);
     const renamed = await call(
       connectorsRouter.connections.update,
       { connectionId: completed.connection.id, label: "Primary org" },
@@ -532,6 +549,206 @@ integration("connector connection flows", () => {
         { context: member.context },
       ),
     ).resolves.toMatchObject({ id: ownConnection.id });
+  });
+
+  it("lets a member retry tool sync for an existing personal MCP installation", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "MCP Retry Member");
+    const connection = await db.connectorConnection.create({
+      data: {
+        orgId: org.org.id,
+        ownerPrincipalId: member.principal.id,
+        providerKey: linearProvider.key,
+        authMode: linearProvider.authMode,
+        config: {},
+        ciphertext: encryptEnvelope({ accessToken: "linear-token" }, masterKey),
+      },
+    });
+    const installation = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: member.personalScope.id,
+        kind: "connector",
+        title: linearProvider.displayName,
+        body: {
+          catalogKey: linearProvider.key,
+          connectionId: connection.id,
+          access: { kind: "scope" },
+          enabledTools: "all",
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: member.principal.id,
+      },
+    });
+    const clientFactory = vi.fn(async () => ({
+      listTools: async () => ({
+        tools: [{ name: "list_issues", description: "List Linear issues" }],
+      }),
+      close: async () => {},
+    })) satisfies McpClientFactory;
+
+    await expect(
+      call(
+        connectorsRouter.member.installations.create,
+        {
+          scopeId: member.personalScope.id,
+          catalogKey: linearProvider.key,
+          connectionId: connection.id,
+        },
+        { context: { ...member.context, mcpClientFactory: clientFactory } },
+      ),
+    ).resolves.toMatchObject({ id: installation.id });
+    await expect(
+      db.item.findUniqueOrThrow({
+        where: { orgId_id: { orgId: org.org.id, id: installation.id } },
+      }),
+    ).resolves.toMatchObject({
+      body: {
+        syncedTools: [{ name: "list_issues", description: "List Linear issues" }],
+      },
+    });
+    expect(clientFactory).toHaveBeenCalledOnce();
+  });
+
+  it("reports and repairs a stale personal REST installation", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "REST Repair Member");
+    const connection = await storedConnection(org.org.id, member.principal.id);
+    const installation = await db.item.create({
+      data: {
+        orgId: org.org.id,
+        scopeId: member.personalScope.id,
+        kind: "connector",
+        title: githubProvider.displayName,
+        body: {
+          catalogKey: githubProvider.key,
+          connectionId: connection.id,
+          access: { kind: "minimum_role", role: "member" },
+          enabledTools: ["removed_legacy_tool"],
+        },
+        status: "active",
+        disclosure: "retrieved",
+        createdById: member.principal.id,
+      },
+    });
+
+    await expect(
+      call(connectorsRouter.member.installations.health, {}, { context: member.context }),
+    ).resolves.toEqual([]);
+    await expect(
+      call(connectorsRouter.member.connections.list, {}, { context: member.context }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: connection.id,
+        installations: [{ id: installation.id, scopeId: member.personalScope.id }],
+      }),
+    ]);
+
+    await expect(
+      call(
+        connectorsRouter.member.installations.create,
+        {
+          scopeId: member.personalScope.id,
+          catalogKey: githubProvider.key,
+          connectionId: connection.id,
+        },
+        { context: member.context },
+      ),
+    ).resolves.toMatchObject({
+      id: installation.id,
+      body: {
+        access: { kind: "minimum_role", role: "member" },
+        enabledTools: "all",
+      },
+    });
+    await expect(
+      call(connectorsRouter.member.installations.health, {}, { context: member.context }),
+    ).resolves.toEqual([{ installationItemId: installation.id, status: "available" }]);
+  });
+
+  it("reports organization installation health without exposing connection metadata", async () => {
+    const org = await createOrg();
+    const member = await addMember(org.org.id, org.orgScope.id, "Health Member");
+    const connection = await storedConnection(org.org.id, org.agent.id, "slack");
+    const installation = await createConnectorInstallation(db, {
+      orgId: org.org.id,
+      actorPrincipalId: org.principal.id,
+      scopeId: org.orgScope.id,
+      catalogKey: "slack",
+      connectionId: connection.id,
+    });
+    const listHealth = () =>
+      call(connectorsRouter.member.installations.health, {}, { context: member.context });
+
+    await Promise.all([
+      db.item.create({
+        data: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          title: "Retired provider",
+          body: {
+            catalogKey: "retired_provider",
+            connectionId: connection.id,
+            enabledTools: "all",
+          },
+          status: "active",
+          disclosure: "retrieved",
+          createdById: org.principal.id,
+        },
+      }),
+      db.item.create({
+        data: {
+          orgId: org.org.id,
+          scopeId: org.orgScope.id,
+          kind: "connector",
+          title: "Legacy provider body",
+          body: {
+            catalogKey: "github",
+            connectionId: connection.id,
+            enabledTools: ["removed_legacy_tool"],
+          },
+          status: "active",
+          disclosure: "retrieved",
+          createdById: org.principal.id,
+        },
+      }),
+    ]);
+
+    await expect(listHealth()).resolves.toEqual([
+      {
+        installationItemId: installation.id,
+        status: "available",
+      },
+    ]);
+
+    await db.connectorConnection.update({
+      where: { id: connection.id },
+      data: { revokedAt: new Date() },
+    });
+    await expect(listHealth()).resolves.toEqual([
+      expect.objectContaining({ installationItemId: installation.id, status: "revoked" }),
+    ]);
+
+    await db.connectorConnection.update({
+      where: { id: connection.id },
+      data: { revokedAt: null, expiresAt: new Date(0), refreshExhausted: false },
+    });
+    await expect(listHealth()).resolves.toEqual([
+      expect.objectContaining({ installationItemId: installation.id, status: "expired" }),
+    ]);
+
+    await db.connectorConnection.update({
+      where: { id: connection.id },
+      data: { expiresAt: null, refreshExhausted: true },
+    });
+    await expect(listHealth()).resolves.toEqual([
+      expect.objectContaining({
+        installationItemId: installation.id,
+        status: "refresh_exhausted",
+      }),
+    ]);
   });
 
   it("appends connected=<connectionId> to the safe callback redirect", async () => {
@@ -1081,6 +1298,7 @@ integration("connector connection flows", () => {
         "google_workspace",
         new Date(),
         undefined,
+        masterKey,
         googleWorkspaceOAuthCatalog,
       ),
     ).resolves.toEqual([

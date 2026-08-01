@@ -4,7 +4,10 @@ import type { PrincipalKind, Role, ScopeKind } from "#server/generated/prisma/cl
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { effectiveRolesAtScope } from "#server/services/authorize/index.js";
-import { ConnectorConnectionNotFoundError } from "#server/services/connectors/connect.js";
+import {
+  ConnectorConnectionNotFoundError,
+  connectorConnectionMetadataLabel,
+} from "#server/services/connectors/connect.js";
 import {
   type ConnectorInstallationBody,
   createConnectorInstallationBodySchema,
@@ -77,6 +80,8 @@ export interface ResolvedConnectorInstallation {
   connectorKey: string;
   connectionId: string;
   credentialOwnerPrincipalId: string;
+  connectionLabel: string;
+  connectionSource: "personal" | "organization";
   body: ConnectorInstallationBody;
   provider: ProviderDef;
   tools: ResolvedInstallationTool[];
@@ -241,6 +246,8 @@ async function resolveSelectedInstallation(
       id: true,
       providerKey: true,
       authMode: true,
+      label: true,
+      config: true,
       ownerPrincipalId: true,
       revokedAt: true,
       refreshExhausted: true,
@@ -290,6 +297,11 @@ async function resolveSelectedInstallation(
     connectorKey: provider.key,
     connectionId: connection.id,
     credentialOwnerPrincipalId: connection.ownerPrincipalId,
+    connectionLabel:
+      connection.label ??
+      connectorConnectionMetadataLabel(catalog, provider.key, connection.config) ??
+      provider.displayName,
+    connectionSource: connection.owner.kind === "human" ? "personal" : "organization",
     body: parsed.data,
     provider,
     tools: resolveInstallationTools(provider, parsed.data),

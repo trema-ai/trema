@@ -47,6 +47,7 @@ export type ConnectorConnection = {
   providerScopes: string[];
   isRevoked: boolean;
   isExpired: boolean;
+  isCredentialUnavailable: boolean;
   isValid: boolean;
   refreshExhausted: boolean;
   expiresAt: string | null;
@@ -70,8 +71,21 @@ export type ConnectorInstallation = {
     description?: string;
     annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
   }>;
+  health: "available" | "setup_required";
   status: "proposed" | "active" | "archived";
   updatedAt: string;
+};
+
+export type ConnectorInstallationHealth = {
+  installationItemId: string;
+  status:
+    | "available"
+    | "revoked"
+    | "expired"
+    | "refresh_exhausted"
+    | "unavailable"
+    | "missing"
+    | "setup_required";
 };
 
 export type ConnectorMeta = { callbackUrl: string };

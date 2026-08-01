@@ -45,7 +45,6 @@ export {
   CredentialVerificationError,
   completeOAuthCallback,
   connectorCallbackUrl,
-  connectorConnectionValidity,
   consumeOAuthState,
   createStaticConnection,
   hashOAuthState,
@@ -71,6 +70,12 @@ export {
   type RestConnectorToolResult,
 } from "#server/services/connectors/execute.js";
 export {
+  type ConnectorConnectionHealth,
+  type ConnectorConnectionHealthStatus,
+  connectorConnectionHealthStatus,
+  connectorConnectionValidity,
+} from "#server/services/connectors/health.js";
+export {
   type ArchiveConnectorInstallationInput,
   archiveConnectorInstallation,
   type ConnectorInstallationBody,
@@ -82,7 +87,9 @@ export {
   createConnectorInstallationBodySchema,
   type InstallationAccess,
   installationAccessSchema,
+  type ListConnectorInstallationHealthInput,
   type ListConnectorInstallationsInput,
+  listConnectorInstallationHealth,
   listConnectorInstallations,
   type ResolvedInstallationTool,
   resolveInstallationTools,

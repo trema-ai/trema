@@ -285,6 +285,7 @@ function connectorSchema(
 export function connectorToolDef(
   provider: ProviderCatalog[number],
   tool: ResolvedInstallationTool,
+  account?: { label: string; source: "personal" | "organization" },
 ): ToolDef {
   const key = `${provider.key}:${tool.name}`;
   return {
@@ -301,6 +302,7 @@ export function connectorToolDef(
       key: provider.key,
       displayName: provider.displayName,
       ...(provider.logoUrl === undefined ? {} : { logoUrl: provider.logoUrl }),
+      ...(account === undefined ? {} : { account }),
     },
     ...(tool.annotations?.destructiveHint ? { execution: "sequential" } : {}),
   };
@@ -332,7 +334,13 @@ export async function resolveConnectorToolDefs(
   for (const installation of installations) {
     for (const tool of installation.tools) {
       const key = `${installation.provider.key}:${tool.name}`;
-      definitions.set(key, connectorToolDef(installation.provider, tool));
+      definitions.set(
+        key,
+        connectorToolDef(installation.provider, tool, {
+          label: installation.connectionLabel,
+          source: installation.connectionSource,
+        }),
+      );
     }
   }
 

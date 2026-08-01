@@ -50,6 +50,10 @@ export interface ToolDef {
     key: string;
     displayName: string;
     logoUrl?: string;
+    account?: {
+      label: string;
+      source: "personal" | "organization";
+    };
   };
   /** Runs the whole containing batch sequentially when set to `sequential`; all other batches run in parallel. */
   execution?: "parallel" | "sequential";

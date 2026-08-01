@@ -31,6 +31,7 @@ import {
   deleteClientRegistration,
   listClientRegistrations,
   listConnectorConnections,
+  listConnectorInstallationHealth,
   listConnectorInstallations,
   loadProviderCatalog,
   McpOAuthDiscoveryError,
@@ -131,11 +132,21 @@ const connectionSchema = z.object({
   updatedAt: z.string(),
   isRevoked: z.boolean(),
   isExpired: z.boolean(),
+  isCredentialUnavailable: z.boolean(),
   isValid: z.boolean(),
   installations: z.array(z.object({ id: z.uuid(), scopeId: z.uuid() })),
 });
 
 const connectionUpdateSchema = z.object({ id: z.uuid(), label: z.string().nullable() });
+const connectionHealthStatusSchema = z.enum([
+  "available",
+  "revoked",
+  "expired",
+  "refresh_exhausted",
+  "unavailable",
+  "missing",
+  "setup_required",
+]);
 
 type ListedConnection = Awaited<ReturnType<typeof listConnectorConnections>>[number];
 
@@ -490,6 +501,7 @@ const listedInstallationSchema = z.object({
         .optional(),
     }),
   ),
+  health: z.enum(["available", "setup_required"]),
   status: z.enum(["proposed", "active", "archived"]),
   updatedAt: z.string(),
 });
@@ -799,6 +811,7 @@ const listConnections = requireCapability("manage_connectors")
         // Personal connections are managed by their owners in the main view;
         // the admin area lists the agent's connections only.
         await orgAgentPrincipalId(context.db, context.org.id),
+        context.env.TREMA_CREDENTIAL_MASTER_KEY,
       )
     ).map(serializeConnection),
   );
@@ -935,9 +948,64 @@ const memberListConnections = orgScoped
         input.providerKey,
         new Date(),
         context.principal.id,
+        context.env.TREMA_CREDENTIAL_MASTER_KEY,
       )
     ).map(serializeConnection),
   );
+
+const memberListInstallationHealth = orgScoped
+  .route({
+    method: "GET",
+    path: "/member/connector-installations/health",
+    summary: "List connector installation health for members",
+    description:
+      "List safe installation availability for the caller's personal and organization connectors.",
+    tags: ["Connectors"],
+  })
+  .output(
+    z.array(
+      z.object({
+        installationItemId: z.uuid(),
+        status: connectionHealthStatusSchema,
+      }),
+    ),
+  )
+  .handler(async ({ context }) => {
+    const scopes = await context.db.scope.findMany({
+      where: {
+        orgId: context.org.id,
+        OR: [
+          { kind: { in: ["org", "shared"] } },
+          { kind: "personal", ownerId: context.principal.id },
+        ],
+      },
+      select: { id: true, kind: true },
+      orderBy: [{ kind: "asc" }, { id: "asc" }],
+    });
+    const orgScope = scopes.find((scope) => scope.kind === "org");
+    if (!orgScope) {
+      throw new ORPCError("NOT_FOUND", { message: "Organization scope not found" });
+    }
+    if (!(await authorize(context.principal, "read", orgScope.id, context.db))) {
+      throw new ORPCError("FORBIDDEN", { message: "Capability required: read" });
+    }
+    const readable = await Promise.all(
+      scopes.map(async (scope) => ({
+        ...scope,
+        canRead:
+          scope.id === orgScope.id ||
+          (await authorize(context.principal, "read", scope.id, context.db)),
+      })),
+    );
+    const scopeIds = readable.filter((scope) => scope.canRead).map((scope) => scope.id);
+    return listConnectorInstallationHealth(context.db, {
+      orgId: context.org.id,
+      scopeIds,
+      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+        : {}),
+    });
+  });
 
 const memberRevokeConnection = orgScoped
   .route({
@@ -1039,6 +1107,6 @@ export const connectorsRouter = {
   member: {
     connect: { startOAuth: memberStartOAuth },
     connections: { list: memberListConnections, revoke: memberRevokeConnection },
-    installations: { create: memberCreateInstallation },
+    installations: { create: memberCreateInstallation, health: memberListInstallationHealth },
   },
 };

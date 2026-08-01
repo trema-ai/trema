@@ -12,6 +12,10 @@ import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { authorize } from "#server/services/authorize/index.js";
 import {
+  connectorConnectionCredentialHealth,
+  connectorConnectionValidity,
+} from "#server/services/connectors/health.js";
+import {
   finalizeConnectorInstallation,
   lockConnectorBindingMutations,
   lockConnectorConnectionBindings,
@@ -32,6 +36,8 @@ import {
   resolveStoredClientRegistration,
 } from "#server/services/connectors/registrations.js";
 import type { McpClientFactory } from "#server/services/connectors/sync.js";
+
+export { connectorConnectionValidity };
 
 const defaultCatalog = loadProviderCatalog();
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
@@ -1526,7 +1532,7 @@ export async function updateConnectorConnectionLabel(
 // Derive a display label from the provider's hoisted token-response metadata
 // (an account or workspace name) when the connection has no explicit label.
 // Config itself never leaves the server; only the derived string does.
-function metadataLabel(
+export function connectorConnectionMetadataLabel(
   catalog: ProviderCatalog,
   providerKey: string,
   config: Prisma.JsonValue,
@@ -1546,6 +1552,7 @@ export async function listConnectorConnections(
   providerKey?: string,
   now = new Date(),
   ownerPrincipalId?: string,
+  masterKey?: string,
   catalog: ProviderCatalog = defaultCatalog,
 ) {
   const [connections, installations] = await Promise.all([
@@ -1555,7 +1562,7 @@ export async function listConnectorConnections(
         ...(providerKey ? { providerKey } : {}),
         ...(ownerPrincipalId ? { ownerPrincipalId } : {}),
       },
-      select: { ...publicConnectionSelect(), config: true },
+      select: { ...publicConnectionSelect(), config: true, ciphertext: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     // No principal filter here: bindings only surface when their connectionId
@@ -1581,25 +1588,21 @@ export async function listConnectorConnections(
     current.push({ id: installation.id, scopeId: installation.scopeId });
     bindings.set(connectionId, current);
   }
-  return connections.map(({ config, ...connection }) => ({
-    ...connection,
-    label: connection.label ?? metadataLabel(catalog, connection.providerKey, config) ?? null,
-    installations: bindings.get(connection.id) ?? [],
-    ...connectorConnectionValidity(connection, now),
-  }));
-}
-
-export function connectorConnectionValidity(
-  connection: { revokedAt: Date | null; expiresAt: Date | null; refreshExhausted: boolean },
-  now = new Date(),
-) {
-  const isRevoked = connection.revokedAt !== null;
-  const isExpired = connection.expiresAt !== null && connection.expiresAt <= now;
-  return {
-    isRevoked,
-    isExpired,
-    isValid: !isRevoked && !isExpired && !connection.refreshExhausted,
-  };
+  return connections.map(({ config, ciphertext, ...connection }) => {
+    const credentialHealth = connectorConnectionCredentialHealth(
+      { authMode: connection.authMode, ciphertext },
+      masterKey,
+    );
+    return {
+      ...connection,
+      label:
+        connection.label ??
+        connectorConnectionMetadataLabel(catalog, connection.providerKey, config) ??
+        null,
+      installations: bindings.get(connection.id) ?? [],
+      ...connectorConnectionValidity({ ...connection, ...credentialHealth }, now),
+    };
+  });
 }
 
 export async function revokeConnectorConnection(

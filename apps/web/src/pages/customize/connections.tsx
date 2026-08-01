@@ -3,7 +3,6 @@ import { Cable, RefreshCw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { CredentialStatusBadge } from "#web/components/trema/credential-status-badge.tsx";
 import { EmptyState } from "#web/components/trema/empty-state.tsx";
 import { RelativeTime } from "#web/components/trema/relative-time.tsx";
 import { Alert, AlertDescription } from "#web/components/ui/alert.tsx";
@@ -18,26 +17,27 @@ import {
   AlertDialogTitle,
 } from "#web/components/ui/alert-dialog.tsx";
 import { Button } from "#web/components/ui/button.tsx";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#web/components/ui/card.tsx";
 import { Skeleton } from "#web/components/ui/skeleton.tsx";
 import { orpc, rpcClient } from "#web/lib/api.ts";
-import type { ConnectorBody, Item, Scope } from "#web/pages/customize/types.ts";
+import {
+  type ConnectorBody,
+  type Item,
+  normalizeConnectorBody,
+  type Scope,
+} from "#web/pages/customize/types.ts";
 import { useAuthenticatedSession } from "#web/pages/home.tsx";
+import { ConnectorCard } from "#web/pages/settings/connectors/card.tsx";
 import { OAuthConnectionDialog } from "#web/pages/settings/connectors/connection-dialogs.tsx";
 import {
-  authModeLabel,
+  ConnectorFilters,
+  connectorCategoryOptions,
+  filterConnectorRows,
+} from "#web/pages/settings/connectors/filters.tsx";
+import {
   type CatalogProvider,
   type ConnectorConnection,
-  categoryLabel,
+  type ConnectorInstallationHealth,
   messageFrom,
-  providerLogo,
 } from "#web/pages/settings/connectors/shared.tsx";
 
 type ConnectSelection = {
@@ -45,19 +45,33 @@ type ConnectSelection = {
   reconnect?: ConnectorConnection;
 };
 
+const roleRank = { viewer: 0, member: 1, admin: 2, owner: 3 } as const;
+
+const memberSourceOptions = [
+  { value: "all", label: "All connectors" },
+  { value: "personal", label: "Your accounts" },
+  { value: "organization", label: "Organization-provided" },
+  { value: "available", label: "Available to connect" },
+];
+
 export function ConnectionsTab({
   items,
   scope,
+  orgScope,
   loading,
 }: {
   items: Item[];
   scope: Scope;
+  orgScope?: Scope | undefined;
   loading: boolean;
 }) {
   const session = useAuthenticatedSession();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selection, setSelection] = useState<ConnectSelection>();
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
+  const [source, setSource] = useState("all");
   const handledCallback = useRef<string | undefined>(undefined);
   const ownPersonal =
     scope.kind === "personal" && scope.ownerId === session.membership.principal.id;
@@ -66,15 +80,51 @@ export function ConnectionsTab({
     ...orpc.connectors.member.connections.list.queryOptions({ input: {} }),
     enabled: ownPersonal,
   });
+  const organizationInstallationHealth = useQuery({
+    ...orpc.connectors.member.installations.health.queryOptions({}),
+    enabled: ownPersonal,
+  });
   const entries = (catalog.data ?? []) as CatalogProvider[];
   const entryByKey = useMemo(() => new Map(entries.map((entry) => [entry.key, entry])), [entries]);
   const connectionRows = useMemo(
     () => (memberConnections.data ?? []) as ConnectorConnection[],
     [memberConnections.data],
   );
-  const installations = items.filter(
-    (item) => item.kind === "connector" && item.status !== "archived",
+  const healthByInstallationId = useMemo(
+    () =>
+      new Map(
+        ((organizationInstallationHealth.data ?? []) as ConnectorInstallationHealth[]).map(
+          (health) => [health.installationItemId, health.status],
+        ),
+      ),
+    [organizationInstallationHealth.data],
   );
+  const installations = items.flatMap((item) => {
+    if (item.scopeId !== scope.id || item.kind !== "connector" || item.status === "archived") {
+      return [];
+    }
+    const body = normalizeConnectorBody(item.body);
+    return body === undefined ? [] : [{ item, body }];
+  });
+  const organizationInstallations =
+    scope.kind === "personal" && orgScope
+      ? items.flatMap((item) => {
+          if (
+            item.scopeId !== orgScope.id ||
+            item.kind !== "connector" ||
+            item.status === "archived"
+          ) {
+            return [];
+          }
+          const body = normalizeConnectorBody(item.body);
+          if (body === undefined) return [];
+          const provider = entryByKey.get(body.catalogKey);
+          if (provider === undefined || provider.supportsPersonalOAuth) return [];
+          const allowed =
+            body.access.kind === "scope" || roleRank[session.role] >= roleRank[body.access.role];
+          return allowed ? [{ item, body, provider }] : [];
+        })
+      : [];
   const eligibleConnections = connectionRows.filter(
     (connection) => entryByKey.get(connection.providerKey)?.supportsPersonalOAuth === true,
   );
@@ -82,6 +132,49 @@ export function ConnectionsTab({
   const available = entries.filter(
     (entry) => entry.supportsPersonalOAuth && !connectedKeys.has(entry.key),
   );
+  const filteredConnections =
+    source === "all" || source === "personal"
+      ? filterConnectorRows({
+          rows: eligibleConnections,
+          search,
+          category,
+          providerOf: (connection) => entryByKey.get(connection.providerKey) as CatalogProvider,
+          extraFieldsOf: (connection) => (connection.label ? [connection.label] : []),
+        })
+      : [];
+  const filteredOrganizationInstallations =
+    source === "all" || source === "organization"
+      ? filterConnectorRows({
+          rows: organizationInstallations,
+          search,
+          category,
+          providerOf: (installation) => installation.provider,
+          extraFieldsOf: () => ["organization provided"],
+        })
+      : [];
+  const filteredAvailable =
+    source === "all" || source === "available"
+      ? filterConnectorRows({
+          rows: available,
+          search,
+          category,
+          providerOf: (provider) => provider,
+          extraFieldsOf: () => ["available connect"],
+        })
+      : [];
+  const memberProviders = [
+    ...eligibleConnections.flatMap((connection) => {
+      const provider = entryByKey.get(connection.providerKey);
+      return provider ? [provider] : [];
+    }),
+    ...organizationInstallations.map((installation) => installation.provider),
+    ...available,
+  ];
+  const filtersActive = search.trim() !== "" || category !== "all" || source !== "all";
+  const matchCount =
+    filteredConnections.length +
+    filteredOrganizationInstallations.length +
+    filteredAvailable.length;
   const connectedId = searchParams.get("connected");
 
   const removeSearchParams = useCallback(
@@ -102,24 +195,13 @@ export function ConnectionsTab({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: orpc.connectors.member.connections.list.key() }),
       queryClient.invalidateQueries({
+        queryKey: orpc.connectors.member.installations.health.key(),
+      }),
+      queryClient.invalidateQueries({
         queryKey: orpc.items.list.queryOptions({ input: {} }).queryKey,
       }),
     ]);
   }, [queryClient]);
-  const bind = useMutation({
-    mutationFn: (input: { connectionId: string; catalogKey: string }) =>
-      rpcClient.connectors.member.installations.create({
-        scopeId: scope.id,
-        catalogKey: input.catalogKey,
-        connectionId: input.connectionId,
-      }),
-    onSuccess: async () => {
-      await invalidateConnections();
-      toast.success("Connection added to your personal scope");
-    },
-    onError: (error) => toast.error(messageFrom(error)),
-  });
-
   useEffect(() => {
     const connectorError = searchParams.get("connector_error");
     if (!connectorError) return;
@@ -139,14 +221,18 @@ export function ConnectionsTab({
     void invalidateConnections();
     toast.success(
       setupStatus === "syncing"
-        ? "Connection added; connector tools are still syncing"
+        ? "Account connected; connector tools are still syncing"
         : setupStatus === "sync_failed"
-          ? "Connection added; connector tool sync needs attention"
-          : "Connection added to your personal scope",
+          ? "Account connected; connector tool sync needs attention"
+          : "Account connected",
     );
   }, [connectedId, invalidateConnections, ownPersonal, removeSearchParams, searchParams]);
 
-  if (loading || catalog.isPending || (ownPersonal && memberConnections.isPending)) {
+  if (
+    loading ||
+    catalog.isPending ||
+    (ownPersonal && (memberConnections.isPending || organizationInstallationHealth.isPending))
+  ) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {[1, 2, 3].map((key) => (
@@ -155,7 +241,9 @@ export function ConnectionsTab({
       </div>
     );
   }
-  const error = catalog.error ?? (ownPersonal ? memberConnections.error : null);
+  const error =
+    catalog.error ??
+    (ownPersonal ? (memberConnections.error ?? organizationInstallationHealth.error) : null);
   if (error) {
     return (
       <Alert variant="destructive">
@@ -169,67 +257,117 @@ export function ConnectionsTab({
 
   return (
     <div className="space-y-8">
-      <ConnectionSection
-        title="Your connections"
-        description="Provider accounts connected for your personal scope."
-      >
-        {eligibleConnections.length === 0 ? (
-          <div className="rounded-md border bg-card">
-            <EmptyState
-              icon={Cable}
-              title="No personal connections yet"
-              description="Connect a provider account for use in your personal scope."
-            />
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {eligibleConnections.map((connection) => {
-              const provider = entryByKey.get(connection.providerKey);
-              return provider ? (
-                <PersonalConnectionRow
-                  key={connection.id}
-                  provider={provider}
-                  connection={connection}
-                  personalScopeId={scope.id}
-                  onReconnect={() => setSelection({ provider, reconnect: connection })}
-                  onBind={() =>
-                    bind.mutate({
-                      connectionId: connection.id,
-                      catalogKey: connection.providerKey,
-                    })
-                  }
-                  onChanged={invalidateConnections}
-                />
-              ) : null;
-            })}
-          </div>
-        )}
-      </ConnectionSection>
+      <ConnectorFilters
+        search={search}
+        onSearchChange={setSearch}
+        category={category}
+        onCategoryChange={setCategory}
+        categoryOptions={connectorCategoryOptions(memberProviders)}
+        kindLabel="Source"
+        kind={source}
+        onKindChange={setSource}
+        kindOptions={memberSourceOptions}
+      />
 
-      <ConnectionSection
-        title="Available"
-        description="Providers that support personal OAuth connections."
-      >
-        {available.length === 0 ? (
-          <div className="rounded-md border bg-card">
-            <EmptyState
-              icon={Cable}
-              title="No connections available"
-              description="You have connected every provider that supports personal OAuth."
-            />
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {available.map((provider) => (
-              <AvailableConnectionCard
-                key={provider.key}
-                provider={provider}
-                onConnect={() => setSelection({ provider })}
-              />
-            ))}
-          </div>
-        )}
-      </ConnectionSection>
+      {filtersActive && matchCount === 0 ? (
+        <div className="rounded-md border bg-card">
+          <EmptyState
+            icon={Cable}
+            title="No connectors match"
+            description="Try a different search or filter."
+          />
+        </div>
+      ) : (
+        <>
+          {(source === "all" || source === "personal") &&
+          (filteredConnections.length > 0 || !filtersActive) ? (
+            <ConnectionSection
+              title="Your connections"
+              description="Accounts you connected for connector calls in your personal chats."
+            >
+              {filteredConnections.length === 0 ? (
+                <div className="rounded-md border bg-card">
+                  <EmptyState
+                    icon={Cable}
+                    title="No accounts connected yet"
+                    description="Connect an account from one of the available providers below."
+                  />
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {filteredConnections.map((connection) => {
+                    const provider = entryByKey.get(connection.providerKey);
+                    const personalInstallation = connection.installations.find(
+                      (installation) => installation.scopeId === scope.id,
+                    );
+                    return provider ? (
+                      <PersonalConnectionRow
+                        key={connection.id}
+                        provider={provider}
+                        connection={connection}
+                        personalScopeId={scope.id}
+                        installationHealth={
+                          personalInstallation
+                            ? healthByInstallationId.get(personalInstallation.id)
+                            : undefined
+                        }
+                        onReconnect={() => setSelection({ provider, reconnect: connection })}
+                        onChanged={invalidateConnections}
+                      />
+                    ) : null;
+                  })}
+                </div>
+              )}
+            </ConnectionSection>
+          ) : null}
+
+          {filteredOrganizationInstallations.length > 0 ? (
+            <ConnectionSection
+              title="Provided by your organization"
+              description="These organization-managed connectors are also available in your personal chats."
+            >
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredOrganizationInstallations.map(({ item, body, provider }) => (
+                  <OrganizationConnectionCard
+                    key={item.id}
+                    provider={provider}
+                    body={body}
+                    health={healthByInstallationId.get(item.id) ?? "missing"}
+                  />
+                ))}
+              </div>
+            </ConnectionSection>
+          ) : null}
+
+          {(source === "all" || source === "available") &&
+          (filteredAvailable.length > 0 || !filtersActive) ? (
+            <ConnectionSection
+              title="Available"
+              description="Connect an account from any of these providers."
+            >
+              {filteredAvailable.length === 0 ? (
+                <div className="rounded-md border bg-card">
+                  <EmptyState
+                    icon={Cable}
+                    title="No connections available"
+                    description="Every available provider already has an account connected."
+                  />
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {filteredAvailable.map((provider) => (
+                    <AvailableConnectionCard
+                      key={provider.key}
+                      provider={provider}
+                      onConnect={() => setSelection({ provider })}
+                    />
+                  ))}
+                </div>
+              )}
+            </ConnectionSection>
+          ) : null}
+        </>
+      )}
 
       {selection ? (
         <OAuthConnectionDialog
@@ -252,7 +390,7 @@ function ReadOnlyConnections({
   scope,
 }: {
   entries: Map<string, CatalogProvider>;
-  installations: Item[];
+  installations: Array<{ item: Item; body: ConnectorBody }>;
   scope: Scope;
 }) {
   return (
@@ -261,7 +399,7 @@ function ReadOnlyConnections({
       description={
         scope.kind === "personal"
           ? "Personal connections are managed by their owner."
-          : "The agent uses these provider bindings in shared sessions. Admins manage them in settings."
+          : "Trema can use these connectors in this location. Admins manage them in settings."
       }
     >
       {installations.length === 0 ? (
@@ -272,47 +410,34 @@ function ReadOnlyConnections({
             description={
               scope.kind === "personal"
                 ? "No provider account is connected to this personal scope."
-                : "An admin can add a connector from the admin settings area."
+                : "An admin can make a connector available from organization settings."
             }
           />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {installations.map((item) => {
-            const body = item.body as ConnectorBody;
+          {installations.map(({ item, body }) => {
             const provider = entries.get(body.catalogKey);
+            if (!provider) return null;
             return (
-              <Card key={item.id} className="gap-2 py-4 shadow-xs">
-                <CardHeader className="px-4">
-                  <div className="flex items-center gap-2">
-                    {provider ? providerLogo(provider) : null}
-                    <div className="min-w-0">
-                      <CardTitle>{provider?.displayName ?? item.title}</CardTitle>
-                      {provider ? (
-                        <p className="mt-0.5 text-meta text-muted-foreground">
-                          {categoryLabel(provider.categories)}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="px-4">
-                  {provider ? (
-                    <CardDescription>
-                      {provider.description ?? "No description available."}
-                    </CardDescription>
-                  ) : null}
-                  <p className="mt-2 text-meta text-muted-foreground">
+              <ConnectorCard
+                key={item.id}
+                provider={provider}
+                {...(scope.kind === "personal"
+                  ? {}
+                  : { identity: { kind: "organization" as const } })}
+                detail={
+                  <>
                     {body.access.kind === "scope"
-                      ? "Scope-wide access"
+                      ? "Everyone in this location"
                       : `${body.access.role} or higher`}{" "}
                     ·{" "}
                     {body.enabledTools === "all"
                       ? "All tools"
                       : `${body.enabledTools.length} enabled tools`}
-                  </p>
-                </CardContent>
-              </Card>
+                  </>
+                }
+              />
             );
           })}
         </div>
@@ -349,134 +474,125 @@ function AvailableConnectionCard({
   onConnect: () => void;
 }) {
   return (
-    <Card
-      className="cursor-pointer gap-2 py-4 shadow-xs transition-colors hover:bg-muted/40"
-      onClick={onConnect}
-    >
-      <CardHeader className="px-4">
-        <div className="flex items-center gap-2">
-          {providerLogo(provider)}
-          <div className="min-w-0">
-            <CardTitle>{provider.displayName}</CardTitle>
-            <p className="mt-0.5 text-meta text-muted-foreground">
-              {categoryLabel(provider.categories)}
-            </p>
-          </div>
-        </div>
-        <CardAction>
-          <Button
-            size="xs"
-            onClick={(event) => {
-              event.stopPropagation();
-              onConnect();
-            }}
-          >
-            Connect
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="px-4">
-        <CardDescription>{provider.description ?? "No description available."}</CardDescription>
-      </CardContent>
-    </Card>
+    <ConnectorCard
+      provider={provider}
+      action={{ label: "Connect", onClick: onConnect }}
+      onOpen={onConnect}
+    />
   );
 }
 
-function PersonalConnectionRow({
+export function PersonalConnectionRow({
   provider,
   connection,
   personalScopeId,
+  installationHealth,
   onReconnect,
-  onBind,
   onChanged,
 }: {
   provider: CatalogProvider;
   connection: ConnectorConnection;
   personalScopeId: string;
+  installationHealth: ConnectorInstallationHealth["status"] | undefined;
   onReconnect: () => void;
-  onBind: () => void;
   onChanged: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState(false);
+  const install = useMutation({
+    mutationFn: () =>
+      rpcClient.connectors.member.installations.create({
+        scopeId: personalScopeId,
+        catalogKey: connection.providerKey,
+        connectionId: connection.id,
+      }),
+    onSuccess: async () => {
+      await onChanged();
+      toast.success(`${provider.displayName} is available in your personal chats`);
+    },
+    onError: (error) => toast.error(messageFrom(error)),
+  });
   const revoke = useMutation({
     mutationFn: () =>
       rpcClient.connectors.member.connections.revoke({ connectionId: connection.id }),
     onSuccess: async () => {
       await onChanged();
       setConfirm(false);
-      toast.success("Connection revoked");
+      toast.success(`${provider.displayName} disconnected`);
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
-  const statusLabel = connection.isRevoked
-    ? "Revoked"
-    : connection.isExpired
-      ? "Expired"
-      : connection.refreshExhausted
-        ? "Reconnect needed"
-        : "Connected";
-  const isBound = connection.installations.some(
+  const isInstalled = connection.installations.some(
     (installation) => installation.scopeId === personalScopeId,
   );
+  const installationReady = installationHealth === "available";
+  const needsSetup = !isInstalled || !installationReady;
+  const statusLabel =
+    connection.isValid && needsSetup
+      ? "Setup needed"
+      : connection.isRevoked
+        ? "Revoked"
+        : connection.refreshExhausted
+          ? "Reconnect needed"
+          : connection.isCredentialUnavailable
+            ? "Reconnect needed"
+            : connection.isExpired
+              ? "Expired"
+              : "Connected";
+  const accountLabel = connection.label ?? provider.displayName;
 
   return (
     <>
-      <Card className="gap-2 py-4 shadow-xs">
-        <CardHeader className="px-4">
-          <div className="flex items-center gap-2">
-            {providerLogo(provider)}
-            <div className="min-w-0">
-              <CardTitle>{connection.label ?? provider.displayName}</CardTitle>
-              <p className="mt-0.5 text-meta text-muted-foreground">
-                {categoryLabel(provider.categories)}
-              </p>
-            </div>
-          </div>
-          <CardAction>
-            <CredentialStatusBadge
-              status={connection.isValid ? "connected" : "expired"}
-              label={statusLabel}
-            />
-          </CardAction>
-        </CardHeader>
-        <CardContent className="px-4">
-          <CardDescription>{provider.description ?? "No description available."}</CardDescription>
-          <p className="mt-2 text-meta text-muted-foreground">
-            {authModeLabel(connection.authMode)} · Connected{" "}
-            <RelativeTime date={connection.createdAt} />
+      <ConnectorCard
+        provider={provider}
+        identity={{ kind: "personal", accountLabel }}
+        status={{
+          value: connection.isValid ? (needsSetup ? "missing" : "connected") : "expired",
+          label: statusLabel,
+        }}
+        detail={
+          <>
+            Connected <RelativeTime date={connection.createdAt} />
             {connection.expiresAt ? (
               <>
                 {" "}
                 · Expires <RelativeTime date={connection.expiresAt} />
               </>
             ) : null}
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {connection.isValid && !isBound ? (
-              <Button size="xs" variant="outline" onClick={onBind}>
-                Finish setup
-              </Button>
-            ) : null}
+          </>
+        }
+        footer={
+          <>
             {!connection.isValid ? (
               <Button size="xs" variant="outline" onClick={onReconnect}>
                 <RefreshCw />
                 Reconnect
               </Button>
             ) : null}
-            {!connection.isRevoked ? (
-              <Button size="xs" variant="destructive" onClick={() => setConfirm(true)}>
-                Revoke
+            {connection.isValid && needsSetup ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={install.isPending}
+                onClick={() => install.mutate()}
+              >
+                {install.isPending ? "Finishing…" : isInstalled ? "Retry setup" : "Finish setup"}
               </Button>
             ) : null}
-          </div>
-        </CardContent>
-      </Card>
+            {!connection.isRevoked ? (
+              <Button size="xs" variant="destructive" onClick={() => setConfirm(true)}>
+                Disconnect
+              </Button>
+            ) : null}
+          </>
+        }
+      />
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke this connection?</AlertDialogTitle>
+            <AlertDialogTitle>Disconnect {accountLabel}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The agent will stop using it in your personal sessions. You can reconnect it later.
+              Trema will stop using this {provider.displayName} account in your personal chats. You
+              can reconnect it later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -486,11 +602,57 @@ function PersonalConnectionRow({
               disabled={revoke.isPending}
               onClick={() => revoke.mutate()}
             >
-              {revoke.isPending ? "Revoking…" : "Revoke"}
+              {revoke.isPending ? "Disconnecting…" : "Disconnect"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>
   );
+}
+
+export function OrganizationConnectionCard({
+  provider,
+  body,
+  health,
+}: {
+  provider: CatalogProvider;
+  body: ConnectorBody;
+  health: ConnectorInstallationHealth["status"];
+}) {
+  const status = organizationHealthBadge(health);
+  return (
+    <ConnectorCard
+      provider={provider}
+      identity={{ kind: "organization" }}
+      status={status}
+      detail={
+        body.enabledTools === "all"
+          ? "All available tools"
+          : `${body.enabledTools.length} tool${body.enabledTools.length === 1 ? "" : "s"}`
+      }
+    />
+  );
+}
+
+function organizationHealthBadge(health: ConnectorInstallationHealth["status"]): {
+  value: "connected" | "missing" | "expired";
+  label: string;
+} {
+  switch (health) {
+    case "available":
+      return { value: "connected", label: "Available" };
+    case "revoked":
+      return { value: "expired", label: "Disconnected" };
+    case "expired":
+      return { value: "expired", label: "Expired" };
+    case "refresh_exhausted":
+      return { value: "expired", label: "Reconnect needed" };
+    case "unavailable":
+      return { value: "missing", label: "Unavailable" };
+    case "setup_required":
+      return { value: "missing", label: "Setup needed" };
+    case "missing":
+      return { value: "missing", label: "Unavailable" };
+  }
 }

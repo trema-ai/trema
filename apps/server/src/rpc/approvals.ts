@@ -1,7 +1,9 @@
 import { ORPCError } from "@orpc/server";
+import { loadProviderCatalog } from "@trema/connectors";
 import { z } from "zod";
 
 import type { Approval } from "#server/generated/prisma/client.js";
+import type { Database } from "#server/lib/db/index.js";
 import { orgScoped } from "#server/rpc/builders.js";
 import {
   APPROVAL_PAGE_SIZE,
@@ -16,6 +18,21 @@ import {
   requireApproval,
 } from "#server/services/approvals/index.js";
 import { authorize } from "#server/services/authorize/index.js";
+import { connectorConnectionMetadataLabel } from "#server/services/connectors/connect.js";
+
+const catalog = loadProviderCatalog();
+
+const connectorAccountSchema = z
+  .object({
+    label: z.string().describe("The current display label for the bound connector account."),
+    source: z
+      .enum(["personal", "organization"])
+      .describe("Whether the credential belongs to a person or the organization."),
+  })
+  .nullable()
+  .describe(
+    "The account currently bound to this connector approval. Resolved for the authorized reader and not stored in run events.",
+  );
 
 const statusSchema = z
   .enum(["pending", "approved", "denied", "expired"])
@@ -59,10 +76,71 @@ const approvalSchema = z
       .nullable()
       .describe("When the approved call ran. Set once, by the executor that claimed it."),
     createdAt: z.string().describe("When the approval was asked for. An ISO 8601 date-time."),
+    connectorAccount: connectorAccountSchema,
   })
   .describe("One gated call waiting on a person, and how it ended.");
 
-function serialize(approval: Approval) {
+type ConnectorAccount = z.infer<typeof connectorAccountSchema>;
+
+function approvalConnectionId(approval: Approval): string | undefined {
+  const binding = approval.executionBinding;
+  if (typeof binding !== "object" || binding === null || Array.isArray(binding)) return undefined;
+  return typeof binding.connectionId === "string" ? binding.connectionId : undefined;
+}
+
+/**
+ * Resolve account labels only while serving an authorized approval read. The
+ * approval stores the opaque execution binding, while mutable labels and
+ * provider metadata remain on the connection rather than entering run history.
+ */
+async function connectorAccounts(
+  db: Database,
+  orgId: string,
+  approvals: readonly Approval[],
+): Promise<Map<string, Exclude<ConnectorAccount, null>>> {
+  const connectionIds = [
+    ...new Set(
+      approvals.flatMap((approval) => {
+        const connectionId = approvalConnectionId(approval);
+        return connectionId === undefined ? [] : [connectionId];
+      }),
+    ),
+  ];
+  if (connectionIds.length === 0) return new Map();
+
+  const connections = await db.connectorConnection.findMany({
+    where: { orgId, id: { in: connectionIds } },
+    select: {
+      id: true,
+      providerKey: true,
+      label: true,
+      config: true,
+      owner: { select: { kind: true } },
+    },
+  });
+  return new Map(
+    connections.map((connection) => {
+      const provider = catalog.find(({ key }) => key === connection.providerKey);
+      return [
+        connection.id,
+        {
+          label:
+            connection.label ??
+            connectorConnectionMetadataLabel(catalog, connection.providerKey, connection.config) ??
+            provider?.displayName ??
+            connection.providerKey,
+          source: connection.owner.kind === "human" ? "personal" : "organization",
+        },
+      ];
+    }),
+  );
+}
+
+function serialize(
+  approval: Approval,
+  accounts: ReadonlyMap<string, Exclude<ConnectorAccount, null>> = new Map(),
+) {
+  const connectionId = approvalConnectionId(approval);
   return {
     id: approval.id,
     sessionId: approval.sessionId,
@@ -83,6 +161,7 @@ function serialize(approval: Approval) {
     resolvedAt: approval.resolvedAt?.toISOString() ?? null,
     executedAt: approval.executedAt?.toISOString() ?? null,
     createdAt: approval.createdAt.toISOString(),
+    connectorAccount: connectionId === undefined ? null : (accounts.get(connectionId) ?? null),
   };
 }
 
@@ -143,7 +222,8 @@ const list = orgScoped
       ...(input.scopeId === undefined ? {} : { scopeId: input.scopeId }),
       ...(input.limit === undefined ? {} : { limit: input.limit }),
     });
-    return { approvals: approvals.map(serialize) };
+    const accounts = await connectorAccounts(context.db, context.org.id, approvals);
+    return { approvals: approvals.map((approval) => serialize(approval, accounts)) };
   });
 
 const get = orgScoped
@@ -165,7 +245,8 @@ const get = orgScoped
         // its tool key and reason would otherwise describe that scope's work.
         throw new ApprovalNotFoundError();
       }
-      return serialize(approval);
+      const accounts = await connectorAccounts(context.db, context.org.id, [approval]);
+      return serialize(approval, accounts);
     } catch (error) {
       throwApprovalError(error);
     }
@@ -210,8 +291,9 @@ const approve = orgScoped
         approverPrincipalId: context.principal.id,
         ...(input.grantScope === undefined ? {} : { grantScope: input.grantScope }),
       });
+      const accounts = await connectorAccounts(context.db, context.org.id, [resolved.approval]);
       return {
-        approval: serialize(resolved.approval),
+        approval: serialize(resolved.approval, accounts),
         ...(resolved.activatedItemId === undefined
           ? {}
           : { activatedItemId: resolved.activatedItemId }),
@@ -234,13 +316,13 @@ const deny = orgScoped
   .output(approvalSchema)
   .handler(async ({ context, input }) => {
     try {
-      return serialize(
-        await denyApproval(context.db, {
-          orgId: context.org.id,
-          approvalId: input.id,
-          approverPrincipalId: context.principal.id,
-        }),
-      );
+      const approval = await denyApproval(context.db, {
+        orgId: context.org.id,
+        approvalId: input.id,
+        approverPrincipalId: context.principal.id,
+      });
+      const accounts = await connectorAccounts(context.db, context.org.id, [approval]);
+      return serialize(approval, accounts);
     } catch (error) {
       throwApprovalError(error);
     }

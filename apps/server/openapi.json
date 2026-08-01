@@ -1020,6 +1020,35 @@
                           "createdAt": {
                             "type": "string",
                             "description": "When the approval was asked for. An ISO 8601 date-time."
+                          },
+                          "connectorAccount": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "label": {
+                                    "type": "string",
+                                    "description": "The current display label for the bound connector account."
+                                  },
+                                  "source": {
+                                    "enum": [
+                                      "personal",
+                                      "organization"
+                                    ],
+                                    "type": "string",
+                                    "description": "Whether the credential belongs to a person or the organization."
+                                  }
+                                },
+                                "required": [
+                                  "label",
+                                  "source"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "The account currently bound to this connector approval. Resolved for the authorized reader and not stored in run events."
                           }
                         },
                         "required": [
@@ -1041,7 +1070,8 @@
                           "resolvedById",
                           "resolvedAt",
                           "executedAt",
-                          "createdAt"
+                          "createdAt",
+                          "connectorAccount"
                         ],
                         "description": "One gated call waiting on a person, and how it ended."
                       }
@@ -1313,6 +1343,35 @@
                     "createdAt": {
                       "type": "string",
                       "description": "When the approval was asked for. An ISO 8601 date-time."
+                    },
+                    "connectorAccount": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "label": {
+                              "type": "string",
+                              "description": "The current display label for the bound connector account."
+                            },
+                            "source": {
+                              "enum": [
+                                "personal",
+                                "organization"
+                              ],
+                              "type": "string",
+                              "description": "Whether the credential belongs to a person or the organization."
+                            }
+                          },
+                          "required": [
+                            "label",
+                            "source"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The account currently bound to this connector approval. Resolved for the authorized reader and not stored in run events."
                     }
                   },
                   "required": [
@@ -1334,7 +1393,8 @@
                     "resolvedById",
                     "resolvedAt",
                     "executedAt",
-                    "createdAt"
+                    "createdAt",
+                    "connectorAccount"
                   ],
                   "description": "One gated call waiting on a person, and how it ended."
                 }
@@ -1623,6 +1683,35 @@
                         "createdAt": {
                           "type": "string",
                           "description": "When the approval was asked for. An ISO 8601 date-time."
+                        },
+                        "connectorAccount": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "label": {
+                                  "type": "string",
+                                  "description": "The current display label for the bound connector account."
+                                },
+                                "source": {
+                                  "enum": [
+                                    "personal",
+                                    "organization"
+                                  ],
+                                  "type": "string",
+                                  "description": "Whether the credential belongs to a person or the organization."
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "source"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "The account currently bound to this connector approval. Resolved for the authorized reader and not stored in run events."
                         }
                       },
                       "required": [
@@ -1644,7 +1733,8 @@
                         "resolvedById",
                         "resolvedAt",
                         "executedAt",
-                        "createdAt"
+                        "createdAt",
+                        "connectorAccount"
                       ],
                       "description": "One gated call waiting on a person, and how it ended."
                     },
@@ -1919,6 +2009,35 @@
                     "createdAt": {
                       "type": "string",
                       "description": "When the approval was asked for. An ISO 8601 date-time."
+                    },
+                    "connectorAccount": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "label": {
+                              "type": "string",
+                              "description": "The current display label for the bound connector account."
+                            },
+                            "source": {
+                              "enum": [
+                                "personal",
+                                "organization"
+                              ],
+                              "type": "string",
+                              "description": "Whether the credential belongs to a person or the organization."
+                            }
+                          },
+                          "required": [
+                            "label",
+                            "source"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The account currently bound to this connector approval. Resolved for the authorized reader and not stored in run events."
                     }
                   },
                   "required": [
@@ -1940,7 +2059,8 @@
                     "resolvedById",
                     "resolvedAt",
                     "executedAt",
-                    "createdAt"
+                    "createdAt",
+                    "connectorAccount"
                   ],
                   "description": "One gated call waiting on a person, and how it ended."
                 }
@@ -3322,6 +3442,13 @@
                           ]
                         }
                       },
+                      "health": {
+                        "enum": [
+                          "available",
+                          "setup_required"
+                        ],
+                        "type": "string"
+                      },
                       "status": {
                         "enum": [
                           "proposed",
@@ -3342,6 +3469,7 @@
                       "access",
                       "enabledTools",
                       "syncedTools",
+                      "health",
                       "status",
                       "updatedAt"
                     ]
@@ -4677,6 +4805,9 @@
                       "isExpired": {
                         "type": "boolean"
                       },
+                      "isCredentialUnavailable": {
+                        "type": "boolean"
+                      },
                       "isValid": {
                         "type": "boolean"
                       },
@@ -4718,6 +4849,7 @@
                       "updatedAt",
                       "isRevoked",
                       "isExpired",
+                      "isCredentialUnavailable",
                       "isValid",
                       "installations"
                     ]
@@ -5085,6 +5217,9 @@
                       "isExpired": {
                         "type": "boolean"
                       },
+                      "isCredentialUnavailable": {
+                        "type": "boolean"
+                      },
                       "isValid": {
                         "type": "boolean"
                       },
@@ -5126,6 +5261,7 @@
                       "updatedAt",
                       "isRevoked",
                       "isExpired",
+                      "isCredentialUnavailable",
                       "isValid",
                       "installations"
                     ]
@@ -5390,6 +5526,58 @@
                     "updatedAt",
                     "version"
                   ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/member/connector-installations/health": {
+      "get": {
+        "operationId": "connectors.member.installations.health",
+        "summary": "List connector installation health for members",
+        "description": "List safe installation availability for the caller's personal and organization connectors.",
+        "tags": [
+          "Connectors"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "installationItemId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "status": {
+                        "enum": [
+                          "available",
+                          "revoked",
+                          "expired",
+                          "refresh_exhausted",
+                          "unavailable",
+                          "missing",
+                          "setup_required"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "installationItemId",
+                      "status"
+                    ]
+                  }
                 }
               }
             }

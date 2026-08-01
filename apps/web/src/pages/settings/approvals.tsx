@@ -36,6 +36,10 @@ type Approval = {
   resolvedById: string | null;
   resolvedAt: string | null;
   createdAt: string;
+  connectorAccount: {
+    label: string;
+    source: "personal" | "organization";
+  } | null;
 };
 
 type Member = { principal: { id: string; displayName: string } };
@@ -336,6 +340,14 @@ function ApprovalRow({
           : { escalationReason: approval.escalationReason }),
         argsSummary: summarizeArgs(approval.args),
       }}
+      {...(approval.connectorAccount === null
+        ? {}
+        : {
+            connector: {
+              name: call.connector,
+              account: approval.connectorAccount,
+            },
+          })}
       prompt={approval.reason}
       requestedBy={scopeName ? `${requester} in ${scopeName}` : requester}
       options={

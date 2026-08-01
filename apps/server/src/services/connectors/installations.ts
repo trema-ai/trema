@@ -5,6 +5,11 @@ import type { Prisma, Role } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import type { ConnectorFetch } from "#server/services/connectors/connect.js";
+import {
+  type ConnectorConnectionHealthStatus,
+  connectorConnectionCredentialHealth,
+  connectorConnectionHealthStatus,
+} from "#server/services/connectors/health.js";
 import type { PlatformAppDirectory } from "#server/services/connectors/registrations.js";
 import type { McpClientFactory } from "#server/services/connectors/sync.js";
 import type { EmbeddingOptions } from "#server/services/embeddings/index.js";
@@ -171,6 +176,28 @@ export function resolveInstallationTools(
   return available.filter((tool) => !enabled || enabled.has(tool.name));
 }
 
+export type ConnectorInstallationHealthStatus = ConnectorConnectionHealthStatus | "setup_required";
+
+export type ConnectorInstallationSetupStatus = "available" | "setup_required";
+
+export function connectorInstallationSetupStatus(
+  provider: ProviderDef,
+  body: ConnectorInstallationBody,
+): ConnectorInstallationSetupStatus {
+  return provider.transport.type === "mcp" && resolveInstallationTools(provider, body).length === 0
+    ? "setup_required"
+    : "available";
+}
+
+export function connectorInstallationHealthStatus(
+  provider: ProviderDef,
+  body: ConnectorInstallationBody,
+  connectionStatus: ConnectorConnectionHealthStatus,
+): ConnectorInstallationHealthStatus {
+  if (connectionStatus !== "available") return connectionStatus;
+  return connectorInstallationSetupStatus(provider, body);
+}
+
 export class ConnectorInstallationValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -193,6 +220,37 @@ function parseBody(body: unknown, catalog: ProviderCatalog): ConnectorInstallati
     );
   }
   return parsed.data;
+}
+
+function rawInstallationString(body: unknown, key: "catalogKey" | "connectionId") {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+  const value = (body as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function recoverInstallationAccess(body: unknown) {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+  const parsed = installationAccessSchema.safeParse((body as Record<string, unknown>).access);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function findProviderInstallation<T extends { body: unknown }>(
+  candidates: T[],
+  providerKey: string,
+  catalog: ProviderCatalog,
+) {
+  return (
+    candidates.find((candidate) => {
+      try {
+        return parseBody(candidate.body, catalog).catalogKey === providerKey;
+      } catch {
+        return false;
+      }
+    }) ??
+    candidates.find(
+      (candidate) => rawInstallationString(candidate.body, "catalogKey") === providerKey,
+    )
+  );
 }
 
 function jsonValue(body: ConnectorInstallationBody): Prisma.InputJsonValue {
@@ -254,6 +312,12 @@ export async function listConnectorInstallations(
 
   return installations.map((installation) => {
     const body = parseBody(installation.body, catalog);
+    const provider = catalog.find(({ key }) => key === body.catalogKey);
+    if (!provider) {
+      throw new ConnectorInstallationValidationError(
+        `Unknown connector provider: ${body.catalogKey}`,
+      );
+    }
     return {
       id: installation.id,
       scopeId: installation.scopeId,
@@ -262,8 +326,95 @@ export async function listConnectorInstallations(
       access: body.access,
       enabledTools: body.enabledTools,
       syncedTools: body.syncedTools ?? [],
+      health: connectorInstallationSetupStatus(provider, body),
       status: installation.status,
       updatedAt: installation.updatedAt,
+    };
+  });
+}
+
+export interface ListConnectorInstallationHealthInput {
+  orgId: string;
+  scopeIds: string[];
+  masterKey?: string;
+  now?: Date;
+}
+
+export async function listConnectorInstallationHealth(
+  db: Database,
+  input: ListConnectorInstallationHealthInput,
+) {
+  const installations = await db.item.findMany({
+    where: {
+      orgId: input.orgId,
+      scopeId: { in: input.scopeIds },
+      kind: "connector",
+      status: { not: "archived" },
+    },
+    select: { id: true, scopeId: true, body: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  const parsed = installations.flatMap((installation) => {
+    const body = connectorInstallationBodySchema.safeParse(installation.body);
+    if (!body.success) {
+      // Active items can outlive a provider or the catalog schema that created
+      // them. One stale item must not hide every healthy connector from members.
+      log.debug("Invalid connector installation omitted from health", {
+        itemId: installation.id,
+      });
+      return [];
+    }
+    const provider = defaultCatalog.find(({ key }) => key === body.data.catalogKey);
+    if (provider === undefined) {
+      // The schema currently rejects this first; keep the listing boundary
+      // independently tolerant if catalog validation changes later.
+      log.debug("Unknown connector installation omitted from health", {
+        itemId: installation.id,
+      });
+      return [];
+    }
+    return [{ ...installation, body: body.data, provider }];
+  });
+  const connections = await db.connectorConnection.findMany({
+    where: {
+      orgId: input.orgId,
+      id: { in: parsed.map((installation) => installation.body.connectionId) },
+    },
+    select: {
+      id: true,
+      authMode: true,
+      ciphertext: true,
+      revokedAt: true,
+      expiresAt: true,
+      lastRefreshFailure: true,
+      refreshExhausted: true,
+    },
+  });
+  const connectionById = new Map(
+    connections.map(({ ciphertext, ...connection }) => [
+      connection.id,
+      {
+        ...connection,
+        ...connectorConnectionCredentialHealth(
+          { authMode: connection.authMode, ciphertext },
+          input.masterKey,
+        ),
+      },
+    ]),
+  );
+
+  return parsed.map((installation) => {
+    const connectionStatus = connectorConnectionHealthStatus(
+      connectionById.get(installation.body.connectionId),
+      input.now,
+    );
+    return {
+      installationItemId: installation.id,
+      status: connectorInstallationHealthStatus(
+        installation.provider,
+        installation.body,
+        connectionStatus,
+      ),
     };
   });
 }
@@ -546,15 +697,9 @@ export async function provisionConnectorInstallation(
     },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
   });
-  const initialExisting = initialCandidates.find((candidate) => {
-    try {
-      return parseBody(candidate.body, catalog).catalogKey === provider.key;
-    } catch {
-      return false;
-    }
-  });
+  const initialExisting = findProviderInstallation(initialCandidates, provider.key, catalog);
   const currentConnectionId = initialExisting
-    ? parseBody(initialExisting.body, catalog).connectionId
+    ? rawInstallationString(initialExisting.body, "connectionId")
     : undefined;
   await lockConnectorConnectionBindings(transaction, input.orgId, [
     ...(currentConnectionId ? [currentConnectionId] : []),
@@ -590,13 +735,7 @@ export async function provisionConnectorInstallation(
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
   });
 
-  const existing = candidates.find((candidate) => {
-    try {
-      return parseBody(candidate.body, catalog).catalogKey === provider.key;
-    } catch {
-      return false;
-    }
-  });
+  const existing = findProviderInstallation(candidates, provider.key, catalog);
   if (!existing) {
     const body = parseBody(
       {
@@ -641,14 +780,25 @@ export async function provisionConnectorInstallation(
     return { installation, created: true, invalidatedInstallations };
   }
 
-  const current = parseBody(existing.body, catalog);
-  const repointed = repointInstallationBody(
-    current,
-    input.connectionId,
-    provider,
-    catalog,
-    input.connectionCredentialsChanged,
-  );
+  const parsedCurrent = createConnectorInstallationBodySchema(catalog).safeParse(existing.body);
+  const current = parsedCurrent.success ? parsedCurrent.data : undefined;
+  const repointed = current
+    ? repointInstallationBody(
+        current,
+        input.connectionId,
+        provider,
+        catalog,
+        input.connectionCredentialsChanged,
+      )
+    : parseBody(
+        {
+          catalogKey: provider.key,
+          connectionId: input.connectionId,
+          access: input.access ?? recoverInstallationAccess(existing.body) ?? { kind: "scope" },
+          enabledTools: input.enabledTools ?? "all",
+        },
+        catalog,
+      );
   const body = parseBody(
     {
       ...repointed,
@@ -656,7 +806,7 @@ export async function provisionConnectorInstallation(
     },
     catalog,
   );
-  const changed = JSON.stringify(body) !== JSON.stringify(current);
+  const changed = current === undefined || JSON.stringify(body) !== JSON.stringify(current);
   if (changed) {
     await transaction.itemVersion.create({
       data: {
@@ -687,6 +837,7 @@ export async function provisionConnectorInstallation(
       subject: installation.id,
       payload: {
         changed,
+        repaired: current === undefined,
         provisioned: true,
         scopeId: installation.scopeId,
         catalogKey: provider.key,

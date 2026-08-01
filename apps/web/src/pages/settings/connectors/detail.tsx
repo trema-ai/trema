@@ -207,7 +207,7 @@ export function SettingsConnectorDetailPage() {
       <PageHeader
         leading={providerLogo(provider, "size-10")}
         title={provider.displayName}
-        description="Manage provider accounts, scope availability, and per-scope tools."
+        description="Manage organization accounts, locations, audience, and tools."
       />
       <div className="space-y-7">
         <ConnectionsSection
@@ -351,10 +351,9 @@ function ConnectionsSection({
     <section data-slot="settings-section">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-chrome font-medium text-foreground">Connections</h3>
+          <h3 className="text-chrome font-medium text-foreground">Organization accounts</h3>
           <p className="mt-0.5 text-meta text-muted-foreground">
-            Accounts the agent acts as, and where each one is available. Connect more than one to
-            reach separate workspaces.
+            Provider accounts used for connector calls in organization and shared locations.
           </p>
         </div>
         <Button onClick={onConnect}>
@@ -367,7 +366,7 @@ function ConnectionsSection({
           <div className="rounded-md border bg-card px-4 py-5">
             <EmptyState
               title="Not connected"
-              description={`Authorize the ${provider.displayName} account the agent should act as.`}
+              description={`Choose the organization-controlled ${provider.displayName} account Trema should use for connector calls.`}
             />
           </div>
         ) : (
@@ -530,7 +529,7 @@ function ConnectionGroup({
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => setRenaming(true)}>Rename</DropdownMenuItem>
                 <DropdownMenuItem variant="destructive" onSelect={() => setConfirmRevoke(true)}>
-                  Revoke connection
+                  Disconnect account
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -556,7 +555,7 @@ function ConnectionGroup({
       {bindings.length === 0 || (connection.isValid && canAddScope) ? (
         <div className="flex flex-wrap items-center justify-between gap-3 py-2 pr-4 pl-9">
           {bindings.length === 0 ? (
-            <p className="text-meta text-muted-foreground">Not available in any scope yet</p>
+            <p className="text-meta text-muted-foreground">Not available in any location yet</p>
           ) : (
             <span />
           )}
@@ -568,7 +567,7 @@ function ConnectionGroup({
               onClick={onAddToScope}
             >
               <Plus />
-              Add to scope
+              Add location
             </Button>
           ) : null}
         </div>
@@ -576,9 +575,9 @@ function ConnectionGroup({
       <AlertDialog open={confirmRevoke} onOpenChange={setConfirmRevoke}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke this connection?</AlertDialogTitle>
+            <AlertDialogTitle>Disconnect {label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Every scope bound to it will stop working until its binding uses another connection.
+              Connector calls in every location using this account will stop until you reconnect it.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -588,7 +587,7 @@ function ConnectionGroup({
               disabled={revoke.isPending}
               onClick={() => revoke.mutate()}
             >
-              {revoke.isPending ? "Revoking…" : "Revoke"}
+              {revoke.isPending ? "Disconnecting…" : "Disconnect"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -617,7 +616,7 @@ function BindingRow({
       : installation.syncedTools.length;
   const summary = [
     installation.access.kind === "scope"
-      ? "Scope-wide access"
+      ? "Everyone in this location"
       : `${installation.access.role.replaceAll("_", " ")} or higher`,
     installation.enabledTools === "all"
       ? "All tools"
@@ -642,7 +641,7 @@ function BindingRow({
     onSuccess: async () => {
       await onChanged();
       setConfirmRemove(false);
-      toast.success("Removed from scope");
+      toast.success("Removed from location");
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -660,7 +659,7 @@ function BindingRow({
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="ghost" aria-label="Scope binding actions">
+              <Button size="sm" variant="ghost" aria-label="Location actions">
                 <MoreHorizontal className={sync.isPending ? "animate-pulse" : ""} />
               </Button>
             </DropdownMenuTrigger>
@@ -673,7 +672,7 @@ function BindingRow({
               ) : null}
               <DropdownMenuItem variant="destructive" onSelect={() => setConfirmRemove(true)}>
                 <Trash2 />
-                Remove from scope
+                Remove from location
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -690,9 +689,10 @@ function BindingRow({
       <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove this scope binding?</AlertDialogTitle>
+            <AlertDialogTitle>Remove this location?</AlertDialogTitle>
             <AlertDialogDescription>
-              The installation is archived. Its connection remains available to other scopes.
+              {provider.displayName} will no longer be available here. Other locations keep using
+              this account.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -775,16 +775,16 @@ function ConfigureToolsDialog({
         <DialogHeader>
           <DialogTitle>Configure connector</DialogTitle>
           <DialogDescription>
-            Access and tool choices apply only to this scope binding. Approval policy still governs
-            whether an allowed call pauses.
+            Audience and tool choices apply to this location. Approval policy still governs whether
+            an allowed call pauses.
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
           <div className="space-y-3 rounded-md border p-4">
             <div className="space-y-1">
-              <Label htmlFor={`connector-access-${installation.id}`}>Installation access</Label>
+              <Label htmlFor={`connector-access-${installation.id}`}>Audience</Label>
               <p className="text-meta text-muted-foreground">
-                Scope-wide access also supports shared surfaces and unattended automations.
+                Choose everyone in this location or require a minimum organization role.
               </p>
             </div>
             <select
@@ -793,8 +793,8 @@ function ConfigureToolsDialog({
               value={accessKind}
               onChange={(event) => setAccessKind(event.target.value as "scope" | "minimum_role")}
             >
-              <option value="scope">Any valid session in this scope</option>
-              <option value="minimum_role">Require a linked requester role</option>
+              <option value="scope">Everyone in this location</option>
+              <option value="minimum_role">Minimum role</option>
             </select>
             {accessKind === "minimum_role" ? (
               <select
@@ -916,7 +916,7 @@ function ScopeBindingDialog({
     onSuccess: async () => {
       await onChanged();
       onOpenChange(false);
-      toast.success(selected.length === 1 ? "Added to scope" : "Added to scopes");
+      toast.success(selected.length === 1 ? "Location added" : "Locations added");
     },
     onError: (error) => toast.error(messageFrom(error)),
   });
@@ -924,15 +924,16 @@ function ScopeBindingDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add {provider.displayName} to scopes</DialogTitle>
+          <DialogTitle>Add {provider.displayName} to locations</DialogTitle>
           <DialogDescription>
-            Each selected scope gets its own installation with all tools enabled.
+            Everyone in each selected location can use all current tools. You can restrict the
+            audience and tools after adding it.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border p-3">
           {choices.length === 0 ? (
             <p className="text-meta text-muted-foreground">
-              This provider is already in every scope.
+              This provider is already available in every location.
             </p>
           ) : (
             choices.map((scope) => (
@@ -962,7 +963,7 @@ function ScopeBindingDialog({
             Skip
           </Button>
           <Button disabled={selected.length === 0 || bind.isPending} onClick={() => bind.mutate()}>
-            {bind.isPending ? "Adding…" : "Add to selected scopes"}
+            {bind.isPending ? "Adding…" : "Add locations"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1034,7 +1035,7 @@ function DangerZone({
   return (
     <SettingsSection
       title="Danger zone"
-      description="Remove every scope binding and revoke every connection. App credentials are kept."
+      description="Remove this connector from every location and disconnect every organization account. OAuth app registration is kept."
     >
       <SettingRow
         label={`Disconnect ${provider.displayName}`}
@@ -1050,7 +1051,8 @@ function DangerZone({
           <AlertDialogHeader>
             <AlertDialogTitle>Disconnect {provider.displayName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This archives all bindings and revokes all provider connections for the organization.
+              Trema will stop using every connected {provider.displayName} account, and the
+              connector will be unavailable throughout the organization.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -1,6 +1,7 @@
 import { githubProvider, loadProviderCatalog, notionMcpProvider } from "@trema/connectors";
 import { describe, expect, it } from "vitest";
 import {
+  connectorInstallationHealthStatus,
   createConnectorInstallationBodySchema,
   resolveInstallationTools,
 } from "#server/services/connectors/installations.js";
@@ -54,6 +55,31 @@ describe("connector installation body", () => {
         syncedTools: [{ name: "search_pages", annotations: { readOnlyHint: true } }],
       }).success,
     ).toBe(true);
+  });
+
+  it("requires usable MCP tools before reporting an installation available", () => {
+    const pending = bodySchema.parse({
+      catalogKey: "notion",
+      connectionId,
+      enabledTools: "all",
+    });
+    const ready = bodySchema.parse({
+      catalogKey: "notion",
+      connectionId,
+      enabledTools: "all",
+      syncedTools: [{ name: "search_pages" }],
+    });
+
+    expect(connectorInstallationHealthStatus(notion, pending, "available")).toBe("setup_required");
+    expect(connectorInstallationHealthStatus(notion, ready, "available")).toBe("available");
+    expect(connectorInstallationHealthStatus(notion, pending, "revoked")).toBe("revoked");
+    expect(
+      connectorInstallationHealthStatus(
+        github,
+        bodySchema.parse({ catalogKey: "github", connectionId, enabledTools: "all" }),
+        "available",
+      ),
+    ).toBe("available");
   });
 
   it("rejects synced tools on REST and unknown catalog keys", () => {
