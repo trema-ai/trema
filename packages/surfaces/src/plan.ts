@@ -252,7 +252,10 @@ function realizeSegment(
   budget: number,
   terminal: boolean,
 ): PlannedMessage[] {
-  const content = segment.parts.map((part) => ({ part, text: partText(part) }));
+  const content = segment.parts.map((part) => ({
+    part: driverPart(part),
+    text: partText(part),
+  }));
   const chunks = chunkContent(content, budget);
   const finalized = terminal || segment.end !== undefined;
   return chunks.map((renderContent, index) => {
@@ -266,6 +269,10 @@ function realizeSegment(
       content: renderContent,
     };
   });
+}
+
+function driverPart(part: Part): Part {
+  return part.kind === "reasoning" && part.redacted === true ? { ...part, text: "" } : part;
 }
 
 function partText(part: Part): string {

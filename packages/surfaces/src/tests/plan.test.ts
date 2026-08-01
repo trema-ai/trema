@@ -251,6 +251,38 @@ describe("planRender", () => {
     ]);
   });
 
+  it("removes redacted reasoning text from driver-visible typed parts", () => {
+    const input: Projection = {
+      ...projection("unused"),
+      segments: [
+        {
+          index: 0,
+          parts: [
+            {
+              kind: "reasoning",
+              id: "reasoning-1",
+              status: "done",
+              text: "private chain of thought",
+              redacted: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    const plan = planRender(input, realization(), deltaCapabilities);
+    expect(plan.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        content: {
+          text: "Reasoning redacted",
+          parts: [expect.objectContaining({ kind: "reasoning", redacted: true, text: "" })],
+        },
+      }),
+    ]);
+    expect(JSON.stringify(plan.operations)).not.toContain("private chain of thought");
+  });
+
   it("keeps every overflowed fenced-code message syntactically balanced", () => {
     const codeBudget = {
       ...deltaCapabilities,
