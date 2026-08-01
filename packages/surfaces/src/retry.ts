@@ -18,5 +18,8 @@ export function retryDecision(
   const maximum = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
   const requested = error instanceof SurfaceDriverError ? error.retryAfterMs : undefined;
   const exponential = base * 2 ** Math.max(0, attempt);
-  return { disposition: "retry", delayMs: Math.min(requested ?? exponential, maximum) };
+  return {
+    disposition: "retry",
+    delayMs: requested ?? Math.min(exponential, maximum),
+  };
 }

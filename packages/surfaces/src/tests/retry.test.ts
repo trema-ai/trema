@@ -12,6 +12,14 @@ describe("retryDecision", () => {
       disposition: "retry",
       delayMs: 300_000,
     });
+    const longLimit = new SurfaceDriverError("rate_limited", "try tomorrow", {
+      retryable: true,
+      retryAfterMs: 86_400_000,
+    });
+    expect(retryDecision(longLimit, 20)).toEqual({
+      disposition: "retry",
+      delayMs: 86_400_000,
+    });
   });
 
   it("does not retry a terminal driver classification", () => {

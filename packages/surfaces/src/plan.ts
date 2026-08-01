@@ -20,7 +20,7 @@ type PlannedMessage = RealizedMessage & { content: RenderContent };
  */
 export function planRender(
   projection: Projection,
-  realization: Pick<SurfaceRealization, "runId" | "renderedThroughSeq" | "segments" | "version">,
+  realization: Pick<SurfaceRealization, "runId" | "renderedThroughSeq" | "segments">,
   capabilities: CapabilityDescriptor,
   options: PlanRenderOptions = {},
 ): RenderPlan {
@@ -45,6 +45,17 @@ export function planRender(
   }
 
   const terminal = isTerminal(projection.status);
+  // A render-once realization is immutable after its first acknowledged
+  // delivery. Replays may advance or reconcile the cursor, but never mutate
+  // the remote message or replace its durable description.
+  if (capabilities.mutation === "render-once" && realization.segments.length > 0) {
+    return {
+      fromCursor: realization.renderedThroughSeq,
+      toCursor: projection.lastSeq,
+      operations: [],
+      nextSegments: realization.segments,
+    };
+  }
   // Render-once drivers must not claim an applied cursor before anything was
   // delivered. At terminal they receive the full projection in one plan.
   if (capabilities.mutation === "render-once" && !terminal) {
@@ -107,7 +118,7 @@ export function planRender(
                 index: messages.length,
               };
         operations.push({
-          ...operationIdentity(immutableTarget, "create", realization.version),
+          ...operationIdentity(immutableTarget, "create", realization.renderedThroughSeq),
           type: "create",
           content: immutableTarget.content,
           finalized: true,
@@ -125,7 +136,7 @@ export function planRender(
 
       if (prior === undefined || prior.remoteRef === undefined) {
         operations.push({
-          ...operationIdentity(target, "create", realization.version),
+          ...operationIdentity(target, "create", realization.renderedThroughSeq),
           type: "create",
           content: target.content,
           finalized: target.finalized,
@@ -140,7 +151,7 @@ export function planRender(
           target.text.startsWith(prior.text)
         ) {
           operations.push({
-            ...operationIdentity(target, "append", realization.version),
+            ...operationIdentity(target, "append", realization.renderedThroughSeq),
             type: "append",
             remoteRef: prior.remoteRef,
             text: target.text.slice(prior.text.length),
@@ -150,7 +161,7 @@ export function planRender(
             ...operationIdentity(
               target,
               target.finalized ? "finalize" : "replace",
-              realization.version,
+              realization.renderedThroughSeq,
             ),
             type: target.finalized ? "finalize" : "replace",
             remoteRef: prior.remoteRef,
@@ -159,7 +170,7 @@ export function planRender(
         }
       } else if (target.finalized && !prior.finalized) {
         operations.push({
-          ...operationIdentity(target, "finalize", realization.version),
+          ...operationIdentity(target, "finalize", realization.renderedThroughSeq),
           type: "finalize",
           remoteRef: prior.remoteRef,
           content: target.content,
@@ -174,7 +185,7 @@ export function planRender(
         if (targetIds.has(prior.id)) continue;
         if (capabilities.mutation === "edit" && prior.remoteRef !== undefined) {
           operations.push({
-            ...operationIdentity(prior, "delete", realization.version),
+            ...operationIdentity(prior, "delete", realization.renderedThroughSeq),
             type: "delete",
             remoteRef: prior.remoteRef,
           });
@@ -201,7 +212,7 @@ export function planRender(
     for (const message of existing.messages) {
       if (message.remoteRef === undefined) continue;
       operations.push({
-        ...operationIdentity(message, "delete", realization.version),
+        ...operationIdentity(message, "delete", realization.renderedThroughSeq),
         type: "delete",
         remoteRef: message.remoteRef,
       });
@@ -487,7 +498,7 @@ function segmentIdentity(runId: string, index: number): string {
 function operationIdentity(
   message: Pick<RealizedMessage, "id" | "index" | "contentHash">,
   kind: RenderOperation["type"],
-  realizationVersion: number,
+  appliedCursor: number,
 ): Omit<RenderOperation, "type" | "content" | "finalized" | "remoteRef" | "text"> {
   const segmentId = message.id.slice(0, message.id.lastIndexOf(":message:"));
   const segmentIndexText = segmentId.slice(segmentId.lastIndexOf(":") + 1);
@@ -495,7 +506,7 @@ function operationIdentity(
     id:
       kind === "create"
         ? `${message.id}:create`
-        : `${message.id}:${kind}:${realizationVersion}:${message.contentHash}`,
+        : `${message.id}:${kind}:${appliedCursor}:${message.contentHash}`,
     messageId: message.id,
     segmentId,
     segmentIndex: Number(segmentIndexText),

@@ -138,6 +138,27 @@ describe("planRender", () => {
     expect(retried.operations[0]?.id).toBe(first.operations[0]?.id);
   });
 
+  it("keeps mutation idempotency keys stable across failure version increments", () => {
+    const first = planRender(projection("Hello"), realization(), deltaCapabilities);
+    const segments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: [{ messageId: first.operations[0]!.messageId, remoteRef: "remote-1" }],
+    });
+    const beforeFailure = planRender(
+      projection("Hello world", { lastSeq: 2 }),
+      realization({ renderedThroughSeq: 1, segments, version: 1 }),
+      deltaCapabilities,
+    );
+    const afterFailure = planRender(
+      projection("Hello world", { lastSeq: 2 }),
+      realization({ renderedThroughSeq: 1, segments, version: 2 }),
+      deltaCapabilities,
+    );
+
+    expect(beforeFailure.operations[0]).toMatchObject({ type: "append", text: " world" });
+    expect(afterFailure.operations[0]?.id).toBe(beforeFailure.operations[0]?.id);
+  });
+
   it("uses a snapshot when a delta would cross more than one unapplied event", () => {
     const first = planRender(projection("Hello"), realization(), deltaCapabilities);
     const segments = acknowledge(first, {
@@ -360,6 +381,23 @@ describe("planRender", () => {
       expect.objectContaining({ type: "create", finalized: true }),
     ]);
     expect(terminal.toCursor).toBe(4);
+
+    const segments = acknowledge(terminal, {
+      appliedOperationIds: terminal.operations.map(({ id }) => id),
+      messages: [{ messageId: terminal.operations[0]!.messageId, remoteRef: "remote-1" }],
+    });
+    const reconciled = planRender(
+      projection("Changed", { lastSeq: 2, status: "completed", ended: true }),
+      realization({ renderedThroughSeq: 4, segments, version: 1 }),
+      capabilities,
+      { allowCursorRegression: true },
+    );
+    expect(reconciled).toEqual({
+      fromCursor: 4,
+      toCursor: 2,
+      operations: [],
+      nextSegments: segments,
+    });
   });
 
   it("waits for append-only segment boundaries and sends later changes as follow-ups", () => {
