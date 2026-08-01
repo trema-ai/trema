@@ -272,6 +272,45 @@ integration("run reads", () => {
       ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     });
 
+    it("keeps a state-filtered cursor valid when its run changes state", async () => {
+      const { org, alice, session, run } = await setup();
+      const older = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 1000),
+        state: "running",
+      });
+      const boundary = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:alice",
+        createdAt: new Date(run.createdAt.getTime() + 2000),
+        state: "running",
+      });
+
+      const first = await call(
+        runsRouter.list,
+        { state: "running", limit: 1 },
+        { context: alice.context },
+      );
+      expect(first.runs.map(({ id }) => id)).toEqual([boundary.id]);
+      expect(first.nextCursor).toBe(boundary.id);
+
+      await db.agentRun.update({
+        where: { orgId_id: { orgId: org.org.id, id: boundary.id } },
+        data: { state: "completed" },
+      });
+
+      const second = await call(
+        runsRouter.list,
+        { state: "running", limit: 1, cursor: boundary.id },
+        { context: alice.context },
+      );
+      expect(second.runs.map(({ id }) => id)).toEqual([older.id]);
+      expect(second.nextCursor).toBeNull();
+    });
+
     it("applies the limit after removing runs the caller cannot discover", async () => {
       const { org, bob, run } = await setup();
       const scope = await personalScope(org.org.id, bob.principal);

@@ -228,6 +228,7 @@ const list = orgScoped
       .describe("The caller's recent-run index."),
   )
   .handler(async ({ context, input }) => {
+    let cursorPosition: { createdAt: Date; id: string } | undefined;
     if (input.cursor !== undefined) {
       const cursor = await resolveRunAccess({
         db: context.db,
@@ -237,17 +238,16 @@ const list = orgScoped
       });
       if (
         cursor.access === "none" ||
-        (input.state !== undefined && cursor.run.state !== input.state) ||
         (input.trigger !== undefined && cursor.run.trigger !== input.trigger)
       ) {
         throw new ORPCError("BAD_REQUEST", { message: "Invalid run cursor" });
       }
+      cursorPosition = { createdAt: cursor.run.createdAt, id: cursor.run.id };
     }
 
     const runs: RunSummary[] = [];
     const targetCount = input.limit + 1;
     const scanSize = Math.max(targetCount, RUN_LIST_SIZE);
-    let cursorId = input.cursor;
 
     while (runs.length < targetCount) {
       const rows = await context.db.agentRun.findMany({
@@ -255,18 +255,26 @@ const list = orgScoped
           orgId: context.org.id,
           ...(input.state === undefined ? {} : { state: input.state }),
           ...(input.trigger === undefined ? {} : { trigger: input.trigger }),
+          ...(cursorPosition === undefined
+            ? {}
+            : {
+                OR: [
+                  { createdAt: { lt: cursorPosition.createdAt } },
+                  {
+                    createdAt: cursorPosition.createdAt,
+                    id: { lt: cursorPosition.id },
+                  },
+                ],
+              }),
         },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: scanSize,
-        ...(cursorId === undefined
-          ? {}
-          : {
-              cursor: { orgId_id: { orgId: context.org.id, id: cursorId } },
-              skip: 1,
-            }),
       });
       if (rows.length === 0) break;
-      cursorId = rows.at(-1)?.id;
+      const lastRow = rows.at(-1);
+      if (lastRow !== undefined) {
+        cursorPosition = { createdAt: lastRow.createdAt, id: lastRow.id };
+      }
 
       const verdicts = await resolveRunsAccess({
         db: context.db,
