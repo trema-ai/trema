@@ -41,7 +41,7 @@ export class SlackIngressDriver implements SurfaceIngressDriver {
           type: "message",
           surface: "slack",
           intentId: `slack:event:${payload.eventId ?? `${payload.channelId}:${payload.ts}`}`,
-          surfaceRef: toSurfaceRef(payload.continuation),
+          surfaceRef: toSurfaceRef(payload.continuation, authorRef),
           authorRef,
           text: payload.text,
           at: slackTimestamp(payload.eventTime, payload.ts),
@@ -72,7 +72,7 @@ export class SlackIngressDriver implements SurfaceIngressDriver {
                 },
           ...(payload.continuation === undefined
             ? {}
-            : { surfaceRef: toSurfaceRef(payload.continuation) }),
+            : { surfaceRef: toSurfaceRef(payload.continuation, payload.userId) }),
           ...retry,
         };
         return event;
@@ -104,12 +104,15 @@ export class SlackIngressDriver implements SurfaceIngressDriver {
   }
 }
 
-function toSurfaceRef(continuation: {
-  channelId: string;
-  enterpriseId?: string;
-  teamId?: string;
-  threadTs: string;
-}): SurfaceRef {
+function toSurfaceRef(
+  continuation: {
+    channelId: string;
+    enterpriseId?: string;
+    teamId?: string;
+    threadTs: string;
+  },
+  recipientUserRef?: string,
+): SurfaceRef {
   const teamRef = continuation.teamId ?? continuation.enterpriseId;
   const locationRef = teamRef ? `${teamRef}:${continuation.channelId}` : continuation.channelId;
   return {
@@ -118,6 +121,9 @@ function toSurfaceRef(continuation: {
     channelRef: continuation.channelId,
     threadRef: continuation.threadTs,
     ...(teamRef === undefined ? {} : { teamRef }),
+    ...(continuation.teamId === undefined || !recipientUserRef
+      ? {}
+      : { recipient: { teamRef: continuation.teamId, userRef: recipientUserRef } }),
   };
 }
 

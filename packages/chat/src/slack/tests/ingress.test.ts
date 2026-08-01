@@ -76,6 +76,7 @@ describe("Slack ingress driver", () => {
         channelRef: "C1",
         threadRef: "1800000000.000001",
         teamRef: "T1",
+        recipient: { teamRef: "T1", userRef: "U1" },
       },
       authorRef: "U1",
       text: "<@UBOT> investigate the deploy",
@@ -124,6 +125,7 @@ describe("Slack ingress driver", () => {
         channelRef: "C1",
         threadRef: "1800000000.000001",
         teamRef: "T1",
+        recipient: { teamRef: "T1", userRef: "U1" },
       },
       action: {
         type: "resolve",
