@@ -552,12 +552,13 @@ function NewBindingDialog({
 }) {
   const queryClient = useQueryClient();
   const surfaces = useQuery(orpc.surfaces.list.queryOptions());
-  // Web chat is available but has no location to pick: it always resolves to
-  // the member's own personal scope, so it never appears here.
+  // Web chat resolves implicitly, while Slack has an installation-aware
+  // binding flow under Messaging. Neither belongs in this generic dialog.
   const availableSurfaces = useMemo(
     () =>
       ((surfaces.data ?? []) as Surface[]).filter(
-        (surface) => surface.status === "available" && surface.locationBindable,
+        (surface) =>
+          surface.id !== "slack" && surface.status === "available" && surface.locationBindable,
       ),
     [surfaces.data],
   );

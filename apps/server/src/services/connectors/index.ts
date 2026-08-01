@@ -39,6 +39,7 @@ export {
 export {
   buildOAuthAuthorizationUrl,
   ConnectorAccountConflictError,
+  ConnectorAccountMismatchError,
   ConnectorCatalogDefectError,
   ConnectorConnectionNotFoundError,
   type ConnectorFetch,

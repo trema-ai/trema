@@ -185,7 +185,9 @@ export function SettingsMessagingPage() {
       toast.error(
         connectorError === "account_conflict"
           ? "This Slack workspace is already connected to another Trema organization"
-          : `Slack connection failed: ${connectorError.replaceAll("_", " ")}`,
+          : connectorError === "account_mismatch"
+            ? "Reauthorization selected a different Slack workspace"
+            : `Slack connection failed: ${connectorError.replaceAll("_", " ")}`,
       );
     }
     if (connected) {

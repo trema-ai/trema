@@ -18,6 +18,7 @@ import { createRunStreamHandler, type RunStreamTiming } from "./routes/run-strea
 import type { RpcContext } from "./rpc/builders.js";
 import {
   ConnectorAccountConflictError,
+  ConnectorAccountMismatchError,
   type ConnectorFetch,
   completeOAuthCallback,
   consumeOAuthState,
@@ -61,6 +62,7 @@ export function safeConnectorReturnUrl(
 
 function connectorErrorCode(error: unknown): string {
   if (error instanceof ConnectorAccountConflictError) return error.code;
+  if (error instanceof ConnectorAccountMismatchError) return error.code;
   if (error instanceof OAuthStateExpiredError) return error.code;
   if (error instanceof OAuthStateSingleUseError) return error.code;
   if (error instanceof OAuthTokenExchangeError) return error.code;
