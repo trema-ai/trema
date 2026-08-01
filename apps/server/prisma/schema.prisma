@@ -1106,7 +1106,9 @@ model SurfaceRealization {
   renderedThroughSeq Int       @default(0)
   segments           Json      @default("[]")
   presentation       Json      @default("{}")
-  /// Optimistic revision. Every successful cursor commit increments it.
+  /// Exact unacknowledged batch, staged before any remote mutation.
+  pendingPlan        Json?
+  /// Optimistic revision. Every successful state transition increments it.
   version            Int       @default(0)
   leaseOwner         String?
   leaseUntil         DateTime?

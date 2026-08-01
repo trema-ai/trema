@@ -1,4 +1,4 @@
-import type { RealizedSegment, SurfaceRef } from "@trema/surfaces";
+import type { RealizedSegment, RenderPlan, SurfaceRef } from "@trema/surfaces";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createPrismaClient } from "#server/lib/db/index.js";
@@ -226,6 +226,74 @@ integration("surface realizations", () => {
     now = new Date("2026-07-31T12:01:00.000Z");
     const retried = await store.claim("run-1", ref, "worker-b", 30_000);
     expect(retried).toMatchObject({ renderedThroughSeq: 2, retry: { attempt: 1 } });
+  });
+
+  it("persists an unacknowledged plan across failure and clears it on commit", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const plan: RenderPlan = {
+      fromCursor: 0,
+      toCursor: 1,
+      operations: [
+        {
+          id: "run-1:segment:0:message:0:create",
+          type: "create",
+          messageId: "run-1:segment:0:message:0",
+          segmentId: "run-1:segment:0",
+          segmentIndex: 0,
+          messageIndex: 0,
+          content: { text: "Hello", parts: [] },
+          finalized: false,
+        },
+      ],
+      nextSegments: [
+        {
+          id: "run-1:segment:0",
+          index: 0,
+          messages: [
+            {
+              id: "run-1:segment:0:message:0",
+              index: 0,
+              text: "Hello",
+              contentHash: "f55c314b",
+              finalized: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    const staged = await store.stagePlan({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: 0,
+      plan,
+    });
+    expect(staged).toMatchObject({ version: 1, pendingPlan: plan });
+
+    const failed = await store.recordFailure({
+      id: staged.id,
+      owner: "worker-a",
+      expectedVersion: 1,
+      code: "unavailable",
+    });
+    expect(failed).toMatchObject({ version: 2, pendingPlan: plan });
+
+    const retried = await store.claim("run-1", ref, "worker-b", 30_000);
+    expect(retried).toMatchObject({ version: 2, pendingPlan: plan });
+    const committed = await store.commit({
+      id: retried!.id,
+      owner: "worker-b",
+      expectedVersion: 2,
+      renderedThroughSeq: 1,
+      segments: [
+        {
+          ...plan.nextSegments[0]!,
+          messages: [{ ...plan.nextSegments[0]!.messages[0]!, remoteRef: "remote-1" }],
+        },
+      ],
+    });
+    expect(committed).toMatchObject({ renderedThroughSeq: 1, version: 3 });
+    expect(committed.pendingPlan).toBeUndefined();
   });
 
   it("does not reclaim a realization after a terminal delivery failure", async () => {

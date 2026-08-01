@@ -114,6 +114,8 @@ export interface RealizedSegment {
   id: string;
   index: number;
   messages: RealizedMessage[];
+  /** Current append-only snapshot; older messages remain as immutable history. */
+  activeMessageIds?: string[];
 }
 
 /** Durable state for exactly one run and surface destination. */
@@ -125,7 +127,9 @@ export interface SurfaceRealization {
   renderedThroughSeq: number;
   segments: RealizedSegment[];
   presentation: Record<string, unknown>;
-  /** Optimistic concurrency revision, incremented after every committed apply. */
+  /** Batch durably staged before remote apply and replayed until acknowledged. */
+  pendingPlan?: RenderPlan;
+  /** Optimistic concurrency revision, incremented after every state transition. */
   version: number;
   lease?: { owner: string; until: string };
   retry: {
@@ -136,6 +140,7 @@ export interface SurfaceRealization {
   };
 }
 
+/** Non-empty plans must be durably staged before any driver operation is attempted. */
 export interface RenderPlan {
   fromCursor: number;
   toCursor: number;

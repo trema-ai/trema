@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   RealizedSegment,
+  RenderPlan,
   SurfaceErrorCode,
   SurfaceRealization,
   SurfaceRef,
@@ -20,6 +21,7 @@ type RealizationRow = {
   renderedThroughSeq: number;
   segments: Prisma.JsonValue;
   presentation: Prisma.JsonValue;
+  pendingPlan: Prisma.JsonValue | null;
   version: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
@@ -42,6 +44,13 @@ export interface CommitRealizationInput {
   renderedThroughSeq: number;
   segments: RealizedSegment[];
   presentation?: Record<string, unknown>;
+}
+
+export interface StageRenderPlanInput {
+  id: string;
+  owner: string;
+  expectedVersion: number;
+  plan: RenderPlan;
 }
 
 export interface RecordRenderFailureInput {
@@ -130,10 +139,53 @@ export class PrismaSurfaceRealizationStore {
         AND NOT "SurfaceRealization"."terminalFailure"
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
-        "renderedThroughSeq", "segments", "presentation", "version",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     return row === undefined ? undefined : toRealization(row);
+  }
+
+  /** Durably stages a non-empty batch before any remote operation is attempted. */
+  async stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization> {
+    if (input.plan.operations.length === 0) {
+      throw new Error("only non-empty surface render plans need staging");
+    }
+    const now = this.#clock.now();
+    const plan = JSON.stringify(input.plan);
+    const [row] = await this.#db.$queryRaw<RealizationRow[]>`
+      UPDATE "SurfaceRealization" AS realization
+      SET "pendingPlan" = ${plan}::jsonb,
+          "version" = "version" + 1,
+          "updatedAt" = ${now}
+      WHERE realization."id" = ${input.id}
+        AND realization."orgId" = ${this.#orgId}
+        AND realization."leaseOwner" = ${input.owner}
+        AND realization."leaseUntil" > ${now}
+        AND realization."version" = ${input.expectedVersion}
+        AND realization."pendingPlan" IS NULL
+        AND realization."renderedThroughSeq" = ${input.plan.fromCursor}
+        AND ${input.plan.toCursor} <= (
+          SELECT run."lastEventSeq" FROM "AgentRun" AS run
+          WHERE run."id" = realization."runId" AND run."orgId" = realization."orgId"
+        )
+        AND (
+          realization."renderedThroughSeq" <= ${input.plan.toCursor}
+          OR ${input.plan.toCursor} = (
+            SELECT run."lastEventSeq" FROM "AgentRun" AS run
+            WHERE run."id" = realization."runId" AND run."orgId" = realization."orgId"
+          )
+        )
+      RETURNING
+        "id", "orgId", "runId", "surface", "locationRef", "threadRef",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
+        "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
+        "nextRetryAt", "lastErrorCode"`;
+    if (row === undefined) {
+      throw new SurfaceRealizationConflictError(
+        `surface realization plan lost its lease or revision: ${input.id}`,
+      );
+    }
+    return toRealization(row);
   }
 
   /** Extends only a lease that is still live and owned by this worker. */
@@ -164,6 +216,7 @@ export class PrismaSurfaceRealizationStore {
       SET "renderedThroughSeq" = ${input.renderedThroughSeq},
           "segments" = ${segments}::jsonb,
           "presentation" = COALESCE(${presentation}::jsonb, realization."presentation"),
+          "pendingPlan" = NULL,
           "version" = "version" + 1,
           "retryAttempt" = 0,
           "terminalFailure" = false,
@@ -188,7 +241,7 @@ export class PrismaSurfaceRealizationStore {
         )
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
-        "renderedThroughSeq", "segments", "presentation", "version",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -219,7 +272,7 @@ export class PrismaSurfaceRealizationStore {
         AND "version" = ${input.expectedVersion}
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
-        "renderedThroughSeq", "segments", "presentation", "version",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -258,6 +311,7 @@ function toRealization(row: RealizationRow): SurfaceRealization {
     renderedThroughSeq: row.renderedThroughSeq,
     segments: row.segments as unknown as RealizedSegment[],
     presentation: row.presentation as Record<string, unknown>,
+    ...(row.pendingPlan === null ? {} : { pendingPlan: row.pendingPlan as unknown as RenderPlan }),
     version: row.version,
     ...(row.leaseOwner === null || row.leaseUntil === null
       ? {}

@@ -49,6 +49,7 @@ export {
   type CommitRealizationInput,
   PrismaSurfaceRealizationStore,
   type RecordRenderFailureInput,
+  type StageRenderPlanInput,
   SurfaceRealizationConflictError,
   type SurfaceRealizationStoreOptions,
 } from "#server/services/surfaces/store.js";

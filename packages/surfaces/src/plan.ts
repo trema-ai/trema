@@ -20,7 +20,10 @@ type PlannedMessage = RealizedMessage & { content: RenderContent };
  */
 export function planRender(
   projection: Projection,
-  realization: Pick<SurfaceRealization, "runId" | "renderedThroughSeq" | "segments">,
+  realization: Pick<
+    SurfaceRealization,
+    "runId" | "renderedThroughSeq" | "segments" | "pendingPlan"
+  >,
   capabilities: CapabilityDescriptor,
   options: PlanRenderOptions = {},
 ): RenderPlan {
@@ -29,10 +32,8 @@ export function planRender(
       `projection run ${projection.runId} does not match realization run ${realization.runId}`,
     );
   }
-  if (
-    projection.lastSeq < realization.renderedThroughSeq &&
-    options.allowCursorRegression !== true
-  ) {
+  const cursorRegressed = projection.lastSeq < realization.renderedThroughSeq;
+  if (cursorRegressed && options.allowCursorRegression !== true) {
     throw new Error(
       `projection cursor regressed from ${realization.renderedThroughSeq} to ${projection.lastSeq}`,
     );
@@ -42,6 +43,17 @@ export function planRender(
   }
   if (capabilities.budgets.messageChars <= 0) {
     throw new Error("messageChars must be greater than zero");
+  }
+
+  // A batch is staged before remote apply. Until it is acknowledged, replay
+  // its exact operation identities and target state before planning from a
+  // newer projection; the remote side may already have applied any subset.
+  if (realization.pendingPlan !== undefined) {
+    return {
+      ...realization.pendingPlan,
+      fromCursor: realization.renderedThroughSeq,
+      toCursor: Math.min(realization.pendingPlan.toCursor, projection.lastSeq),
+    };
   }
 
   const terminal = isTerminal(projection.status);
@@ -92,25 +104,31 @@ export function planRender(
     const planned = realizeSegment(segment, segmentId, capabilities.budgets.messageChars, terminal);
     const messages: RealizedMessage[] =
       capabilities.mutation === "append-only" ? [...(existing?.messages ?? [])] : [];
+    const plannedIds = new Set(planned.map((message) => message.id));
+    const historicalLogicalIds = new Set(messages.map((message) => logicalMessageId(message.id)));
+    const activeMessages = appendActiveMessages(existing);
+    const activeByLogicalId = new Map(
+      activeMessages.map((message) => [logicalMessageId(message.id), message]),
+    );
+    const nextActiveMessageIds: string[] = [];
+    const appendSnapshotRequired =
+      capabilities.mutation === "append-only" &&
+      activeMessages.some((message) => !plannedIds.has(logicalMessageId(message.id)));
 
     for (const target of planned) {
       if (capabilities.mutation === "append-only") {
-        const latest = existing?.messages
-          .filter(
-            (message) =>
-              message.id === target.id || message.id.startsWith(`${target.id}:revision:`),
-          )
-          .reduce<RealizedMessage | undefined>(
-            (newest, message) =>
-              newest === undefined || message.index > newest.index ? message : newest,
-            undefined,
-          );
-        if (latest?.contentHash === target.contentHash && latest.finalized === target.finalized) {
+        const latest = activeByLogicalId.get(target.id);
+        if (
+          !appendSnapshotRequired &&
+          latest?.contentHash === target.contentHash &&
+          latest.finalized === target.finalized
+        ) {
+          nextActiveMessageIds.push(latest.id);
           continue;
         }
 
         const immutableTarget =
-          latest === undefined
+          latest === undefined && !historicalLogicalIds.has(target.id)
             ? target
             : {
                 ...target,
@@ -124,6 +142,7 @@ export function planRender(
           finalized: true,
         });
         messages.push(withoutContent({ ...immutableTarget, finalized: true }));
+        nextActiveMessageIds.push(immutableTarget.id);
         continue;
       }
 
@@ -196,7 +215,14 @@ export function planRender(
     }
 
     if (messages.length > 0) {
-      nextSegments.push({ id: segmentId, index: segment.index, messages });
+      nextSegments.push({
+        id: segmentId,
+        index: segment.index,
+        messages,
+        ...(capabilities.mutation === "append-only"
+          ? { activeMessageIds: nextActiveMessageIds }
+          : {}),
+      });
     }
     existingById.delete(segmentId);
   }
@@ -222,7 +248,7 @@ export function planRender(
   nextSegments.sort((left, right) => left.index - right.index);
   return {
     fromCursor: realization.renderedThroughSeq,
-    toCursor: deferred ? realization.renderedThroughSeq : projection.lastSeq,
+    toCursor: deferred && !cursorRegressed ? realization.renderedThroughSeq : projection.lastSeq,
     operations,
     nextSegments,
   };
@@ -493,6 +519,32 @@ function characterCount(value: string): number {
 
 function segmentIdentity(runId: string, index: number): string {
   return `${runId}:segment:${index}`;
+}
+
+function logicalMessageId(messageId: string): string {
+  const revision = messageId.indexOf(":revision:");
+  return revision === -1 ? messageId : messageId.slice(0, revision);
+}
+
+function appendActiveMessages(segment: RealizedSegment | undefined): RealizedMessage[] {
+  if (segment === undefined) return [];
+  if (segment.activeMessageIds !== undefined) {
+    const byId = new Map(segment.messages.map((message) => [message.id, message]));
+    return segment.activeMessageIds.flatMap((id) => {
+      const message = byId.get(id);
+      return message === undefined ? [] : [message];
+    });
+  }
+
+  const latestByLogicalId = new Map<string, RealizedMessage>();
+  for (const message of segment.messages) {
+    const logicalId = logicalMessageId(message.id);
+    const current = latestByLogicalId.get(logicalId);
+    if (current === undefined || message.index > current.index) {
+      latestByLogicalId.set(logicalId, message);
+    }
+  }
+  return [...latestByLogicalId.values()];
 }
 
 function operationIdentity(

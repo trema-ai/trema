@@ -159,6 +159,48 @@ describe("planRender", () => {
     expect(afterFailure.operations[0]?.id).toBe(beforeFailure.operations[0]?.id);
   });
 
+  it("replays a staged unknown apply before planning a reverted projection", () => {
+    const first = planRender(projection("A"), realization(), deltaCapabilities);
+    const firstSegments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: [{ messageId: first.operations[0]!.messageId, remoteRef: "remote-1" }],
+    });
+    const changed = planRender(
+      projection("B", { lastSeq: 2 }),
+      realization({ renderedThroughSeq: 1, segments: firstSegments, version: 1 }),
+      deltaCapabilities,
+    );
+
+    const retry = planRender(
+      projection("A", { lastSeq: 3 }),
+      realization({
+        renderedThroughSeq: 1,
+        segments: firstSegments,
+        pendingPlan: changed,
+        version: 2,
+      }),
+      deltaCapabilities,
+    );
+    expect(retry).toEqual(changed);
+
+    const changedSegments = acknowledge(retry, {
+      appliedOperationIds: retry.operations.map(({ id }) => id),
+      messages: [],
+    });
+    const reverted = planRender(
+      projection("A", { lastSeq: 3 }),
+      realization({ renderedThroughSeq: 2, segments: changedSegments, version: 3 }),
+      deltaCapabilities,
+    );
+    expect(reverted.operations).toEqual([
+      expect.objectContaining({
+        type: "replace",
+        remoteRef: "remote-1",
+        content: expect.objectContaining({ text: "A" }),
+      }),
+    ]);
+  });
+
   it("uses a snapshot when a delta would cross more than one unapplied event", () => {
     const first = planRender(projection("Hello"), realization(), deltaCapabilities);
     const segments = acknowledge(first, {
@@ -470,6 +512,71 @@ describe("planRender", () => {
     expect(reverted.nextSegments[0]?.messages).toHaveLength(3);
   });
 
+  it("appends a complete snapshot when append-only overflow chunks disappear", () => {
+    const capabilities: CapabilityDescriptor = {
+      ...deltaCapabilities,
+      mutation: "append-only",
+      streaming: "none",
+      budgets: { ...deltaCapabilities.budgets, messageChars: 5 },
+    };
+    const first = planRender(
+      projection("Hello world", { ended: true }),
+      realization(),
+      capabilities,
+    );
+    const firstSegments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: first.operations.map((operation, index) => ({
+        messageId: operation.messageId,
+        remoteRef: `remote-${index}`,
+      })),
+    });
+    expect(firstSegments[0]?.messages).toHaveLength(3);
+
+    const shrunk = planRender(
+      projection("Hello", { lastSeq: 2, ended: true }),
+      realization({ renderedThroughSeq: 1, segments: firstSegments, version: 1 }),
+      capabilities,
+    );
+    expect(shrunk.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:0:revision:3",
+        content: expect.objectContaining({ text: "Hello" }),
+      }),
+    ]);
+    expect(shrunk.nextSegments[0]?.activeMessageIds).toEqual([
+      "run-1:segment:0:message:0:revision:3",
+    ]);
+
+    const applied = acknowledge(shrunk, {
+      appliedOperationIds: shrunk.operations.map(({ id }) => id),
+      messages: [{ messageId: shrunk.operations[0]!.messageId, remoteRef: "remote-snapshot" }],
+    });
+    const replay = planRender(
+      projection("Hello", { lastSeq: 2, ended: true }),
+      realization({ renderedThroughSeq: 2, segments: applied, version: 2 }),
+      capabilities,
+    );
+    expect(replay.operations).toEqual([]);
+
+    const regrown = planRender(
+      projection("Hello world", { lastSeq: 3, ended: true }),
+      realization({ renderedThroughSeq: 2, segments: applied, version: 2 }),
+      capabilities,
+    );
+    expect(regrown.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:1:revision:4",
+      }),
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:2:revision:5",
+      }),
+    ]);
+  });
+
   it("defers unfinished segments when the driver does not support streaming", () => {
     const capabilities: CapabilityDescriptor = {
       ...deltaCapabilities,
@@ -487,6 +594,23 @@ describe("planRender", () => {
       expect.objectContaining({ type: "create", finalized: true }),
     ]);
     expect(settled.toCursor).toBe(4);
+
+    const settledSegments = acknowledge(settled, {
+      appliedOperationIds: settled.operations.map(({ id }) => id),
+      messages: [{ messageId: settled.operations[0]!.messageId, remoteRef: "remote-1" }],
+    });
+    const truncated = planRender(
+      projection("Partial", { lastSeq: 2 }),
+      realization({ renderedThroughSeq: 4, segments: settledSegments, version: 1 }),
+      capabilities,
+      { allowCursorRegression: true },
+    );
+    expect(truncated).toEqual({
+      fromCursor: 4,
+      toCursor: 2,
+      operations: [],
+      nextSegments: settledSegments,
+    });
   });
 
   it("requires complete acknowledgement before state can commit", () => {
