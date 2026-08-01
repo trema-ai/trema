@@ -953,19 +953,19 @@ const memberListConnections = orgScoped
     ).map(serializeConnection),
   );
 
-const memberListInstallationHealth = orgScoped
+const memberListConnectorAvailability = orgScoped
   .route({
     method: "GET",
-    path: "/member/connector-installations/health",
-    summary: "List connector installation health for members",
+    path: "/member/connectors/availability",
+    summary: "List connector availability for the caller",
     description:
-      "List safe installation availability for the caller's personal and organization connectors.",
+      "List safe availability for the caller's personal and organization-provided connectors.",
     tags: ["Connectors"],
   })
   .output(
     z.array(
       z.object({
-        installationItemId: z.uuid(),
+        itemId: z.uuid(),
         status: connectionHealthStatusSchema,
       }),
     ),
@@ -998,13 +998,15 @@ const memberListInstallationHealth = orgScoped
       })),
     );
     const scopeIds = readable.filter((scope) => scope.canRead).map((scope) => scope.id);
-    return listConnectorInstallationHealth(context.db, {
-      orgId: context.org.id,
-      scopeIds,
-      ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-        ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-        : {}),
-    });
+    return (
+      await listConnectorInstallationHealth(context.db, {
+        orgId: context.org.id,
+        scopeIds,
+        ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
+          ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
+          : {}),
+      })
+    ).map(({ installationItemId, status }) => ({ itemId: installationItemId, status }));
   });
 
 const memberRevokeConnection = orgScoped
@@ -1031,62 +1033,6 @@ const memberRevokeConnection = orgScoped
     }
   });
 
-const memberCreateInstallation = orgScoped
-  .route({
-    method: "POST",
-    path: "/member/connector-installations",
-    summary: "Create a personal connector installation",
-    description:
-      "Bind one of the caller's connections into the caller's personal scope with all tools enabled.",
-    tags: ["Connectors"],
-  })
-  .input(
-    z.object({
-      scopeId: z.uuid(),
-      catalogKey: z.string().trim().min(1),
-      connectionId: z.uuid(),
-    }),
-  )
-  .output(installationSchema)
-  .handler(async ({ context, input }) => {
-    try {
-      requirePersonalOAuthProvider(input.catalogKey);
-      const scope = await context.db.scope.findFirst({
-        where: {
-          id: input.scopeId,
-          orgId: context.org.id,
-          kind: "personal",
-          ownerId: context.principal.id,
-        },
-        select: { id: true },
-      });
-      if (!scope) {
-        throw new ORPCError("FORBIDDEN", {
-          message: "Members may only install connectors in their own personal scope",
-        });
-      }
-      return serializeInstallation(
-        await createConnectorInstallation(context.db, {
-          orgId: context.org.id,
-          actorPrincipalId: context.principal.id,
-          scopeId: scope.id,
-          catalogKey: input.catalogKey,
-          connectionId: input.connectionId,
-          enabledTools: "all",
-          ...(context.env.TREMA_CREDENTIAL_MASTER_KEY
-            ? { masterKey: context.env.TREMA_CREDENTIAL_MASTER_KEY }
-            : {}),
-          ...(context.connectorFetch ? { fetch: context.connectorFetch } : {}),
-          ...(context.mcpClientFactory ? { clientFactory: context.mcpClientFactory } : {}),
-          ...(context.platformApps ? { platformApps: context.platformApps } : {}),
-        }),
-      );
-    } catch (error) {
-      if (error instanceof ORPCError) throw error;
-      throwConnectorError(error);
-    }
-  });
-
 export const connectorsRouter = {
   meta,
   catalog: { list: catalog },
@@ -1107,6 +1053,6 @@ export const connectorsRouter = {
   member: {
     connect: { startOAuth: memberStartOAuth },
     connections: { list: memberListConnections, revoke: memberRevokeConnection },
-    installations: { create: memberCreateInstallation, health: memberListInstallationHealth },
+    availability: { list: memberListConnectorAvailability },
   },
 };

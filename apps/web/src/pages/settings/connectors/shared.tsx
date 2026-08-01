@@ -76,8 +76,8 @@ export type ConnectorInstallation = {
   updatedAt: string;
 };
 
-export type ConnectorInstallationHealth = {
-  installationItemId: string;
+export type ConnectorAvailability = {
+  itemId: string;
   status:
     | "available"
     | "revoked"
