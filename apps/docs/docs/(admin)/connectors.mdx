@@ -39,7 +39,7 @@ MCP and API-key providers skip this step. For an MCP provider, Trema discovers t
 
 ## Connect an account
 
-Connections made from the settings page belong to the organization's agent principal: the agent acts as that account in organization and shared scopes. For OAuth and MCP providers:
+Connections made from the settings page belong to the organization's agent principal. Connector calls use that external account in organization and shared scopes. For OAuth and MCP providers:
 
 1. On the provider page, click **Connect**.
 2. Fill any provider-specific fields. Providers with a published scope catalog also show a scope picker, with the defaults preselected.
@@ -53,16 +53,19 @@ Connect more than one account to reach separate workspaces—each becomes its ow
 
 ## Add a connection to scopes
 
-A connection does nothing until it is installed into a scope. After a connect completes, Trema offers to add the new connection to organization and shared scopes. The organization scope starts selected for a provider's first installation, and each selected scope gets its own installation with all tools enabled.
+A connection does nothing until it is installed into a scope. Setup starts from its target scope and creates the connection plus its first installation as one operation. The organization scope is the default target for a provider's first static or app connection, and the installation starts with all tools enabled.
 
 Use **Add to scope** on a connection to bind more scopes later, and **Remove from scope** to archive a binding without touching the connection. Installation changes are recorded in the audit log.
 
-## Configure tools per scope
+## Configure access and tools per scope
 
-**Configure tools** on a scope binding controls what the agent can call there:
+Each scope binding controls who may use it and what the agent can call there:
 
+- Choose **Everyone in this scope** or require a minimum role. Trema evaluates the requester's effective role at the installation's scope.
 - Turn individual tools on or off, or keep **All tools** on—new synced tools then arrive enabled.
 - Choices apply only to that binding, so the same connection can expose different tools in different scopes.
+
+Audience and tool choices remain installation-wide and independent. Trema does not support role-by-tool matrices.
 
 Turning a tool off removes it outright. Bounding how freely the enabled tools run is a policy decision instead. An [approval policy](/approval-policies) sets a per-connector or scope-wide ceiling on the approval mode.
 
@@ -81,7 +84,7 @@ A synced tool keeps the server's own MCP annotations verbatim. They gate nothing
 
 Members can connect any user-acting OAuth provider from the Connections tab of their personal scope. App OAuth, API keys, basic authentication, and machine-to-machine credentials stay organization-owned and do not appear in the personal flow.
 
-A personal installation always uses the scope owner's connection. Members can reconnect or revoke connections they own.
+The OAuth callback creates or updates the personal installation automatically. A personal installation always uses the scope owner's connection. Members can reconnect or revoke connections they own; there is no separate installation action.
 
 ## Watch credential health
 

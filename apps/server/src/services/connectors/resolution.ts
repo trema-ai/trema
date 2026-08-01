@@ -190,7 +190,7 @@ function credentialEligible(input: {
   }
 
   if (input.installationScope.kind === "personal") return false;
-  // User-delegated OAuth owned by the organization agent may serve only
+  // User-acting OAuth owned by the organization agent may serve only
   // organization and shared sessions. App OAuth, static credentials, and M2M
   // credentials retain ordinary inherited installation reach.
   return input.provider.oauthActor !== "user" || input.sessionScopeKind !== "personal";

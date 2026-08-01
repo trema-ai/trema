@@ -16,26 +16,48 @@ ALTER TABLE "ConnectorOAuthState"
   ON DELETE CASCADE
   ON UPDATE CASCADE;
 
--- Keep the most recently touched installation when old application behavior
--- managed to create duplicates. The partial expression index then makes the
--- one-provider-per-scope invariant concurrency-safe for every scope kind.
-WITH ranked AS (
-  SELECT
-    "id",
-    row_number() OVER (
-      PARTITION BY "orgId", "scopeId", ("body"->>'catalogKey')
-      ORDER BY "updatedAt" DESC, "id" DESC
-    ) AS position
-  FROM "Item"
-  WHERE "kind" = 'connector'
-    AND "status" <> 'archived'
-    AND "body" ? 'catalogKey'
-)
-UPDATE "Item"
-SET "status" = 'archived'
-FROM ranked
-WHERE "Item"."id" = ranked."id"
-  AND ranked.position > 1;
+-- BEGIN connector installation conflict check
+-- Stop with structured conflict details instead of silently choosing which
+-- installation survives. An operator must resolve each listed scope/provider
+-- conflict and rerun the migration.
+DO $migration$
+DECLARE
+  conflicts jsonb;
+BEGIN
+  SELECT jsonb_agg(
+    jsonb_build_object(
+      'orgId', grouped."orgId",
+      'scopeId', grouped."scopeId",
+      'providerKey', grouped."providerKey",
+      'installationItemIds', grouped."installationItemIds"
+    )
+    ORDER BY grouped."orgId", grouped."scopeId", grouped."providerKey"
+  )
+  INTO conflicts
+  FROM (
+    SELECT
+      "orgId",
+      "scopeId",
+      "body"->>'catalogKey' AS "providerKey",
+      jsonb_agg("id" ORDER BY "id") AS "installationItemIds"
+    FROM "Item"
+    WHERE "kind" = 'connector'
+      AND "status" <> 'archived'
+      AND "body" ? 'catalogKey'
+    GROUP BY "orgId", "scopeId", "body"->>'catalogKey'
+    HAVING count(*) > 1
+  ) AS grouped;
+
+  IF conflicts IS NOT NULL THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'connector_installation_conflicts',
+      DETAIL = conflicts::text,
+      HINT = 'Archive or merge every listed duplicate installation, then rerun the migration.';
+  END IF;
+END
+$migration$;
+-- END connector installation conflict check
 
 CREATE UNIQUE INDEX "Item_one_active_connector_per_scope_provider"
   ON "Item"("orgId", "scopeId", ("body"->>'catalogKey'))
