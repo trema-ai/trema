@@ -222,6 +222,22 @@ integration("run reads", () => {
 
       expect(listed.runs.map(({ id }) => id)).toEqual([running.id]);
     });
+
+    it("applies the limit after removing runs the caller cannot discover", async () => {
+      const { org, bob, run } = await setup();
+      const scope = await personalScope(org.org.id, bob.principal);
+      const session = await openSession(org.org.id, scope.id, org.agent);
+      const visible = await createRun({
+        orgId: org.org.id,
+        sessionId: session.id,
+        threadRef: "web:bob",
+        createdAt: new Date(run.createdAt.getTime() - 1000),
+      });
+
+      const listed = await call(runsRouter.list, { limit: 1 }, { context: bob.context });
+
+      expect(listed.runs.map(({ id }) => id)).toEqual([visible.id]);
+    });
   });
 
   describe("GET /runs/{id}", () => {

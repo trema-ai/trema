@@ -46,6 +46,10 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
   query.result = {
     isPending: false,
     error: null,
@@ -96,6 +100,18 @@ describe("RunsPage", () => {
     fireEvent.click(row);
 
     expect(screen.getByTestId("location").textContent).toBe("/runs/run-001");
+  });
+
+  it("copies a run ID without opening the run", () => {
+    renderPage();
+
+    const copy = screen.getAllByRole("button", { name: "Copy" })[0];
+    if (copy === undefined) throw new Error("Run copy button was not rendered");
+    fireEvent.keyDown(copy, { key: "Enter" });
+    fireEvent.click(copy);
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("run-001");
+    expect(screen.getByTestId("location").textContent).toBe("/runs");
   });
 
   it("keeps an operational empty state", () => {

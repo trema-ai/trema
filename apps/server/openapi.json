@@ -12048,7 +12048,7 @@
               "minimum": 1,
               "maximum": 200,
               "default": 100,
-              "description": "How many of the organization's most recent matching runs to consider. Defaults to 100."
+              "description": "How many visible matching runs to return. Defaults to 100."
             },
             "allowEmptyValue": true,
             "allowReserved": true

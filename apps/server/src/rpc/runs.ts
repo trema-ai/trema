@@ -205,9 +205,7 @@ const list = orgScoped
         .min(1)
         .max(RUN_LIST_LIMIT)
         .default(RUN_LIST_SIZE)
-        .describe(
-          `How many of the organization's most recent matching runs to consider. Defaults to ${RUN_LIST_SIZE}.`,
-        ),
+        .describe(`How many visible matching runs to return. Defaults to ${RUN_LIST_SIZE}.`),
     }),
   )
   .output(
@@ -220,49 +218,64 @@ const list = orgScoped
       .describe("The caller's recent-run index."),
   )
   .handler(async ({ context, input }) => {
-    const rows = await context.db.agentRun.findMany({
-      where: {
-        orgId: context.org.id,
-        ...(input.state === undefined ? {} : { state: input.state }),
-        ...(input.trigger === undefined ? {} : { trigger: input.trigger }),
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: input.limit,
-    });
-    const verdicts = await resolveRunsAccess({
-      db: context.db,
-      orgId: context.org.id,
-      principal: context.principal,
-      runs: rows,
-    });
-
     const runs: RunSummary[] = [];
-    for (const verdict of verdicts) {
-      if (verdict.access === "none") continue;
-      const summary = metadataView(verdict.run);
-      if (verdict.access === "metadata") {
-        runs.push({
-          access: "metadata",
-          id: summary.id,
-          state: summary.state,
-          trigger: summary.trigger,
-          createdAt: summary.createdAt,
-          updatedAt: summary.updatedAt,
-        });
-        continue;
-      }
-      if (verdict.session === null) continue;
-      runs.push({
-        access: "full",
-        id: summary.id,
-        state: summary.state,
-        trigger: summary.trigger,
-        threadRef: verdict.run.threadRef,
-        surface: verdict.session.surface,
-        locationRef: verdict.session.locationRef,
-        createdAt: summary.createdAt,
-        updatedAt: summary.updatedAt,
+    const scanSize = Math.max(input.limit, RUN_LIST_SIZE);
+    let cursorId: string | undefined;
+
+    while (runs.length < input.limit) {
+      const rows = await context.db.agentRun.findMany({
+        where: {
+          orgId: context.org.id,
+          ...(input.state === undefined ? {} : { state: input.state }),
+          ...(input.trigger === undefined ? {} : { trigger: input.trigger }),
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: scanSize,
+        ...(cursorId === undefined
+          ? {}
+          : {
+              cursor: { orgId_id: { orgId: context.org.id, id: cursorId } },
+              skip: 1,
+            }),
       });
+      if (rows.length === 0) break;
+      cursorId = rows.at(-1)?.id;
+
+      const verdicts = await resolveRunsAccess({
+        db: context.db,
+        orgId: context.org.id,
+        principal: context.principal,
+        runs: rows,
+      });
+      for (const verdict of verdicts) {
+        if (verdict.access === "none") continue;
+        const summary = metadataView(verdict.run);
+        if (verdict.access === "metadata") {
+          runs.push({
+            access: "metadata",
+            id: summary.id,
+            state: summary.state,
+            trigger: summary.trigger,
+            createdAt: summary.createdAt,
+            updatedAt: summary.updatedAt,
+          });
+        } else if (verdict.session !== null) {
+          runs.push({
+            access: "full",
+            id: summary.id,
+            state: summary.state,
+            trigger: summary.trigger,
+            threadRef: verdict.run.threadRef,
+            surface: verdict.session.surface,
+            locationRef: verdict.session.locationRef,
+            createdAt: summary.createdAt,
+            updatedAt: summary.updatedAt,
+          });
+        }
+        if (runs.length === input.limit) break;
+      }
+
+      if (rows.length < scanSize) break;
     }
     return { runs };
   });
