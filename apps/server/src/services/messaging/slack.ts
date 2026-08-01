@@ -1,5 +1,6 @@
 import { loadProviderCatalog } from "@trema/connectors";
 
+import { encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { createBinding, deleteBinding, resolveLocation } from "#server/services/bindings/index.js";
@@ -12,7 +13,9 @@ import {
   ConnectorToolValidationError,
   connectorConnectionCredentialHealth,
   connectorConnectionValidity,
+  emptyPlatformAppDirectory,
   listConnectorConnections,
+  resolveClientRegistration,
   resolveConnectionCredential,
   resolveConnectorInstallation,
   startOAuthConnect,
@@ -24,6 +27,9 @@ const slackProvider = loadProviderCatalog().find(({ key }) => key === SLACK_PROV
 if (!slackProvider) throw new Error("Slack connector provider is missing from the catalog");
 
 export const SLACK_BOT_SCOPES = [...slackProvider.auth.defaultScopes];
+export const SLACK_USER_SCOPES = (slackProvider.auth.authorizationParams?.user_scope ?? "")
+  .split(/[\s,]+/)
+  .filter((scope) => scope.length > 0);
 export const SLACK_EVENTS_PATH = "/api/v1/messaging/slack/events";
 export const SLACK_INTERACTIONS_PATH = "/api/v1/messaging/slack/interactions";
 
@@ -155,7 +161,7 @@ export function slackAppManifest(authBaseUrl: string) {
     },
     oauth_config: {
       redirect_urls: [endpoint("/connect/callback")],
-      scopes: { bot: SLACK_BOT_SCOPES },
+      scopes: { bot: SLACK_BOT_SCOPES, user: SLACK_USER_SCOPES },
       token_management_enabled: true,
     },
     settings: {
@@ -320,24 +326,101 @@ export async function uninstallSlackInstallation(
     ...(input.platformApps ? { platformApps: input.platformApps } : {}),
     ...(input.fetch ? { fetch: input.fetch } : {}),
   });
-  const accessToken = resolved.credential.accessToken;
-  if (typeof accessToken !== "string" || accessToken.length === 0) {
-    throw new SlackUninstallError("Slack credential is unavailable");
+  let registration: Awaited<ReturnType<typeof resolveClientRegistration>>;
+  try {
+    registration = await resolveClientRegistration(
+      db,
+      input.orgId,
+      SLACK_PROVIDER_KEY,
+      input.platformApps ?? emptyPlatformAppDirectory,
+      input.masterKey,
+    );
+  } catch (error) {
+    log.warn("Slack uninstall request preparation failed", {
+      connectionId: connection.id,
+      error,
+    });
+    throw new SlackUninstallError("Slack app credentials are unavailable");
+  }
+
+  const credentialRaw = record(resolved.credential.raw);
+  const authedUser = record(credentialRaw.authed_user);
+  let userAccessToken = stringField(authedUser, "access_token");
+  const userRefreshToken = stringField(authedUser, "refresh_token");
+  const fetch = input.fetch ?? globalThis.fetch;
+
+  if (userRefreshToken) {
+    let refreshResponse: Response;
+    try {
+      refreshResponse = await fetch("https://slack.com/api/oauth.v2.access", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          client_id: registration.clientId,
+          client_secret: registration.clientSecret,
+          grant_type: "refresh_token",
+          refresh_token: userRefreshToken,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // Fetch failures may retain the request body, including the refresh
+      // token and client secret, so do not attach the transport error.
+      log.warn("Slack user token refresh failed", { connectionId: connection.id });
+      throw new SlackUninstallError("Slack user credential could not be refreshed");
+    }
+    const refreshResult = record(await refreshResponse.json().catch(() => undefined));
+    userAccessToken = stringField(refreshResult, "access_token");
+    if (!refreshResponse.ok || refreshResult.ok !== true || !userAccessToken) {
+      log.warn("Slack user token refresh rejected", {
+        connectionId: connection.id,
+        status: refreshResponse.status,
+      });
+      throw new SlackUninstallError("Slack user credential could not be refreshed");
+    }
+
+    const rotatedUser = Object.fromEntries(
+      Object.entries(refreshResult).filter(([key]) => key !== "ok" && key !== "error"),
+    );
+    const nextCredential = {
+      ...resolved.credential,
+      raw: {
+        ...credentialRaw,
+        authed_user: { ...authedUser, ...rotatedUser },
+      },
+    };
+    const updated = await db.connectorConnection.updateMany({
+      where: { id: connection.id, orgId: input.orgId, revokedAt: null },
+      data: { ciphertext: encryptEnvelope(nextCredential, input.masterKey) },
+    });
+    if (updated.count === 0) throw new SlackInstallationNotFoundError();
+  }
+
+  if (!userAccessToken) {
+    throw new SlackUninstallError("Slack must be reauthorized before it can be uninstalled");
   }
 
   let response: Response;
   try {
-    response = await (input.fetch ?? globalThis.fetch)("https://slack.com/api/auth.revoke", {
+    response = await fetch("https://slack.com/api/apps.uninstall", {
       method: "POST",
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${userAccessToken}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams(),
+      body: new URLSearchParams({
+        client_id: registration.clientId,
+        client_secret: registration.clientSecret,
+      }),
+      signal: AbortSignal.timeout(10_000),
     });
-  } catch (error) {
-    log.warn("Slack uninstall request failed", { connectionId: connection.id, error });
+  } catch {
+    // Fetch failures may retain the bearer token or client secret.
+    log.warn("Slack uninstall request failed", { connectionId: connection.id });
     throw new SlackUninstallError();
   }
   let result: Record<string, unknown> = {};
@@ -347,8 +430,7 @@ export async function uninstallSlackInstallation(
     // A provider response can contain credential material. Never include it in
     // an error or log record; the safe status is enough for diagnosis.
   }
-  const alreadyRevoked = result.error === "token_revoked";
-  if (!response.ok || (result.ok !== true && !alreadyRevoked)) {
+  if (!response.ok || result.ok !== true) {
     log.warn("Slack uninstall request rejected", {
       connectionId: connection.id,
       status: response.status,

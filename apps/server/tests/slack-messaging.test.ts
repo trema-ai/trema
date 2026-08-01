@@ -2,14 +2,16 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { encryptEnvelope } from "#server/lib/crypto/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
+import { createClientRegistration } from "#server/services/connectors/index.js";
 import {
   createSlackBinding,
   listSlackBindings,
   listSlackIdentityLinks,
   resolveSlackRequest,
   SlackRequestRejectedError,
+  SlackUninstallError,
   setSlackIdentityLink,
   uninstallSlackInstallation,
 } from "#server/services/messaging/index.js";
@@ -32,6 +34,14 @@ integration("Slack installation and conversation bindings", () => {
 
   async function setup(workspaceId = "T123ABC") {
     const org = await db.org.create({ data: { name: `Org ${randomUUID()}` } });
+    await createClientRegistration(db, {
+      orgId: org.id,
+      providerKey: "slack",
+      source: "customer",
+      clientId: "slack-client-id",
+      clientSecret: "slack-client-secret",
+      masterKey,
+    });
     const agent = await db.principal.create({
       data: { orgId: org.id, kind: "agent", displayName: "Trema" },
     });
@@ -57,7 +67,17 @@ integration("Slack installation and conversation bindings", () => {
           bot_user_id: "U999BOT",
         },
         ciphertext: encryptEnvelope(
-          { accessToken: "xoxb-safe-test-token", raw: { access_token: "xoxb-safe-test-token" } },
+          {
+            accessToken: "xoxb-safe-test-token",
+            raw: {
+              access_token: "xoxb-safe-test-token",
+              authed_user: {
+                id: "UINSTALLER",
+                access_token: "xoxp-safe-user-token",
+                token_type: "user",
+              },
+            },
+          },
           masterKey,
         ),
         providerScopes: ["app_mentions:read", "chat:write"],
@@ -241,7 +261,7 @@ integration("Slack installation and conversation bindings", () => {
     ).rejects.toMatchObject({ code: "P2002" });
   });
 
-  it("audits bindings, requester links, and a remotely revoked uninstall without token material", async () => {
+  it("audits bindings, requester links, and a remote app uninstall without token material", async () => {
     const fixture = await setup();
     await createSlackBinding(db, {
       orgId: fixture.org.id,
@@ -258,7 +278,9 @@ integration("Slack installation and conversation bindings", () => {
       userId: "U123ABC",
       principalId: fixture.member.id,
     });
-    const fetch = vi.fn(async () => Response.json({ ok: true, revoked: true }, { status: 200 }));
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({ ok: true }, { status: 200 }),
+    );
     await uninstallSlackInstallation(db, {
       orgId: fixture.org.id,
       actorPrincipalId: fixture.member.id,
@@ -280,6 +302,106 @@ integration("Slack installation and conversation bindings", () => {
       "messaging.slack.installation.uninstall",
     ]);
     expect(JSON.stringify(audits)).not.toContain("xoxb-safe-test-token");
+    expect(JSON.stringify(audits)).not.toContain("xoxp-safe-user-token");
     expect(fetch).toHaveBeenCalledOnce();
+    const [request, init] = fetch.mock.calls[0]!;
+    expect(String(request)).toBe("https://slack.com/api/apps.uninstall");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer xoxp-safe-user-token");
+    const body = new URLSearchParams(String(init?.body));
+    expect(body.get("client_id")).toBe("slack-client-id");
+    expect(body.get("client_secret")).toBe("slack-client-secret");
+    expect(body.has("token")).toBe(false);
+  });
+
+  it("requires reauthorization when a legacy installation has no user token", async () => {
+    const fixture = await setup();
+    await db.connectorConnection.update({
+      where: { id: fixture.connection.id },
+      data: {
+        ciphertext: encryptEnvelope(
+          { accessToken: "xoxb-legacy-token", raw: { access_token: "xoxb-legacy-token" } },
+          masterKey,
+        ),
+      },
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>();
+
+    await expect(
+      uninstallSlackInstallation(db, {
+        orgId: fixture.org.id,
+        actorPrincipalId: fixture.member.id,
+        ownerPrincipalId: fixture.agent.id,
+        connectionId: fixture.connection.id,
+        masterKey,
+        fetch,
+      }),
+    ).rejects.toEqual(
+      new SlackUninstallError("Slack must be reauthorized before it can be uninstalled"),
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: fixture.connection.id } }),
+    ).resolves.toMatchObject({ revokedAt: null });
+  });
+
+  it("rotates and persists an expiring Slack user token before uninstalling", async () => {
+    const fixture = await setup();
+    await db.connectorConnection.update({
+      where: { id: fixture.connection.id },
+      data: {
+        ciphertext: encryptEnvelope(
+          {
+            accessToken: "xoxb-safe-test-token",
+            raw: {
+              access_token: "xoxb-safe-test-token",
+              authed_user: {
+                id: "UINSTALLER",
+                access_token: "xoxe.old-user-access",
+                refresh_token: "xoxe.old-user-refresh",
+              },
+            },
+          },
+          masterKey,
+        ),
+      },
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>(async (request) => {
+      if (String(request) === "https://slack.com/api/oauth.v2.access") {
+        return Response.json({
+          ok: true,
+          access_token: "xoxe.new-user-access",
+          refresh_token: "xoxe.new-user-refresh",
+          expires_in: 43_200,
+          token_type: "user",
+        });
+      }
+      return Response.json({ ok: true });
+    });
+
+    await uninstallSlackInstallation(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      ownerPrincipalId: fixture.agent.id,
+      connectionId: fixture.connection.id,
+      masterKey,
+      fetch,
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(String(fetch.mock.calls[0]![0])).toBe("https://slack.com/api/oauth.v2.access");
+    expect(String(fetch.mock.calls[1]![0])).toBe("https://slack.com/api/apps.uninstall");
+    const uninstallHeaders = new Headers(fetch.mock.calls[1]![1]?.headers);
+    expect(uninstallHeaders.get("Authorization")).toBe("Bearer xoxe.new-user-access");
+    const stored = await db.connectorConnection.findUniqueOrThrow({
+      where: { id: fixture.connection.id },
+    });
+    expect(decryptEnvelope(stored.ciphertext, masterKey)).toMatchObject({
+      raw: {
+        authed_user: {
+          access_token: "xoxe.new-user-access",
+          refresh_token: "xoxe.new-user-refresh",
+        },
+      },
+    });
   });
 });

@@ -160,6 +160,10 @@ export const slackProvider = {
       "workflow.steps:execute",
     ],
     scopeSeparator: ",",
+    // apps.uninstall rejects granular bot tokens. Request a minimally scoped
+    // user token alongside the bot token so Trema can remove the complete app
+    // installation rather than revoking only one rotating token.
+    authorizationParams: { user_scope: "users:read" },
     tokenRequestAuthMethod: "body",
     // Slack's v2 OAuth flow does not support PKCE.
     pkce: false,

@@ -35,6 +35,7 @@ describe("Slack messaging configuration", () => {
       ]),
     );
     expect(manifest.oauth_config.scopes.bot).not.toContain("admin");
+    expect(manifest.oauth_config.scopes.user).toEqual(["users:read"]);
   });
 
   it("builds workspace-scoped location and requester references", () => {

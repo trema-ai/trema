@@ -3,6 +3,7 @@ import {
   figmaProvider,
   githubProvider,
   loadProviderCatalog,
+  slackProvider,
   TemplateInterpolationError,
 } from "@trema/connectors";
 import { describe, expect, it, vi } from "vitest";
@@ -107,6 +108,22 @@ describe("OAuth authorization URL construction", () => {
     );
 
     expect(result.searchParams.get("scope")).toBe("files:read,projects:read");
+  });
+
+  it("includes provider-specific user scopes alongside bot scopes", () => {
+    const provider = loadProviderCatalog([slackProvider])[0]!;
+    const result = new URL(
+      buildOAuthAuthorizationUrl({
+        provider,
+        clientId: "client-id",
+        authBaseUrl: "https://auth.trema.example",
+        state: "opaque-state",
+        codeVerifier: "unused-verifier",
+      }),
+    );
+
+    expect(result.searchParams.get("user_scope")).toBe("users:read");
+    expect(result.searchParams.get("scope")).toContain("app_mentions:read");
   });
 
   it("falls back to the provider defaults when no scopes are supplied", () => {

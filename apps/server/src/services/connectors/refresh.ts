@@ -307,6 +307,18 @@ function refreshToken(payload: ConnectionCredentialPayload): string | undefined 
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function refreshedCredentialRaw(
+  providerKey: string,
+  previousRaw: unknown,
+  refreshedRaw: Record<string, unknown>,
+): Record<string, unknown> {
+  if (providerKey !== "slack" || Object.hasOwn(refreshedRaw, "authed_user")) {
+    return refreshedRaw;
+  }
+  const authedUser = recordValue(previousRaw)?.authed_user;
+  return recordValue(authedUser) ? { ...refreshedRaw, authed_user: authedUser } : refreshedRaw;
+}
+
 function effectiveExpiration(
   connection: ConnectorConnection,
   payload: ConnectionCredentialPayload,
@@ -807,7 +819,7 @@ async function resolveConnectionCredentialInternal(
         const nextPayload: ConnectionCredentialPayload = {
           accessToken: exchange.accessToken,
           refreshToken: exchange.refreshToken ?? refreshToken(payload),
-          raw: exchange.raw,
+          raw: refreshedCredentialRaw(connection.providerKey, payload.raw, exchange.raw),
         };
         const refreshed = await transaction.connectorConnection.update({
           where: { id: connection.id },
