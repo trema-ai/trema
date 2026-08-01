@@ -296,6 +296,109 @@ integration("surface realizations", () => {
     expect(committed.pendingPlan).toBeUndefined();
   });
 
+  it("persists a follow-up requirement when a staged plan crosses a truncation", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const changedSegments: RealizedSegment[] = [
+      {
+        id: "run-1:segment:0",
+        index: 0,
+        messages: [
+          {
+            id: "run-1:segment:0:message:0",
+            index: 0,
+            remoteRef: "remote-1",
+            text: "Changed",
+            contentHash: "changed",
+            finalized: false,
+          },
+        ],
+      },
+    ];
+    const staged = await store.stagePlan({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: 0,
+      plan: {
+        fromCursor: 0,
+        toCursor: 2,
+        operations: [
+          {
+            id: "run-1:segment:0:message:0:create",
+            type: "create",
+            messageId: "run-1:segment:0:message:0",
+            segmentId: "run-1:segment:0",
+            segmentIndex: 0,
+            messageIndex: 0,
+            content: { text: "Changed", parts: [] },
+            finalized: false,
+          },
+        ],
+        nextSegments: changedSegments,
+      },
+    });
+    await db.agentRun.update({ where: { id: "run-1" }, data: { lastEventSeq: 1 } });
+
+    const truncated = await store.commit({
+      id: staged.id,
+      owner: "worker-a",
+      expectedVersion: 1,
+      renderedThroughSeq: 1,
+      segments: changedSegments,
+    });
+    expect(truncated).toMatchObject({
+      renderedThroughSeq: 1,
+      reconciliationRequired: true,
+      version: 2,
+    });
+
+    const correction: RenderPlan = {
+      fromCursor: 1,
+      toCursor: 1,
+      operations: [
+        {
+          id: "run-1:segment:0:message:0:replace:1",
+          type: "replace",
+          messageId: "run-1:segment:0:message:0",
+          segmentId: "run-1:segment:0",
+          segmentIndex: 0,
+          messageIndex: 0,
+          remoteRef: "remote-1",
+          content: { text: "Original", parts: [] },
+        },
+      ],
+      nextSegments: [
+        {
+          ...changedSegments[0]!,
+          messages: [
+            {
+              ...changedSegments[0]!.messages[0]!,
+              text: "Original",
+              contentHash: "original",
+            },
+          ],
+        },
+      ],
+    };
+    const correctionStaged = await store.stagePlan({
+      id: truncated.id,
+      owner: "worker-a",
+      expectedVersion: 2,
+      plan: correction,
+    });
+    const reconciled = await store.commit({
+      id: correctionStaged.id,
+      owner: "worker-a",
+      expectedVersion: 3,
+      renderedThroughSeq: 1,
+      segments: correction.nextSegments,
+    });
+    expect(reconciled).toMatchObject({
+      renderedThroughSeq: 1,
+      reconciliationRequired: false,
+      version: 4,
+    });
+  });
+
   it("does not reclaim a realization after a terminal delivery failure", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const failed = await store.recordFailure({

@@ -129,6 +129,8 @@ export interface SurfaceRealization {
   presentation: Record<string, unknown>;
   /** Batch durably staged before remote apply and replayed until acknowledged. */
   pendingPlan?: RenderPlan;
+  /** A truncated staged batch was applied and needs one authoritative follow-up plan. */
+  reconciliationRequired: boolean;
   /** Optimistic concurrency revision, incremented after every state transition. */
   version: number;
   lease?: { owner: string; until: string };

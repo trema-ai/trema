@@ -22,6 +22,7 @@ type RealizationRow = {
   segments: Prisma.JsonValue;
   presentation: Prisma.JsonValue;
   pendingPlan: Prisma.JsonValue | null;
+  reconciliationRequired: boolean;
   version: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
@@ -139,7 +140,8 @@ export class PrismaSurfaceRealizationStore {
         AND NOT "SurfaceRealization"."terminalFailure"
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
-        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     return row === undefined ? undefined : toRealization(row);
@@ -177,7 +179,8 @@ export class PrismaSurfaceRealizationStore {
         )
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
-        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -216,6 +219,10 @@ export class PrismaSurfaceRealizationStore {
       SET "renderedThroughSeq" = ${input.renderedThroughSeq},
           "segments" = ${segments}::jsonb,
           "presentation" = COALESCE(${presentation}::jsonb, realization."presentation"),
+          "reconciliationRequired" = CASE
+            WHEN realization."pendingPlan" IS NULL THEN false
+            ELSE (realization."pendingPlan"->>'toCursor')::integer > ${input.renderedThroughSeq}
+          END,
           "pendingPlan" = NULL,
           "version" = "version" + 1,
           "retryAttempt" = 0,
@@ -241,7 +248,8 @@ export class PrismaSurfaceRealizationStore {
         )
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
-        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -272,7 +280,8 @@ export class PrismaSurfaceRealizationStore {
         AND "version" = ${input.expectedVersion}
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
-        "renderedThroughSeq", "segments", "presentation", "pendingPlan", "version",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -312,6 +321,7 @@ function toRealization(row: RealizationRow): SurfaceRealization {
     segments: row.segments as unknown as RealizedSegment[],
     presentation: row.presentation as Record<string, unknown>,
     ...(row.pendingPlan === null ? {} : { pendingPlan: row.pendingPlan as unknown as RenderPlan }),
+    reconciliationRequired: row.reconciliationRequired,
     version: row.version,
     ...(row.leaseOwner === null || row.leaseUntil === null
       ? {}

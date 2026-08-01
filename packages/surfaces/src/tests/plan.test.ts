@@ -55,6 +55,7 @@ function realization(overrides: Partial<SurfaceRealization> = {}): SurfaceRealiz
     renderedThroughSeq: 0,
     segments: [],
     presentation: {},
+    reconciliationRequired: false,
     version: 0,
     retry: { attempt: 0, terminal: false },
     ...overrides,
@@ -193,6 +194,55 @@ describe("planRender", () => {
       deltaCapabilities,
     );
     expect(reverted.operations).toEqual([
+      expect.objectContaining({
+        type: "replace",
+        remoteRef: "remote-1",
+        content: expect.objectContaining({ text: "A" }),
+      }),
+    ]);
+  });
+
+  it("plans an authoritative follow-up after a staged batch crosses a truncation", () => {
+    const first = planRender(projection("A"), realization(), deltaCapabilities);
+    const firstSegments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: [{ messageId: first.operations[0]!.messageId, remoteRef: "remote-1" }],
+    });
+    const changed = planRender(
+      projection("B", { lastSeq: 2 }),
+      realization({ renderedThroughSeq: 1, segments: firstSegments, version: 1 }),
+      deltaCapabilities,
+    );
+
+    const truncatedRetry = planRender(
+      projection("A", { lastSeq: 1 }),
+      realization({
+        renderedThroughSeq: 1,
+        segments: firstSegments,
+        pendingPlan: changed,
+        version: 2,
+      }),
+      deltaCapabilities,
+      { allowCursorRegression: true },
+    );
+    expect(truncatedRetry).toMatchObject({ fromCursor: 1, toCursor: 1 });
+    expect(truncatedRetry.operations).toEqual(changed.operations);
+
+    const changedSegments = acknowledge(truncatedRetry, {
+      appliedOperationIds: truncatedRetry.operations.map(({ id }) => id),
+      messages: [],
+    });
+    const reconciled = planRender(
+      projection("A", { lastSeq: 1 }),
+      realization({
+        renderedThroughSeq: 1,
+        segments: changedSegments,
+        reconciliationRequired: true,
+        version: 3,
+      }),
+      deltaCapabilities,
+    );
+    expect(reconciled.operations).toEqual([
       expect.objectContaining({
         type: "replace",
         remoteRef: "remote-1",
@@ -573,6 +623,51 @@ describe("planRender", () => {
       expect.objectContaining({
         type: "create",
         messageId: "run-1:segment:0:message:2:revision:5",
+      }),
+    ]);
+  });
+
+  it("appends a complete snapshot when an earlier append-only chunk changes", () => {
+    const capabilities: CapabilityDescriptor = {
+      ...deltaCapabilities,
+      mutation: "append-only",
+      streaming: "none",
+      budgets: { ...deltaCapabilities.budgets, messageChars: 5 },
+    };
+    const first = planRender(
+      projection("Hello world", { ended: true }),
+      realization(),
+      capabilities,
+    );
+    const firstSegments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: first.operations.map((operation, index) => ({
+        messageId: operation.messageId,
+        remoteRef: `remote-${index}`,
+      })),
+    });
+
+    const changed = planRender(
+      projection("Hallo world", { lastSeq: 2, ended: true }),
+      realization({ renderedThroughSeq: 1, segments: firstSegments, version: 1 }),
+      capabilities,
+    );
+    expect(changed.operations).toHaveLength(3);
+    expect(changed.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:0:revision:3",
+        content: expect.objectContaining({ text: "Hallo" }),
+      }),
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:1:revision:4",
+        content: expect.objectContaining({ text: " worl" }),
+      }),
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:2:revision:5",
+        content: expect.objectContaining({ text: "d" }),
       }),
     ]);
   });

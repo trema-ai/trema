@@ -111,9 +111,23 @@ export function planRender(
       activeMessages.map((message) => [logicalMessageId(message.id), message]),
     );
     const nextActiveMessageIds: string[] = [];
+    const activeMatches = planned.map((target) => {
+      const active = activeByLogicalId.get(target.id);
+      return active?.contentHash === target.contentHash && active.finalized === target.finalized;
+    });
+    let reusableMessageFollows = false;
+    let changedBeforeReusableMessage = false;
+    for (let index = activeMatches.length - 1; index >= 0; index -= 1) {
+      if (activeMatches[index] === true) {
+        reusableMessageFollows = true;
+      } else if (reusableMessageFollows) {
+        changedBeforeReusableMessage = true;
+      }
+    }
     const appendSnapshotRequired =
       capabilities.mutation === "append-only" &&
-      activeMessages.some((message) => !plannedIds.has(logicalMessageId(message.id)));
+      (activeMessages.some((message) => !plannedIds.has(logicalMessageId(message.id))) ||
+        changedBeforeReusableMessage);
 
     for (const target of planned) {
       if (capabilities.mutation === "append-only") {

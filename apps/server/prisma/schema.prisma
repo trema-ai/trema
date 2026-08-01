@@ -1095,31 +1095,33 @@ model RunEvent {
 /// The cursor advances only after a driver acknowledges its entire operation
 /// batch. The lease makes that advance single-writer across renderer workers.
 model SurfaceRealization {
-  id                 String    @id @default(uuid(7))
-  orgId              String
-  runId              String
-  surface            String
-  locationRef        String
+  id                     String    @id @default(uuid(7))
+  orgId                  String
+  runId                  String
+  surface                String
+  locationRef            String
   /// Empty when the destination has no thread. Keeping it non-null makes the
   /// destination uniqueness constraint behave consistently in Postgres.
-  threadRef          String    @default("")
-  renderedThroughSeq Int       @default(0)
-  segments           Json      @default("[]")
-  presentation       Json      @default("{}")
+  threadRef              String    @default("")
+  renderedThroughSeq     Int       @default(0)
+  segments               Json      @default("[]")
+  presentation           Json      @default("{}")
   /// Exact unacknowledged batch, staged before any remote mutation.
-  pendingPlan        Json?
+  pendingPlan            Json?
+  /// True when a staged target crossed a truncation and needs one fresh plan.
+  reconciliationRequired Boolean   @default(false)
   /// Optimistic revision. Every successful state transition increments it.
-  version            Int       @default(0)
-  leaseOwner         String?
-  leaseUntil         DateTime?
-  retryAttempt       Int       @default(0)
-  terminalFailure    Boolean   @default(false)
-  nextRetryAt        DateTime?
-  lastErrorCode      String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  org                Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  run                AgentRun  @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
+  version                Int       @default(0)
+  leaseOwner             String?
+  leaseUntil             DateTime?
+  retryAttempt           Int       @default(0)
+  terminalFailure        Boolean   @default(false)
+  nextRetryAt            DateTime?
+  lastErrorCode          String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  org                    Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  run                    AgentRun  @relation(fields: [orgId, runId], references: [orgId, id], onDelete: Cascade)
 
   @@unique([runId, surface, locationRef, threadRef])
   @@index([orgId, runId])
