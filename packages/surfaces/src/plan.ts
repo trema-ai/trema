@@ -19,7 +19,7 @@ type PlannedMessage = RealizedMessage & { content: RenderContent };
  */
 export function planRender(
   projection: Projection,
-  realization: Pick<SurfaceRealization, "runId" | "renderedThroughSeq" | "segments">,
+  realization: Pick<SurfaceRealization, "runId" | "renderedThroughSeq" | "segments" | "version">,
   capabilities: CapabilityDescriptor,
 ): RenderPlan {
   if (projection.runId !== realization.runId) {
@@ -84,7 +84,7 @@ export function planRender(
             }
           : target;
         operations.push({
-          ...operationIdentity(immutableTarget, projection.lastSeq, "create"),
+          ...operationIdentity(immutableTarget, "create", realization.version),
           type: "create",
           content: immutableTarget.content,
           finalized: true,
@@ -102,7 +102,7 @@ export function planRender(
 
       if (prior === undefined || prior.remoteRef === undefined) {
         operations.push({
-          ...operationIdentity(target, projection.lastSeq, "create"),
+          ...operationIdentity(target, "create", realization.version),
           type: "create",
           content: target.content,
           finalized: target.finalized,
@@ -111,10 +111,11 @@ export function planRender(
         if (
           !target.finalized &&
           capabilities.streaming === "delta" &&
+          projection.lastSeq === realization.renderedThroughSeq + 1 &&
           target.text.startsWith(prior.text)
         ) {
           operations.push({
-            ...operationIdentity(target, projection.lastSeq, "append"),
+            ...operationIdentity(target, "append", realization.version),
             type: "append",
             remoteRef: prior.remoteRef,
             text: target.text.slice(prior.text.length),
@@ -123,8 +124,8 @@ export function planRender(
           operations.push({
             ...operationIdentity(
               target,
-              projection.lastSeq,
               target.finalized ? "finalize" : "replace",
+              realization.version,
             ),
             type: target.finalized ? "finalize" : "replace",
             remoteRef: prior.remoteRef,
@@ -133,7 +134,7 @@ export function planRender(
         }
       } else if (target.finalized && !prior.finalized) {
         operations.push({
-          ...operationIdentity(target, projection.lastSeq, "finalize"),
+          ...operationIdentity(target, "finalize", realization.version),
           type: "finalize",
           remoteRef: prior.remoteRef,
           content: target.content,
@@ -148,7 +149,7 @@ export function planRender(
         if (targetIds.has(prior.id)) continue;
         if (capabilities.mutation === "edit" && prior.remoteRef !== undefined) {
           operations.push({
-            ...operationIdentity(prior, projection.lastSeq, "delete"),
+            ...operationIdentity(prior, "delete", realization.version),
             type: "delete",
             remoteRef: prior.remoteRef,
           });
@@ -175,7 +176,7 @@ export function planRender(
     for (const message of existing.messages) {
       if (message.remoteRef === undefined) continue;
       operations.push({
-        ...operationIdentity(message, projection.lastSeq, "delete"),
+        ...operationIdentity(message, "delete", realization.version),
         type: "delete",
         remoteRef: message.remoteRef,
       });
@@ -227,20 +228,17 @@ function realizeSegment(
   terminal: boolean,
 ): PlannedMessage[] {
   const content = segment.parts.map((part) => ({ part, text: partText(part) })).filter(hasText);
-  const joined = content.map(({ text }) => text).join("\n\n");
-  if (joined.length === 0) return [];
-
-  const chunks = splitAtBudget(joined, budget);
+  const chunks = chunkContent(content, budget);
   const finalized = terminal || segment.end !== undefined;
-  return chunks.map((text, index) => {
+  return chunks.map((renderContent, index) => {
     const id = `${segmentId}:message:${index}`;
     return {
       id,
       index,
-      text,
-      contentHash: fingerprint(text),
+      text: renderContent.text,
+      contentHash: fingerprint(renderContent.text),
       finalized,
-      content: { text, parts: content.map(({ part }) => part) },
+      content: renderContent,
     };
   });
 }
@@ -275,13 +273,166 @@ function partText(part: Part): string {
   }
 }
 
-function splitAtBudget(value: string, budget: number): string[] {
-  const characters = Array.from(value);
+function chunkContent(content: { part: Part; text: string }[], budget: number): RenderContent[] {
+  const chunks: RenderContent[] = [];
+  let current: RenderContent | undefined;
+
+  const flush = (): void => {
+    if (current === undefined) return;
+    chunks.push(current);
+    current = undefined;
+  };
+
+  for (const { part, text } of content) {
+    const separator = current === undefined ? "" : "\n\n";
+    if (current !== undefined && characterCount(`${current.text}${separator}${text}`) <= budget) {
+      current = { text: `${current.text}${separator}${text}`, parts: [...current.parts, part] };
+      continue;
+    }
+
+    flush();
+    const fragments = splitMarkdownAtBudget(text, budget);
+    for (const [index, fragment] of fragments.entries()) {
+      const fragmentPart = partFragment(part, fragment, fragments.length, index);
+      const next = { text: fragment, parts: fragmentPart === undefined ? [] : [fragmentPart] };
+      if (index === fragments.length - 1) current = next;
+      else chunks.push(next);
+    }
+  }
+
+  flush();
+  return chunks;
+}
+
+function partFragment(
+  part: Part,
+  text: string,
+  fragmentCount: number,
+  fragmentIndex: number,
+): Part | undefined {
+  if (fragmentCount === 1) return part;
+  if (part.kind === "text") return { ...part, markdown: text };
+  if (part.kind === "reasoning" && part.redacted !== true) return { ...part, text };
+  return fragmentIndex === 0 ? part : undefined;
+}
+
+type MarkdownBlock =
+  | { kind: "plain"; text: string }
+  | { kind: "fence"; text: string; opening: string; body: string; marker: string };
+
+function splitMarkdownAtBudget(value: string, budget: number): string[] {
+  if (characterCount(value) <= budget) return [value];
+
+  const pieces = markdownBlocks(value).flatMap((block) => {
+    if (characterCount(block.text) <= budget) return [block.text];
+    return block.kind === "fence"
+      ? splitOversizedFence(block.opening, block.body, block.marker, budget)
+      : splitPlainText(block.text, budget);
+  });
+
   const chunks: string[] = [];
-  for (let offset = 0; offset < characters.length; offset += budget) {
-    chunks.push(characters.slice(offset, offset + budget).join(""));
+  for (const piece of pieces) {
+    const prior = chunks.at(-1);
+    if (prior !== undefined && characterCount(prior + piece) <= budget) {
+      chunks[chunks.length - 1] = prior + piece;
+    } else {
+      chunks.push(piece);
+    }
   }
   return chunks;
+}
+
+function markdownBlocks(value: string): MarkdownBlock[] {
+  const lines = value.match(/[^\n]*(?:\n|$)/g)?.filter((line) => line.length > 0) ?? [];
+  const blocks: MarkdownBlock[] = [];
+  let plain = "";
+
+  const flushPlain = (): void => {
+    if (plain.length === 0) return;
+    blocks.push({ kind: "plain", text: plain });
+    plain = "";
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const opening = lines[index]!;
+    const match = /^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(opening);
+    if (match === null) {
+      plain += opening;
+      continue;
+    }
+
+    flushPlain();
+    const marker = match[1]!;
+    const closingPattern = new RegExp(`^ {0,3}${marker[0]}{${marker.length},}[ \\t]*(?:\\n|$)`);
+    let body = "";
+    let closing = "";
+    for (index += 1; index < lines.length; index += 1) {
+      const line = lines[index]!;
+      if (closingPattern.test(line)) {
+        closing = line;
+        break;
+      }
+      body += line;
+    }
+    blocks.push({ kind: "fence", text: opening + body + closing, opening, body, marker });
+  }
+
+  flushPlain();
+  return blocks;
+}
+
+function splitOversizedFence(
+  opening: string,
+  body: string,
+  marker: string,
+  budget: number,
+): string[] {
+  const normalizedOpening = opening.endsWith("\n") ? opening : `${opening}\n`;
+  const wrapperSize = characterCount(normalizedOpening) + characterCount(marker) + 2;
+  const bodyBudget = budget - wrapperSize;
+  if (bodyBudget <= 0) {
+    // A valid fenced block cannot fit. Preserve its payload as plain text rather
+    // than emitting unmatched fence markers.
+    return splitPlainText(body.length === 0 ? opening.replace(marker, "") : body, budget);
+  }
+
+  const fragments = body.length === 0 ? [""] : splitPlainText(body, bodyBudget);
+  return fragments.map((fragment) => {
+    const beforeClose = fragment.endsWith("\n") ? "" : "\n";
+    return `${normalizedOpening}${fragment}${beforeClose}${marker}\n`;
+  });
+}
+
+function splitPlainText(value: string, budget: number): string[] {
+  const characters = Array.from(value);
+  const chunks: string[] = [];
+  for (let offset = 0; offset < characters.length; ) {
+    const limit = Math.min(offset + budget, characters.length);
+    let end = limit;
+    if (limit < characters.length) {
+      const candidate = characters.slice(offset, limit).join("");
+      const minimum = Math.floor(budget / 2);
+      const paragraph = candidate.lastIndexOf("\n\n");
+      const line = candidate.lastIndexOf("\n");
+      const space = candidate.lastIndexOf(" ");
+      const boundary =
+        paragraph >= minimum
+          ? paragraph + 2
+          : line >= minimum
+            ? line + 1
+            : space >= minimum
+              ? space + 1
+              : 0;
+      if (boundary > 0) end = offset + Array.from(candidate.slice(0, boundary)).length;
+    }
+    chunks.push(characters.slice(offset, end).join(""));
+    offset = end;
+  }
+  return chunks;
+}
+
+function characterCount(value: string): number {
+  return Array.from(value).length;
 }
 
 function segmentIdentity(runId: string, index: number): string {
@@ -290,13 +441,16 @@ function segmentIdentity(runId: string, index: number): string {
 
 function operationIdentity(
   message: Pick<RealizedMessage, "id" | "index" | "contentHash">,
-  cursor: number,
   kind: RenderOperation["type"],
+  realizationVersion: number,
 ): Omit<RenderOperation, "type" | "content" | "finalized" | "remoteRef" | "text"> {
   const segmentId = message.id.slice(0, message.id.lastIndexOf(":message:"));
   const segmentIndexText = segmentId.slice(segmentId.lastIndexOf(":") + 1);
   return {
-    id: `${message.id}:${kind}:${cursor}:${message.contentHash}`,
+    id:
+      kind === "create"
+        ? `${message.id}:create`
+        : `${message.id}:${kind}:${realizationVersion}:${message.contentHash}`,
     messageId: message.id,
     segmentId,
     segmentIndex: Number(segmentIndexText),

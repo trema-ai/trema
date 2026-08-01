@@ -150,19 +150,20 @@ export class PrismaSurfaceRealizationStore {
   }
 
   /**
-   * Commits acknowledged render state and advances its applied cursor once.
-   * A stale revision, expired lease, regressing cursor, or impossible future
-   * cursor all lose the compare-and-set.
+   * Commits acknowledged render state and moves its applied cursor once. Cursor
+   * regression is allowed only to the run's current end, which is the guarded
+   * reconciliation path after an authorized event-log truncation.
    */
   async commit(input: CommitRealizationInput): Promise<SurfaceRealization> {
     const now = this.#clock.now();
     const segments = JSON.stringify(input.segments);
-    const presentation = JSON.stringify(input.presentation ?? {});
+    const presentation =
+      input.presentation === undefined ? null : JSON.stringify(input.presentation);
     const [row] = await this.#db.$queryRaw<RealizationRow[]>`
       UPDATE "SurfaceRealization" AS realization
       SET "renderedThroughSeq" = ${input.renderedThroughSeq},
           "segments" = ${segments}::jsonb,
-          "presentation" = ${presentation}::jsonb,
+          "presentation" = COALESCE(${presentation}::jsonb, realization."presentation"),
           "version" = "version" + 1,
           "retryAttempt" = 0,
           "terminalFailure" = false,
@@ -174,10 +175,16 @@ export class PrismaSurfaceRealizationStore {
         AND realization."leaseOwner" = ${input.owner}
         AND realization."leaseUntil" > ${now}
         AND realization."version" = ${input.expectedVersion}
-        AND realization."renderedThroughSeq" <= ${input.renderedThroughSeq}
         AND ${input.renderedThroughSeq} <= (
           SELECT run."lastEventSeq" FROM "AgentRun" AS run
           WHERE run."id" = realization."runId" AND run."orgId" = realization."orgId"
+        )
+        AND (
+          realization."renderedThroughSeq" <= ${input.renderedThroughSeq}
+          OR ${input.renderedThroughSeq} = (
+            SELECT run."lastEventSeq" FROM "AgentRun" AS run
+            WHERE run."id" = realization."runId" AND run."orgId" = realization."orgId"
+          )
         )
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",

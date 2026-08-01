@@ -112,6 +112,27 @@ integration("surface realizations", () => {
     });
   });
 
+  it("preserves presentation state when a later commit omits it", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const first = await store.commit({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: 0,
+      renderedThroughSeq: 1,
+      segments: [],
+      presentation: { dialect: "mrkdwn" },
+    });
+    const second = await store.commit({
+      id: first.id,
+      owner: "worker-a",
+      expectedVersion: 1,
+      renderedThroughSeq: 2,
+      segments: [],
+    });
+
+    expect(second.presentation).toEqual({ dialect: "mrkdwn" });
+  });
+
   it("rejects stale or future cursor commits", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const committed = await store.commit({
@@ -136,10 +157,41 @@ integration("surface realizations", () => {
         id: committed.id,
         owner: "worker-a",
         expectedVersion: 1,
+        renderedThroughSeq: 1,
+        segments: [],
+      }),
+    ).rejects.toBeInstanceOf(SurfaceRealizationConflictError);
+    await expect(
+      store.commit({
+        id: committed.id,
+        owner: "worker-a",
+        expectedVersion: 1,
         renderedThroughSeq: 5,
         segments: [],
       }),
     ).rejects.toBeInstanceOf(SurfaceRealizationConflictError);
+  });
+
+  it("reconciles to the run cursor after event-log truncation", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const committed = await store.commit({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: 0,
+      renderedThroughSeq: 3,
+      segments: [],
+    });
+    await db.agentRun.update({ where: { id: "run-1" }, data: { lastEventSeq: 1 } });
+
+    const reconciled = await store.commit({
+      id: committed.id,
+      owner: "worker-a",
+      expectedVersion: 1,
+      renderedThroughSeq: 1,
+      segments: [],
+    });
+
+    expect(reconciled).toMatchObject({ renderedThroughSeq: 1, version: 2 });
   });
 
   it("preserves the cursor across failure and makes retry timing claimable", async () => {

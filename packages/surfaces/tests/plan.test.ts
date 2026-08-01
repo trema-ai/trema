@@ -105,6 +105,36 @@ describe("planRender", () => {
     expect(replay.toCursor).toBe(1);
   });
 
+  it("keeps a create idempotency key stable when the projection cursor advances", () => {
+    const first = planRender(projection("Hello"), realization(), deltaCapabilities);
+    const retried = planRender(
+      projection("Hello world", { lastSeq: 2 }),
+      realization(),
+      deltaCapabilities,
+    );
+
+    expect(first.operations[0]?.type).toBe("create");
+    expect(retried.operations[0]?.id).toBe(first.operations[0]?.id);
+  });
+
+  it("uses a snapshot when a delta would cross more than one unapplied event", () => {
+    const first = planRender(projection("Hello"), realization(), deltaCapabilities);
+    const segments = acknowledge(first, {
+      appliedOperationIds: first.operations.map(({ id }) => id),
+      messages: [{ messageId: "run-1:segment:0:message:0", remoteRef: "remote-1" }],
+    });
+
+    const recovered = planRender(
+      projection("Hello world", { lastSeq: 3 }),
+      realization({ renderedThroughSeq: 1, segments }),
+      deltaCapabilities,
+    );
+
+    expect(recovered.operations).toEqual([
+      expect.objectContaining({ type: "replace", remoteRef: "remote-1" }),
+    ]);
+  });
+
   it("keeps message identities stable as content grows across budget chunks", () => {
     const smallBudget = {
       ...deltaCapabilities,
@@ -130,6 +160,50 @@ describe("planRender", () => {
     expect(grown.nextSegments[0]?.messages.every(({ text }) => Array.from(text).length <= 5)).toBe(
       true,
     );
+  });
+
+  it("attaches only the source parts represented by each overflow message", () => {
+    const smallBudget = {
+      ...deltaCapabilities,
+      budgets: { ...deltaCapabilities.budgets, messageChars: 7 },
+    };
+    const input: Projection = {
+      ...projection("unused"),
+      segments: [
+        {
+          index: 0,
+          parts: [
+            { kind: "text", id: "text-1", status: "done", markdown: "Alpha" },
+            { kind: "text", id: "text-2", status: "done", markdown: "Beta" },
+          ],
+        },
+      ],
+    };
+
+    const plan = planRender(input, realization(), smallBudget);
+    const creates = plan.operations.filter((operation) => operation.type === "create");
+    expect(creates.map(({ content }) => content.text)).toEqual(["Alpha", "Beta"]);
+    expect(creates.map(({ content }) => content.parts.map((part) => part.id))).toEqual([
+      ["text-1"],
+      ["text-2"],
+    ]);
+  });
+
+  it("keeps every overflowed fenced-code message syntactically balanced", () => {
+    const codeBudget = {
+      ...deltaCapabilities,
+      budgets: { ...deltaCapabilities.budgets, messageChars: 24 },
+    };
+    const markdown = "Intro\n\n```ts\nconst alpha = 1;\nconst beta = 2;\n```\n\nOutro";
+    const plan = planRender(projection(markdown), realization(), codeBudget);
+    const creates = plan.operations.filter((operation) => operation.type === "create");
+
+    expect(creates.length).toBeGreaterThan(1);
+    for (const operation of creates) {
+      expect(Array.from(operation.content.text).length).toBeLessThanOrEqual(24);
+      const fences = operation.content.text.match(/^```/gm) ?? [];
+      expect(fences.length % 2).toBe(0);
+    }
   });
 
   it("replaces changed content and deletes overflow messages that disappear", () => {

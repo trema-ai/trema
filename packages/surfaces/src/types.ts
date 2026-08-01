@@ -62,6 +62,7 @@ interface OperationBase {
 export type RenderOperation =
   | (OperationBase & {
       type: "create";
+      /** Idempotent upsert by operation id; retries converge the existing message. */
       content: RenderContent;
       finalized: boolean;
     })
