@@ -227,8 +227,14 @@ function providerStatus(row: ProviderRow) {
   if (row.needsSetup) return "setup";
   const active = row.connections.filter((connection) => !connection.isRevoked);
   if (active.length === 0) return "disconnected";
-  return active.every((connection) => connection.isValid) &&
-    row.installations.every((installation) => installation.health === "available")
+  const activeById = new Map(active.map((connection) => [connection.id, connection]));
+  const installationsAreUsable =
+    row.installations.length > 0 &&
+    row.installations.every((installation) => {
+      const connection = activeById.get(installation.connectionId);
+      return connection?.isValid === true && installation.health === "available";
+    });
+  return active.every((connection) => connection.isValid) && installationsAreUsable
     ? "healthy"
     : "attention";
 }

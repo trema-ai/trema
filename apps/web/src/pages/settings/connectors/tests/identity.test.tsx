@@ -15,6 +15,7 @@ import { ProviderCard, type ProviderRow } from "#web/pages/settings/connectors/i
 import type {
   CatalogProvider,
   ConnectorConnection,
+  ConnectorInstallation,
 } from "#web/pages/settings/connectors/shared.tsx";
 
 afterEach(cleanup);
@@ -67,6 +68,19 @@ const connection: ConnectorConnection = {
   createdAt: "2026-07-31T12:00:00.000Z",
   updatedAt: "2026-07-31T12:00:00.000Z",
   installations: [{ id: "installation-1", scopeId: "personal-1" }],
+};
+
+const installation: ConnectorInstallation = {
+  id: "installation-1",
+  scopeId: "org-1",
+  catalogKey: provider.key,
+  connectionId: connection.id,
+  access: { kind: "scope" },
+  enabledTools: "all",
+  syncedTools: [],
+  health: "available",
+  status: "active",
+  updatedAt: "2026-07-31T12:00:00.000Z",
 };
 
 describe("connector identity UX", () => {
@@ -220,7 +234,7 @@ describe("connector identity UX", () => {
     const row: ProviderRow = {
       provider,
       connections: [connection],
-      installations: [],
+      installations: [installation],
       needsSetup: false,
     };
     render(<ProviderCard row={row} onOpen={vi.fn()} />);
@@ -235,24 +249,47 @@ describe("connector identity UX", () => {
     const row: ProviderRow = {
       provider: { ...provider, transport: { type: "mcp" } },
       connections: [connection],
-      installations: [
-        {
-          id: "installation-1",
-          scopeId: "org-1",
-          catalogKey: provider.key,
-          connectionId: connection.id,
-          access: { kind: "scope" },
-          enabledTools: "all",
-          syncedTools: [],
-          health: "setup_required",
-          status: "active",
-          updatedAt: "2026-07-31T12:00:00.000Z",
-        },
-      ],
+      installations: [{ ...installation, health: "setup_required" }],
       needsSetup: false,
     };
     render(<ProviderCard row={row} onOpen={vi.fn()} />);
 
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+    expect(screen.queryByText("Healthy")).toBeNull();
+  });
+
+  it("requires a usable installation binding before reporting a provider healthy", () => {
+    const disconnected = {
+      ...connection,
+      isRevoked: true,
+      revokedAt: "2026-07-31T13:00:00.000Z",
+    };
+    const validUnbound = { ...connection, id: "connection-2", installations: [] };
+    const { rerender } = render(
+      <ProviderCard
+        row={{
+          provider,
+          connections: [connection],
+          installations: [],
+          needsSetup: false,
+        }}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+
+    rerender(
+      <ProviderCard
+        row={{
+          provider,
+          connections: [disconnected, validUnbound],
+          installations: [installation],
+          needsSetup: false,
+        }}
+        onOpen={vi.fn()}
+      />,
+    );
     expect(screen.getByText("Needs attention")).toBeTruthy();
     expect(screen.queryByText("Healthy")).toBeNull();
   });
