@@ -69,6 +69,10 @@
       "description": "Integration-backed locations that can bind to context scopes."
     },
     {
+      "name": "Messaging",
+      "description": "Messaging-surface installation, conversation authorization, and requester identity links."
+    },
+    {
       "name": "Bindings",
       "description": "Deterministic mappings from surface locations to context scopes."
     },
@@ -6451,6 +6455,872 @@
                     "revokedAt"
                   ],
                   "description": "The revoked invite."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/manifest": {
+      "get": {
+        "operationId": "messaging.slack.manifest",
+        "summary": "Get the Slack app manifest",
+        "description": "Get a Slack app manifest with this deployment's OAuth, Events API, and interactivity URLs.",
+        "tags": [
+          "Messaging"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "manifest": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {},
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "callbackUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "eventsUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "interactionsUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "manifest",
+                    "callbackUrl",
+                    "eventsUrl",
+                    "interactionsUrl"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/installations": {
+      "get": {
+        "operationId": "messaging.slack.installations.list",
+        "summary": "List Slack installations",
+        "description": "Inspect safe workspace and credential-health metadata for Slack installations without returning token material.",
+        "tags": [
+          "Messaging"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "providerKey": {
+                        "const": "slack"
+                      },
+                      "ownerPrincipalId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "label": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "providerScopes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "workspaceId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "workspaceName": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "enterpriseId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "enterpriseName": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "botUserId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "appId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "installerUserId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "isEnterpriseInstall": {
+                        "type": "boolean"
+                      },
+                      "isRevoked": {
+                        "type": "boolean"
+                      },
+                      "isExpired": {
+                        "type": "boolean"
+                      },
+                      "isCredentialUnavailable": {
+                        "type": "boolean"
+                      },
+                      "isValid": {
+                        "type": "boolean"
+                      },
+                      "refreshExhausted": {
+                        "type": "boolean"
+                      },
+                      "expiresAt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "revokedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      },
+                      "installations": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "scopeId": {
+                              "type": "string",
+                              "format": "uuid"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "scopeId"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "providerKey",
+                      "ownerPrincipalId",
+                      "label",
+                      "providerScopes",
+                      "workspaceId",
+                      "workspaceName",
+                      "enterpriseId",
+                      "enterpriseName",
+                      "botUserId",
+                      "appId",
+                      "installerUserId",
+                      "isEnterpriseInstall",
+                      "isRevoked",
+                      "isExpired",
+                      "isCredentialUnavailable",
+                      "isValid",
+                      "refreshExhausted",
+                      "expiresAt",
+                      "revokedAt",
+                      "createdAt",
+                      "updatedAt",
+                      "installations"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/installations/oauth": {
+      "post": {
+        "operationId": "messaging.slack.installations.start",
+        "summary": "Install or reauthorize Slack",
+        "description": "Start a single-use Slack OAuth flow owned by the organization agent. Pass an installation ID to reauthorize it.",
+        "tags": [
+          "Messaging"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "defaultScopeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "installationId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "returnTo": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "defaultScopeId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authorizationUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "authorizationUrl"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/installations/{installationId}/uninstall": {
+      "post": {
+        "operationId": "messaging.slack.installations.uninstall",
+        "summary": "Uninstall Slack",
+        "description": "Revoke the Slack authorization remotely, then mark the Trema installation revoked locally.",
+        "tags": [
+          "Messaging"
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "revokedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revokedAt"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/bindings": {
+      "get": {
+        "operationId": "messaging.slack.bindings.list",
+        "summary": "List Slack conversation bindings",
+        "description": "List allowed Slack conversations and the Trema scopes they resolve to.",
+        "tags": [
+          "Messaging"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "workspaceId": {
+                        "type": "string"
+                      },
+                      "channelId": {
+                        "type": "string"
+                      },
+                      "scopeId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "scopeName": {
+                        "type": "string"
+                      },
+                      "scopeKind": {
+                        "enum": [
+                          "org",
+                          "shared"
+                        ],
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "workspaceId",
+                      "channelId",
+                      "scopeId",
+                      "scopeName",
+                      "scopeKind",
+                      "createdAt",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "messaging.slack.bindings.create",
+        "summary": "Allow a Slack conversation",
+        "description": "Bind one Slack channel or direct-message conversation to an organization or shared scope.",
+        "tags": [
+          "Messaging"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "installationId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "channelId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "scopeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "installationId",
+                  "workspaceId",
+                  "channelId",
+                  "scopeId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "workspaceId": {
+                      "type": "string"
+                    },
+                    "channelId": {
+                      "type": "string"
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "scopeName": {
+                      "type": "string"
+                    },
+                    "scopeKind": {
+                      "enum": [
+                        "org",
+                        "shared"
+                      ],
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "workspaceId",
+                    "channelId",
+                    "scopeId",
+                    "scopeName",
+                    "scopeKind",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/bindings/{bindingId}": {
+      "delete": {
+        "operationId": "messaging.slack.bindings.remove",
+        "summary": "Remove a Slack conversation binding",
+        "description": "Stop one Slack conversation from resolving to a Trema scope.",
+        "tags": [
+          "Messaging"
+        ],
+        "parameters": [
+          {
+            "name": "bindingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/identities": {
+      "get": {
+        "operationId": "messaging.slack.identities.list",
+        "summary": "List Slack identity links",
+        "description": "List Slack users linked to active Trema members.",
+        "tags": [
+          "Messaging"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "workspaceId": {
+                        "type": "string"
+                      },
+                      "userId": {
+                        "type": "string"
+                      },
+                      "principalId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "principalName": {
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "workspaceId",
+                      "userId",
+                      "principalId",
+                      "principalName",
+                      "createdAt",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "messaging.slack.identities.set",
+        "summary": "Link a Slack user",
+        "description": "Link a workspace-scoped Slack user ID to an active Trema member.",
+        "tags": [
+          "Messaging"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "workspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "userId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "principalId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "workspaceId",
+                  "userId",
+                  "principalId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/messaging/slack/identities/{identityLinkId}": {
+      "delete": {
+        "operationId": "messaging.slack.identities.remove",
+        "summary": "Unlink a Slack user",
+        "description": "Remove one Slack-to-Trema requester identity link.",
+        "tags": [
+          "Messaging"
+        ],
+        "parameters": [
+          {
+            "name": "identityLinkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
                 }
               }
             }

@@ -52,6 +52,24 @@ export class ConnectorInstallationError extends Error {
   }
 }
 
+export class ConnectorAccountConflictError extends Error {
+  readonly code = "account_conflict";
+
+  constructor(message = "This provider account is already connected to another organization") {
+    super(message);
+    this.name = "ConnectorAccountConflictError";
+  }
+}
+
+export class ConnectorAccountMismatchError extends Error {
+  readonly code = "account_mismatch";
+
+  constructor(message = "Reauthorization returned a different provider account") {
+    super(message);
+    this.name = "ConnectorAccountMismatchError";
+  }
+}
+
 export class UnsupportedConnectorAuthModeError extends Error {
   constructor(message: string) {
     super(message);
@@ -650,6 +668,46 @@ async function sameAccountConnectionId(
   return match?.id;
 }
 
+async function requireMatchingReconnectAccount(
+  db: ProvisioningDatabase,
+  oauthState: ConnectorOAuthState,
+  provider: ProviderDef,
+  metadata: Record<string, unknown>,
+) {
+  const identityFields = provider.auth.accountIdentityFields;
+  if (!oauthState.connectionId || !identityFields || identityFields.length === 0) return;
+
+  const existing = await db.connectorConnection.findFirst({
+    where: {
+      id: oauthState.connectionId,
+      orgId: oauthState.orgId,
+      providerKey: oauthState.providerKey,
+      ownerPrincipalId: oauthState.ownerPrincipalId,
+    },
+    select: { config: true },
+  });
+  if (!existing) throw new ConnectorConnectionNotFoundError();
+
+  const stored = connectionConfig(existing.config);
+  const hasStoredIdentity = identityFields.every(
+    (field) =>
+      Object.hasOwn(stored, field) && stored[field] !== null && stored[field] !== undefined,
+  );
+  // Connections created before a provider declared stable identity metadata
+  // have nothing trustworthy to compare. Preserve their reconnect path; once
+  // refreshed, subsequent reconnects are protected by the stored identity.
+  if (!hasStoredIdentity) return;
+
+  const matches = identityFields.every(
+    (field) =>
+      Object.hasOwn(metadata, field) &&
+      metadata[field] !== null &&
+      metadata[field] !== undefined &&
+      JSON.stringify(stored[field]) === JSON.stringify(metadata[field]),
+  );
+  if (!matches) throw new ConnectorAccountMismatchError();
+}
+
 interface StoreConnectionInput {
   orgId: string;
   providerKey: string;
@@ -1018,33 +1076,59 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
         ? new Date(now.getTime() + CONSERVATIVE_OAUTH_TOKEN_LIFETIME_MS)
         : undefined;
   const metadata = await connectionMetadata(provider, raw, connectionConfig(oauthState.config));
+  await requireMatchingReconnectAccount(db, oauthState, provider, metadata);
+  if (provider.key === "slack" && typeof metadata["team.id"] === "string") {
+    const otherOrganization = await db.connectorConnection.findFirst({
+      where: {
+        providerKey: provider.key,
+        revokedAt: null,
+        config: { path: ["team.id"], equals: metadata["team.id"] },
+        orgId: { not: oauthState.orgId },
+      },
+      select: { id: true },
+    });
+    if (otherOrganization) throw new ConnectorAccountConflictError();
+  }
   const grantedScopes = parseGrantedScopes(
     raw.scope,
     oauthState.providerScopes,
     provider.auth.scopeSeparator,
   );
   const payload = { accessToken, ...(refreshToken ? { refreshToken } : {}), raw };
-  return persistOAuthProvisioning(db, {
-    oauthState,
-    provider,
-    callback: input,
-    connection: {
-      orgId: oauthState.orgId,
-      providerKey: oauthState.providerKey,
-      ownerPrincipalId: oauthState.ownerPrincipalId,
-      authMode: provider.authMode,
-      config: connectionConfig(oauthState.config),
-      ciphertext: encryptEnvelope(payload, input.masterKey),
-      ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
-      ...(oauthState.label ? { label: oauthState.label } : {}),
-      providerScopes: grantedScopes,
-      ...(expiresAt ? { expiresAt } : {}),
-      metadata,
-      ...(provider.auth.accountIdentityFields
-        ? { accountIdentityFields: provider.auth.accountIdentityFields }
-        : {}),
-    },
-  });
+  try {
+    return await persistOAuthProvisioning(db, {
+      oauthState,
+      provider,
+      callback: input,
+      connection: {
+        orgId: oauthState.orgId,
+        providerKey: oauthState.providerKey,
+        ownerPrincipalId: oauthState.ownerPrincipalId,
+        authMode: provider.authMode,
+        config: connectionConfig(oauthState.config),
+        ciphertext: encryptEnvelope(payload, input.masterKey),
+        ...(oauthState.connectionId ? { connectionId: oauthState.connectionId } : {}),
+        ...(oauthState.label ? { label: oauthState.label } : {}),
+        providerScopes: grantedScopes,
+        ...(expiresAt ? { expiresAt } : {}),
+        metadata,
+        ...(provider.auth.accountIdentityFields
+          ? { accountIdentityFields: provider.auth.accountIdentityFields }
+          : {}),
+      },
+    });
+  } catch (error) {
+    if (
+      provider.key === "slack" &&
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
+      throw new ConnectorAccountConflictError();
+    }
+    throw error;
+  }
 }
 
 // Complete an mcp_oauth callback: resolve the client identity recorded on the

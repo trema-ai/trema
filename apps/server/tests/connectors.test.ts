@@ -15,6 +15,7 @@ import { parseEnv } from "#server/lib/env/schema.js";
 import { connectorsRouter } from "#server/rpc/connectors.js";
 import { orgRouter } from "#server/rpc/org.js";
 import {
+  ConnectorAccountMismatchError,
   ConnectorConnectionNotFoundError,
   completeOAuthCallback,
   consumeOAuthState,
@@ -1157,6 +1158,39 @@ integration("connector connection flows", () => {
     await expect(
       db.connectorConnection.count({ where: { orgId: org.org.id, providerKey: "github" } }),
     ).resolves.toBe(1);
+  });
+
+  it("rejects reconnecting an existing connection to a different provider account", async () => {
+    const org = await createOrg();
+    const first = await completeOAuthCallback(db, {
+      state: await start(org.org.id),
+      code: "first",
+      authBaseUrl: env.TREMA_AUTH_BASE_URL,
+      masterKey,
+      catalog: oauthCatalog,
+      fetch: tokenFetch({ access_token: "original-token", account_name: "octo-org" }),
+    });
+    const original = await db.connectorConnection.findUniqueOrThrow({
+      where: { id: first.connection.id },
+    });
+
+    await expect(
+      completeOAuthCallback(db, {
+        state: await start(org.org.id, { reconnectConnectionId: first.connection.id }),
+        code: "second",
+        authBaseUrl: env.TREMA_AUTH_BASE_URL,
+        masterKey,
+        catalog: oauthCatalog,
+        fetch: tokenFetch({ access_token: "wrong-account-token", account_name: "hooli" }),
+      }),
+    ).rejects.toBeInstanceOf(ConnectorAccountMismatchError);
+
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: first.connection.id } }),
+    ).resolves.toMatchObject({
+      config: { account_name: "octo-org" },
+      ciphertext: original.ciphertext,
+    });
   });
 
   it("collapses a re-connect of the same account but keeps distinct workspaces apart", async () => {

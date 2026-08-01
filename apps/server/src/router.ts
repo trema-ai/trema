@@ -10,6 +10,7 @@ import { serviceCredentialsRouter } from "./rpc/credentials.js";
 import { intentsRouter } from "./rpc/intents.js";
 import { itemsRouter } from "./rpc/items.js";
 import { membersRouter } from "./rpc/members.js";
+import { messagingRouter } from "./rpc/messaging.js";
 import { modelProvidersRouter } from "./rpc/model-providers.js";
 import { orgRouter } from "./rpc/org.js";
 import { policiesRouter } from "./rpc/policies.js";
@@ -32,6 +33,7 @@ export const router = {
   conversations: conversationsRouter,
   intents: intentsRouter,
   members: membersRouter,
+  messaging: messagingRouter,
   items: itemsRouter,
   modelProviders: modelProvidersRouter,
   org: orgRouter,

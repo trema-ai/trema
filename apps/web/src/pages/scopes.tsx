@@ -552,11 +552,13 @@ function NewBindingDialog({
 }) {
   const queryClient = useQueryClient();
   const surfaces = useQuery(orpc.surfaces.list.queryOptions());
-  // Only integrations whose locations can be bound to a scope appear here.
+  // Only bindable integrations appear here. Slack uses the installation-aware
+  // binding flow under Messaging instead of this generic dialog.
   const availableSurfaces = useMemo(
     () =>
       ((surfaces.data ?? []) as Surface[]).filter(
-        (surface) => surface.status === "available" && surface.locationBindable,
+        (surface) =>
+          surface.id !== "slack" && surface.status === "available" && surface.locationBindable,
       ),
     [surfaces.data],
   );

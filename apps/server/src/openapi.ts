@@ -109,6 +109,11 @@ export function generateOpenApiDocument() {
         description: "Integration-backed locations that can bind to context scopes.",
       },
       {
+        name: "Messaging",
+        description:
+          "Messaging-surface installation, conversation authorization, and requester identity links.",
+      },
+      {
         name: "Bindings",
         description: "Deterministic mappings from surface locations to context scopes.",
       },

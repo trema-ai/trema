@@ -38,6 +38,8 @@ export {
 } from "@trema/connectors";
 export {
   buildOAuthAuthorizationUrl,
+  ConnectorAccountConflictError,
+  ConnectorAccountMismatchError,
   ConnectorCatalogDefectError,
   ConnectorConnectionNotFoundError,
   type ConnectorFetch,
@@ -72,6 +74,7 @@ export {
 export {
   type ConnectorConnectionHealth,
   type ConnectorConnectionHealthStatus,
+  connectorConnectionCredentialHealth,
   connectorConnectionHealthStatus,
   connectorConnectionValidity,
 } from "#server/services/connectors/health.js";

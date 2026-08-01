@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { googleWorkspaceProvider, loadProviderCatalog, notionMcpProvider } from "@trema/connectors";
+import {
+  googleWorkspaceProvider,
+  loadProviderCatalog,
+  notionMcpProvider,
+  slackProvider,
+} from "@trema/connectors";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
@@ -21,6 +26,7 @@ const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const masterKey = Buffer.alloc(32, 61).toString("base64");
 const googleCatalog = loadProviderCatalog([googleWorkspaceProvider]);
+const slackCatalog = loadProviderCatalog([slackProvider]);
 
 type FetchMock = ReturnType<typeof vi.fn<typeof globalThis.fetch>>;
 
@@ -47,13 +53,14 @@ integration("connector credential refresh", () => {
         displayName: "Refresh agent",
       },
     });
-    if (providerKey === "google_workspace") {
+    if (providerKey === "google_workspace" || providerKey === "slack") {
       await createClientRegistration(db, {
         orgId: org.id,
         providerKey,
         source: "customer",
-        clientId: "google-client-id",
-        clientSecret: "google-client-secret",
+        clientId: providerKey === "google_workspace" ? "google-client-id" : "slack-client-id",
+        clientSecret:
+          providerKey === "google_workspace" ? "google-client-secret" : "slack-client-secret",
         masterKey,
       });
     }
@@ -71,12 +78,14 @@ integration("connector credential refresh", () => {
     refreshAttempts?: number;
     lastRefreshFailure?: Date;
     refreshFailureStartedAt?: Date;
+    providerKey?: string;
+    raw?: Record<string, unknown>;
   }) {
     return db.connectorConnection.create({
       data: {
         orgId: input.orgId,
         ownerPrincipalId: input.principalId,
-        providerKey: "google_workspace",
+        providerKey: input.providerKey ?? "google_workspace",
         authMode: "oauth2_code",
         config: {},
         ciphertext: encryptEnvelope(
@@ -87,7 +96,7 @@ integration("connector credential refresh", () => {
               : input.refreshToken
                 ? { refreshToken: input.refreshToken }
                 : {}),
-            raw: { token_type: "Bearer" },
+            raw: input.raw ?? { token_type: "Bearer" },
           },
           masterKey,
         ),
@@ -398,6 +407,60 @@ integration("connector credential refresh", () => {
     expect(decryptEnvelope(rotatedStored.ciphertext, masterKey)).toMatchObject({
       accessToken: "rotated-new-access",
       refreshToken: "rotated-new-refresh",
+    });
+  });
+
+  it("preserves Slack user credentials while rotating the bot credential", async () => {
+    const now = new Date("2026-07-24T12:00:00.000Z");
+    const owner = await connectorOwner("slack");
+    const connection = await oauthConnection({
+      orgId: owner.org.id,
+      principalId: owner.principal.id,
+      providerKey: "slack",
+      accessToken: "old-bot-access",
+      refreshToken: "old-bot-refresh",
+      expiresAt: new Date(now.getTime() + 5 * 60 * 1000),
+      raw: {
+        access_token: "old-bot-access",
+        authed_user: {
+          id: "U123ABC",
+          access_token: "old-user-access",
+          refresh_token: "old-user-refresh",
+        },
+      },
+    });
+    const fetch = successfulFetch([
+      {
+        ok: true,
+        access_token: "new-bot-access",
+        refresh_token: "new-bot-refresh",
+        expires_in: 3600,
+      },
+    ]);
+
+    await resolveConnectionCredential(db, {
+      orgId: owner.org.id,
+      connectionId: connection.id,
+      masterKey,
+      catalog: slackCatalog,
+      fetch,
+      now,
+    });
+
+    const stored = await db.connectorConnection.findUniqueOrThrow({
+      where: { id: connection.id },
+    });
+    expect(decryptEnvelope(stored.ciphertext, masterKey)).toMatchObject({
+      accessToken: "new-bot-access",
+      refreshToken: "new-bot-refresh",
+      raw: {
+        access_token: "new-bot-access",
+        authed_user: {
+          id: "U123ABC",
+          access_token: "old-user-access",
+          refresh_token: "old-user-refresh",
+        },
+      },
     });
   });
 
