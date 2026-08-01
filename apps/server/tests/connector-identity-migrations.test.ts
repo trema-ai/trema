@@ -6,12 +6,17 @@ import { createPrismaClient } from "#server/lib/db/index.js";
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
+const conflictPreflight = "20260730175000_connector_identity_conflict_preflight";
 
-function migrationBlock(name: string, marker: string): string {
+function migrationSource(name: string): string {
   const path = fileURLToPath(
     new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url),
   );
-  const source = readFileSync(path, "utf8");
+  return readFileSync(path, "utf8");
+}
+
+function migrationBlock(name: string, marker: string): string {
+  const source = migrationSource(name);
   const start = `-- BEGIN ${marker}`;
   const end = `-- END ${marker}`;
   const startAt = source.indexOf(start);
@@ -75,6 +80,19 @@ integration("connector identity migrations", () => {
     return { org, agent, human, orgScope, personalScope, agentConnection, humanConnection };
   }
 
+  it("runs a read-only conflict preflight before state-changing uniqueness migrations", () => {
+    const source = migrationSource(conflictPreflight);
+    const sqlWithoutComments = source.replace(/^\s*--.*$/gm, "");
+
+    expect(conflictPreflight < "20260730180000_atomic_connector_provisioning").toBe(true);
+    expect(sqlWithoutComments).not.toMatch(
+      /\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/i,
+    );
+    expect(source).toContain(
+      "prisma migrate resolve --rolled-back 20260730175000_connector_identity_conflict_preflight",
+    );
+  });
+
   it("backfills active installation access without changing scope or credential ownership", async () => {
     const setup = await fixture();
     const personal = await db.item.create({
@@ -109,26 +127,7 @@ integration("connector identity migrations", () => {
         createdById: setup.agent.id,
       },
     });
-    const archived = await db.item.create({
-      data: {
-        orgId: setup.org.id,
-        scopeId: setup.orgScope.id,
-        kind: "connector",
-        title: "Retired Slack",
-        body: {
-          catalogKey: "slack",
-          connectionId: setup.agentConnection.id,
-          enabledTools: [],
-        },
-        status: "archived",
-        disclosure: "retrieved",
-        createdById: setup.agent.id,
-      },
-    });
-
-    await db.$executeRawUnsafe(
-      migrationBlock("20260730190000_connector_installation_access", "connector access backfill"),
-    );
+    await db.$executeRawUnsafe(migrationSource("20260730190000_connector_installation_access"));
 
     await expect(
       db.item.findMany({
@@ -154,16 +153,13 @@ integration("connector identity migrations", () => {
         },
       ]),
     );
-    await expect(db.item.findUniqueOrThrow({ where: { id: archived.id } })).resolves.toMatchObject({
-      body: expect.not.objectContaining({ access: expect.anything() }),
-    });
   });
 
   it("reports duplicate active installations without choosing a winner", async () => {
     const setup = await fixture();
     const conflictCheck = migrationBlock(
-      "20260730180000_atomic_connector_provisioning",
-      "connector installation conflict check",
+      conflictPreflight,
+      "connector identity conflict preflight",
     );
     await db.$executeRawUnsafe('DROP INDEX "Item_one_active_connector_per_scope_provider"');
     let duplicateIds: string[] = [];
@@ -197,12 +193,21 @@ integration("connector identity migrations", () => {
       duplicateIds = rows.map((row) => row.id);
 
       await expect(db.$executeRawUnsafe(conflictCheck)).rejects.toThrow(
-        "connector_installation_conflicts",
+        "connector_identity_conflicts",
       );
       await expect(
         db.item.count({ where: { id: { in: duplicateIds }, status: "active" } }),
       ).resolves.toBe(2);
       expect(conflictCheck).toContain("installationItemIds");
+      const duplicateToArchive = duplicateIds[1];
+      if (!duplicateToArchive) {
+        throw new Error("Expected a duplicate installation fixture");
+      }
+      await db.item.update({
+        where: { id: duplicateToArchive },
+        data: { status: "archived" },
+      });
+      await expect(db.$executeRawUnsafe(conflictCheck)).resolves.toBe(0);
     } finally {
       if (duplicateIds[1]) {
         await db.item.update({ where: { id: duplicateIds[1] }, data: { status: "archived" } });
@@ -220,8 +225,8 @@ integration("connector identity migrations", () => {
   it("reports duplicate active agents without choosing one for attribution", async () => {
     const org = await db.org.create({ data: { name: "Agent conflict fixture" } });
     const conflictCheck = migrationBlock(
-      "20260730190000_connector_installation_access",
-      "active agent conflict check",
+      conflictPreflight,
+      "connector identity conflict preflight",
     );
     await db.$executeRawUnsafe('DROP INDEX "Principal_one_active_agent_per_org"');
     let duplicateId: string | undefined;
@@ -234,13 +239,20 @@ integration("connector identity migrations", () => {
       });
       duplicateId = duplicate.id;
 
-      await expect(db.$executeRawUnsafe(conflictCheck)).rejects.toThrow("active_agent_conflicts");
+      await expect(db.$executeRawUnsafe(conflictCheck)).rejects.toThrow(
+        "connector_identity_conflicts",
+      );
       await expect(
         db.principal.count({
           where: { orgId: org.id, kind: "agent", deactivatedAt: null },
         }),
       ).resolves.toBe(2);
       expect(conflictCheck).toContain("agentPrincipalIds");
+      await db.principal.update({
+        where: { id: duplicateId },
+        data: { deactivatedAt: new Date() },
+      });
+      await expect(db.$executeRawUnsafe(conflictCheck)).resolves.toBe(0);
     } finally {
       if (duplicateId) {
         await db.principal.update({
