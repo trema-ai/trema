@@ -44,6 +44,7 @@ const SAFE_UNAVAILABLE =
 const SLACK_INGRESS_LEASE_MS = 30_000;
 const SLACK_INGRESS_RETRY_MS = 1_000;
 const SLACK_THREAD_OWNERSHIP_WAIT_MS = 60_000;
+const SLACK_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
 type ProcessableSurfaceEvent = Exclude<SurfaceEvent, { type: "challenge" | "unsupported" }>;
 
@@ -125,7 +126,7 @@ export class SlackIngressService {
   }
 
   async accept(request: Request): Promise<SlackIngressAcknowledgement> {
-    const body = await request.text();
+    const body = await readSlackWebhookBody(request);
     const verified = await this.#read(request, body);
     const event = verified.event;
     if (event.type === "challenge") return { challenge: event.challenge };
@@ -773,6 +774,13 @@ export class SlackIngressConfigurationError extends Error {
   }
 }
 
+export class SlackIngressBodyTooLargeError extends Error {
+  constructor() {
+    super("Slack webhook body exceeds the size limit");
+    this.name = "SlackIngressBodyTooLargeError";
+  }
+}
+
 class SlackRunSchedulingUnavailableError extends Error {}
 
 class SlackTargetMismatchError extends Error {
@@ -794,6 +802,39 @@ function intentErrorCode(error: Error): string {
 
 function ingressRetryDelay(attempt: number): number {
   return Math.min(60_000, SLACK_INGRESS_RETRY_MS * 2 ** Math.min(Math.max(attempt - 1, 0), 6));
+}
+
+async function readSlackWebhookBody(request: Request): Promise<string> {
+  const contentLength = request.headers.get("content-length");
+  if (
+    contentLength !== null &&
+    /^\d+$/u.test(contentLength) &&
+    Number(contentLength) > SLACK_WEBHOOK_MAX_BODY_BYTES
+  ) {
+    await request.body?.cancel();
+    throw new SlackIngressBodyTooLargeError();
+  }
+  if (request.body === null) return "";
+
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > SLACK_WEBHOOK_MAX_BODY_BYTES) {
+        await reader.cancel();
+        throw new SlackIngressBodyTooLargeError();
+      }
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    return body + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function slackIngressThreadKey(payload: SlackIngressPayload): string | undefined {

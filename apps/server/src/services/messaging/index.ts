@@ -1,6 +1,7 @@
 export {
   IngressWorkTracker,
   type SlackIngressAcknowledgement,
+  SlackIngressBodyTooLargeError,
   SlackIngressConfigurationError,
   type SlackIngressNotice,
   type SlackIngressOptions,

@@ -35,6 +35,7 @@ import {
   IngressWorkTracker,
   SLACK_EVENTS_PATH,
   SLACK_INTERACTIONS_PATH,
+  SlackIngressBodyTooLargeError,
   SlackIngressConfigurationError,
   SlackIngressService,
 } from "./services/messaging/index.js";
@@ -220,6 +221,10 @@ export function createApp({
         ? new Response(null, { status: 200 })
         : Response.json({ challenge: acknowledgement.challenge });
     } catch (error) {
+      if (error instanceof SlackIngressBodyTooLargeError) {
+        log.warn("Slack webhook body rejected as too large");
+        return new Response(null, { status: 413 });
+      }
       if (error instanceof SurfaceDriverError && error.category === "invalid-request") {
         log.warn("Slack webhook rejected", { code: error.method ?? "invalid_request" });
         return new Response(null, { status: 401 });

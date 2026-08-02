@@ -114,6 +114,33 @@ describe("server", () => {
     expect(response.status).toBe(503);
   });
 
+  it.each(["events", "interactions"])(
+    "caps streamed Slack %s webhook bodies before verification",
+    async (route) => {
+      const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>({
+        cancel,
+        pull(controller) {
+          // The stream deliberately never closes. Three chunks exceed the
+          // ingress cap, so the handler must stop reading and cancel it.
+          controller.enqueue(new Uint8Array(400_000));
+        },
+      });
+      const request = new Request(`https://trema.test/api/v1/messaging/slack/${route}`, {
+        method: "POST",
+        body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+
+      const response = await app.fetch(request);
+
+      expect(response.status).toBe(413);
+      await expect(response.text()).resolves.toBe("");
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
+
   it("reports readiness when the database is reachable", async () => {
     const query = vi.fn().mockResolvedValue([{ "?column?": 1 }]);
     const app = createApp(appDependencies(databaseMock(query)));
