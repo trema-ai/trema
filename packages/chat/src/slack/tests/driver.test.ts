@@ -16,6 +16,11 @@ const context = {
   realizationVersion: 1,
 } as const satisfies SurfaceApplyContext;
 
+const threadlessContext = {
+  ...context,
+  ref: { surface: "slack", locationRef: "T1:C1" },
+} as const satisfies SurfaceApplyContext;
+
 const canonicalRunLinkBlock = {
   type: "context",
   elements: [{ type: "mrkdwn", text: "<https://trema.test/runs/run-1|View full run>" }],
@@ -160,6 +165,67 @@ describe("SlackDriver", () => {
           thread_ts: "1800000000.000001",
         },
       },
+    ]);
+  });
+
+  it("keeps threadless in-progress deliveries in editable snapshot mode", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+
+    const started = await render.apply([create("Starting")], threadlessContext);
+    const startedMetadata = started.messages[0]?.metadata;
+    const grown = await render.apply(
+      [
+        mutation("append", {
+          text: " more",
+          prior: {
+            text: "Starting",
+            ...(startedMetadata === undefined ? {} : { metadata: startedMetadata }),
+          },
+        }),
+      ],
+      threadlessContext,
+    );
+    const grownMetadata = grown.messages[0]?.metadata;
+    await render.apply(
+      [
+        mutation("finalize", {
+          text: "Complete",
+          prior: {
+            text: "Starting more",
+            ...(grownMetadata === undefined ? {} : { metadata: grownMetadata }),
+          },
+        }),
+      ],
+      threadlessContext,
+    );
+
+    expect(started.messages[0]).toMatchObject({
+      remoteRef: "1800000001.000001",
+      metadata: { mode: "snapshot" },
+    });
+    expect(grown.messages[0]).toMatchObject({ metadata: { mode: "snapshot" } });
+    expect(slack.calls.map(({ method }) => method)).toEqual([
+      "chat.postMessage",
+      "chat.update",
+      "chat.update",
+    ]);
+    expect(slack.calls[0]?.body).not.toHaveProperty("thread_ts");
+    expect(slack.calls[0]?.body.blocks).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "Starting" } },
+      canonicalRunLinkBlock,
+    ]);
+    expect(slack.calls[1]?.body.blocks).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "Starting more" } },
+      canonicalRunLinkBlock,
+    ]);
+    expect(slack.calls[2]?.body.blocks).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "Complete" } },
+      canonicalRunLinkBlock,
     ]);
   });
 

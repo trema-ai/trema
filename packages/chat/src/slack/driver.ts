@@ -157,6 +157,26 @@ export class SlackDriver implements SurfaceDriver {
         const prior =
           parseThinkingState(operation.prior.metadata) ?? emptyThinkingState(operation.prior.text);
         const next = appendThinkingText(prior, operation.text);
+        if (operation.prior.metadata?.mode === "snapshot") {
+          // The planner emits append only for text-only growth, so the prior
+          // tier-zero text plus its delta is the complete next snapshot.
+          const realized = realizeMessage(
+            { text: `${operation.prior.text}${operation.text}`, parts: [] },
+            operation.messageId,
+            context.canonicalRunUrl,
+          );
+          await this.#call("chat.update", destination.channelRef, {
+            blocks: realized.blocks,
+            channel: destination.channelRef,
+            text: realized.text,
+            ts: operation.remoteRef,
+          });
+          return appliedMessage(
+            operation,
+            operation.remoteRef,
+            slackMetadata(operation.prior.metadata, "snapshot", next),
+          );
+        }
         await this.#call("chat.appendStream", destination.channelRef, {
           channel: destination.channelRef,
           client_msg_id: slackClientMessageId(operation.id),
@@ -199,14 +219,7 @@ export class SlackDriver implements SurfaceDriver {
     const clientMessageId = slackClientMessageId(operation.id);
     const thinking = realizeSlackThinking(operation.content, operation.messageId);
     const initial = initialThinkingChunks(thinking);
-    if (!operation.finalized) {
-      if (destination.threadRef === undefined) {
-        throw new SurfaceDriverError(
-          "invalid_request",
-          "Slack streaming requires a destination thread reference",
-          { retryable: false },
-        );
-      }
+    if (!operation.finalized && destination.threadRef !== undefined) {
       const recipient = await this.#recipient(context);
       const response = await this.#call("chat.startStream", destination.channelRef, {
         channel: destination.channelRef,
@@ -242,7 +255,7 @@ export class SlackDriver implements SurfaceDriver {
     });
     return appliedMessage(operation, requiredMessageRef(response, "chat.postMessage"), {
       clientMessageId,
-      mode: "final",
+      mode: operation.finalized ? "final" : "snapshot",
       slackThinking: initial.state,
     });
   }
