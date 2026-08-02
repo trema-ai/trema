@@ -16,6 +16,11 @@ const context = {
   realizationVersion: 1,
 } as const satisfies SurfaceApplyContext;
 
+const canonicalRunLinkBlock = {
+  type: "context",
+  elements: [{ type: "mrkdwn", text: "<https://trema.test/runs/run-1|View full run>" }],
+};
+
 interface CapturedCall {
   body: Record<string, unknown>;
   contentType: string | null;
@@ -361,6 +366,7 @@ describe("SlackDriver", () => {
     expect(slack.calls[1]).toMatchObject({
       method: "chat.stopStream",
       body: {
+        blocks: [canonicalRunLinkBlock],
         chunks: [
           expect.objectContaining({
             type: "task_update",
@@ -425,6 +431,7 @@ describe("SlackDriver", () => {
               }),
             ],
           },
+          canonicalRunLinkBlock,
         ],
       },
     });
@@ -456,7 +463,34 @@ describe("SlackDriver", () => {
     expect(slack.calls[0]?.body).toMatchObject({
       chunks: [{ type: "markdown_text", text: " more" }],
     });
-    expect(slack.calls[1]?.body).toMatchObject({ markdown_text: "Complete" });
+    expect(slack.calls[1]?.body).toMatchObject({
+      blocks: [canonicalRunLinkBlock],
+      markdown_text: "Complete",
+    });
+  });
+
+  it("keeps the canonical run link on snapshot replacements", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+
+    await driver({ fetch: slack.fetch }).apply(
+      [
+        mutation("replace", {
+          text: "Corrected",
+          prior: { text: "Original", metadata: { mode: "snapshot" } },
+        }),
+      ],
+      context,
+    );
+
+    expect(slack.calls[0]).toMatchObject({
+      method: "chat.update",
+      body: {
+        blocks: [
+          { type: "section", text: { type: "mrkdwn", text: "Corrected" } },
+          canonicalRunLinkBlock,
+        ],
+      },
+    });
   });
 
   it("renders text, code, tools, citations, and errors into bounded Block Kit", async () => {
@@ -512,6 +546,7 @@ describe("SlackDriver", () => {
     }>;
     expect(sections.length).toBeGreaterThan(0);
     expect(sections.every((block) => Array.from(block.text.text).length <= 3_000)).toBe(true);
+    expect(blocks.at(-1)).toEqual(canonicalRunLinkBlock);
   });
 
   it("renders elicitation controls when the first delivery is already final", async () => {
@@ -533,6 +568,7 @@ describe("SlackDriver", () => {
         blocks: [
           { type: "section", text: { type: "mrkdwn", text: "*Deploy* version 2.4.1?" } },
           { type: "actions", elements: expect.arrayContaining([expect.any(Object)]) },
+          canonicalRunLinkBlock,
         ],
       },
     });
@@ -545,11 +581,16 @@ describe("SlackDriver", () => {
       context,
     );
 
-    const blocks = slack.calls[0]?.body.blocks as Array<{ text: { text: string } }>;
-    expect(blocks).toHaveLength(4);
-    expect(blocks.every((block) => Array.from(block.text.text).length <= 3_000)).toBe(true);
+    const blocks = slack.calls[0]?.body.blocks as Array<Record<string, unknown>>;
+    const sections = blocks.filter((block) => block.type === "section") as Array<{
+      text: { text: string };
+    }>;
+    expect(blocks).toHaveLength(5);
+    expect(sections).toHaveLength(4);
+    expect(sections.every((block) => Array.from(block.text.text).length <= 3_000)).toBe(true);
+    expect(blocks.at(-1)).toEqual(canonicalRunLinkBlock);
     expect(
-      blocks
+      sections
         .map((block) => block.text.text)
         .join("")
         .replaceAll(/[^x]/gu, ""),

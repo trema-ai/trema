@@ -77,6 +77,7 @@ interface RealizedMessage {
 }
 
 const SLACK_SECTION_TEXT_LIMIT = 3_000;
+const SLACK_CONTEXT_TEXT_LIMIT = 3_000;
 const SLACK_MESSAGE_BLOCK_LIMIT = 50;
 const SLACK_ACTION_ID_LIMIT = 255;
 const SLACK_BUTTON_TEXT_LIMIT = 75;
@@ -167,10 +168,10 @@ export class SlackDriver implements SurfaceDriver {
         );
       }
       case "replace": {
-        return this.#replace(operation, destination);
+        return this.#replace(operation, context, destination);
       }
       case "finalize":
-        return this.#finalize(operation, destination);
+        return this.#finalize(operation, context, destination);
       case "delete":
         try {
           await this.#call("chat.delete", destination.channelRef, {
@@ -225,7 +226,11 @@ export class SlackDriver implements SurfaceDriver {
       });
     }
 
-    const realized = realizeMessage(operation.content, operation.messageId);
+    const realized = realizeMessage(
+      operation.content,
+      operation.messageId,
+      context.canonicalRunUrl,
+    );
     const response = await this.#call("chat.postMessage", destination.channelRef, {
       blocks: realized.blocks,
       channel: destination.channelRef,
@@ -242,6 +247,7 @@ export class SlackDriver implements SurfaceDriver {
 
   async #replace(
     operation: Extract<RenderOperation, { type: "replace" }>,
+    context: SurfaceApplyContext,
     destination: SlackDestination,
   ): Promise<AppliedMessage> {
     const thinking = realizeSlackThinking(operation.content, operation.messageId);
@@ -270,7 +276,11 @@ export class SlackDriver implements SurfaceDriver {
     // Event-log reconciliation can shrink text or remove tasks, neither of
     // which Slack's append-only stream chunks can express. Converge through a
     // complete Block Kit snapshot instead of duplicating visible content.
-    const realized = realizeMessage(operation.content, operation.messageId);
+    const realized = realizeMessage(
+      operation.content,
+      operation.messageId,
+      context.canonicalRunUrl,
+    );
     await this.#call("chat.update", destination.channelRef, {
       blocks: realized.blocks,
       channel: destination.channelRef,
@@ -287,6 +297,7 @@ export class SlackDriver implements SurfaceDriver {
 
   async #finalize(
     operation: Extract<RenderOperation, { type: "finalize" }>,
+    context: SurfaceApplyContext,
     destination: SlackDestination,
   ): Promise<AppliedMessage> {
     const thinking = realizeSlackThinking(operation.content, operation.messageId);
@@ -300,7 +311,7 @@ export class SlackDriver implements SurfaceDriver {
           channel: destination.channelRef,
           client_msg_id: slackClientMessageId(operation.id),
           ...(changed.chunks.length === 0 ? {} : { chunks: changed.chunks }),
-          ...finalizeBlocks(operation.content),
+          ...finalizeBlocks(operation.content, context.canonicalRunUrl),
           ts: operation.remoteRef,
         });
         return appliedMessage(
@@ -312,7 +323,11 @@ export class SlackDriver implements SurfaceDriver {
     }
 
     if (priorMode === "snapshot" || priorMode === "final") {
-      const realized = realizeMessage(operation.content, operation.messageId);
+      const realized = realizeMessage(
+        operation.content,
+        operation.messageId,
+        context.canonicalRunUrl,
+      );
       await this.#call("chat.update", destination.channelRef, {
         blocks: realized.blocks,
         channel: destination.channelRef,
@@ -324,7 +339,7 @@ export class SlackDriver implements SurfaceDriver {
         channel: destination.channelRef,
         client_msg_id: slackClientMessageId(operation.id),
         markdown_text: nonEmpty(operation.content.text),
-        ...finalizeBlocks(operation.content),
+        ...finalizeBlocks(operation.content, context.canonicalRunUrl),
         ts: operation.remoteRef,
       });
     }
@@ -441,26 +456,54 @@ function requiredMessageRef(response: SlackResponse, method: string): string {
   });
 }
 
-function realizeMessage(content: RenderContent, messageId: string): RealizedMessage {
+function realizeMessage(
+  content: RenderContent,
+  messageId: string,
+  canonicalRunUrl: string,
+): RealizedMessage {
   const thinking = realizeSlackThinking(content, messageId);
   const narrative = toSlackMrkdwn(thinking.narrativeText);
   const text = nonEmpty(toSlackMrkdwn(content.text));
   const plan = staticThinkingBlock(thinking);
   const controls = unresolvedElicitationBlocks(content);
-  const sectionLimit = SLACK_MESSAGE_BLOCK_LIMIT - (plan === undefined ? 0 : 1) - controls.length;
+  const runLink = canonicalRunLinkBlock(canonicalRunUrl);
+  const sectionLimit =
+    SLACK_MESSAGE_BLOCK_LIMIT - (plan === undefined ? 0 : 1) - controls.length - 1;
   return {
     text,
     blocks: [
       ...(plan === undefined ? [] : [plan]),
       ...slackMarkdownSections(narrative).slice(0, sectionLimit),
       ...controls,
+      runLink,
     ],
   };
 }
 
-function finalizeBlocks(content: RenderContent): { blocks?: unknown[] } {
-  const blocks = unresolvedElicitationBlocks(content);
-  return blocks.length === 0 ? {} : { blocks };
+function finalizeBlocks(content: RenderContent, canonicalRunUrl: string): { blocks: unknown[] } {
+  return {
+    blocks: [...unresolvedElicitationBlocks(content), canonicalRunLinkBlock(canonicalRunUrl)],
+  };
+}
+
+function canonicalRunLinkBlock(canonicalRunUrl: string): Record<string, unknown> {
+  let url: URL;
+  try {
+    url = new URL(canonicalRunUrl);
+  } catch (cause) {
+    throw new SurfaceDriverError("invalid_request", "Slack canonical run URL is invalid", {
+      cause,
+      retryable: false,
+    });
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new SurfaceDriverError("invalid_request", "Slack canonical run URL must use HTTP(S)", {
+      retryable: false,
+    });
+  }
+  const text = `<${escapeSlackControlCharacters(url.href)}|View full run>`;
+  validateSlackField(text, SLACK_CONTEXT_TEXT_LIMIT, "canonical run link");
+  return { type: "context", elements: [{ type: "mrkdwn", text }] };
 }
 
 function unresolvedElicitationBlocks(content: RenderContent): unknown[] {
