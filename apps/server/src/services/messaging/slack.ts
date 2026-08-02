@@ -17,6 +17,7 @@ import {
   resolveClientRegistration,
   resolveConnectionCredential,
   resolveConnectorInstallation,
+  resolveStoredClientRegistration,
   startOAuthConnect,
 } from "#server/services/connectors/index.js";
 
@@ -405,7 +406,7 @@ export async function uninstallSlackInstallation(
       providerKey: SLACK_PROVIDER_KEY,
       revokedAt: null,
     },
-    select: { id: true, config: true },
+    select: { id: true, config: true, clientRegistrationId: true },
   });
   if (!connection) throw new SlackInstallationNotFoundError();
 
@@ -418,13 +419,21 @@ export async function uninstallSlackInstallation(
   });
   let registration: Awaited<ReturnType<typeof resolveClientRegistration>>;
   try {
-    registration = await resolveClientRegistration(
-      db,
-      input.orgId,
-      SLACK_PROVIDER_KEY,
-      input.platformApps ?? emptyPlatformAppDirectory,
-      input.masterKey,
-    );
+    registration = connection.clientRegistrationId
+      ? await resolveStoredClientRegistration(
+          db,
+          input.orgId,
+          connection.clientRegistrationId,
+          input.platformApps ?? emptyPlatformAppDirectory,
+          input.masterKey,
+        )
+      : await resolveClientRegistration(
+          db,
+          input.orgId,
+          SLACK_PROVIDER_KEY,
+          input.platformApps ?? emptyPlatformAppDirectory,
+          input.masterKey,
+        );
   } catch (error) {
     log.warn("Slack uninstall request preparation failed", {
       connectionId: connection.id,

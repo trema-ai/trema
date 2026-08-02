@@ -6,7 +6,10 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
-import { createClientRegistration } from "#server/services/connectors/index.js";
+import {
+  createClientRegistration,
+  deleteClientRegistration,
+} from "#server/services/connectors/index.js";
 import {
   createSlackBinding,
   type SlackIngressNotice,
@@ -179,12 +182,13 @@ integration("Slack ingress", () => {
     workspaceId = "T123ABC",
     linked = true,
     registrationSigningSecret = signingSecret,
+    registrationSource: "customer" | "dynamic" = "customer",
   ) {
     const org = await db.org.create({ data: { name: `Org ${randomUUID()}` } });
-    await createClientRegistration(db, {
+    const registration = await createClientRegistration(db, {
       orgId: org.id,
       providerKey: "slack",
-      source: "customer",
+      source: registrationSource,
       clientId: "slack-client-id",
       clientSecret: "slack-client-secret",
       signingSecret: registrationSigningSecret,
@@ -206,6 +210,7 @@ integration("Slack ingress", () => {
       data: {
         orgId: org.id,
         providerKey: "slack",
+        clientRegistrationId: registration.id,
         ownerPrincipalId: agent.id,
         authMode: "oauth2_code",
         config: {
@@ -265,7 +270,7 @@ integration("Slack ingress", () => {
         principalId: member.id,
       });
     }
-    return { org, member, connection, workspaceId };
+    return { org, member, connection, registration, workspaceId };
   }
 
   function subject(options: { engine?: Engine; notify?: SlackIngressNotice } = {}) {
@@ -444,6 +449,125 @@ integration("Slack ingress", () => {
 
     await expect(db.runIntent.count()).resolves.toBe(0);
     expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it("emits one rejection notice for a mentioned reply's message and app-mention deliveries", async () => {
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+    const unlinked = await setup("TMENTIONSHADOW", false);
+    const ingress = subject({ notify });
+    const threadTs = "1800000000.000001";
+    const ts = "1800000000.000002";
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          threadReply({
+            eventId: "Ev-mention-shadow",
+            workspaceId: unlinked.workspaceId,
+            threadTs,
+            ts,
+            text: "<@U999BOT> investigate the deploy",
+          }),
+        ),
+      ),
+    );
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-mention-canonical",
+            workspaceId: unlinked.workspaceId,
+            threadTs,
+            ts,
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    expect(notify).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ visibility: "private" }));
+    await expect(db.runIntent.count({ where: { orgId: unlinked.org.id } })).resolves.toBe(0);
+
+    const unbound = await setup("TUNBOUNDMENTION");
+    await db.binding.deleteMany({ where: { orgId: unbound.org.id, surface: "slack" } });
+    const unboundIngress = subject({ notify });
+    await unboundIngress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          threadReply({
+            eventId: "Ev-unbound-shadow",
+            workspaceId: unbound.workspaceId,
+            threadTs,
+            ts,
+            text: "<@U999BOT> investigate the deploy",
+          }),
+        ),
+      ),
+    );
+    await unboundIngress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-unbound-canonical",
+            workspaceId: unbound.workspaceId,
+            threadTs,
+            ts,
+          }),
+        ),
+      ),
+    );
+    await unboundIngress.drain();
+
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ visibility: "channel" }));
+    await expect(db.runIntent.count({ where: { orgId: unbound.org.id } })).resolves.toBe(0);
+  });
+
+  it("keeps an installation on its original app until that registration is replaced", async () => {
+    const originalSecret = "original-slack-signing-secret";
+    const fixture = await setup("TAPPASSOCIATION", true, originalSecret, "dynamic");
+    await createClientRegistration(db, {
+      orgId: fixture.org.id,
+      providerKey: "slack",
+      source: "customer",
+      clientId: "new-preferred-client",
+      clientSecret: "new-preferred-secret",
+      signingSecret: "new-preferred-signing-secret",
+      masterKey,
+    });
+    const ingress = subject();
+    const body = JSON.stringify(
+      appMention({ eventId: "Ev-original-app", workspaceId: fixture.workspaceId }),
+    );
+
+    await expect(
+      ingress.service.accept(signedRequest(body, "application/json", originalSecret)),
+    ).resolves.toEqual({});
+    await ingress.drain();
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+
+    await createClientRegistration(db, {
+      orgId: fixture.org.id,
+      providerKey: "slack",
+      source: "dynamic",
+      clientId: "replacement-client",
+      clientSecret: "replacement-secret",
+      signingSecret: "replacement-signing-secret",
+      masterKey,
+      replace: true,
+    });
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: fixture.connection.id } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+
+    await deleteClientRegistration(db, fixture.org.id, fixture.registration.id);
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: fixture.connection.id } }),
+    ).resolves.toMatchObject({
+      clientRegistrationId: null,
+      revokedAt: expect.any(Date),
+    });
   });
 
   it("rejects a revoked app secret after the workspace is reinstalled", async () => {

@@ -922,6 +922,7 @@ model ClientRegistration {
   updatedAt               DateTime                 @updatedAt
   org                     Org                      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   oauthStates             ConnectorOAuthState[]
+  connections             ConnectorConnection[]
 
   @@unique([orgId, providerKey, source])
   @@unique([orgId, id])
@@ -932,6 +933,7 @@ model ConnectorConnection {
   id                      String                @id @default(uuid(7))
   orgId                   String
   providerKey             String
+  clientRegistrationId    String?
   ownerPrincipalId        String
   authMode                String
   config                  Json
@@ -948,10 +950,12 @@ model ConnectorConnection {
   createdAt               DateTime              @default(now())
   updatedAt               DateTime              @updatedAt
   org                     Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  clientRegistration      ClientRegistration?   @relation(fields: [orgId, clientRegistrationId], references: [orgId, id], onDelete: Restrict)
   owner                   Principal             @relation(fields: [orgId, ownerPrincipalId], references: [orgId, id], onDelete: Cascade)
   oauthStates             ConnectorOAuthState[]
 
   @@index([orgId, providerKey])
+  @@index([orgId, clientRegistrationId])
   @@index([orgId, ownerPrincipalId])
 }
 

@@ -16,6 +16,7 @@ import {
   type PlatformAppDirectory,
   resolveClientRegistration,
   resolveConnectionCredential,
+  resolveStoredClientRegistration,
 } from "#server/services/connectors/index.js";
 import {
   applySlackLifecycleEvent,
@@ -167,29 +168,45 @@ export class SlackIngressService {
             config: { path: ["team.id"], equals: workspaceId },
             owner: { kind: "agent", deactivatedAt: null },
           },
-          select: { orgId: true },
+          select: { orgId: true, clientRegistrationId: true },
         })
       : [];
-    const registrations =
-      matchingConnections.length > 0
-        ? matchingConnections
-        : allowGlobalFallback
-          ? await this.#options.db.clientRegistration.findMany({
-              where: { providerKey: "slack" },
-              select: { orgId: true },
-              distinct: ["orgId"],
-            })
-          : [];
     const secrets = new Set<string>();
-    for (const orgId of new Set(registrations.map((registration) => registration.orgId))) {
+    const candidates = new Map<string, { orgId: string; registrationId?: string }>();
+    for (const connection of matchingConnections) {
+      const registrationId = connection.clientRegistrationId ?? undefined;
+      candidates.set(`${connection.orgId}:${registrationId ?? "preferred"}`, {
+        orgId: connection.orgId,
+        ...(registrationId === undefined ? {} : { registrationId }),
+      });
+    }
+    if (candidates.size === 0 && allowGlobalFallback) {
+      const registrations = await this.#options.db.clientRegistration.findMany({
+        where: { providerKey: "slack" },
+        select: { orgId: true },
+        distinct: ["orgId"],
+      });
+      for (const registration of registrations) {
+        candidates.set(`${registration.orgId}:preferred`, { orgId: registration.orgId });
+      }
+    }
+    for (const candidate of candidates.values()) {
       try {
-        const registration = await resolveClientRegistration(
-          this.#options.db,
-          orgId,
-          "slack",
-          this.#options.platformApps,
-          this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
-        );
+        const registration = candidate.registrationId
+          ? await resolveStoredClientRegistration(
+              this.#options.db,
+              candidate.orgId,
+              candidate.registrationId,
+              this.#options.platformApps,
+              this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
+            )
+          : await resolveClientRegistration(
+              this.#options.db,
+              candidate.orgId,
+              "slack",
+              this.#options.platformApps,
+              this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
+            );
         if (registration.signingSecret) secrets.add(registration.signingSecret);
       } catch (error) {
         if (error instanceof NoClientRegistrationError) continue;
@@ -240,16 +257,8 @@ export class SlackIngressService {
   }
 
   async #message(event: MessageSurfaceEvent): Promise<void> {
+    if (await this.#isMentionShadow(event)) return;
     const request = await this.#resolve(event);
-    // Slack fans a mentioned channel reply out as both `message` and
-    // `app_mention`. The mention is canonical; discard its message shadow.
-    if (
-      event.nativeKind === "thread-reply" &&
-      request.botUserId !== null &&
-      event.text.includes(`<@${request.botUserId}>`)
-    ) {
-      return;
-    }
     const engine = this.#options.runEngineFor?.(request.orgId);
     if (engine === undefined) throw new SlackRunSchedulingUnavailableError();
     const text = stripBotMention(event.text, request.botUserId);
@@ -281,6 +290,27 @@ export class SlackIngressService {
         author,
         message: { role: "user", blocks: [{ type: "text", text }] },
       },
+    });
+  }
+
+  async #isMentionShadow(event: MessageSurfaceEvent): Promise<boolean> {
+    if (event.nativeKind !== "thread-reply" || !event.text.includes("<@")) return false;
+    const workspaceId = event.surfaceRef.teamRef;
+    if (workspaceId === undefined) return false;
+    const connections = await this.#options.db.connectorConnection.findMany({
+      where: {
+        providerKey: "slack",
+        revokedAt: null,
+        config: { path: ["team.id"], equals: workspaceId },
+        owner: { kind: "agent", deactivatedAt: null },
+      },
+      select: { config: true },
+    });
+    return connections.some((connection) => {
+      const config = connection.config;
+      if (typeof config !== "object" || config === null || Array.isArray(config)) return false;
+      const botUserId = (config as Record<string, unknown>).bot_user_id;
+      return typeof botUserId === "string" && event.text.includes(`<@${botUserId}>`);
     });
   }
 

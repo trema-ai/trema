@@ -148,22 +148,34 @@ export async function createClientRegistration(db: Database, input: CreateClient
   };
 
   if (input.replace) {
-    const registration = await db.clientRegistration.upsert({
-      where: {
-        orgId_providerKey_source: {
+    const registration = await db.$transaction(async (transaction) => {
+      const stored = await transaction.clientRegistration.upsert({
+        where: {
+          orgId_providerKey_source: {
+            orgId: input.orgId,
+            providerKey: input.providerKey,
+            source: input.source,
+          },
+        },
+        create: {
           orgId: input.orgId,
           providerKey: input.providerKey,
           source: input.source,
+          ...values,
         },
-      },
-      create: {
-        orgId: input.orgId,
-        providerKey: input.providerKey,
-        source: input.source,
-        ...values,
-      },
-      update: values,
-      select: registrationMetadataSelect,
+        update: values,
+        select: registrationMetadataSelect,
+      });
+      await transaction.connectorConnection.updateMany({
+        where: {
+          orgId: input.orgId,
+          providerKey: input.providerKey,
+          clientRegistrationId: stored.id,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      });
+      return stored;
     });
     log.info("Client registration replaced", { provider: input.providerKey, kind: input.source });
     return registration;
@@ -199,7 +211,16 @@ export function listClientRegistrations(db: Database, orgId: string) {
 }
 
 export async function deleteClientRegistration(db: Database, orgId: string, id: string) {
-  const result = await db.clientRegistration.deleteMany({ where: { id, orgId } });
+  const result = await db.$transaction(async (transaction) => {
+    await transaction.connectorConnection.updateMany({
+      where: {
+        orgId,
+        clientRegistrationId: id,
+      },
+      data: { revokedAt: new Date(), clientRegistrationId: null },
+    });
+    return transaction.clientRegistration.deleteMany({ where: { id, orgId } });
+  });
   if (result.count === 0) {
     log.warn("Client registration not found", { registrationId: id });
     throw new ClientRegistrationNotFoundError();

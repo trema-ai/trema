@@ -711,6 +711,7 @@ async function requireMatchingReconnectAccount(
 interface StoreConnectionInput {
   orgId: string;
   providerKey: string;
+  clientRegistrationId?: string;
   ownerPrincipalId: string;
   authMode: string;
   config: Record<string, unknown>;
@@ -801,6 +802,9 @@ async function storeConnection(
       },
       data: {
         authMode: input.authMode,
+        ...(input.clientRegistrationId === undefined
+          ? {}
+          : { clientRegistrationId: input.clientRegistrationId }),
         config,
         ciphertext: input.ciphertext,
         ...(input.label !== undefined ? { label: input.label } : {}),
@@ -832,6 +836,9 @@ async function storeConnection(
     data: {
       orgId: input.orgId,
       providerKey: input.providerKey,
+      ...(input.clientRegistrationId === undefined
+        ? {}
+        : { clientRegistrationId: input.clientRegistrationId }),
       ownerPrincipalId: input.ownerPrincipalId,
       authMode: input.authMode,
       config,
@@ -1103,6 +1110,7 @@ export async function completeOAuthCallback(db: Database, input: CompleteOAuthCa
       connection: {
         orgId: oauthState.orgId,
         providerKey: oauthState.providerKey,
+        clientRegistrationId: oauthState.registrationId,
         ownerPrincipalId: oauthState.ownerPrincipalId,
         authMode: provider.authMode,
         config: connectionConfig(oauthState.config),
@@ -1213,6 +1221,7 @@ async function completeMcpOAuthCallback(
     connection: {
       orgId: oauthState.orgId,
       providerKey: oauthState.providerKey,
+      clientRegistrationId: oauthState.registrationId,
       ownerPrincipalId: oauthState.ownerPrincipalId,
       authMode: provider.authMode,
       config: connectionConfig(oauthState.config),
