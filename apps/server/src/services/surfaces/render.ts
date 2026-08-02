@@ -289,6 +289,16 @@ async function applyWithLeaseHeartbeat(
     await renewal;
   }
 
+  // A native stop is an observed remote side effect with a separate durable
+  // obligation. Let the caller persist it before surfacing lease-renewal
+  // trouble, otherwise a replay may falsely acknowledge the stopped stream.
+  if (
+    applyFailed &&
+    applyError instanceof SurfaceDriverError &&
+    applyError.code === "stopped_by_user"
+  ) {
+    throw applyError;
+  }
   if (heartbeatError !== undefined) throw heartbeatError;
   if (!(await input.store.renew(realizationId, input.owner, ttlMs))) {
     throw new SurfaceRealizationConflictError(

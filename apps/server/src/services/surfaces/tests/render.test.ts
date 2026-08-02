@@ -79,6 +79,7 @@ class MemoryStore implements SurfaceRealizationStore {
   };
   released = 0;
   renewed = 0;
+  renewalError: unknown;
   renewalResult = true;
 
   async claim(): Promise<SurfaceRealization | undefined> {
@@ -156,6 +157,7 @@ class MemoryStore implements SurfaceRealizationStore {
 
   async renew(): Promise<boolean> {
     this.renewed += 1;
+    if (this.renewalError !== undefined) throw this.renewalError;
     return this.renewalResult;
   }
 
@@ -441,6 +443,34 @@ describe("renderSurface", () => {
       runId: "run-1",
       ref,
     });
+  });
+
+  it("persists a native stop before surfacing a concurrent renewal failure", async () => {
+    const store = new MemoryStore();
+    store.renewalError = new Error("database unavailable");
+    const requestRunStop = vi.fn(async () => "recorded" as const);
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      requestRunStop,
+      driver: fakeDriver(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
+      }),
+      projection: projection("Hello"),
+      leaseTtlMs: 15,
+    });
+
+    expect(store.renewed).toBeGreaterThanOrEqual(1);
+    expect(result).toMatchObject({
+      status: "stopped",
+      realization: {
+        nativeStopPending: false,
+        presentation: { stoppedByUser: true },
+      },
+    });
+    expect(requestRunStop).toHaveBeenCalledOnce();
   });
 
   it("accepts a native stop that loses the race to run completion", async () => {
