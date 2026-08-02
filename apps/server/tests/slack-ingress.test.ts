@@ -30,8 +30,12 @@ const env = parseEnv({
   TREMA_CREDENTIAL_MASTER_KEY: masterKey,
 });
 
-function signedRequest(body: string, contentType = "application/json"): Request {
-  const signature = `v0=${createHmac("sha256", signingSecret)
+function signedRequest(
+  body: string,
+  contentType = "application/json",
+  requestSigningSecret = signingSecret,
+): Request {
+  const signature = `v0=${createHmac("sha256", requestSigningSecret)
     .update(`v0:${nowSeconds}:${body}`)
     .digest("hex")}`;
   return new Request("https://trema.test/api/v1/messaging/slack/events", {
@@ -155,7 +159,11 @@ integration("Slack ingress", () => {
     await db.$disconnect();
   });
 
-  async function setup(workspaceId = "T123ABC", linked = true) {
+  async function setup(
+    workspaceId = "T123ABC",
+    linked = true,
+    registrationSigningSecret = signingSecret,
+  ) {
     const org = await db.org.create({ data: { name: `Org ${randomUUID()}` } });
     await createClientRegistration(db, {
       orgId: org.id,
@@ -163,7 +171,7 @@ integration("Slack ingress", () => {
       source: "customer",
       clientId: "slack-client-id",
       clientSecret: "slack-client-secret",
-      signingSecret,
+      signingSecret: registrationSigningSecret,
       masterKey,
     });
     const agent = await db.principal.create({
@@ -404,6 +412,31 @@ integration("Slack ingress", () => {
 
     await expect(db.runIntent.count()).resolves.toBe(0);
     expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a revoked app secret after the workspace is reinstalled", async () => {
+    const workspaceId = "TREINSTALLED";
+    const retiredSecret = "retired-slack-signing-secret";
+    const activeSecret = "active-slack-signing-secret";
+    const retired = await setup(workspaceId, true, retiredSecret);
+    await db.connectorConnection.update({
+      where: { id: retired.connection.id },
+      data: { revokedAt: new Date() },
+    });
+    const active = await setup(workspaceId, true, activeSecret);
+    const ingress = subject();
+    const body = JSON.stringify(appMention({ eventId: "Ev-reinstalled", workspaceId }));
+
+    await expect(
+      ingress.service.accept(signedRequest(body, "application/json", retiredSecret)),
+    ).rejects.toMatchObject({ category: "invalid-request" });
+    await expect(
+      ingress.service.accept(signedRequest(body, "application/json", activeSecret)),
+    ).resolves.toEqual({});
+    await ingress.drain();
+
+    await expect(db.runIntent.count({ where: { orgId: retired.org.id } })).resolves.toBe(0);
+    await expect(db.runIntent.count({ where: { orgId: active.org.id } })).resolves.toBe(1);
   });
 
   it("posts a public setup link when a conversation is not bound", async () => {

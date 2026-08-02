@@ -147,7 +147,9 @@ export class SlackIngressService {
       ? await this.#options.db.connectorConnection.findMany({
           where: {
             providerKey: "slack",
+            revokedAt: null,
             config: { path: ["team.id"], equals: workspaceId },
+            owner: { kind: "agent", deactivatedAt: null },
           },
           select: { orgId: true },
         })
