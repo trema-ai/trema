@@ -105,8 +105,8 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
     plan.toCursor === current.renderedThroughSeq &&
     sameSegments(plan.nextSegments, current.segments)
   ) {
-    await input.store.release(current.id, input.owner);
-    return { status: "noop", realization: current };
+    const released = await releaseRealization(input.store, current, input.owner);
+    return { status: "noop", realization: released };
   }
 
   if (plan.operations.length === 0) {
@@ -118,8 +118,8 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
       segments: plan.nextSegments,
       presentation: { dialect: input.driver.capabilities.dialect },
     });
-    await input.store.release(committed.id, input.owner);
-    return { status: "rendered", operations: 0, realization: committed };
+    const released = await releaseRealization(input.store, committed, input.owner);
+    return { status: "rendered", operations: 0, realization: released };
   }
 
   if (current.pendingPlan === undefined) {
@@ -147,8 +147,8 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
       segments,
       presentation: { dialect: input.driver.capabilities.dialect },
     });
-    await input.store.release(committed.id, input.owner);
-    return { status: "rendered", operations: plan.operations.length, realization: committed };
+    const released = await releaseRealization(input.store, committed, input.owner);
+    return { status: "rendered", operations: plan.operations.length, realization: released };
   } catch (caught) {
     if (caught instanceof SurfaceRealizationConflictError) throw caught;
     const error =
@@ -212,6 +212,20 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
       realization: failed,
     };
   }
+}
+
+async function releaseRealization(
+  store: SurfaceRealizationStore,
+  realization: SurfaceRealization,
+  owner: string,
+): Promise<SurfaceRealization> {
+  if (!(await store.release(realization.id, owner))) {
+    throw new SurfaceRealizationConflictError(
+      `surface realization lost its lease before release: ${realization.id}`,
+    );
+  }
+  const { lease: _lease, ...released } = realization;
+  return released;
 }
 
 /** Keeps ownership live while a throttled remote batch is in flight. */

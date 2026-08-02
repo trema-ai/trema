@@ -76,9 +76,14 @@ class MemoryStore implements SurfaceRealizationStore {
   renewalResult = true;
 
   async claim(): Promise<SurfaceRealization | undefined> {
-    return this.current.retry.terminal || this.current.presentation.stoppedByUser === true
-      ? undefined
-      : { ...this.current, lease: { owner: "worker-1", until: "2026-08-01T12:00:30.000Z" } };
+    if (this.current.retry.terminal || this.current.presentation.stoppedByUser === true) {
+      return undefined;
+    }
+    this.current = {
+      ...this.current,
+      lease: { owner: "worker-1", until: "2026-08-01T12:00:30.000Z" },
+    };
+    return this.current;
   }
 
   async stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization> {
@@ -104,8 +109,9 @@ class MemoryStore implements SurfaceRealizationStore {
 
   async recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization> {
     expect(input.expectedVersion).toBe(this.current.version);
+    const { lease: _lease, ...current } = this.current;
     this.current = {
-      ...this.current,
+      ...current,
       version: this.current.version + 1,
       retry: {
         attempt: this.current.retry.attempt + 1,
@@ -135,8 +141,11 @@ class MemoryStore implements SurfaceRealizationStore {
     return this.renewalResult;
   }
 
-  async release(): Promise<boolean> {
+  async release(_id: string, owner: string): Promise<boolean> {
+    if (this.current.lease?.owner !== owner) return false;
     this.released += 1;
+    const { lease: _lease, ...current } = this.current;
+    this.current = current;
     return true;
   }
 }
@@ -194,6 +203,11 @@ describe("renderSurface", () => {
 
     expect(first).toMatchObject({ status: "rendered", operations: 1 });
     expect(replay).toMatchObject({ status: "noop" });
+    if (first.status !== "rendered" || replay.status !== "noop") {
+      throw new Error("unexpected render result");
+    }
+    expect(first.realization).not.toHaveProperty("lease");
+    expect(replay.realization).not.toHaveProperty("lease");
     expect(apply).toHaveBeenCalledTimes(1);
     expect(store.current).toMatchObject({
       renderedThroughSeq: 1,
@@ -210,6 +224,27 @@ describe("renderSurface", () => {
       ],
     });
     expect(store.current).not.toHaveProperty("pendingPlan");
+  });
+
+  it("returns a released realization when only the durable cursor advances", async () => {
+    const store = new MemoryStore();
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(async (operations) => createdResult(operations)),
+      projection: {
+        runId: "run-1",
+        status: "running",
+        segments: [],
+        unknownEvents: 1,
+        lastSeq: 1,
+      },
+    });
+
+    expect(result).toMatchObject({ status: "rendered", operations: 0 });
+    if (result.status !== "rendered") throw new Error(`unexpected result: ${result.status}`);
+    expect(result.realization).not.toHaveProperty("lease");
+    expect(store.current).not.toHaveProperty("lease");
   });
 
   it("renews its lease while a remote batch runs longer than the original TTL", async () => {
