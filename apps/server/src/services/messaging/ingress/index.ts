@@ -43,6 +43,7 @@ const SAFE_UNAVAILABLE =
   "Trema can't start work right now. Ask a Trema administrator to check the Slack connection.";
 const SLACK_INGRESS_LEASE_MS = 30_000;
 const SLACK_INGRESS_RETRY_MS = 1_000;
+const SLACK_THREAD_OWNERSHIP_WAIT_MS = 60_000;
 
 type ProcessableSurfaceEvent = Exclude<SurfaceEvent, { type: "challenge" | "unsupported" }>;
 
@@ -159,11 +160,14 @@ export class SlackIngressService {
   }
 
   async #persist(id: string, payload: SlackIngressPayload): Promise<void> {
+    const threadKey = slackIngressThreadKey(payload);
     await this.#options.db.slackIngressDelivery.createMany({
       data: [
         {
           id,
+          opensThread: slackIngressOpensThread(payload),
           payload: payload as unknown as Prisma.InputJsonValue,
+          ...(threadKey === undefined ? {} : { threadKey }),
         },
       ],
       skipDuplicates: true,
@@ -183,13 +187,16 @@ export class SlackIngressService {
         select: { id: true },
       });
       let completed = false;
-      let blocked = false;
       for (const delivery of deliveries) {
         const outcome = await this.#processDelivery(delivery.id);
         if (outcome === "completed") completed = true;
-        else if (outcome === "blocked") blocked = true;
       }
-      repeatBlocked = completed && blocked;
+      repeatBlocked =
+        completed &&
+        (await this.#options.db.slackIngressDelivery.findFirst({
+          where: { completedAt: null, leaseUntil: null },
+          select: { id: true },
+        })) !== null;
     } while (repeatBlocked);
 
     const leased = await this.#options.db.slackIngressDelivery.findFirst({
@@ -220,7 +227,7 @@ export class SlackIngressService {
     if (claimed.count === 0) return "failed";
     const delivery = await this.#options.db.slackIngressDelivery.findUniqueOrThrow({
       where: { id },
-      select: { attempt: true, payload: true },
+      select: { attempt: true, payload: true, receivedAt: true, threadKey: true },
     });
     const payload = delivery.payload as unknown as SlackIngressPayload;
     try {
@@ -229,23 +236,36 @@ export class SlackIngressService {
           ? await this.#processLifecycle(payload.event, payload.connectionIds)
           : await this.#process(payload.event, payload.connectionIds);
       if (outcome === "blocked") {
+        const waitUntil = new Date(delivery.receivedAt.getTime() + SLACK_THREAD_OWNERSHIP_WAIT_MS);
+        const owningDelivery =
+          delivery.threadKey === null
+            ? null
+            : await this.#options.db.slackIngressDelivery.findFirst({
+                where: {
+                  id: { not: id },
+                  completedAt: null,
+                  opensThread: true,
+                  threadKey: delivery.threadKey,
+                },
+                select: { id: true },
+              });
+        if (waitUntil.getTime() <= Date.now() && owningDelivery === null) {
+          await this.#completeDelivery(id, owner);
+          log.debug("Unowned Slack thread reply expired", { deliveryId: id });
+          return "completed";
+        }
+        const nextCheck =
+          waitUntil.getTime() > Date.now()
+            ? waitUntil
+            : new Date(Date.now() + SLACK_THREAD_OWNERSHIP_WAIT_MS);
         await this.#options.db.slackIngressDelivery.updateMany({
           where: { id, completedAt: null, leaseOwner: owner },
-          data: { leaseOwner: null, leaseUntil: null },
+          data: { awaitingThread: true, leaseOwner: null, leaseUntil: nextCheck },
         });
+        this.#scheduleRecovery(nextCheck);
         return "blocked";
       }
-      await this.#options.db.slackIngressDelivery.updateMany({
-        where: { id, completedAt: null, leaseOwner: owner },
-        data: {
-          completedAt: new Date(),
-          leaseOwner: null,
-          leaseUntil: null,
-          // The id remains as the durable dedup tombstone; message content is
-          // needed only while work is pending and is not retained afterward.
-          payload: { kind: "completed" },
-        },
-      });
+      await this.#completeDelivery(id, owner);
       return "completed";
     } catch (error) {
       if (delivery.attempt === 1 && payload.kind === "surface") {
@@ -254,12 +274,27 @@ export class SlackIngressService {
       const retryAt = new Date(Date.now() + ingressRetryDelay(delivery.attempt));
       await this.#options.db.slackIngressDelivery.updateMany({
         where: { id, completedAt: null, leaseOwner: owner },
-        data: { leaseOwner: null, leaseUntil: retryAt },
+        data: { awaitingThread: false, leaseOwner: null, leaseUntil: retryAt },
       });
       this.#scheduleRecovery(retryAt);
       log.error("Slack ingress delivery will retry", { error, deliveryId: id });
       return "failed";
     }
+  }
+
+  async #completeDelivery(id: string, owner: string): Promise<void> {
+    await this.#options.db.slackIngressDelivery.updateMany({
+      where: { id, completedAt: null, leaseOwner: owner },
+      data: {
+        completedAt: new Date(),
+        awaitingThread: false,
+        leaseOwner: null,
+        leaseUntil: null,
+        // The id remains as the durable dedup tombstone; message content is
+        // needed only while work is pending and is not retained afterward.
+        payload: { kind: "completed" },
+      },
+    });
   }
 
   async #processLifecycle(
@@ -410,6 +445,12 @@ export class SlackIngressService {
       if (event.type === "message") {
         const outcome = await this.#message(event, connectionIds);
         if (outcome === "blocked") return "blocked";
+        if (
+          event.nativeKind === "app-mention" &&
+          (await this.#isOwnedThread(event, connectionIds))
+        ) {
+          await this.#wakeOwnedThread(event);
+        }
       } else {
         await this.#interaction(event, connectionIds);
       }
@@ -457,6 +498,20 @@ export class SlackIngressService {
       log.error("Slack delivery processing failed", { error, durationMs });
       throw error;
     }
+  }
+
+  async #wakeOwnedThread(event: MessageSurfaceEvent): Promise<void> {
+    const threadKey = slackSurfaceThreadKey(event);
+    if (threadKey === undefined) return;
+    await this.#options.db.slackIngressDelivery.updateMany({
+      where: {
+        completedAt: null,
+        awaitingThread: true,
+        leaseOwner: null,
+        threadKey,
+      },
+      data: { awaitingThread: false, leaseUntil: null },
+    });
   }
 
   async #message(
@@ -739,6 +794,26 @@ function intentErrorCode(error: Error): string {
 
 function ingressRetryDelay(attempt: number): number {
   return Math.min(60_000, SLACK_INGRESS_RETRY_MS * 2 ** Math.min(Math.max(attempt - 1, 0), 6));
+}
+
+function slackIngressThreadKey(payload: SlackIngressPayload): string | undefined {
+  return payload.kind === "surface" && payload.event.type === "message"
+    ? slackSurfaceThreadKey(payload.event)
+    : undefined;
+}
+
+function slackIngressOpensThread(payload: SlackIngressPayload): boolean {
+  return (
+    payload.kind === "surface" &&
+    payload.event.type === "message" &&
+    payload.event.nativeKind === "app-mention"
+  );
+}
+
+function slackSurfaceThreadKey(event: MessageSurfaceEvent): string | undefined {
+  const threadRef = event.surfaceRef.threadRef;
+  if (threadRef === undefined || event.nativeKind === "direct-message") return undefined;
+  return createHash("sha256").update(`${event.surfaceRef.locationRef}\0${threadRef}`).digest("hex");
 }
 
 function stripBotMention(text: string, botUserId: string | null): string {

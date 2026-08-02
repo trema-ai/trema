@@ -377,7 +377,21 @@ integration("Slack ingress", () => {
     await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
     await expect(
       db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
-    ).resolves.toMatchObject({ completedAt: null });
+    ).resolves.toMatchObject({
+      awaitingThread: true,
+      completedAt: null,
+      leaseUntil: expect.any(Date),
+    });
+
+    // Even an old reply remains recoverable when the durable inbox already
+    // contains the matching root delivery that will establish ownership.
+    await db.slackIngressDelivery.update({
+      where: { id: replyId },
+      data: {
+        receivedAt: new Date(Date.now() - 10 * 60_000),
+        leaseUntil: new Date(0),
+      },
+    });
 
     await ingress.service.accept(
       signedRequest(
@@ -397,6 +411,64 @@ integration("Slack ingress", () => {
     await expect(
       db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
     ).resolves.toEqual(expect.objectContaining({ completedAt: expect.any(Date) }));
+  });
+
+  it("finalizes an unrelated thread reply after a bounded ownership wait", async () => {
+    const fixture = await setup("TUNRELATEDTHREAD");
+    const ingress = subject();
+    const threadTs = "1800000000.000035";
+    const replyId = `slack:delivery:${fixture.workspaceId}:C123ABC:slack:event:Ev-unrelated-reply`;
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          threadReply({
+            eventId: "Ev-unrelated-reply",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: "1800000000.000036",
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-other-thread",
+            workspaceId: fixture.workspaceId,
+            threadTs: "1800000000.000037",
+            ts: "1800000000.000037",
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
+    ).resolves.toMatchObject({ attempt: 1, awaitingThread: true, completedAt: null });
+
+    await db.slackIngressDelivery.update({
+      where: { id: replyId },
+      data: {
+        receivedAt: new Date(Date.now() - 10 * 60_000),
+        leaseUntil: new Date(0),
+      },
+    });
+    await ingress.service.recoverPending();
+
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
+    ).resolves.toMatchObject({
+      attempt: 2,
+      awaitingThread: false,
+      completedAt: expect.any(Date),
+      payload: { kind: "completed" },
+    });
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
   });
 
   it("namespaces equal Slack timestamps by workspace and channel", async () => {
