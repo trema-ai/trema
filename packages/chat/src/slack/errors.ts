@@ -3,11 +3,7 @@ import { SurfaceDriverError, type SurfaceErrorCode } from "@trema/surfaces";
 
 const REVOKED_ERRORS = new Set(["account_inactive", "app_uninstalled", "token_revoked"]);
 const UNAUTHORIZED_ERRORS = new Set(["invalid_auth", "not_authed", "token_expired"]);
-const MESSAGE_NOT_FOUND_ERRORS = new Set([
-  "message_not_found",
-  "message_not_in_streaming_state",
-  "thread_not_found",
-]);
+const MESSAGE_NOT_FOUND_ERRORS = new Set(["message_not_found", "thread_not_found"]);
 const DESTINATION_NOT_FOUND_ERRORS = new Set([
   "channel_not_found",
   "is_archived",
@@ -48,6 +44,19 @@ function platformErrorCode(error: unknown): string | undefined {
   const { data } = error;
   if (typeof data !== "object" || data === null || !("error" in data)) return undefined;
   return typeof data.error === "string" ? data.error : undefined;
+}
+
+/** Matches a Slack response through the mapped surface-error cause chain. */
+export function isSlackPlatformError(error: unknown, expected: string): boolean {
+  const seen = new Set<unknown>();
+  let candidate: unknown = error;
+  while (typeof candidate === "object" && candidate !== null && !seen.has(candidate)) {
+    seen.add(candidate);
+    if (candidate instanceof SlackApiError && candidate.response?.error === expected) return true;
+    if (platformErrorCode(candidate) === expected) return true;
+    candidate = "cause" in candidate ? candidate.cause : undefined;
+  }
+  return false;
 }
 
 function classifyPlatformError(code: string | undefined): {

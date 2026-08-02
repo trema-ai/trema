@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 
 import { assertSlackOk, callSlackApi, resolveSlackBotToken } from "@chat-adapter/slack/api";
+import { inputRequestToSlackBlocks } from "@chat-adapter/slack/blocks";
 import { linkBareSlackMentions, markdownBoldToSlackMrkdwn } from "@chat-adapter/slack/format";
+import type { ElicitationPart } from "@trema/projection";
 import {
   type AppliedMessage,
   type ApplyResult,
@@ -16,7 +18,7 @@ import {
 } from "@trema/surfaces";
 
 import type { SlackDriverOptions, SlackRecipient } from "#chat/slack/contracts.js";
-import { mapSlackError } from "#chat/slack/errors.js";
+import { isSlackPlatformError, mapSlackError } from "#chat/slack/errors.js";
 import {
   appendThinkingText,
   changedThinkingChunks,
@@ -76,6 +78,9 @@ interface RealizedMessage {
 
 const SLACK_SECTION_TEXT_LIMIT = 3_000;
 const SLACK_MESSAGE_BLOCK_LIMIT = 50;
+const SLACK_ACTION_ID_LIMIT = 255;
+const SLACK_BUTTON_TEXT_LIMIT = 75;
+const SLACK_BUTTON_VALUE_LIMIT = 2_000;
 const EMPTY_MESSAGE = "\u200b";
 const SLACK_MRKDWN_TOKEN =
   /```[\s\S]*?```|`[^`\n]*`|<[^>\n]+>|:[A-Za-z0-9_+-]+:|\*(?=\S)[^*\n]*\S\*|_(?=\S)[^_\n]*\S_|~(?=\S)[^~\n]*\S~/gu;
@@ -291,10 +296,11 @@ export class SlackDriver implements SurfaceDriver {
     if (prior !== undefined && priorMode === "stream") {
       const changed = changedThinkingChunks(thinking, prior);
       if (!changed.narrativeReplaced && !changed.removedTask) {
-        await this.#call("chat.stopStream", destination.channelRef, {
+        await this.#stopStream(destination.channelRef, {
           channel: destination.channelRef,
           client_msg_id: slackClientMessageId(operation.id),
           ...(changed.chunks.length === 0 ? {} : { chunks: changed.chunks }),
+          ...finalizeBlocks(operation.content),
           ts: operation.remoteRef,
         });
         return appliedMessage(
@@ -314,10 +320,11 @@ export class SlackDriver implements SurfaceDriver {
         ts: operation.remoteRef,
       });
     } else {
-      await this.#call("chat.stopStream", destination.channelRef, {
+      await this.#stopStream(destination.channelRef, {
         channel: destination.channelRef,
         client_msg_id: slackClientMessageId(operation.id),
         markdown_text: nonEmpty(operation.content.text),
+        ...finalizeBlocks(operation.content),
         ts: operation.remoteRef,
       });
     }
@@ -332,6 +339,17 @@ export class SlackDriver implements SurfaceDriver {
   async #recipient(context: SurfaceApplyContext): Promise<SlackRecipient | undefined> {
     const configured = this.#options.recipient;
     return typeof configured === "function" ? configured(context) : configured;
+  }
+
+  async #stopStream(destination: string, body: Record<string, unknown>): Promise<void> {
+    try {
+      await this.#call("chat.stopStream", destination, body);
+    } catch (error) {
+      // Slack may have finalized the stream before its response was observed.
+      // Replaying that durable operation has already converged, but a truly
+      // missing message must continue to fail.
+      if (!isSlackPlatformError(error, "message_not_in_streaming_state")) throw error;
+    }
   }
 
   async #call(
@@ -428,14 +446,77 @@ function realizeMessage(content: RenderContent, messageId: string): RealizedMess
   const narrative = toSlackMrkdwn(thinking.narrativeText);
   const text = nonEmpty(toSlackMrkdwn(content.text));
   const plan = staticThinkingBlock(thinking);
-  const sectionLimit = SLACK_MESSAGE_BLOCK_LIMIT - (plan === undefined ? 0 : 1);
+  const controls = unresolvedElicitationBlocks(content);
+  const sectionLimit = SLACK_MESSAGE_BLOCK_LIMIT - (plan === undefined ? 0 : 1) - controls.length;
   return {
     text,
     blocks: [
       ...(plan === undefined ? [] : [plan]),
       ...slackMarkdownSections(narrative).slice(0, sectionLimit),
+      ...controls,
     ],
   };
+}
+
+function finalizeBlocks(content: RenderContent): { blocks?: unknown[] } {
+  const blocks = unresolvedElicitationBlocks(content);
+  return blocks.length === 0 ? {} : { blocks };
+}
+
+function unresolvedElicitationBlocks(content: RenderContent): unknown[] {
+  const elicitation = content.parts.find(
+    (part): part is ElicitationPart =>
+      part.kind === "elicitation" && part.blocking && part.resolution === undefined,
+  );
+  return elicitation === undefined ? [] : realizeElicitation(elicitation);
+}
+
+function realizeElicitation(elicitation: ElicitationPart): unknown[] {
+  for (const option of elicitation.options) {
+    validateSlackField(option.id, SLACK_BUTTON_VALUE_LIMIT, "button value");
+  }
+  const prompt = toSlackMrkdwn(elicitation.prompt);
+  const [firstPrompt = "", ...remainingPrompt] = splitSlackMrkdwn(prompt);
+  const generated = inputRequestToSlackBlocks({
+    prompt: firstPrompt,
+    requestId: elicitation.elicitationId,
+    options: elicitation.options.map((option) => ({
+      id: option.id,
+      label: option.label,
+      ...(option.style === undefined ? {} : { style: option.style }),
+    })),
+  });
+  validateSlackInputBlocks(generated);
+  const promptBlock = generated[0];
+  if (promptBlock === undefined || remainingPrompt.length === 0) return generated;
+  return [
+    promptBlock,
+    ...remainingPrompt.map((text) => ({ type: "section", text: { type: "mrkdwn", text } })),
+    ...generated.slice(1),
+  ];
+}
+
+function validateSlackInputBlocks(blocks: readonly Record<string, unknown>[]): void {
+  for (const block of blocks) {
+    if (!Array.isArray(block.elements)) continue;
+    for (const element of block.elements) {
+      if (!isRecord(element)) continue;
+      validateSlackField(element.action_id, SLACK_ACTION_ID_LIMIT, "action ID");
+      validateSlackField(element.value, SLACK_BUTTON_VALUE_LIMIT, "button value");
+      if (isRecord(element.text)) {
+        validateSlackField(element.text.text, SLACK_BUTTON_TEXT_LIMIT, "button text");
+      }
+    }
+  }
+}
+
+function validateSlackField(value: unknown, limit: number, field: string): void {
+  if (typeof value !== "string" || value.length <= limit) return;
+  throw new SurfaceDriverError(
+    "invalid_request",
+    `Slack ${field} exceeds the ${limit}-character limit`,
+    { retryable: false },
+  );
 }
 
 function slackMarkdownSections(text: string): unknown[] {
@@ -575,4 +656,8 @@ function slackMetadata(
 
 function defaultSleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -212,10 +212,10 @@ function narrativePartText(part: Part): string | undefined {
     case "elicitation": {
       const answer = part.resolution?.optionId;
       if (answer !== undefined) return `${part.prompt}\nAnswer: ${answer}`;
-      return [
-        part.prompt,
-        ...part.options.map((option, index) => `${index + 1}. ${option.label}`),
-      ].join("\n");
+      // Unresolved elicitations become native controls when the message is
+      // finalized. Keeping them out of the narrative avoids duplicating the
+      // prompt and choices above those controls.
+      return undefined;
     }
     case "error":
       return `Error: ${part.message}`;

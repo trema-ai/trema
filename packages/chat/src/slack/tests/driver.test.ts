@@ -105,6 +105,21 @@ function mutation(
   };
 }
 
+function pendingElicitation(): Extract<Part, { kind: "elicitation" }> {
+  return {
+    kind: "elicitation",
+    id: "elicitation-part-1",
+    elicitationId: "approval-1",
+    elicitationKind: "approval",
+    prompt: "**Deploy** version 2.4.1?",
+    options: [
+      { id: "approve", label: "Approve", style: "primary" },
+      { id: "deny", label: "Deny", style: "danger" },
+    ],
+    blocking: true,
+  };
+}
+
 describe("SlackDriver", () => {
   it("starts a threaded stream from committed render content and returns its durable ref", async () => {
     const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
@@ -360,6 +375,61 @@ describe("SlackDriver", () => {
     expect(slack.calls[1]?.body).not.toHaveProperty("markdown_text");
   });
 
+  it("attaches resolvable controls when a stream pauses for an elicitation", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+    const started = await render.apply(
+      [
+        create("Working", {
+          parts: [{ kind: "text", id: "text-1", status: "streaming", markdown: "Working" }],
+        }),
+      ],
+      context,
+    );
+    const metadata = started.messages[0]?.metadata;
+
+    await render.apply(
+      [
+        mutation("finalize", {
+          text: "Working\n\nDeploy version 2.4.1?\n1. Approve\n2. Deny",
+          parts: [
+            { kind: "text", id: "text-1", status: "done", markdown: "Working" },
+            pendingElicitation(),
+          ],
+          prior: { text: "Working", ...(metadata === undefined ? {} : { metadata }) },
+        }),
+      ],
+      context,
+    );
+
+    expect(slack.calls[1]).toMatchObject({
+      method: "chat.stopStream",
+      body: {
+        blocks: [
+          { type: "section", text: { type: "mrkdwn", text: "*Deploy* version 2.4.1?" } },
+          {
+            type: "actions",
+            elements: [
+              expect.objectContaining({
+                action_id: "input:approval-1:button:0",
+                type: "button",
+                value: "approve",
+              }),
+              expect.objectContaining({
+                action_id: "input:approval-1:button:1",
+                type: "button",
+                value: "deny",
+              }),
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   it("appends and finalizes the same Slack stream", async () => {
     const slack = fakeSlack([
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
@@ -444,6 +514,30 @@ describe("SlackDriver", () => {
     expect(sections.every((block) => Array.from(block.text.text).length <= 3_000)).toBe(true);
   });
 
+  it("renders elicitation controls when the first delivery is already final", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+
+    await driver({ fetch: slack.fetch }).apply(
+      [
+        create("Deploy version 2.4.1?\n1. Approve\n2. Deny", {
+          finalized: true,
+          parts: [pendingElicitation()],
+        }),
+      ],
+      context,
+    );
+
+    expect(slack.calls[0]).toMatchObject({
+      method: "chat.postMessage",
+      body: {
+        blocks: [
+          { type: "section", text: { type: "mrkdwn", text: "*Deploy* version 2.4.1?" } },
+          { type: "actions", elements: expect.arrayContaining([expect.any(Object)]) },
+        ],
+      },
+    });
+  });
+
   it("degrades a maximum-sized answer into deterministic Slack sections", async () => {
     const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
     await driver({ fetch: slack.fetch }).apply(
@@ -505,6 +599,27 @@ describe("SlackDriver", () => {
     ).resolves.toEqual(
       expect.objectContaining({ appliedOperationIds: [expect.stringContaining(":delete:")] }),
     );
+  });
+
+  it("acknowledges a replay when Slack already finalized the stream", async () => {
+    const slack = fakeSlack([{ body: { ok: false, error: "message_not_in_streaming_state" } }]);
+
+    await expect(
+      driver({ fetch: slack.fetch }).apply([mutation("finalize")], context),
+    ).resolves.toMatchObject({
+      appliedOperationIds: [expect.stringContaining(":finalize:")],
+      messages: [expect.objectContaining({ metadata: expect.objectContaining({ mode: "final" }) })],
+    });
+  });
+
+  it("does not acknowledge a finalize when Slack cannot find the message", async () => {
+    const slack = fakeSlack([{ body: { ok: false, error: "message_not_found" } }]);
+    const error = await driver({ fetch: slack.fetch })
+      .apply([mutation("finalize")], context)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(SurfaceDriverError);
+    expect(error).toMatchObject({ code: "message_not_found", retryable: false });
   });
 
   it("preserves Slack retry-after as a retryable surface error", async () => {
