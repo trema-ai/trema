@@ -574,6 +574,34 @@ describe("SlackDriver", () => {
     });
   });
 
+  it("preserves elicitation choices across Slack action blocks", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+    const options = Array.from({ length: 26 }, (_, index) => ({
+      id: `choice-${index + 1}`,
+      label: `Choice ${index + 1}`,
+    }));
+    const elicitation: Extract<Part, { kind: "elicitation" }> = {
+      ...pendingElicitation(),
+      options,
+    };
+
+    await driver({ fetch: slack.fetch }).apply(
+      [create("Choose an option", { finalized: true, parts: [elicitation] })],
+      context,
+    );
+
+    const blocks = slack.calls[0]?.body.blocks as Array<Record<string, unknown>>;
+    const actions = blocks.filter(({ type }) => type === "actions") as Array<{
+      elements: Array<{ value: string }>;
+    }>;
+    expect(actions.map(({ elements }) => elements)).toHaveLength(2);
+    expect(actions.map(({ elements }) => elements.length)).toEqual([25, 1]);
+    expect(actions.flatMap(({ elements }) => elements.map(({ value }) => value))).toEqual(
+      options.map(({ id }) => id),
+    );
+    expect(blocks.at(-1)).toEqual(canonicalRunLinkBlock);
+  });
+
   it("degrades a maximum-sized answer into deterministic Slack sections", async () => {
     const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
     await driver({ fetch: slack.fetch }).apply(

@@ -30,6 +30,8 @@ import {
   staticThinkingBlock,
 } from "#chat/slack/thinking.js";
 
+const SLACK_ACTION_ELEMENTS_LIMIT = 25;
+
 export const slackCapabilities = {
   mutation: "edit",
   streaming: "delta",
@@ -43,7 +45,7 @@ export const slackCapabilities = {
     threads: true,
   },
   budgets: {
-    actionsPerMessage: 25,
+    actionsPerMessage: SLACK_ACTION_ELEMENTS_LIMIT,
     firstPaintMs: 3_000,
     flushIntervalMs: 600,
     // Slack stream markdown is capped at 12,000 characters. Leave room for
@@ -520,23 +522,36 @@ function realizeElicitation(elicitation: ElicitationPart): unknown[] {
   }
   const prompt = toSlackMrkdwn(elicitation.prompt);
   const [firstPrompt = "", ...remainingPrompt] = splitSlackMrkdwn(prompt);
-  const generated = inputRequestToSlackBlocks({
-    prompt: firstPrompt,
-    requestId: elicitation.elicitationId,
-    options: elicitation.options.map((option) => ({
-      id: option.id,
-      label: option.label,
-      ...(option.style === undefined ? {} : { style: option.style }),
-    })),
-  });
-  validateSlackInputBlocks(generated);
-  const promptBlock = generated[0];
-  if (promptBlock === undefined || remainingPrompt.length === 0) return generated;
-  return [
-    promptBlock,
+  const options = elicitation.options.map((option) => ({
+    id: option.id,
+    label: option.label,
+    ...(option.style === undefined ? {} : { style: option.style }),
+  }));
+  const optionGroups = chunk(options, SLACK_ACTION_ELEMENTS_LIMIT);
+  const generatedGroups = (optionGroups.length === 0 ? [[]] : optionGroups).map((group) =>
+    inputRequestToSlackBlocks({
+      prompt: firstPrompt,
+      requestId: elicitation.elicitationId,
+      options: group,
+    }),
+  );
+  const promptBlock = generatedGroups[0]?.[0];
+  const actionBlocks = generatedGroups.flatMap((blocks) => blocks.slice(1));
+  const generated = [
+    ...(promptBlock === undefined ? [] : [promptBlock]),
     ...remainingPrompt.map((text) => ({ type: "section", text: { type: "mrkdwn", text } })),
-    ...generated.slice(1),
+    ...actionBlocks,
   ];
+  validateSlackInputBlocks(generated);
+  return generated;
+}
+
+function chunk<T>(values: readonly T[], size: number): T[][] {
+  const groups: T[][] = [];
+  for (let offset = 0; offset < values.length; offset += size) {
+    groups.push(values.slice(offset, offset + size));
+  }
+  return groups;
 }
 
 function validateSlackInputBlocks(blocks: readonly Record<string, unknown>[]): void {
