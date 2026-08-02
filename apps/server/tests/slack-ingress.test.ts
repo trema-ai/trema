@@ -316,6 +316,52 @@ integration("Slack ingress", () => {
     await expect(db.runQueuedInput.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
   });
 
+  it("keeps a delivery pending until an unresolved run claim can be reclaimed", async () => {
+    const fixture = await setup("TPENDINGCLAIM");
+    const intentId = "slack:event:Ev-pending-claim";
+    const deliveryId = `slack:delivery:${fixture.workspaceId}:C123ABC:${intentId}`;
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+    const ingress = subject({ notify });
+    await db.runIntent.create({
+      data: { orgId: fixture.org.id, id: intentId, kind: "message" },
+    });
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({ eventId: "Ev-pending-claim", workspaceId: fixture.workspaceId }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+    ).resolves.toMatchObject({ attempt: 1, completedAt: null, leaseUntil: expect.any(Date) });
+    await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
+    expect(notify).not.toHaveBeenCalled();
+
+    await db.runIntent.update({
+      where: { orgId_id: { orgId: fixture.org.id, id: intentId } },
+      data: { createdAt: new Date(Date.now() - 61_000) },
+    });
+    await db.slackIngressDelivery.update({
+      where: { id: deliveryId },
+      data: { leaseUntil: null },
+    });
+    await ingress.service.recoverPending();
+
+    await expect(
+      db.runIntent.findUniqueOrThrow({
+        where: { orgId_id: { orgId: fixture.org.id, id: intentId } },
+      }),
+    ).resolves.toMatchObject({ runId: expect.any(String), outcome: "started" });
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+    ).resolves.toMatchObject({ completedAt: expect.any(Date), payload: { kind: "completed" } });
+    await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+  });
+
   it("keeps out-of-order and concurrent replies on one durable Slack thread", async () => {
     const fixture = await setup();
     const ingress = subject();

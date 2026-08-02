@@ -302,7 +302,8 @@ export class SlackIngressService {
       await this.#completeDelivery(id, owner);
       return "completed";
     } catch (error) {
-      if (delivery.attempt === 1 && payload.kind === "surface") {
+      const claimPending = error instanceof SlackRunClaimPendingError;
+      if (delivery.attempt === 1 && payload.kind === "surface" && !claimPending) {
         await this.#safeNotice(payload.event, SAFE_UNAVAILABLE, "private", payload.connectionIds);
       }
       const retryAt = new Date(Date.now() + ingressRetryDelay(delivery.attempt));
@@ -311,7 +312,11 @@ export class SlackIngressService {
         data: { awaitingThread: false, leaseOwner: null, leaseUntil: retryAt },
       });
       this.#scheduleRecovery(retryAt);
-      log.error("Slack ingress delivery will retry", { error, deliveryId: id });
+      if (claimPending) {
+        log.debug("Slack ingress delivery awaits an existing run claim", { deliveryId: id });
+      } else {
+        log.error("Slack ingress delivery will retry", { error, deliveryId: id });
+      }
       return "failed";
     }
   }
@@ -585,7 +590,7 @@ export class SlackIngressService {
       principalId: request.requesterPrincipalId,
       displayName: request.requesterDisplayName,
     };
-    await startRun({
+    const started = await startRun({
       services,
       input: {
         intentId: event.intentId,
@@ -604,6 +609,7 @@ export class SlackIngressService {
         message: { role: "user", blocks: [{ type: "text", text }] },
       },
     });
+    if (started.runId === null) throw new SlackRunClaimPendingError();
     return "completed";
   }
 
@@ -839,6 +845,8 @@ export class SlackIngressVerificationThrottledError extends Error {
 }
 
 class SlackRunSchedulingUnavailableError extends Error {}
+
+class SlackRunClaimPendingError extends Error {}
 
 class SlackTargetMismatchError extends Error {
   readonly code = "target_mismatch";
