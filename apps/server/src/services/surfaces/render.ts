@@ -1,9 +1,12 @@
 import type { Projection } from "@trema/projection";
 import {
+  type ApplyResult,
   acknowledge,
   planRender,
+  type RenderOperation,
   type RenderPlan,
   retryDecision,
+  type SurfaceApplyContext,
   type SurfaceDriver,
   SurfaceDriverError,
   type SurfaceRealization,
@@ -57,6 +60,7 @@ export interface SurfaceRealizationStore {
   commit(input: CommitRealizationInput): Promise<SurfaceRealization>;
   recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization>;
   recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization>;
+  renew(id: string, owner: string, ttlMs: number): Promise<boolean>;
   release(id: string, owner: string): Promise<boolean>;
 }
 
@@ -128,7 +132,7 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
   }
 
   try {
-    const applied = await input.driver.apply(plan.operations, {
+    const applied = await applyWithLeaseHeartbeat(input, current.id, plan.operations, {
       runId: input.projection.runId,
       ref: input.ref,
       canonicalRunUrl: input.canonicalRunUrl,
@@ -208,6 +212,62 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
       realization: failed,
     };
   }
+}
+
+/** Keeps ownership live while a throttled remote batch is in flight. */
+async function applyWithLeaseHeartbeat(
+  input: RenderSurfaceInput,
+  realizationId: string,
+  operations: RenderOperation[],
+  context: SurfaceApplyContext,
+): Promise<ApplyResult> {
+  const ttlMs = input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
+  const intervalMs = Math.max(1, Math.floor(ttlMs / 3));
+  let renewal: Promise<void> | undefined;
+  let heartbeatError: unknown;
+
+  const beginRenewal = (): void => {
+    if (renewal !== undefined || heartbeatError !== undefined) return;
+    renewal = input.store
+      .renew(realizationId, input.owner, ttlMs)
+      .then((renewed) => {
+        if (!renewed) {
+          throw new SurfaceRealizationConflictError(
+            `surface realization lost its lease during remote apply: ${realizationId}`,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        heartbeatError = error;
+      })
+      .then(() => {
+        renewal = undefined;
+      });
+  };
+
+  const timer = setInterval(beginRenewal, intervalMs);
+  timer.unref();
+  let result: ApplyResult | undefined;
+  let applyFailed = false;
+  let applyError: unknown;
+  try {
+    result = await input.driver.apply(operations, context);
+  } catch (error) {
+    applyFailed = true;
+    applyError = error;
+  } finally {
+    clearInterval(timer);
+    await renewal;
+  }
+
+  if (heartbeatError !== undefined) throw heartbeatError;
+  if (!(await input.store.renew(realizationId, input.owner, ttlMs))) {
+    throw new SurfaceRealizationConflictError(
+      `surface realization lost its lease after remote apply: ${realizationId}`,
+    );
+  }
+  if (applyFailed) throw applyError;
+  return result!;
 }
 
 function sameSegments(

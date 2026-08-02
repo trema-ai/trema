@@ -19,6 +19,7 @@ import type {
   RecordRenderStopInput,
   StageRenderPlanInput,
 } from "#server/services/surfaces/store.js";
+import { SurfaceRealizationConflictError } from "#server/services/surfaces/store.js";
 
 const ref = {
   surface: "slack",
@@ -71,6 +72,8 @@ class MemoryStore implements SurfaceRealizationStore {
     retry: { attempt: 0, terminal: false },
   };
   released = 0;
+  renewed = 0;
+  renewalResult = true;
 
   async claim(): Promise<SurfaceRealization | undefined> {
     return this.current.retry.terminal || this.current.presentation.stoppedByUser === true
@@ -125,6 +128,11 @@ class MemoryStore implements SurfaceRealizationStore {
       retry: { attempt: 0, terminal: false },
     };
     return this.current;
+  }
+
+  async renew(): Promise<boolean> {
+    this.renewed += 1;
+    return this.renewalResult;
   }
 
   async release(): Promise<boolean> {
@@ -202,6 +210,41 @@ describe("renderSurface", () => {
       ],
     });
     expect(store.current).not.toHaveProperty("pendingPlan");
+  });
+
+  it("renews its lease while a remote batch runs longer than the original TTL", async () => {
+    const store = new MemoryStore();
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(async (operations) => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return createdResult(operations);
+      }),
+      projection: projection("Hello"),
+      leaseTtlMs: 15,
+    });
+
+    expect(result).toMatchObject({ status: "rendered", operations: 1 });
+    expect(store.renewed).toBeGreaterThanOrEqual(2);
+  });
+
+  it("preserves the staged plan when lease renewal loses ownership", async () => {
+    const store = new MemoryStore();
+    store.renewalResult = false;
+
+    await expect(
+      renderSurface({
+        ...baseInput,
+        store,
+        driver: fakeDriver(async (operations) => createdResult(operations)),
+        projection: projection("Hello"),
+      }),
+    ).rejects.toBeInstanceOf(SurfaceRealizationConflictError);
+    expect(store.current).toMatchObject({
+      renderedThroughSeq: 0,
+      pendingPlan: expect.objectContaining({ fromCursor: 0, toCursor: 1 }),
+    });
   });
 
   it("replays the exact staged operation after worker restart and commits the adopted ref", async () => {
