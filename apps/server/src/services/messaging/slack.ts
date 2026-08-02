@@ -923,7 +923,8 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("connector_mismatch");
   }
 
-  const conversationThreadRef = threadTs ?? "";
+  const logicalThreadRef = input.directMessage ? `slack:${locationRef}` : threadTs;
+  const conversationThreadRef = logicalThreadRef ?? "";
   const [binding, conversation, run] = await Promise.all([
     db.binding.findUnique({
       where: {
@@ -951,7 +952,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
         session: {
           surface: SLACK_PROVIDER_KEY,
           locationRef,
-          threadRef: threadTs ?? null,
+          threadRef: logicalThreadRef ?? null,
         },
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],

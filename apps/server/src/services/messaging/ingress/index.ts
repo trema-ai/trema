@@ -38,6 +38,8 @@ const SAFE_REJECTION =
   "Trema can't start work from this Slack account or conversation. Ask a Trema administrator to check the Slack connection, member link, and conversation binding.";
 const SAFE_UNAVAILABLE =
   "Trema can't start work right now. Ask a Trema administrator to check the Slack connection.";
+const SLACK_THREAD_OWNERSHIP_RETRIES = 5;
+const SLACK_THREAD_OWNERSHIP_RETRY_MS = 100;
 
 export interface SlackIngressAcknowledgement {
   challenge?: string;
@@ -258,6 +260,10 @@ export class SlackIngressService {
 
   async #message(event: MessageSurfaceEvent): Promise<void> {
     if (await this.#isMentionShadow(event)) return;
+    if (event.nativeKind === "thread-reply" && !(await this.#waitForOwnedThread(event))) {
+      log.debug("Slack unrelated thread reply ignored");
+      return;
+    }
     const request = await this.#resolve(event);
     const engine = this.#options.runEngineFor?.(request.orgId);
     if (engine === undefined) throw new SlackRunSchedulingUnavailableError();
@@ -280,7 +286,7 @@ export class SlackIngressService {
         trigger: "message",
         surface: "slack",
         locationRef: request.locationRef,
-        threadRef: event.surfaceRef.threadRef,
+        ...(event.nativeKind === "direct-message" ? {} : { threadRef: event.surfaceRef.threadRef }),
         ...(event.nativeKind === "direct-message"
           ? {
               directMessage: true,
@@ -291,6 +297,38 @@ export class SlackIngressService {
         message: { role: "user", blocks: [{ type: "text", text }] },
       },
     });
+  }
+
+  async #waitForOwnedThread(event: MessageSurfaceEvent): Promise<boolean> {
+    const workspaceId = event.surfaceRef.teamRef;
+    if (workspaceId === undefined) return false;
+    const connections = await this.#options.db.connectorConnection.findMany({
+      where: {
+        providerKey: "slack",
+        revokedAt: null,
+        config: { path: ["team.id"], equals: workspaceId },
+        owner: { kind: "agent", deactivatedAt: null },
+      },
+      select: { orgId: true },
+    });
+    const orgIds = [...new Set(connections.map((connection) => connection.orgId))];
+    if (orgIds.length === 0) return false;
+    for (let attempt = 0; attempt < SLACK_THREAD_OWNERSHIP_RETRIES; attempt += 1) {
+      const session = await this.#options.db.contextSession.findFirst({
+        where: {
+          orgId: { in: orgIds },
+          surface: "slack",
+          locationRef: event.surfaceRef.locationRef,
+          threadRef: event.surfaceRef.threadRef,
+        },
+        select: { id: true },
+      });
+      if (session !== null) return true;
+      if (attempt + 1 < SLACK_THREAD_OWNERSHIP_RETRIES) {
+        await new Promise<void>((resolve) => setTimeout(resolve, SLACK_THREAD_OWNERSHIP_RETRY_MS));
+      }
+    }
+    return false;
   }
 
   async #isMentionShadow(event: MessageSurfaceEvent): Promise<boolean> {

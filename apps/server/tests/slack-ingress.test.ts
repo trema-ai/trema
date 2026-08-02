@@ -104,18 +104,22 @@ function threadReply(input: {
   };
 }
 
-function directMessage(workspaceId: string) {
+function directMessage(
+  workspaceId: string,
+  eventId = "Ev-direct-message",
+  ts = "1800000000.000020",
+) {
   return {
     event: {
       channel: "D123ABC",
       channel_type: "im",
-      event_ts: "1800000000.000020",
+      event_ts: ts,
       text: "summarize my open work",
-      ts: "1800000000.000020",
+      ts,
       type: "message",
       user: "U123ABC",
     },
-    event_id: "Ev-direct-message",
+    event_id: eventId,
     event_time: nowSeconds,
     team_id: workspaceId,
     type: "event_callback",
@@ -378,14 +382,23 @@ integration("Slack ingress", () => {
     const ingress = subject();
 
     await ingress.service.accept(signedRequest(JSON.stringify(directMessage(fixture.workspaceId))));
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          directMessage(fixture.workspaceId, "Ev-direct-message-follow-up", "1800000000.000021"),
+        ),
+      ),
+    );
     await ingress.drain();
 
     const run = await db.agentRun.findFirstOrThrow({
       where: { orgId: fixture.org.id },
       include: { session: { include: { scope: true } } },
     });
-    expect(run.threadRef).toBe("1800000000.000020");
+    expect(run.threadRef).toBe(`slack:${fixture.workspaceId}:D123ABC`);
     expect(run.session?.scope.kind).toBe("personal");
+    await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+    await expect(db.runQueuedInput.count({ where: { orgId: fixture.org.id } })).resolves.toBe(2);
     await expect(
       db.binding.findUnique({
         where: {
@@ -397,6 +410,32 @@ integration("Slack ingress", () => {
         },
       }),
     ).resolves.toMatchObject({ scopeId: run.session?.scopeId });
+  });
+
+  it("ignores unmentioned replies outside Trema-owned Slack threads", async () => {
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+    const fixture = await setup("TUNRELATEDTHREAD", false);
+    const ingress = subject({ notify });
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          threadReply({
+            eventId: "Ev-unrelated-thread",
+            workspaceId: fixture.workspaceId,
+            threadTs: "1800000000.000030",
+            ts: "1800000000.000031",
+            text: "ordinary team discussion",
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
+    await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
+    await expect(db.contextSession.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("creates no intent for unlinked users, revoked installations, or bot loops", async () => {
