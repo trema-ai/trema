@@ -3,7 +3,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { type Engine, InMemoryEngine } from "@trema/harness";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { encryptEnvelope } from "#server/lib/crypto/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
 import { createClientRegistration } from "#server/services/connectors/index.js";
@@ -119,6 +119,22 @@ function directMessage(workspaceId: string) {
   };
 }
 
+function lifecycleEvent(
+  workspaceId: string,
+  event:
+    | { type: "app_uninstalled" }
+    | { type: "tokens_revoked"; tokens: { bot?: string[]; oauth?: string[] } },
+) {
+  return {
+    api_app_id: "A123ABC",
+    event,
+    event_id: `Ev-${event.type}-${workspaceId}`,
+    event_time: nowSeconds,
+    team_id: workspaceId,
+    type: "event_callback",
+  };
+}
+
 function interaction(input: {
   workspaceId: string;
   triggerId: string;
@@ -195,9 +211,23 @@ integration("Slack ingress", () => {
         config: {
           "team.id": workspaceId,
           "team.name": "Trema Test",
+          "authed_user.id": "UINSTALLER",
+          app_id: "A123ABC",
           bot_user_id: "U999BOT",
         },
-        ciphertext: encryptEnvelope({ accessToken: "xoxb-safe-test-token" }, masterKey),
+        ciphertext: encryptEnvelope(
+          {
+            accessToken: "xoxb-safe-test-token",
+            raw: {
+              authed_user: {
+                id: "UINSTALLER",
+                access_token: "xoxp-safe-test-token",
+                refresh_token: "xoxe-safe-test-token",
+              },
+            },
+          },
+          masterKey,
+        ),
         providerScopes: ["app_mentions:read", "chat:write"],
       },
     });
@@ -388,11 +418,13 @@ integration("Slack ingress", () => {
       data: { revokedAt: new Date() },
     });
     const second = subject({ notify });
-    await second.service.accept(
-      signedRequest(
-        JSON.stringify(appMention({ eventId: "Ev-revoked", workspaceId: revoked.workspaceId })),
+    await expect(
+      second.service.accept(
+        signedRequest(
+          JSON.stringify(appMention({ eventId: "Ev-revoked", workspaceId: revoked.workspaceId })),
+        ),
       ),
-    );
+    ).rejects.toThrow("No Slack signing secret is configured for this delivery");
     await second.drain();
 
     const active = await setup("TBOTLOOP");
@@ -437,6 +469,92 @@ integration("Slack ingress", () => {
 
     await expect(db.runIntent.count({ where: { orgId: retired.org.id } })).resolves.toBe(0);
     await expect(db.runIntent.count({ where: { orgId: active.org.id } })).resolves.toBe(1);
+  });
+
+  it("does not use another organization's secret for an event without a workspace hint", async () => {
+    const sourceSecret = "source-org-slack-signing-secret";
+    const targetSecret = "target-org-slack-signing-secret";
+    await setup("TSOURCE", true, sourceSecret);
+    const target = await setup("TTARGET", true, targetSecret);
+    const ingress = subject();
+    const body = JSON.stringify({
+      enterprise_id: target.workspaceId,
+      event: {
+        channel: "C123ABC",
+        event_ts: "1800000000.000004",
+        text: "forged cross-tenant reply",
+        thread_ts: "1800000000.000001",
+        ts: "1800000000.000004",
+        type: "message",
+        user: "U123ABC",
+      },
+      event_id: "Ev-cross-tenant",
+      event_time: nowSeconds,
+      type: "event_callback",
+    });
+
+    await expect(
+      ingress.service.accept(signedRequest(body, "application/json", sourceSecret)),
+    ).rejects.toThrow("No Slack signing secret is configured for this delivery");
+    await ingress.drain();
+
+    await expect(db.runIntent.count({ where: { orgId: target.org.id } })).resolves.toBe(0);
+  });
+
+  it("revokes installations when Slack reports an uninstall or bot-token revocation", async () => {
+    const uninstalled = await setup("TUNINSTALLED");
+    const botRevoked = await setup("TBOTREVOKED");
+    const ingress = subject();
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(lifecycleEvent(uninstalled.workspaceId, { type: "app_uninstalled" })),
+      ),
+    );
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          lifecycleEvent(botRevoked.workspaceId, {
+            type: "tokens_revoked",
+            tokens: { bot: ["U999BOT"] },
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: uninstalled.connection.id } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: botRevoked.connection.id } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+  });
+
+  it("removes a revoked Slack user token without disabling the active bot", async () => {
+    const fixture = await setup("TUSERREVOKED");
+    const ingress = subject();
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          lifecycleEvent(fixture.workspaceId, {
+            type: "tokens_revoked",
+            tokens: { oauth: ["UINSTALLER"] },
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    const connection = await db.connectorConnection.findUniqueOrThrow({
+      where: { id: fixture.connection.id },
+    });
+    expect(connection.revokedAt).toBeNull();
+    expect(decryptEnvelope(connection.ciphertext, masterKey)).toEqual({
+      accessToken: "xoxb-safe-test-token",
+      raw: { authed_user: { id: "UINSTALLER" } },
+    });
   });
 
   it("posts a public setup link when a conversation is not bound", async () => {

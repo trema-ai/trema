@@ -1,6 +1,6 @@
 import { loadProviderCatalog } from "@trema/connectors";
 
-import { encryptEnvelope } from "#server/lib/crypto/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { createBinding, deleteBinding, resolveLocation } from "#server/services/bindings/index.js";
@@ -186,6 +186,96 @@ export function slackAppManifest(authBaseUrl: string) {
       token_rotation_enabled: true,
     },
   };
+}
+
+export type SlackLifecycleEvent =
+  | { type: "app_uninstalled"; workspaceId: string; appId: string }
+  | {
+      type: "tokens_revoked";
+      workspaceId: string;
+      appId: string;
+      botUserIds: readonly string[];
+      oauthUserIds: readonly string[];
+    };
+
+/** Applies provider-originated installation and credential lifecycle changes. */
+export async function applySlackLifecycleEvent(
+  db: Database,
+  event: SlackLifecycleEvent,
+  masterKey?: string,
+): Promise<void> {
+  const candidates = await db.connectorConnection.findMany({
+    where: {
+      providerKey: SLACK_PROVIDER_KEY,
+      revokedAt: null,
+      config: { path: ["team.id"], equals: event.workspaceId },
+      owner: { kind: "agent", deactivatedAt: null },
+    },
+    select: { id: true, orgId: true, config: true, ciphertext: true },
+  });
+  const matching = candidates.filter((connection) => {
+    const storedAppId = stringField(connection.config, "app_id");
+    return storedAppId === null || storedAppId === event.appId;
+  });
+  if (matching.length === 0) return;
+  if (matching.length !== 1) {
+    log.warn("Slack lifecycle event resolved ambiguously", {
+      nativeKind: event.type,
+      workspaceId: event.workspaceId,
+      count: matching.length,
+    });
+    return;
+  }
+  const connection = matching[0]!;
+  if (
+    event.type === "app_uninstalled" ||
+    event.botUserIds.includes(stringField(connection.config, "bot_user_id") ?? "")
+  ) {
+    const revokedAt = new Date();
+    const updated = await db.connectorConnection.updateMany({
+      where: { id: connection.id, orgId: connection.orgId, revokedAt: null },
+      data: { revokedAt },
+    });
+    if (updated.count > 0) {
+      log.info("Slack installation revoked by provider", { connectionId: connection.id });
+    }
+    return;
+  }
+
+  const installerUserId = stringField(connection.config, "authed_user.id");
+  if (installerUserId === null || !event.oauthUserIds.includes(installerUserId)) return;
+  let credential: Record<string, unknown>;
+  try {
+    credential = record(decryptEnvelope<unknown>(connection.ciphertext, masterKey));
+  } catch {
+    log.warn("Slack revoked user credential could not be removed", {
+      connectionId: connection.id,
+    });
+    return;
+  }
+  const raw = record(credential.raw);
+  const authedUser = record(raw.authed_user);
+  const revokedFields = new Set(["access_token", "refresh_token", "expires_in", "expires_at"]);
+  if (!Object.keys(authedUser).some((key) => revokedFields.has(key))) return;
+  const retainedUser = Object.fromEntries(
+    Object.entries(authedUser).filter(([key]) => !revokedFields.has(key)),
+  );
+  const ciphertext = encryptEnvelope(
+    { ...credential, raw: { ...raw, authed_user: retainedUser } },
+    masterKey,
+  );
+  const updated = await db.connectorConnection.updateMany({
+    where: {
+      id: connection.id,
+      orgId: connection.orgId,
+      revokedAt: null,
+      ciphertext: connection.ciphertext,
+    },
+    data: { ciphertext },
+  });
+  if (updated.count > 0) {
+    log.info("Slack installer credential revoked by provider", { connectionId: connection.id });
+  }
 }
 
 export interface StartSlackInstallationInput {

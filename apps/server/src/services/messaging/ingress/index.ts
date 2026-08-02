@@ -18,7 +18,9 @@ import {
   resolveConnectionCredential,
 } from "#server/services/connectors/index.js";
 import {
+  applySlackLifecycleEvent,
   resolveSlackRequest,
+  type SlackLifecycleEvent,
   SlackRequestRejectedError,
 } from "#server/services/messaging/slack.js";
 import {
@@ -105,6 +107,17 @@ export class SlackIngressService {
     const event = await this.#read(request, body);
     if (event.type === "challenge") return { challenge: event.challenge };
     if (event.type === "unsupported") {
+      const lifecycle = slackLifecycleEvent(event.nativePayload);
+      if (lifecycle !== undefined) {
+        this.#options.defer(
+          applySlackLifecycleEvent(
+            this.#options.db,
+            lifecycle,
+            this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
+          ),
+        );
+        return {};
+      }
       log.debug("Slack delivery ignored", { nativeKind: event.nativeType });
       return {};
     }
@@ -113,8 +126,8 @@ export class SlackIngressService {
   }
 
   async #read(request: Request, body: string): Promise<SurfaceEvent> {
-    const workspaceId = slackWorkspaceHint(body, request.headers.get("content-type"));
-    const signingSecrets = await this.#signingSecrets(workspaceId);
+    const hint = slackEnvelopeHint(body, request.headers.get("content-type"));
+    const signingSecrets = await this.#signingSecrets(hint.workspaceId, hint.urlVerification);
     if (signingSecrets.length === 0) throw new SlackIngressConfigurationError();
 
     let invalidRequest: SurfaceDriverError | undefined;
@@ -142,7 +155,10 @@ export class SlackIngressService {
     throw invalidRequest ?? new SlackIngressConfigurationError();
   }
 
-  async #signingSecrets(workspaceId: string | undefined): Promise<string[]> {
+  async #signingSecrets(
+    workspaceId: string | undefined,
+    allowGlobalFallback: boolean,
+  ): Promise<string[]> {
     const matchingConnections = workspaceId
       ? await this.#options.db.connectorConnection.findMany({
           where: {
@@ -157,11 +173,13 @@ export class SlackIngressService {
     const registrations =
       matchingConnections.length > 0
         ? matchingConnections
-        : await this.#options.db.clientRegistration.findMany({
-            where: { providerKey: "slack" },
-            select: { orgId: true },
-            distinct: ["orgId"],
-          });
+        : allowGlobalFallback
+          ? await this.#options.db.clientRegistration.findMany({
+              where: { providerKey: "slack" },
+              select: { orgId: true },
+              distinct: ["orgId"],
+            })
+          : [];
     const secrets = new Set<string>();
     for (const orgId of new Set(registrations.map((registration) => registration.orgId))) {
       try {
@@ -441,16 +459,21 @@ function stripBotMention(text: string, botUserId: string | null): string {
   return text.replace(new RegExp(`<@${botUserId}>`, "gu"), "").trim();
 }
 
-function slackWorkspaceHint(body: string, contentType: string | null): string | undefined {
+function slackEnvelopeHint(
+  body: string,
+  contentType: string | null,
+): { urlVerification: boolean; workspaceId?: string } {
   let payload: unknown;
   try {
     payload = contentType?.includes("application/x-www-form-urlencoded")
       ? JSON.parse(new URLSearchParams(body).get("payload") ?? "null")
       : JSON.parse(body);
   } catch {
-    return undefined;
+    return { urlVerification: false };
   }
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return { urlVerification: false };
+  }
   const record = payload as Record<string, unknown>;
   const direct = record.team_id;
   const team = record.team;
@@ -459,9 +482,50 @@ function slackWorkspaceHint(body: string, contentType: string | null): string | 
       ? (team as Record<string, unknown>).id
       : undefined;
   const candidate = typeof direct === "string" ? direct : nested;
-  return typeof candidate === "string" && /^[A-Z][A-Z0-9]{1,31}$/.test(candidate)
-    ? candidate
-    : undefined;
+  const workspaceId = slackId(candidate);
+  return {
+    urlVerification: record.type === "url_verification",
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+  };
+}
+
+function slackLifecycleEvent(payload: unknown): SlackLifecycleEvent | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const envelope = payload as Record<string, unknown>;
+  if (envelope.type !== "event_callback") return undefined;
+  const workspaceId = slackId(envelope.team_id);
+  const appId = slackId(envelope.api_app_id);
+  const native =
+    typeof envelope.event === "object" && envelope.event !== null && !Array.isArray(envelope.event)
+      ? (envelope.event as Record<string, unknown>)
+      : undefined;
+  if (workspaceId === undefined || appId === undefined || native === undefined) return undefined;
+  if (native.type === "app_uninstalled") return { type: "app_uninstalled", workspaceId, appId };
+  if (native.type !== "tokens_revoked") return undefined;
+  const tokens =
+    typeof native.tokens === "object" && native.tokens !== null && !Array.isArray(native.tokens)
+      ? (native.tokens as Record<string, unknown>)
+      : {};
+  return {
+    type: "tokens_revoked",
+    workspaceId,
+    appId,
+    botUserIds: slackIds(tokens.bot),
+    oauthUserIds: slackIds(tokens.oauth),
+  };
+}
+
+function slackId(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Z][A-Z0-9]{1,31}$/.test(value) ? value : undefined;
+}
+
+function slackIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((candidate) => {
+        const id = slackId(candidate);
+        return id === undefined ? [] : [id];
+      })
+    : [];
 }
 
 async function requireSlackElicitationTarget(

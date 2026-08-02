@@ -7,6 +7,7 @@ export {
   SlackIngressService,
 } from "#server/services/messaging/ingress/index.js";
 export {
+  applySlackLifecycleEvent,
   createSlackBinding,
   deleteSlackBinding,
   deleteSlackIdentityLink,
@@ -19,6 +20,7 @@ export {
   SLACK_EVENTS_PATH,
   SLACK_INTERACTIONS_PATH,
   SlackInstallationNotFoundError,
+  type SlackLifecycleEvent,
   SlackMessagingConflictError,
   SlackMessagingValidationError,
   SlackRequestRejectedError,
