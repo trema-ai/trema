@@ -2,6 +2,7 @@ import {
   ConcurrencyLimitStrategy,
   type Duration,
   type HatchetClient,
+  IdempotencyCollisionError,
 } from "@hatchet-dev/typescript-sdk/v1/index.js";
 import type { Engine, EngineTask } from "@trema/harness";
 
@@ -16,6 +17,7 @@ export const RUN_TASK_NAME = "trema-run";
  * executions instead of redelivering a healthy run while it is still writing.
  */
 export const DEFAULT_RUN_EXECUTION_TIMEOUT: Duration = "30m";
+export const DEFAULT_RUN_IDEMPOTENCY_FALLBACK_MS = 7 * 24 * 60 * 60 * 1_000;
 
 /**
  * Everything the engine carries for a run.
@@ -73,6 +75,11 @@ export function defineRunTask(
 ) {
   return hatchet.task<RunTaskInput, RunTaskOutput>({
     name: RUN_TASK_NAME,
+    idempotency: {
+      strategy: "status",
+      expression: "input.runId",
+      fallbackTtlMs: DEFAULT_RUN_IDEMPOTENCY_FALLBACK_MS,
+    },
     concurrency: {
       expression: "input.concurrencyKey",
       maxRuns: 1,
@@ -131,10 +138,16 @@ export class HatchetEngine implements Engine {
   }
 
   async enqueue(task: EngineTask): Promise<void> {
-    await this.#trigger.runNoWait({
-      runId: task.runId,
-      concurrencyKey: concurrencyKey(this.#orgId, task.threadRef),
-    });
+    try {
+      await this.#trigger.runNoWait({
+        runId: task.runId,
+        concurrencyKey: concurrencyKey(this.#orgId, task.threadRef),
+      });
+    } catch (error) {
+      if (!(error instanceof IdempotencyCollisionError)) throw error;
+      log.debug("Run was already enqueued", { runId: task.runId, threadRef: task.threadRef });
+      return;
+    }
     log.debug("Run enqueued", { runId: task.runId, threadRef: task.threadRef });
   }
 }

@@ -47,7 +47,7 @@ const SLACK_INGRESS_TOMBSTONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const SLACK_INGRESS_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 const SLACK_THREAD_OWNERSHIP_WAIT_MS = 60_000;
 const SLACK_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
-const SLACK_GLOBAL_VERIFICATION_INTERVAL_MS = 60_000;
+const SLACK_GLOBAL_SIGNING_CACHE_MS = 60_000;
 
 type ProcessableSurfaceEvent = Exclude<SurfaceEvent, { type: "challenge" | "unsupported" }>;
 
@@ -123,7 +123,8 @@ export class SlackIngressService {
   #nextPruneAt = 0;
   #retryAt: number | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
-  #nextGlobalVerificationAt = 0;
+  #globalSigningCandidates: { expiresAt: number; value: SlackSigningCandidate[] } | undefined;
+  #globalSigningCandidatesInFlight: Promise<SlackSigningCandidate[]> | undefined;
 
   constructor(options: SlackIngressOptions) {
     this.#options = options;
@@ -368,8 +369,9 @@ export class SlackIngressService {
   async #read(request: Request, body: string): Promise<VerifiedSlackEvent> {
     const hint = slackEnvelopeHint(body, request.headers.get("content-type"));
     const allowGlobalFallback = hint.urlVerification && hint.workspaceId === undefined;
-    if (allowGlobalFallback) this.#claimGlobalVerification();
-    const signingSecrets = await this.#signingSecrets(hint.workspaceId, allowGlobalFallback);
+    const signingSecrets = allowGlobalFallback
+      ? await this.#globalSigningSecrets()
+      : await this.#signingSecrets(hint.workspaceId, false);
     if (signingSecrets.length === 0) throw new SlackIngressConfigurationError();
 
     let invalidRequest: SurfaceDriverError | undefined;
@@ -400,15 +402,30 @@ export class SlackIngressService {
     throw invalidRequest ?? new SlackIngressConfigurationError();
   }
 
-  #claimGlobalVerification(): void {
-    const now = this.#options.now?.() ?? Date.now();
-    if (now < this.#nextGlobalVerificationAt) {
-      throw new SlackIngressVerificationThrottledError(this.#nextGlobalVerificationAt - now);
+  async #globalSigningSecrets(): Promise<SlackSigningCandidate[]> {
+    const now = Date.now();
+    if (this.#globalSigningCandidates && now < this.#globalSigningCandidates.expiresAt) {
+      return this.#globalSigningCandidates.value;
     }
+    if (this.#globalSigningCandidatesInFlight) return this.#globalSigningCandidatesInFlight;
     // Slack's URL-verification envelope has no workspace or app selector. A
-    // deployment-wide secret scan is therefore permitted only at this bounded
-    // cadence; workspace-qualified deliveries never enter this fallback.
-    this.#nextGlobalVerificationAt = now + SLACK_GLOBAL_VERIFICATION_INTERVAL_MS;
+    // deployment-wide secret scan is single-flight and briefly cached. Every
+    // request still verifies its own signature, while an unsigned envelope can
+    // neither reserve exclusive capacity nor repeat tenant-wide decryption.
+    const pending = this.#signingSecrets(undefined, true);
+    this.#globalSigningCandidatesInFlight = pending;
+    try {
+      const value = await pending;
+      this.#globalSigningCandidates = {
+        expiresAt: Date.now() + SLACK_GLOBAL_SIGNING_CACHE_MS,
+        value,
+      };
+      return value;
+    } finally {
+      if (this.#globalSigningCandidatesInFlight === pending) {
+        this.#globalSigningCandidatesInFlight = undefined;
+      }
+    }
   }
 
   async #signingSecrets(
@@ -831,16 +848,6 @@ export class SlackIngressBodyTooLargeError extends Error {
   constructor() {
     super("Slack webhook body exceeds the size limit");
     this.name = "SlackIngressBodyTooLargeError";
-  }
-}
-
-export class SlackIngressVerificationThrottledError extends Error {
-  readonly retryAfterSeconds: number;
-
-  constructor(retryAfterMs: number) {
-    super("Slack URL verification is temporarily rate limited");
-    this.name = "SlackIngressVerificationThrottledError";
-    this.retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1_000));
   }
 }
 

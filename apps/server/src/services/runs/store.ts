@@ -383,21 +383,46 @@ export class PrismaRunStore implements RunStore {
   }
 
   async enqueueSteering(runId: string, input: QueuedInput): Promise<void> {
-    const run = await this.#db.agentRun.findUnique({
-      where: { orgId_id: { orgId: this.#orgId, id: runId } },
-      select: { threadRef: true },
-    });
-    if (run === null) throw new Error(`unknown run: ${runId}`);
-    await this.#db.runQueuedInput.create({
-      data: {
-        id: input.id,
-        orgId: this.#orgId,
-        kind: "steering",
-        runId,
-        threadRef: run.threadRef,
-        message: json(input.message),
-        author: json(input.author),
-      },
+    await this.#db.$transaction(async (tx) => {
+      const run = await tx.agentRun.findUnique({
+        where: { orgId_id: { orgId: this.#orgId, id: runId } },
+        select: { threadRef: true },
+      });
+      if (run === null) throw new Error(`unknown run: ${runId}`);
+      const inserted = await tx.runQueuedInput.createMany({
+        data: [
+          {
+            id: input.id,
+            orgId: this.#orgId,
+            kind: "steering",
+            runId,
+            threadRef: run.threadRef,
+            message: json(input.message),
+            author: json(input.author),
+          },
+        ],
+        skipDuplicates: true,
+      });
+      if (inserted.count === 0) {
+        const existing = await tx.runQueuedInput.findUnique({
+          where: { id: input.id },
+          select: { orgId: true, kind: true, runId: true },
+        });
+        if (
+          existing?.orgId !== this.#orgId ||
+          existing.kind !== "steering" ||
+          existing.runId !== runId
+        ) {
+          throw new Error(`queued input id belongs to a different route: ${input.id}`);
+        }
+      }
+      // Steering is routed once the input and claim commit together. A new
+      // run records its id before reaching this method, so this guard changes
+      // only an active-run message whose claim was still unresolved.
+      await tx.runIntent.updateMany({
+        where: { orgId: this.#orgId, id: input.id, runId: null },
+        data: { runId, outcome: "steered" },
+      });
     });
   }
 

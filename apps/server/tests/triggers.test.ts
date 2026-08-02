@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { call } from "@orpc/server";
 import { InMemoryEngine } from "@trema/harness";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "#server/lib/auth/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { parseEnv } from "#server/lib/env/schema.js";
@@ -349,6 +349,107 @@ integration("triggers", () => {
         where: { orgId_id: { orgId: org.id, id: "key-1" } },
       });
       expect(claim.runId).toBe(accepted.runId);
+    });
+
+    it.each(["opening input", "workflow schedule"] as const)(
+      "resumes a claimed run with a missing %s",
+      async (missing) => {
+        const { engine, org, owner } = await setup();
+        const services = servicesFor(org.id, engine);
+        const enqueue = vi
+          .spyOn(engine, "enqueue")
+          .mockRejectedValueOnce(new Error("transient routing failure"));
+        const input = {
+          intentId: `partial-${missing}`,
+          trigger: "api" as const,
+          surface: "api",
+          locationRef: "ops",
+          threadRef: "api:ops",
+          message: {
+            role: "user" as const,
+            blocks: [{ type: "text" as const, text: "Recover this request." }],
+          },
+          author: { principalId: owner.id, displayName: owner.displayName },
+        };
+
+        try {
+          await expect(startRun({ services, input })).rejects.toThrow("transient routing failure");
+          const partial = await db.runIntent.findUniqueOrThrow({
+            where: { orgId_id: { orgId: org.id, id: input.intentId } },
+          });
+          expect(partial).toMatchObject({ runId: expect.any(String), outcome: null });
+          if (missing === "opening input") {
+            await db.runQueuedInput.delete({ where: { id: input.intentId } });
+          }
+
+          await expect(startRun({ services, input })).resolves.toEqual({
+            outcome: "duplicate",
+            runId: partial.runId,
+            threadRef: input.threadRef,
+          });
+
+          await expect(
+            db.runQueuedInput.count({ where: { orgId: org.id, id: input.intentId } }),
+          ).resolves.toBe(1);
+          await expect(
+            db.runIntent.findUniqueOrThrow({
+              where: { orgId_id: { orgId: org.id, id: input.intentId } },
+            }),
+          ).resolves.toMatchObject({ runId: partial.runId, outcome: "started" });
+          expect(enqueue).toHaveBeenCalledTimes(2);
+        } finally {
+          enqueue.mockRestore();
+        }
+      },
+    );
+
+    it("keeps a steered input routed when final response bookkeeping fails", async () => {
+      const { engine, org, owner } = await setup();
+      const services = servicesFor(org.id, engine);
+      const origin = {
+        trigger: "api" as const,
+        surface: "api",
+        locationRef: "ops",
+        threadRef: "api:ops",
+        author: { principalId: owner.id, displayName: owner.displayName },
+      };
+      const first = await startRun({
+        services,
+        input: {
+          ...origin,
+          intentId: "steer-root",
+          message: { role: "user", blocks: [{ type: "text", text: "Start here." }] },
+        },
+      });
+      const updateClaim = vi
+        .spyOn(db.runIntent, "update")
+        .mockRejectedValueOnce(new Error("transient response bookkeeping failure"));
+      const steering = {
+        ...origin,
+        intentId: "steer-partial",
+        message: { role: "user" as const, blocks: [{ type: "text" as const, text: "Continue." }] },
+      };
+
+      try {
+        await expect(startRun({ services, input: steering })).rejects.toThrow(
+          "transient response bookkeeping failure",
+        );
+        await expect(startRun({ services, input: steering })).resolves.toEqual({
+          outcome: "duplicate",
+          runId: first.runId,
+          threadRef: origin.threadRef,
+        });
+        await expect(
+          db.runQueuedInput.count({ where: { orgId: org.id, id: steering.intentId } }),
+        ).resolves.toBe(1);
+        await expect(
+          db.runIntent.findUniqueOrThrow({
+            where: { orgId_id: { orgId: org.id, id: steering.intentId } },
+          }),
+        ).resolves.toMatchObject({ runId: first.runId, outcome: "steered" });
+      } finally {
+        updateClaim.mockRestore();
+      }
     });
 
     it("rejects a location that is not bound to a scope", async () => {

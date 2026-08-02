@@ -158,7 +158,7 @@ export interface RunStore {
   eventCursor(runId: string): Promise<number>;
   /** Removes events appended after the cursor, preserving events through that boundary. */
   discardEventsAfter(runId: string, cursor: number): Promise<void>;
-  /** Queues input for the identified active run's next turn boundary. */
+  /** Queues input once by id for the identified active run's next turn boundary. */
   enqueueSteering(runId: string, input: QueuedInput): Promise<void>;
   /** Removes and returns steering queued for one run. */
   drainSteering(runId: string): Promise<QueuedInput[]>;

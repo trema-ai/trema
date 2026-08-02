@@ -9,6 +9,7 @@ import type {
 } from "@trema/harness";
 import { InputDispatcher } from "@trema/harness";
 
+import type { Prisma } from "#server/generated/prisma/client.js";
 import { log } from "#server/lib/logger/index.js";
 import type { ModelChainEntry } from "#server/services/model-providers/index.js";
 import type { RunServices } from "#server/services/runs/index.js";
@@ -239,6 +240,9 @@ async function dispatchRun(
         false,
       );
     }
+    if (claim.runId !== null && claim.outcome === null) {
+      await resumeClaimedMessageRouting(services, input, claim.runId);
+    }
     log.info("Run request was a duplicate", { threadRef, runId: claim.runId });
     return { outcome: "duplicate", runId: claim.runId, threadRef };
   }
@@ -265,7 +269,71 @@ async function dispatchRun(
   return { outcome, runId, threadRef };
 }
 
-type DuplicateClaim = { kind: "duplicate"; runId: string | null } | { kind: "reclaimed" };
+/** Finishes the durable steps left between recording a new run and routing it. */
+async function resumeClaimedMessageRouting(
+  services: RunServices,
+  input: StartRunInput,
+  runId: string,
+): Promise<void> {
+  const wasQueued = await services.db.$transaction(async (tx) => {
+    const [run] = await tx.$queryRaw<{ state: string; threadRef: string }[]>`
+      SELECT "state", "threadRef" FROM "AgentRun"
+      WHERE "id" = ${runId} AND "orgId" = ${services.orgId}
+      FOR UPDATE`;
+    if (run === undefined) throw new Error(`claimed run does not exist: ${runId}`);
+    if (run.state !== "queued") return false;
+
+    if (input.toolAllowlist !== undefined && input.toolAllowlist.length > 0) {
+      await tx.agentRun.update({
+        where: { id: runId },
+        data: { toolAllowlist: input.toolAllowlist },
+      });
+    }
+    const inserted = await tx.runQueuedInput.createMany({
+      data: [
+        {
+          id: input.intentId,
+          orgId: services.orgId,
+          kind: "steering",
+          runId,
+          threadRef: run.threadRef,
+          message: input.message as unknown as Prisma.InputJsonValue,
+          author: input.author as unknown as Prisma.InputJsonValue,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    if (inserted.count === 0) {
+      const existing = await tx.runQueuedInput.findUnique({
+        where: { id: input.intentId },
+        select: { orgId: true, kind: true, runId: true },
+      });
+      if (
+        existing?.orgId !== services.orgId ||
+        existing.kind !== "steering" ||
+        existing.runId !== runId
+      ) {
+        throw new Error(`queued input id belongs to a different route: ${input.intentId}`);
+      }
+    }
+    return true;
+  });
+
+  if (wasQueued) {
+    const run = await services.store.getRun(runId);
+    if (run === undefined) throw new Error(`claimed run does not exist: ${runId}`);
+    if (run.state === "queued") await services.enqueue(run);
+  }
+  await services.db.runIntent.updateMany({
+    where: { orgId: services.orgId, id: input.intentId, runId, outcome: null },
+    data: { outcome: "started" },
+  });
+  log.warn("Resumed a partially routed run request", { runId, threadRef: threadRefFor(input) });
+}
+
+type DuplicateClaim =
+  | { kind: "duplicate"; runId: string | null; outcome: string | null }
+  | { kind: "reclaimed" };
 
 /** What the current call asks, checked against what a claim was made for. */
 interface ClaimFingerprint {
@@ -314,7 +382,7 @@ async function claimForDuplicate(
 ): Promise<DuplicateClaim> {
   const claimed = await services.db.runIntent.findUnique({
     where: { orgId_id: { orgId: services.orgId, id: intentId } },
-    select: { runId: true, createdAt: true, kind: true, targetId: true },
+    select: { runId: true, outcome: true, createdAt: true, kind: true, targetId: true },
   });
   if (claimed !== null) assertClaimMatches(claimed, expected, intentId);
   if (
@@ -328,7 +396,11 @@ async function claimForDuplicate(
     });
     if (released.count === 1) return { kind: "reclaimed" };
   }
-  return { kind: "duplicate", runId: claimed?.runId ?? null };
+  return {
+    kind: "duplicate",
+    runId: claimed?.runId ?? null,
+    outcome: claimed?.outcome ?? null,
+  };
 }
 
 /** The elicitation decision, stop, retry, or feedback a caller aims at existing work. */
