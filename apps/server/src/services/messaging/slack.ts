@@ -33,8 +33,15 @@ export const SLACK_USER_SCOPES = (slackProvider.auth.authorizationParams?.user_s
 export const SLACK_EVENTS_PATH = "/api/v1/messaging/slack/events";
 export const SLACK_INTERACTIONS_PATH = "/api/v1/messaging/slack/interactions";
 
-export function slackLogicalThreadRef(locationRef: string, threadTs?: string): string {
-  return `slack:${locationRef}${threadTs === undefined ? "" : `:${threadTs}`}`;
+export function slackLogicalThreadRef(
+  locationRef: string,
+  threadTs?: string,
+  authorization?: { bindingId: string; requesterPrincipalId: string },
+): string {
+  const surfaceThread = `slack:${locationRef}${threadTs === undefined ? "" : `:${threadTs}`}`;
+  return authorization === undefined
+    ? surfaceThread
+    : `${surfaceThread}:binding:${authorization.bindingId}:requester:${authorization.requesterPrincipalId}`;
 }
 
 type SlackRejectReason =
@@ -933,12 +940,8 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("connector_mismatch");
   }
 
-  const logicalThreadRef = slackLogicalThreadRef(
-    locationRef,
-    input.directMessage ? undefined : threadTs,
-  );
   const conversationThreadRef = input.directMessage ? "" : (threadTs ?? "");
-  const [binding, conversation, run] = await Promise.all([
+  const [binding, conversation] = await Promise.all([
     db.binding.findUnique({
       where: {
         orgId_surface_locationRef: {
@@ -959,15 +962,27 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
       },
       select: { id: true },
     }),
-    db.agentRun.findFirst({
-      where: {
-        orgId: connection.orgId,
-        threadRef: logicalThreadRef,
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      select: { id: true },
-    }),
   ]);
+  if (binding === null) {
+    throw new SlackRequestRejectedError("location_unbound");
+  }
+  // The binding and requester together are the authorization epoch. Rebinding
+  // a channel or relinking a Slack user must not steer an active run whose
+  // session pinned the old scope, requester, and policy snapshot, even though
+  // Slack's native thread id is stable.
+  const logicalThreadRef = slackLogicalThreadRef(
+    locationRef,
+    input.directMessage ? undefined : threadTs,
+    { bindingId: binding.id, requesterPrincipalId: identity.principal.id },
+  );
+  const run = await db.agentRun.findFirst({
+    where: {
+      orgId: connection.orgId,
+      threadRef: logicalThreadRef,
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { id: true },
+  });
 
   return {
     orgId: connection.orgId,

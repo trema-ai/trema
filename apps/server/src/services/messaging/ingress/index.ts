@@ -43,6 +43,8 @@ const SAFE_UNAVAILABLE =
   "Trema can't start work right now. Ask a Trema administrator to check the Slack connection.";
 const SLACK_INGRESS_LEASE_MS = 30_000;
 const SLACK_INGRESS_RETRY_MS = 1_000;
+const SLACK_INGRESS_TOMBSTONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+const SLACK_INGRESS_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 const SLACK_THREAD_OWNERSHIP_WAIT_MS = 60_000;
 const SLACK_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
@@ -117,6 +119,7 @@ export class SlackIngressService {
   readonly #options: SlackIngressOptions;
   readonly #notify: SlackIngressNotice;
   #recovery = Promise.resolve();
+  #nextPruneAt = 0;
   #retryAt: number | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -176,6 +179,7 @@ export class SlackIngressService {
   }
 
   async #drainPending(): Promise<void> {
+    await this.#pruneCompleted();
     let repeatBlocked = false;
     do {
       const now = new Date();
@@ -207,6 +211,25 @@ export class SlackIngressService {
     });
     if (leased?.leaseUntil !== null && leased?.leaseUntil !== undefined) {
       this.#scheduleRecovery(leased.leaseUntil);
+    }
+  }
+
+  async #pruneCompleted(): Promise<void> {
+    const now = Date.now();
+    if (now < this.#nextPruneAt) return;
+    this.#nextPruneAt = now + SLACK_INGRESS_PRUNE_INTERVAL_MS;
+    try {
+      const deleted = await this.#options.db.slackIngressDelivery.deleteMany({
+        where: {
+          completedAt: { lte: new Date(now - SLACK_INGRESS_TOMBSTONE_RETENTION_MS) },
+        },
+      });
+      if (deleted.count > 0) {
+        log.info("Expired Slack ingress tombstones pruned", { count: deleted.count });
+      }
+    } catch (error) {
+      this.#nextPruneAt = 0;
+      throw error;
     }
   }
 
@@ -546,7 +569,7 @@ export class SlackIngressService {
         trigger: "message",
         surface: "slack",
         locationRef: request.locationRef,
-        ...(event.nativeKind === "direct-message" ? {} : { threadRef: request.logicalThreadRef }),
+        threadRef: request.logicalThreadRef,
         surfaceThreadRef: event.nativeKind === "direct-message" ? null : event.surfaceRef.threadRef,
         ...(event.nativeKind === "direct-message"
           ? {

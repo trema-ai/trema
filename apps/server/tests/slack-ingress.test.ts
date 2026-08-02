@@ -12,6 +12,7 @@ import {
 } from "#server/services/connectors/index.js";
 import {
   createSlackBinding,
+  deleteSlackBinding,
   type SlackIngressNotice,
   SlackIngressService,
   setSlackIdentityLink,
@@ -349,9 +350,143 @@ integration("Slack ingress", () => {
 
     const runs = await db.agentRun.findMany({ where: { orgId: fixture.org.id } });
     expect(runs).toHaveLength(1);
-    expect(runs[0]?.threadRef).toBe(`slack:${fixture.workspaceId}:C123ABC:${threadTs}`);
+    expect(runs[0]?.threadRef).toMatch(
+      new RegExp(`^slack:${fixture.workspaceId}:C123ABC:${threadTs}:binding:.*:requester:`),
+    );
     await expect(db.runQueuedInput.count({ where: { orgId: fixture.org.id } })).resolves.toBe(6);
     await expect(db.contextSession.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+  });
+
+  it("starts a new scoped run when a Slack channel is rebound", async () => {
+    const fixture = await setup("TREBOUNDSCOPE");
+    const ingress = subject();
+    const threadTs = "1800000000.000025";
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-before-rebind",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: threadTs,
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    const oldBinding = await db.binding.findUniqueOrThrow({
+      where: {
+        orgId_surface_locationRef: {
+          orgId: fixture.org.id,
+          surface: "slack",
+          locationRef: `${fixture.workspaceId}:C123ABC`,
+        },
+      },
+    });
+    const replacementScope = await db.scope.create({
+      data: { orgId: fixture.org.id, kind: "shared", name: "Incidents" },
+    });
+    await deleteSlackBinding(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      bindingId: oldBinding.id,
+    });
+    const replacementBinding = await createSlackBinding(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      connectionId: fixture.connection.id,
+      workspaceId: fixture.workspaceId,
+      channelId: "C123ABC",
+      scopeId: replacementScope.id,
+    });
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-after-rebind",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: threadTs,
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    const runs = await db.agentRun.findMany({
+      where: { orgId: fixture.org.id },
+      orderBy: { createdAt: "asc" },
+      include: { session: true },
+    });
+    expect(runs).toHaveLength(2);
+    expect(runs.map((run) => run.session?.scopeId)).toEqual([
+      oldBinding.scopeId,
+      replacementScope.id,
+    ]);
+    expect(runs[0]?.threadRef).toContain(`:binding:${oldBinding.id}`);
+    expect(runs[1]?.threadRef).toContain(`:binding:${replacementBinding.id}`);
+    expect(runs[0]?.threadRef).not.toBe(runs[1]?.threadRef);
+    await expect(db.runQueuedInput.count({ where: { orgId: fixture.org.id } })).resolves.toBe(2);
+  });
+
+  it("starts a new requester-scoped run when a Slack user is relinked", async () => {
+    const fixture = await setup("TRELINKEDUSER");
+    const ingress = subject();
+    const threadTs = "1800000000.000026";
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-before-relink",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: threadTs,
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    const replacementMember = await db.principal.create({
+      data: { orgId: fixture.org.id, kind: "human", displayName: "Grace" },
+    });
+    await setSlackIdentityLink(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      workspaceId: fixture.workspaceId,
+      userId: "U123ABC",
+      principalId: replacementMember.id,
+    });
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-after-relink",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: threadTs,
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    const runs = await db.agentRun.findMany({
+      where: { orgId: fixture.org.id },
+      orderBy: { createdAt: "asc" },
+      include: { session: true },
+    });
+    expect(runs).toHaveLength(2);
+    expect(runs.map((run) => run.session?.requesterPrincipalId)).toEqual([
+      fixture.member.id,
+      replacementMember.id,
+    ]);
+    expect(runs[0]?.threadRef).not.toBe(runs[1]?.threadRef);
   });
 
   it("retains an early reply until a later root delivery owns the thread", async () => {
@@ -482,7 +617,7 @@ integration("Slack ingress", () => {
         },
       },
     });
-    await createSlackBinding(db, {
+    const secondBinding = await createSlackBinding(db, {
       orgId: fixture.org.id,
       actorPrincipalId: fixture.member.id,
       connectionId: fixture.connection.id,
@@ -518,8 +653,12 @@ integration("Slack ingress", () => {
       select: { threadRef: true },
     });
     expect(runs).toEqual([
-      { threadRef: `slack:${fixture.workspaceId}:C123ABC:${threadTs}` },
-      { threadRef: `slack:${fixture.workspaceId}:C456DEF:${threadTs}` },
+      {
+        threadRef: `slack:${fixture.workspaceId}:C123ABC:${threadTs}:binding:${existingBinding.id}:requester:${fixture.member.id}`,
+      },
+      {
+        threadRef: `slack:${fixture.workspaceId}:C456DEF:${threadTs}:binding:${secondBinding.id}:requester:${fixture.member.id}`,
+      },
     ]);
     await expect(db.contextSession.count({ where: { orgId: fixture.org.id } })).resolves.toBe(2);
   });
@@ -588,6 +727,31 @@ integration("Slack ingress", () => {
     ).resolves.toEqual(
       expect.objectContaining({ completedAt: expect.any(Date), payload: { kind: "completed" } }),
     );
+  });
+
+  it("prunes only completed ingress tombstones after the retention window", async () => {
+    const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1_000);
+    const recent = new Date();
+    await db.slackIngressDelivery.createMany({
+      data: [
+        { id: "old-completed", payload: { kind: "completed" }, completedAt: old },
+        { id: "recent-completed", payload: { kind: "completed" }, completedAt: recent },
+        {
+          id: "old-pending",
+          payload: { kind: "pending" },
+          receivedAt: old,
+          leaseUntil: new Date(Date.now() + 24 * 60 * 60 * 1_000),
+        },
+      ],
+    });
+
+    await subject().service.recoverPending();
+
+    const retained = await db.slackIngressDelivery.findMany({
+      orderBy: { id: "asc" },
+      select: { id: true },
+    });
+    expect(retained).toEqual([{ id: "old-pending" }, { id: "recent-completed" }]);
   });
 
   it("does not replay a delivery through a replacement installation", async () => {
@@ -660,7 +824,11 @@ integration("Slack ingress", () => {
       where: { orgId: fixture.org.id },
       include: { session: { include: { scope: true } } },
     });
-    expect(run.threadRef).toBe(`slack:${fixture.workspaceId}:D123ABC`);
+    expect(run.threadRef).toMatch(
+      new RegExp(
+        `^slack:${fixture.workspaceId}:D123ABC:binding:.*:requester:${fixture.member.id}$`,
+      ),
+    );
     expect(run.session?.scope.kind).toBe("personal");
     expect(run.session?.threadRef).toBeNull();
     await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
