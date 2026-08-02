@@ -594,6 +594,120 @@ integration("Slack ingress", () => {
     ).resolves.toEqual(expect.objectContaining({ completedAt: expect.any(Date) }));
   });
 
+  it("does not replay a reply that predates the first owning mention", async () => {
+    const fixture = await setup("TPREDATEDTHREAD");
+    const ingress = subject();
+    const threadTs = "1800000000.000050";
+    const replyId = `slack:delivery:${fixture.workspaceId}:C123ABC:slack:event:Ev-predated-reply`;
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          threadReply({
+            eventId: "Ev-predated-reply",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: "1800000000.000051",
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-later-owner",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: "1800000000.000052",
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
+    ).resolves.toMatchObject({ awaitingThread: true, completedAt: null });
+
+    await db.slackIngressDelivery.update({
+      where: { id: replyId },
+      data: { leaseUntil: null },
+    });
+    await ingress.service.recoverPending();
+
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
+    ).resolves.toMatchObject({ awaitingThread: false, completedAt: expect.any(Date) });
+  });
+
+  it("immediately resumes a reply when ownership appears while it is leased", async () => {
+    const fixture = await setup("TRACEDTHREAD");
+    const replyIngress = subject();
+    const rootIngress = subject();
+    const threadTs = "1800000000.000060";
+    const replyId = `slack:delivery:${fixture.workspaceId}:C123ABC:slack:event:Ev-raced-reply`;
+    let releaseLookup!: () => void;
+    const lookupBlocked = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    const delayedLookup = lookupBlocked.then(() => null) as unknown as ReturnType<
+      typeof db.contextSession.findFirst
+    >;
+    const contextLookup = vi
+      .spyOn(db.contextSession, "findFirst")
+      .mockReturnValueOnce(delayedLookup);
+
+    await replyIngress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          threadReply({
+            eventId: "Ev-raced-reply",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: "1800000000.000061",
+          }),
+        ),
+      ),
+    );
+    const drainingReply = replyIngress.drain();
+    await vi.waitFor(() => expect(contextLookup).toHaveBeenCalledOnce());
+
+    try {
+      await rootIngress.service.accept(
+        signedRequest(
+          JSON.stringify(
+            appMention({
+              eventId: "Ev-raced-owner",
+              workspaceId: fixture.workspaceId,
+              threadTs,
+              ts: threadTs,
+            }),
+          ),
+        ),
+      );
+      await rootIngress.drain();
+      releaseLookup();
+      await drainingReply;
+
+      await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(2);
+      await expect(
+        db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
+      ).resolves.toMatchObject({
+        attempt: 1,
+        awaitingThread: false,
+        completedAt: expect.any(Date),
+      });
+    } finally {
+      releaseLookup();
+      contextLookup.mockRestore();
+      await Promise.allSettled([drainingReply]);
+    }
+  });
+
   it("finalizes an unrelated thread reply after a bounded ownership wait", async () => {
     const fixture = await setup("TUNRELATEDTHREAD");
     const ingress = subject();
@@ -758,6 +872,7 @@ integration("Slack ingress", () => {
             authorRef: "U123ABC",
             text: "<@U999BOT> recover this delivery",
             at: "2027-01-15T08:00:00.000Z",
+            nativeMessageRef: "1800000000.000041",
             nativeKind: "app-mention",
           },
         },
@@ -861,6 +976,7 @@ integration("Slack ingress", () => {
             authorRef: "U123ABC",
             text: "<@U999BOT> do not cross installations",
             at: "2027-01-15T08:00:00.000Z",
+            nativeMessageRef: "1800000000.000042",
             nativeKind: "app-mention",
           },
         },

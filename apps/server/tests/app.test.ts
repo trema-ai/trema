@@ -23,7 +23,25 @@ function databaseMock(
   return {
     $queryRaw: query,
     connectorConnection: { findMany: vi.fn().mockResolvedValue([]) },
-    clientRegistration: { findMany: vi.fn().mockResolvedValue(clientRegistrations) },
+    clientRegistration: {
+      findMany: vi.fn().mockResolvedValue(clientRegistrations),
+      findUnique: vi
+        .fn()
+        .mockImplementation(({ where }: { where: { id: string } }) =>
+          Promise.resolve(
+            clientRegistrations.find((registration) => registration.id === where.id) ?? null,
+          ),
+        ),
+      findFirst: vi
+        .fn()
+        .mockImplementation(({ where }: { where: { id: string; orgId: string } }) =>
+          Promise.resolve(
+            clientRegistrations.find(
+              (registration) => registration.id === where.id && registration.orgId === where.orgId,
+            ) ?? null,
+          ),
+        ),
+    },
   } as unknown as Database;
 }
 
@@ -82,7 +100,21 @@ describe("server", () => {
       },
     });
 
-    const invalidRequest = app.request("/api/v1/messaging/slack/events", {
+    const unselected = await app.request("/api/v1/messaging/slack/events", {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature,
+      },
+    });
+    expect(unselected.status).toBe(503);
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+    expect(db.clientRegistration.findUnique).not.toHaveBeenCalled();
+
+    const eventsUrl = `/api/v1/messaging/slack/events?registration_id=${registration.id}`;
+    const invalidRequest = app.request(eventsUrl, {
       method: "POST",
       body,
       headers: {
@@ -91,7 +123,7 @@ describe("server", () => {
         "x-slack-signature": "v0=00",
       },
     });
-    const validRequest = app.request("/api/v1/messaging/slack/events", {
+    const validRequest = app.request(eventsUrl, {
       method: "POST",
       body,
       headers: {
@@ -105,10 +137,9 @@ describe("server", () => {
     await expect(invalid.text()).resolves.toBe("");
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ challenge: "challenge-1" });
-    const scanQueryCount = vi.mocked(db.clientRegistration.findMany).mock.calls.length;
-    expect(scanQueryCount).toBe(2);
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
 
-    const repeated = await app.request("/api/v1/messaging/slack/events", {
+    const repeated = await app.request(eventsUrl, {
       method: "POST",
       body,
       headers: {
@@ -119,7 +150,55 @@ describe("server", () => {
     });
     expect(repeated.status).toBe(200);
     await expect(repeated.json()).resolves.toEqual({ challenge: "challenge-1" });
-    expect(db.clientRegistration.findMany).toHaveBeenCalledTimes(scanQueryCount);
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized workspace-less challenges before scanning signing secrets", async () => {
+    const signingSecret = "app-route-slack-signing-secret";
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const body = JSON.stringify({ challenge: "x".repeat(20_000), type: "url_verification" });
+    const signature = `v0=${createHmac("sha256", signingSecret)
+      .update(`v0:${nowSeconds}:${body}`)
+      .digest("hex")}`;
+    const db = databaseMock(vi.fn().mockResolvedValue([]), [
+      {
+        id: "01900000-0000-7000-8000-000000000001",
+        orgId: "01900000-0000-7000-8000-000000000002",
+        providerKey: "slack",
+        source: "platform",
+        clientId: null,
+        clientSecretCiphertext: null,
+        signingSecretCiphertext: null,
+        sharedRef: "slack-app",
+      },
+    ]);
+    const app = createApp({
+      ...appDependencies(db),
+      platformApps: {
+        get: () => ({
+          clientId: "slack-client-id",
+          clientSecret: "slack-client-secret",
+          signingSecret,
+        }),
+      },
+    });
+
+    const response = await app.request(
+      "/api/v1/messaging/slack/events?registration_id=01900000-0000-7000-8000-000000000001",
+      {
+        method: "POST",
+        body,
+        headers: {
+          "content-type": "application/json",
+          "x-slack-request-timestamp": String(nowSeconds),
+          "x-slack-signature": signature,
+        },
+      },
+    );
+
+    expect(response.status).toBe(413);
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+    expect(db.clientRegistration.findUnique).not.toHaveBeenCalled();
   });
 
   it("keeps Slack ingress closed when the UI has no signing secret configured", async () => {

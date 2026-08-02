@@ -1147,12 +1147,15 @@ model SlackIngressDelivery {
   leaseOwner     String?
   leaseUntil     DateTime?
   threadKey      String?
+  nativeOrder    BigInt?
+  ownsThread     Boolean   @default(false)
   opensThread    Boolean   @default(false)
   awaitingThread Boolean   @default(false)
 
   @@index([completedAt, receivedAt])
   @@index([leaseUntil])
   @@index([threadKey, opensThread, awaitingThread, completedAt])
+  @@index([threadKey, ownsThread, nativeOrder])
 }
 
 /// Input waiting for a turn boundary. Steering waits on a named run;

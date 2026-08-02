@@ -81,6 +81,7 @@ describe("Slack ingress driver", () => {
       authorRef: "U1",
       text: "<@UBOT> investigate the deploy",
       at: "2027-01-15T08:00:00.000Z",
+      nativeMessageRef: "1800000000.000002",
       nativeKind: "app-mention",
       retry: { attempt: 1, reason: "http_timeout" },
     });
@@ -187,6 +188,7 @@ describe("Slack ingress driver", () => {
       intentId: "slack:event:Ev-thread-1",
       authorRef: "U1",
       text: "one more constraint",
+      nativeMessageRef: "1800000000.000004",
       nativeKind: "thread-reply",
       surfaceRef: {
         locationRef: "T1:C1",

@@ -34,6 +34,16 @@ import {
 
 type RegistrationValues = { clientId: string; clientSecret: string; signingSecret?: string };
 
+function slackEventsRequestUrl(callbackUrl: string, registrationId: string): string | undefined {
+  try {
+    const url = new URL("/api/v1/messaging/slack/events", callbackUrl);
+    url.searchParams.set("registration_id", registrationId);
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export function RegistrationDialog({
   provider,
   registrations,
@@ -67,6 +77,10 @@ export function RegistrationDialog({
   const needsConfiguration =
     provider.key === "slack" && customerApp !== undefined && !customerApp.isUsable;
   const showForm = editing || !customerApp || needsConfiguration;
+  const eventsRequestUrl =
+    provider.key === "slack" && customerApp
+      ? slackEventsRequestUrl(callbackUrl, customerApp.id)
+      : undefined;
 
   const save = useMutation({
     mutationFn: (values: RegistrationValues) =>
@@ -165,6 +179,19 @@ export function RegistrationDialog({
               shows where.
             </p>
           </div>
+          {eventsRequestUrl ? (
+            <div className="space-y-2">
+              <Label>Events request URL</Label>
+              <div className="flex items-center rounded-sm border bg-muted/30 px-3 py-0.5">
+                <code className="min-w-0 flex-1 truncate text-sm">{eventsRequestUrl}</code>
+                <CopyButton value={eventsRequestUrl} />
+              </div>
+              <p className="text-meta text-muted-foreground">
+                Register this app-specific URL under Event Subscriptions in Slack. Its selector lets
+                Trema verify the challenge against only this app's signing secret.
+              </p>
+            </div>
+          ) : null}
           {customerApp && !editing && !needsConfiguration ? (
             <div className="flex items-center justify-between gap-4 rounded-md border p-3">
               <div className="min-w-0 text-chrome">
@@ -202,7 +229,8 @@ export function RegistrationDialog({
                   />
                   <p className="text-meta text-muted-foreground">
                     Copy this value from your Slack app's Basic Information page. Trema stores it
-                    encrypted and write-only.
+                    encrypted and write-only. After saving, Trema shows the app-specific Events
+                    request URL.
                   </p>
                 </div>
               ) : null}

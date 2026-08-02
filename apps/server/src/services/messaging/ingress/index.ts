@@ -14,6 +14,7 @@ import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { log } from "#server/lib/logger/index.js";
 import {
+  ClientRegistrationNotFoundError,
   ConnectorReconnectRequiredError,
   NoClientRegistrationError,
   type PlatformAppDirectory,
@@ -47,7 +48,7 @@ const SLACK_INGRESS_TOMBSTONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const SLACK_INGRESS_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 const SLACK_THREAD_OWNERSHIP_WAIT_MS = 60_000;
 const SLACK_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
-const SLACK_GLOBAL_SIGNING_CACHE_MS = 60_000;
+const SLACK_URL_VERIFICATION_MAX_BODY_BYTES = 16 * 1024;
 
 type ProcessableSurfaceEvent = Exclude<SurfaceEvent, { type: "challenge" | "unsupported" }>;
 
@@ -123,8 +124,6 @@ export class SlackIngressService {
   #nextPruneAt = 0;
   #retryAt: number | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
-  #globalSigningCandidates: { expiresAt: number; value: SlackSigningCandidate[] } | undefined;
-  #globalSigningCandidatesInFlight: Promise<SlackSigningCandidate[]> | undefined;
 
   constructor(options: SlackIngressOptions) {
     this.#options = options;
@@ -176,6 +175,7 @@ export class SlackIngressService {
 
   async #persist(id: string, payload: SlackIngressPayload): Promise<void> {
     const threadKey = slackIngressThreadKey(payload);
+    const nativeOrder = slackIngressNativeOrder(payload);
     await this.#options.db.slackIngressDelivery.createMany({
       data: [
         {
@@ -183,6 +183,7 @@ export class SlackIngressService {
           opensThread: slackIngressOpensThread(payload),
           payload: payload as unknown as Prisma.InputJsonValue,
           ...(threadKey === undefined ? {} : { threadKey }),
+          ...(nativeOrder === undefined ? {} : { nativeOrder }),
         },
       ],
       skipDuplicates: true,
@@ -297,6 +298,13 @@ export class SlackIngressService {
           where: { id, completedAt: null, leaseOwner: owner },
           data: { awaitingThread: true, leaseOwner: null, leaseUntil: nextCheck },
         });
+        if (
+          payload.kind === "surface" &&
+          payload.event.type === "message" &&
+          (await this.#resumeParkedReply(id, owner, payload.event, payload.connectionIds))
+        ) {
+          return "completed";
+        }
         this.#scheduleRecovery(nextCheck);
         return "blocked";
       }
@@ -369,9 +377,15 @@ export class SlackIngressService {
   async #read(request: Request, body: string): Promise<VerifiedSlackEvent> {
     const hint = slackEnvelopeHint(body, request.headers.get("content-type"));
     const allowGlobalFallback = hint.urlVerification && hint.workspaceId === undefined;
+    if (
+      allowGlobalFallback &&
+      Buffer.byteLength(body, "utf8") > SLACK_URL_VERIFICATION_MAX_BODY_BYTES
+    ) {
+      throw new SlackIngressBodyTooLargeError();
+    }
     const signingSecrets = allowGlobalFallback
-      ? await this.#globalSigningSecrets()
-      : await this.#signingSecrets(hint.workspaceId, false);
+      ? await this.#selectedSigningSecret(slackRegistrationSelector(request.url))
+      : await this.#signingSecrets(hint.workspaceId);
     if (signingSecrets.length === 0) throw new SlackIngressConfigurationError();
 
     let invalidRequest: SurfaceDriverError | undefined;
@@ -402,36 +416,38 @@ export class SlackIngressService {
     throw invalidRequest ?? new SlackIngressConfigurationError();
   }
 
-  async #globalSigningSecrets(): Promise<SlackSigningCandidate[]> {
-    const now = Date.now();
-    if (this.#globalSigningCandidates && now < this.#globalSigningCandidates.expiresAt) {
-      return this.#globalSigningCandidates.value;
-    }
-    if (this.#globalSigningCandidatesInFlight) return this.#globalSigningCandidatesInFlight;
-    // Slack's URL-verification envelope has no workspace or app selector. A
-    // deployment-wide secret scan is single-flight and briefly cached. Every
-    // request still verifies its own signature, while an unsigned envelope can
-    // neither reserve exclusive capacity nor repeat tenant-wide decryption.
-    const pending = this.#signingSecrets(undefined, true);
-    this.#globalSigningCandidatesInFlight = pending;
+  async #selectedSigningSecret(
+    registrationId: string | undefined,
+  ): Promise<SlackSigningCandidate[]> {
+    if (registrationId === undefined) return [];
+    const selected = await this.#options.db.clientRegistration.findUnique({
+      where: { id: registrationId },
+      select: { orgId: true, providerKey: true },
+    });
+    if (selected === null || selected.providerKey !== "slack") return [];
     try {
-      const value = await pending;
-      this.#globalSigningCandidates = {
-        expiresAt: Date.now() + SLACK_GLOBAL_SIGNING_CACHE_MS,
-        value,
-      };
-      return value;
-    } finally {
-      if (this.#globalSigningCandidatesInFlight === pending) {
-        this.#globalSigningCandidatesInFlight = undefined;
+      const registration = await resolveStoredClientRegistration(
+        this.#options.db,
+        selected.orgId,
+        registrationId,
+        this.#options.platformApps,
+        this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
+      );
+      return registration.signingSecret
+        ? [{ signingSecret: registration.signingSecret, connectionIds: [] }]
+        : [];
+    } catch (error) {
+      if (
+        error instanceof ClientRegistrationNotFoundError ||
+        error instanceof NoClientRegistrationError
+      ) {
+        return [];
       }
+      throw error;
     }
   }
 
-  async #signingSecrets(
-    workspaceId: string | undefined,
-    allowGlobalFallback: boolean,
-  ): Promise<SlackSigningCandidate[]> {
+  async #signingSecrets(workspaceId: string | undefined): Promise<SlackSigningCandidate[]> {
     const matchingConnections = workspaceId
       ? await this.#options.db.connectorConnection.findMany({
           where: {
@@ -458,19 +474,6 @@ export class SlackIngressService {
       };
       candidate.connectionIds.add(connection.id);
       candidates.set(key, candidate);
-    }
-    if (candidates.size === 0 && allowGlobalFallback) {
-      const registrations = await this.#options.db.clientRegistration.findMany({
-        where: { providerKey: "slack" },
-        select: { orgId: true },
-        distinct: ["orgId"],
-      });
-      for (const registration of registrations) {
-        candidates.set(`${registration.orgId}:preferred`, {
-          orgId: registration.orgId,
-          connectionIds: new Set<string>(),
-        });
-      }
     }
     for (const candidate of candidates.values()) {
       try {
@@ -571,16 +574,24 @@ export class SlackIngressService {
 
   async #wakeOwnedThread(event: MessageSurfaceEvent): Promise<void> {
     const threadKey = slackSurfaceThreadKey(event);
-    if (threadKey === undefined) return;
-    await this.#options.db.slackIngressDelivery.updateMany({
-      where: {
-        completedAt: null,
-        awaitingThread: true,
-        leaseOwner: null,
-        threadKey,
-      },
-      data: { awaitingThread: false, leaseUntil: null },
-    });
+    const nativeOrder = slackMessageOrder(event.nativeMessageRef);
+    if (threadKey === undefined || nativeOrder === undefined) return;
+    await this.#options.db.$transaction([
+      this.#options.db.slackIngressDelivery.updateMany({
+        where: { id: slackSurfaceDeliveryId(event), completedAt: null },
+        data: { ownsThread: true },
+      }),
+      this.#options.db.slackIngressDelivery.updateMany({
+        where: {
+          completedAt: null,
+          awaitingThread: true,
+          leaseOwner: null,
+          threadKey,
+          nativeOrder: { gt: nativeOrder },
+        },
+        data: { awaitingThread: false, leaseUntil: null },
+      }),
+    ]);
   }
 
   async #message(
@@ -588,9 +599,20 @@ export class SlackIngressService {
     connectionIds: readonly string[],
   ): Promise<"completed" | "blocked"> {
     if (await this.#isMentionShadow(event, connectionIds)) return "completed";
-    if (event.nativeKind === "thread-reply" && !(await this.#isOwnedThread(event, connectionIds))) {
-      log.debug("Slack thread reply awaiting an owning delivery");
-      return "blocked";
+    if (event.nativeKind === "thread-reply") {
+      if (!(await this.#isOwnedThread(event, connectionIds))) {
+        log.debug("Slack thread reply awaiting an owning delivery");
+        return "blocked";
+      }
+      const ownershipOrder = await this.#replyOwnershipOrder(event);
+      if (ownershipOrder === "pending") {
+        log.debug("Slack thread reply awaits ownership ordering");
+        return "blocked";
+      }
+      if (ownershipOrder === "predates") {
+        log.debug("Slack thread reply predates Trema ownership");
+        return "completed";
+      }
     }
     const request = await this.#resolve(event, connectionIds);
     const engine = this.#options.runEngineFor?.(request.orgId);
@@ -628,6 +650,66 @@ export class SlackIngressService {
     });
     if (started.runId === null) throw new SlackRunClaimPendingError();
     return "completed";
+  }
+
+  async #resumeParkedReply(
+    id: string,
+    owner: string,
+    event: MessageSurfaceEvent,
+    connectionIds: readonly string[],
+  ): Promise<boolean> {
+    if (!(await this.#isOwnedThread(event, connectionIds))) return false;
+    const reclaimed = await this.#options.db.slackIngressDelivery.updateMany({
+      where: {
+        id,
+        completedAt: null,
+        awaitingThread: true,
+        leaseOwner: null,
+      },
+      data: {
+        awaitingThread: false,
+        leaseOwner: owner,
+        leaseUntil: new Date(Date.now() + SLACK_INGRESS_LEASE_MS),
+      },
+    });
+    if (reclaimed.count === 0) return false;
+    const outcome = await this.#process(event, connectionIds);
+    if (outcome === "blocked") {
+      const retryAt = new Date(Date.now() + SLACK_THREAD_OWNERSHIP_WAIT_MS);
+      await this.#options.db.slackIngressDelivery.updateMany({
+        where: { id, completedAt: null, leaseOwner: owner },
+        data: { awaitingThread: true, leaseOwner: null, leaseUntil: retryAt },
+      });
+      this.#scheduleRecovery(retryAt);
+      return false;
+    }
+    await this.#completeDelivery(id, owner);
+    return true;
+  }
+
+  async #replyOwnershipOrder(
+    event: MessageSurfaceEvent,
+  ): Promise<"follows" | "pending" | "predates"> {
+    const threadKey = slackSurfaceThreadKey(event);
+    if (threadKey === undefined) return "follows";
+    const opener = await this.#options.db.slackIngressDelivery.findFirst({
+      where: {
+        threadKey,
+        ownsThread: true,
+        nativeOrder: { not: null },
+      },
+      orderBy: { nativeOrder: "asc" },
+      select: { nativeOrder: true },
+    });
+    if (opener?.nativeOrder === undefined || opener.nativeOrder === null) {
+      const pendingOpener = await this.#options.db.slackIngressDelivery.findFirst({
+        where: { threadKey, opensThread: true, completedAt: null },
+        select: { id: true },
+      });
+      return pendingOpener === null ? "follows" : "pending";
+    }
+    const nativeOrder = slackMessageOrder(event.nativeMessageRef);
+    return nativeOrder !== undefined && nativeOrder > opener.nativeOrder ? "follows" : "predates";
   }
 
   async #isOwnedThread(
@@ -915,6 +997,22 @@ function slackIngressThreadKey(payload: SlackIngressPayload): string | undefined
     : undefined;
 }
 
+function slackIngressNativeOrder(payload: SlackIngressPayload): bigint | undefined {
+  return payload.kind === "surface" && payload.event.type === "message"
+    ? slackMessageOrder(payload.event.nativeMessageRef)
+    : undefined;
+}
+
+function slackMessageOrder(nativeMessageRef: string): bigint | undefined {
+  const match = /^(\d{1,12})(?:\.(\d{1,6}))?$/u.exec(nativeMessageRef);
+  if (match?.[1] === undefined) return undefined;
+  try {
+    return BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? "").padEnd(6, "0"));
+  } catch {
+    return undefined;
+  }
+}
+
 function slackIngressOpensThread(payload: SlackIngressPayload): boolean {
   return (
     payload.kind === "surface" &&
@@ -932,6 +1030,14 @@ function slackSurfaceThreadKey(event: MessageSurfaceEvent): string | undefined {
 function stripBotMention(text: string, botUserId: string | null): string {
   if (botUserId === null) return text.trim();
   return text.replace(new RegExp(`<@${botUserId}>`, "gu"), "").trim();
+}
+
+function slackRegistrationSelector(requestUrl: string): string | undefined {
+  const candidate = new URL(requestUrl).searchParams.get("registration_id");
+  return candidate !== null &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(candidate)
+    ? candidate
+    : undefined;
 }
 
 function slackEnvelopeHint(

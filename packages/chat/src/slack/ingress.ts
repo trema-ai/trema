@@ -48,6 +48,7 @@ export class SlackIngressDriver implements SurfaceIngressDriver {
           authorRef,
           text: payload.text,
           at: slackTimestamp(payload.eventTime, payload.ts),
+          nativeMessageRef: payload.ts,
           nativeKind: payload.kind === "app_mention" ? "app-mention" : "direct-message",
           ...retry,
         };
@@ -168,6 +169,7 @@ function threadedReply(raw: unknown, retry: { retry?: DeliveryRetry }): SurfaceE
       typeof envelope.event_time === "number" ? envelope.event_time : undefined,
       native.ts,
     ),
+    nativeMessageRef: native.ts,
     nativeKind: "thread-reply",
     ...retry,
   };

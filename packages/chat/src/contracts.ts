@@ -127,6 +127,8 @@ export interface MessageSurfaceEvent extends SurfaceEventBase {
   authorRef: string;
   text: string;
   at: string;
+  /** Provider-native message identifier, preserved when it also defines delivery order. */
+  nativeMessageRef: string;
   nativeKind: string;
 }
 

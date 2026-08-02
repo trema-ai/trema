@@ -117,6 +117,16 @@ async function expectAffectedQueriesInvalidated(queryClient: QueryClient) {
 }
 
 describe("registration mutation warnings", () => {
+  it("shows a registration-scoped Slack Events request URL", () => {
+    renderDialog();
+
+    expect(
+      screen.getByText(
+        "https://trema.example/api/v1/messaging/slack/events?registration_id=registration-1",
+      ),
+    ).toBeTruthy();
+  });
+
   it("warns that accounts are revoked and refreshes every affected Slack query", async () => {
     const queryClient = renderDialog();
 
