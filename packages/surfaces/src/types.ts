@@ -142,6 +142,8 @@ export interface SurfaceRealization {
   pendingPlan?: RenderPlan;
   /** A truncated staged batch was applied and needs one authoritative follow-up plan. */
   reconciliationRequired: boolean;
+  /** A native surface stop was observed and its durable run intent still needs submission. */
+  nativeStopPending: boolean;
   /** Optimistic concurrency revision, incremented after every state transition. */
   version: number;
   lease?: { owner: string; until: string };

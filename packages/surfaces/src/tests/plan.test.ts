@@ -56,6 +56,7 @@ function realization(overrides: Partial<SurfaceRealization> = {}): SurfaceRealiz
     segments: [],
     presentation: {},
     reconciliationRequired: false,
+    nativeStopPending: false,
     version: 0,
     retry: { attempt: 0, terminal: false },
     ...overrides,

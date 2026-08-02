@@ -23,6 +23,7 @@ type RealizationRow = {
   presentation: Prisma.JsonValue;
   pendingPlan: Prisma.JsonValue | null;
   reconciliationRequired: boolean;
+  nativeStopPending: boolean;
   version: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
@@ -59,6 +60,7 @@ export interface RecordRenderFailureInput {
   owner: string;
   expectedVersion: number;
   code: SurfaceErrorCode;
+  nativeStopPending?: true;
   terminal?: boolean;
   nextRetryAt?: Date;
 }
@@ -148,7 +150,7 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     return row === undefined ? undefined : toRealization(row);
@@ -187,7 +189,7 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -230,6 +232,7 @@ export class PrismaSurfaceRealizationStore {
             WHEN realization."pendingPlan" IS NULL THEN false
             ELSE (realization."pendingPlan"->>'toCursor')::integer > ${input.renderedThroughSeq}
           END,
+          "nativeStopPending" = false,
           "pendingPlan" = NULL,
           "version" = "version" + 1,
           "retryAttempt" = 0,
@@ -256,7 +259,7 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -273,6 +276,7 @@ export class PrismaSurfaceRealizationStore {
     const [row] = await this.#db.$queryRaw<RealizationRow[]>`
       UPDATE "SurfaceRealization"
       SET "version" = "version" + 1,
+          "nativeStopPending" = "nativeStopPending" OR ${input.nativeStopPending ?? false},
           "retryAttempt" = "retryAttempt" + 1,
           "terminalFailure" = ${input.terminal ?? false},
           "nextRetryAt" = ${input.nextRetryAt ?? null},
@@ -288,7 +292,7 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -306,6 +310,7 @@ export class PrismaSurfaceRealizationStore {
       UPDATE "SurfaceRealization"
       SET "pendingPlan" = NULL,
           "reconciliationRequired" = false,
+          "nativeStopPending" = false,
           "presentation" = "presentation" || '{"stoppedByUser":true}'::jsonb,
           "version" = "version" + 1,
           "retryAttempt" = 0,
@@ -323,7 +328,7 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -364,6 +369,7 @@ function toRealization(row: RealizationRow): SurfaceRealization {
     presentation: row.presentation as Record<string, unknown>,
     ...(row.pendingPlan === null ? {} : { pendingPlan: row.pendingPlan as unknown as RenderPlan }),
     reconciliationRequired: row.reconciliationRequired,
+    nativeStopPending: row.nativeStopPending,
     version: row.version,
     ...(row.leaseOwner === null || row.leaseUntil === null
       ? {}

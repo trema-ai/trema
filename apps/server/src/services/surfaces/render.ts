@@ -88,6 +88,7 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
     input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
   );
   if (realization === undefined) return { status: "busy" };
+  if (realization.nativeStopPending) return submitNativeStop(input, realization);
 
   let current = realization;
   let plan: RenderPlan;
@@ -158,44 +159,7 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
             cause: caught,
             retryable: true,
           });
-    if (error.code === "stopped_by_user") {
-      try {
-        await input.requestRunStop({
-          intentId: `surface:${current.id}:stopped-by-user`,
-          runId: input.projection.runId,
-          ref: input.ref,
-        });
-      } catch (stopError) {
-        const requestError = new SurfaceDriverError(
-          "unavailable",
-          "Failed to record the Slack stop request",
-          { cause: stopError, retryable: true },
-        );
-        const retry = retryDecision(requestError, current.retry.attempt);
-        const failed = await input.store.recordFailure({
-          id: current.id,
-          owner: input.owner,
-          expectedVersion: current.version,
-          code: requestError.code,
-          ...(retry.disposition === "terminal"
-            ? { terminal: true }
-            : {
-                nextRetryAt: new Date((input.clock?.now() ?? new Date()).getTime() + retry.delayMs),
-              }),
-        });
-        return {
-          status: retry.disposition === "terminal" ? "terminal_failure" : "retry_scheduled",
-          error: requestError,
-          realization: failed,
-        };
-      }
-      const stopped = await input.store.recordStopped({
-        id: current.id,
-        owner: input.owner,
-        expectedVersion: current.version,
-      });
-      return { status: "stopped", realization: stopped };
-    }
+    if (error.code === "stopped_by_user") return submitNativeStop(input, current);
     const retry = retryDecision(error, current.retry.attempt);
     const failed = await input.store.recordFailure({
       id: current.id,
@@ -212,6 +176,49 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
       realization: failed,
     };
   }
+}
+
+async function submitNativeStop(
+  input: RenderSurfaceInput,
+  current: SurfaceRealization,
+): Promise<RenderSurfaceResult> {
+  try {
+    await input.requestRunStop({
+      intentId: `surface:${current.id}:stopped-by-user`,
+      runId: input.projection.runId,
+      ref: input.ref,
+    });
+  } catch (stopError) {
+    const requestError = new SurfaceDriverError(
+      "unavailable",
+      "Failed to submit the native surface stop request",
+      { cause: stopError, retryable: true },
+    );
+    const retry = retryDecision(requestError, current.retry.attempt);
+    const failed = await input.store.recordFailure({
+      id: current.id,
+      owner: input.owner,
+      expectedVersion: current.version,
+      code: requestError.code,
+      nativeStopPending: true,
+      ...(retry.disposition === "terminal"
+        ? { terminal: true }
+        : {
+            nextRetryAt: new Date((input.clock?.now() ?? new Date()).getTime() + retry.delayMs),
+          }),
+    });
+    return {
+      status: retry.disposition === "terminal" ? "terminal_failure" : "retry_scheduled",
+      error: requestError,
+      realization: failed,
+    };
+  }
+  const stopped = await input.store.recordStopped({
+    id: current.id,
+    owner: input.owner,
+    expectedVersion: current.version,
+  });
+  return { status: "stopped", realization: stopped };
 }
 
 async function releaseRealization(

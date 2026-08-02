@@ -296,7 +296,7 @@ integration("surface realizations", () => {
     expect(committed.pendingPlan).toBeUndefined();
   });
 
-  it("terminalizes a user-stopped realization without claiming its staged cursor", async () => {
+  it("persists a pending native stop until it terminalizes the realization", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const plan: RenderPlan = {
       fromCursor: 0,
@@ -323,14 +323,30 @@ integration("surface realizations", () => {
       plan,
     });
 
-    const stopped = await store.recordStopped({
+    const pending = await store.recordFailure({
       id: staged.id,
       owner: "worker-a",
       expectedVersion: staged.version,
+      code: "unavailable",
+      nativeStopPending: true,
+    });
+    expect(pending).toMatchObject({
+      nativeStopPending: true,
+      pendingPlan: plan,
+      retry: { attempt: 1, terminal: false, lastErrorCode: "unavailable" },
+    });
+
+    const retried = await store.claim("run-1", ref, "worker-b", 30_000);
+    expect(retried).toMatchObject({ nativeStopPending: true, pendingPlan: plan });
+    const stopped = await store.recordStopped({
+      id: retried!.id,
+      owner: "worker-b",
+      expectedVersion: retried!.version,
     });
 
     expect(stopped).toMatchObject({
       renderedThroughSeq: 0,
+      nativeStopPending: false,
       presentation: { stoppedByUser: true },
       retry: { attempt: 0, terminal: false },
     });

@@ -12,7 +12,11 @@ import {
   type SurfaceRef,
 } from "@trema/surfaces";
 import { describe, expect, it, vi } from "vitest";
-import { renderSurface, type SurfaceRealizationStore } from "#server/services/surfaces/render.js";
+import {
+  type RenderSurfaceInput,
+  renderSurface,
+  type SurfaceRealizationStore,
+} from "#server/services/surfaces/render.js";
 import type {
   CommitRealizationInput,
   RecordRenderFailureInput,
@@ -68,6 +72,7 @@ class MemoryStore implements SurfaceRealizationStore {
     segments: [],
     presentation: {},
     reconciliationRequired: false,
+    nativeStopPending: false,
     version: 0,
     retry: { attempt: 0, terminal: false },
   };
@@ -101,6 +106,7 @@ class MemoryStore implements SurfaceRealizationStore {
       segments: input.segments,
       presentation: input.presentation ?? this.current.presentation,
       reconciliationRequired: false,
+      nativeStopPending: false,
       version: this.current.version + 1,
       retry: { attempt: 0, terminal: false },
     };
@@ -112,6 +118,7 @@ class MemoryStore implements SurfaceRealizationStore {
     const { lease: _lease, ...current } = this.current;
     this.current = {
       ...current,
+      nativeStopPending: this.current.nativeStopPending || input.nativeStopPending === true,
       version: this.current.version + 1,
       retry: {
         attempt: this.current.retry.attempt + 1,
@@ -130,6 +137,7 @@ class MemoryStore implements SurfaceRealizationStore {
       ...current,
       presentation: { ...this.current.presentation, stoppedByUser: true },
       reconciliationRequired: false,
+      nativeStopPending: false,
       version: this.current.version + 1,
       retry: { attempt: 0, terminal: false },
     };
@@ -443,28 +451,32 @@ describe("renderSurface", () => {
     expect(requestRunStop).toHaveBeenCalledOnce();
   });
 
-  it("retries the staged Slack stop until its durable intent is recorded", async () => {
+  it("retries the pending native stop without replaying the staged Slack finalize", async () => {
     const store = new MemoryStore();
     const now = new Date("2026-08-01T12:00:00.000Z");
+    const requestRunStop = vi
+      .fn<RenderSurfaceInput["requestRunStop"]>()
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValue("recorded");
+    const apply = vi.fn(async () => {
+      throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
+    });
 
-    const result = await renderSurface({
+    const first = await renderSurface({
       ...baseInput,
       store,
-      requestRunStop: async () => {
-        throw new Error("database unavailable");
-      },
-      driver: fakeDriver(async () => {
-        throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
-      }),
+      requestRunStop,
+      driver: fakeDriver(apply),
       projection: projection("Hello"),
       clock: { now: () => now },
     });
 
-    expect(result).toMatchObject({
+    expect(first).toMatchObject({
       status: "retry_scheduled",
       error: { code: "unavailable", retryable: true },
       realization: {
         renderedThroughSeq: 0,
+        nativeStopPending: true,
         pendingPlan: expect.objectContaining({ fromCursor: 0, toCursor: 1 }),
         retry: {
           attempt: 1,
@@ -472,6 +484,39 @@ describe("renderSurface", () => {
           lastErrorCode: "unavailable",
         },
       },
+    });
+
+    const retried = await renderSurface({
+      ...baseInput,
+      store,
+      requestRunStop,
+      driver: fakeDriver(apply),
+      projection: projection("Hello"),
+      clock: { now: () => now },
+    });
+
+    expect(retried).toMatchObject({
+      status: "stopped",
+      realization: {
+        renderedThroughSeq: 0,
+        nativeStopPending: false,
+        presentation: { stoppedByUser: true },
+        retry: { attempt: 0, terminal: false },
+      },
+    });
+    if (retried.status !== "stopped") throw new Error(`unexpected result: ${retried.status}`);
+    expect(retried.realization).not.toHaveProperty("pendingPlan");
+    expect(apply).toHaveBeenCalledOnce();
+    expect(requestRunStop).toHaveBeenCalledTimes(2);
+    expect(requestRunStop).toHaveBeenNthCalledWith(1, {
+      intentId: "surface:realization-1:stopped-by-user",
+      runId: "run-1",
+      ref,
+    });
+    expect(requestRunStop).toHaveBeenNthCalledWith(2, {
+      intentId: "surface:realization-1:stopped-by-user",
+      runId: "run-1",
+      ref,
     });
   });
 });
