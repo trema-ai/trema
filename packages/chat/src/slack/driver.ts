@@ -157,7 +157,7 @@ export class SlackDriver implements SurfaceDriver {
         const prior =
           parseThinkingState(operation.prior.metadata) ?? emptyThinkingState(operation.prior.text);
         const next = appendThinkingText(prior, operation.text);
-        if (operation.prior.metadata?.mode === "snapshot") {
+        if (operation.prior.metadata?.mode !== "stream") {
           // The planner emits append only for text-only growth, so the prior
           // tier-zero text plus its delta is the complete next snapshot.
           const realized = realizeMessage(
@@ -337,7 +337,7 @@ export class SlackDriver implements SurfaceDriver {
       }
     }
 
-    if (priorMode === "snapshot" || priorMode === "final") {
+    if (priorMode !== "stream") {
       const realized = realizeMessage(
         operation.content,
         operation.messageId,

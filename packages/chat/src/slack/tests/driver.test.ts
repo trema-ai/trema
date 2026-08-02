@@ -508,7 +508,10 @@ describe("SlackDriver", () => {
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
     ]);
-    const operations = [mutation("append"), mutation("finalize")];
+    const operations = [
+      mutation("append", { prior: { text: "Starting", metadata: { mode: "stream" } } }),
+      mutation("finalize", { prior: { text: "Starting", metadata: { mode: "stream" } } }),
+    ];
     const result = await driver({ fetch: slack.fetch }).apply(operations, context);
 
     expect(result.appliedOperationIds).toEqual(operations.map(({ id }) => id));
@@ -533,6 +536,38 @@ describe("SlackDriver", () => {
       blocks: [canonicalRunLinkBlock],
       markdown_text: "Complete",
     });
+  });
+
+  it("updates messages when prior Slack mode is absent or unrecognized", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+
+    const result = await driver({ fetch: slack.fetch }).apply(
+      [
+        mutation("append", {
+          text: " more",
+          prior: { text: "Starting", metadata: { mode: "legacy" } },
+        }),
+        mutation("finalize", { prior: { text: "Starting more" } }),
+      ],
+      context,
+    );
+
+    expect(slack.calls.map(({ method }) => method)).toEqual(["chat.update", "chat.update"]);
+    expect(slack.calls[0]?.body.blocks).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "Starting more" } },
+      canonicalRunLinkBlock,
+    ]);
+    expect(slack.calls[1]?.body.blocks).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "Complete" } },
+      canonicalRunLinkBlock,
+    ]);
+    expect(result.messages).toEqual([
+      expect.objectContaining({ metadata: expect.objectContaining({ mode: "snapshot" }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ mode: "final" }) }),
+    ]);
   });
 
   it("keeps the canonical run link on snapshot replacements", async () => {
@@ -740,7 +775,10 @@ describe("SlackDriver", () => {
     const slack = fakeSlack([{ body: { ok: false, error: "message_not_in_streaming_state" } }]);
 
     await expect(
-      driver({ fetch: slack.fetch }).apply([mutation("finalize")], context),
+      driver({ fetch: slack.fetch }).apply(
+        [mutation("finalize", { prior: { text: "Starting", metadata: { mode: "stream" } } })],
+        context,
+      ),
     ).resolves.toMatchObject({
       appliedOperationIds: [expect.stringContaining(":finalize:")],
       messages: [expect.objectContaining({ metadata: expect.objectContaining({ mode: "final" }) })],
