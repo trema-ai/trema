@@ -59,6 +59,14 @@ interface OperationBase {
   messageIndex: number;
 }
 
+/** Previously acknowledged driver state for one mutable remote message. */
+export interface PriorRenderState {
+  /** Tier-zero content previously acknowledged by the destination. */
+  text: string;
+  /** Opaque driver state returned by the previous acknowledgement. */
+  metadata?: Record<string, unknown>;
+}
+
 export type RenderOperation =
   | (OperationBase & {
       type: "create";
@@ -70,16 +78,19 @@ export type RenderOperation =
       type: "append";
       remoteRef: string;
       text: string;
+      prior: PriorRenderState;
     })
   | (OperationBase & {
       type: "replace";
       remoteRef: string;
       content: RenderContent;
+      prior: PriorRenderState;
     })
   | (OperationBase & {
       type: "finalize";
       remoteRef: string;
       content: RenderContent;
+      prior: PriorRenderState;
     })
   | (OperationBase & {
       type: "delete";

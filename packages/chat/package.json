@@ -32,9 +32,11 @@
   },
   "dependencies": {
     "@chat-adapter/slack": "4.35.0",
-    "@slack/web-api": "^7.18.0"
+    "@slack/web-api": "^7.18.0",
+    "@trema/surfaces": "workspace:*"
   },
   "devDependencies": {
+    "@trema/projection": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "^4.1.10"

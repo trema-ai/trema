@@ -188,6 +188,7 @@ export function planRender(
             type: "append",
             remoteRef: prior.remoteRef,
             text: target.text.slice(prior.text.length),
+            prior: priorRenderState(prior),
           });
         } else {
           operations.push({
@@ -199,6 +200,7 @@ export function planRender(
             type: target.finalized ? "finalize" : "replace",
             remoteRef: prior.remoteRef,
             content: target.content,
+            prior: priorRenderState(prior),
           });
         }
       } else if (target.finalized && !prior.finalized) {
@@ -207,6 +209,7 @@ export function planRender(
           type: "finalize",
           remoteRef: prior.remoteRef,
           content: target.content,
+          prior: priorRenderState(prior),
         });
       }
       messages.push(next);
@@ -588,6 +591,15 @@ function withoutContent(message: PlannedMessage): RealizedMessage {
     contentHash: message.contentHash,
     finalized: message.finalized,
     ...(message.remoteRef === undefined ? {} : { remoteRef: message.remoteRef }),
+    ...(message.metadata === undefined ? {} : { metadata: message.metadata }),
+  };
+}
+
+function priorRenderState(
+  message: Pick<RealizedMessage, "text" | "metadata">,
+): NonNullable<Extract<RenderOperation, { type: "append" }>["prior"]> {
+  return {
+    text: message.text,
     ...(message.metadata === undefined ? {} : { metadata: message.metadata }),
   };
 }

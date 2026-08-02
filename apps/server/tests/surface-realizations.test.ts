@@ -364,6 +364,7 @@ integration("surface realizations", () => {
           messageIndex: 0,
           remoteRef: "remote-1",
           content: { text: "Original", parts: [] },
+          prior: { text: "Changed" },
         },
       ],
       nextSegments: [

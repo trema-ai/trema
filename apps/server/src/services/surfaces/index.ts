@@ -46,6 +46,12 @@ export function isLocationBindable(surface: string): boolean {
 }
 
 export {
+  type RenderSurfaceInput,
+  type RenderSurfaceResult,
+  renderSurface,
+  type SurfaceRealizationStore,
+} from "#server/services/surfaces/render.js";
+export {
   type CommitRealizationInput,
   PrismaSurfaceRealizationStore,
   type RecordRenderFailureInput,
