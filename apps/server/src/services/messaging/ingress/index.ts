@@ -661,6 +661,7 @@ export class SlackIngressService {
       await requireSlackElicitationTarget(this.#options.db, {
         orgId: request.orgId,
         elicitationId: event.action.elicitationId,
+        logicalThreadRef: request.logicalThreadRef,
         locationRef: request.locationRef,
         threadRef: event.surfaceRef.channelRef.startsWith("D") ? null : event.surfaceRef.threadRef,
       });
@@ -973,13 +974,20 @@ function slackIds(value: unknown): string[] {
 
 async function requireSlackElicitationTarget(
   db: Database,
-  input: { orgId: string; elicitationId: string; locationRef: string; threadRef: string | null },
+  input: {
+    orgId: string;
+    elicitationId: string;
+    logicalThreadRef: string;
+    locationRef: string;
+    threadRef: string | null;
+  },
 ): Promise<void> {
   const elicitation = await db.runElicitation.findUnique({
     where: { orgId_id: { orgId: input.orgId, id: input.elicitationId } },
     select: {
       run: {
         select: {
+          threadRef: true,
           session: { select: { surface: true, locationRef: true, threadRef: true } },
         },
       },
@@ -987,6 +995,7 @@ async function requireSlackElicitationTarget(
   });
   const session = elicitation?.run.session;
   if (
+    elicitation?.run.threadRef !== input.logicalThreadRef ||
     session?.surface !== "slack" ||
     session.locationRef !== input.locationRef ||
     session.threadRef !== input.threadRef

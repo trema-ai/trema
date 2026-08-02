@@ -1281,4 +1281,120 @@ integration("Slack ingress", () => {
       intentId: "slack:interaction:trigger-stop",
     });
   });
+
+  it("rejects stale approval controls after a channel rebind or user relink", async () => {
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+    const ingress = subject({ notify });
+
+    async function createPendingApproval(
+      fixture: Awaited<ReturnType<typeof setup>>,
+      suffix: string,
+    ) {
+      const threadTs = `1800000000.0000${suffix}`;
+      await ingress.service.accept(
+        signedRequest(
+          JSON.stringify(
+            appMention({
+              eventId: `Ev-stale-control-${suffix}`,
+              workspaceId: fixture.workspaceId,
+              threadTs,
+              ts: threadTs,
+            }),
+          ),
+        ),
+      );
+      await ingress.drain();
+      const run = await db.agentRun.findFirstOrThrow({
+        where: { orgId: fixture.org.id },
+        orderBy: { createdAt: "desc" },
+      });
+      await db.agentRun.update({ where: { id: run.id }, data: { state: "awaiting_input" } });
+      const elicitationId = `elicitation-stale-${suffix}`;
+      await db.runElicitation.create({
+        data: {
+          id: elicitationId,
+          orgId: fixture.org.id,
+          runId: run.id,
+          event: {
+            type: "elicitation",
+            elicitationId,
+            kind: "choice",
+            prompt: "Choose",
+            options: [{ id: "approve", label: "Approve" }],
+            blocking: true,
+          },
+        },
+      });
+      return { elicitationId, threadTs };
+    }
+
+    const rebound = await setup("TSTALEBINDING");
+    const reboundTarget = await createPendingApproval(rebound, "51");
+    const oldBinding = await db.binding.findUniqueOrThrow({
+      where: {
+        orgId_surface_locationRef: {
+          orgId: rebound.org.id,
+          surface: "slack",
+          locationRef: `${rebound.workspaceId}:C123ABC`,
+        },
+      },
+    });
+    const replacementScope = await db.scope.create({
+      data: { orgId: rebound.org.id, kind: "shared", name: "Replacement" },
+    });
+    await deleteSlackBinding(db, {
+      orgId: rebound.org.id,
+      actorPrincipalId: rebound.member.id,
+      bindingId: oldBinding.id,
+    });
+    await createSlackBinding(db, {
+      orgId: rebound.org.id,
+      actorPrincipalId: rebound.member.id,
+      connectionId: rebound.connection.id,
+      workspaceId: rebound.workspaceId,
+      channelId: "C123ABC",
+      scopeId: replacementScope.id,
+    });
+
+    const relinked = await setup("TSTALEIDENTITY");
+    const relinkedTarget = await createPendingApproval(relinked, "52");
+    const replacementMember = await db.principal.create({
+      data: { orgId: relinked.org.id, kind: "human", displayName: "Grace" },
+    });
+    await setSlackIdentityLink(db, {
+      orgId: relinked.org.id,
+      actorPrincipalId: relinked.member.id,
+      workspaceId: relinked.workspaceId,
+      userId: "U123ABC",
+      principalId: replacementMember.id,
+    });
+
+    for (const [fixture, target] of [
+      [rebound, reboundTarget],
+      [relinked, relinkedTarget],
+    ] as const) {
+      await ingress.service.accept(
+        signedRequest(
+          interaction({
+            workspaceId: fixture.workspaceId,
+            triggerId: `trigger-${target.elicitationId}`,
+            threadTs: target.threadTs,
+            actionId: `input:${target.elicitationId}:button:0`,
+            value: "approve",
+          }),
+          "application/x-www-form-urlencoded",
+        ),
+      );
+    }
+    await ingress.drain();
+
+    for (const target of [reboundTarget, relinkedTarget]) {
+      await expect(
+        db.runElicitation.findUniqueOrThrow({ where: { id: target.elicitationId } }),
+      ).resolves.toMatchObject({ resolution: null });
+    }
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenNthCalledWith(1, expect.objectContaining({ visibility: "private" }));
+    expect(notify).toHaveBeenNthCalledWith(2, expect.objectContaining({ visibility: "private" }));
+  });
 });
