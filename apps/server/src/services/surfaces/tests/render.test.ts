@@ -117,10 +117,14 @@ class MemoryStore implements SurfaceRealizationStore {
 
   async recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization> {
     expect(input.id).toBe(this.current.id);
+    const retry = this.current.nativeStopPending
+      ? this.current.retry
+      : { attempt: 0, terminal: false };
     this.current = {
       ...this.current,
       nativeStopPending: true,
       version: this.current.version + 1,
+      retry,
     };
     return this.current;
   }

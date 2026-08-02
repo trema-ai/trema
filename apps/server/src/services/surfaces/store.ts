@@ -274,7 +274,8 @@ export class PrismaSurfaceRealizationStore {
   /**
    * Persists the native-stop outbox marker before its idempotent intent call.
    * This observed remote fact supersedes lease ownership and stale revisions:
-   * incrementing the current version prevents any in-flight renderer commit.
+   * incrementing the current version prevents any in-flight renderer commit,
+   * while a new marker clears unrelated render failure and backoff state.
    */
   async recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization> {
     const now = this.#clock.now();
@@ -282,6 +283,10 @@ export class PrismaSurfaceRealizationStore {
       UPDATE "SurfaceRealization"
       SET "nativeStopPending" = true,
           "version" = "version" + CASE WHEN "nativeStopPending" THEN 0 ELSE 1 END,
+          "retryAttempt" = CASE WHEN "nativeStopPending" THEN "retryAttempt" ELSE 0 END,
+          "terminalFailure" = CASE WHEN "nativeStopPending" THEN "terminalFailure" ELSE false END,
+          "nextRetryAt" = CASE WHEN "nativeStopPending" THEN "nextRetryAt" ELSE NULL END,
+          "lastErrorCode" = CASE WHEN "nativeStopPending" THEN "lastErrorCode" ELSE NULL END,
           "updatedAt" = ${now}
       WHERE "id" = ${input.id}
         AND "orgId" = ${this.#orgId}

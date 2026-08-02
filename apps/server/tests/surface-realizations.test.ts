@@ -411,6 +411,64 @@ integration("surface realizations", () => {
     expect(await store.claim("run-1", ref, "worker-b", 30_000)).toBeUndefined();
   });
 
+  it("makes a native stop claimable after a replacement records terminal failure", async () => {
+    const first = await store.claim("run-1", ref, "worker-a", 30_000);
+    const plan: RenderPlan = {
+      fromCursor: 0,
+      toCursor: 1,
+      operations: [
+        {
+          id: "run-1:segment:0:message:0:create:hash",
+          type: "create",
+          messageId: "run-1:segment:0:message:0",
+          segmentId: "run-1:segment:0",
+          segmentIndex: 0,
+          messageIndex: 0,
+          content: { text: "Hello", parts: [] },
+          finalized: false,
+        },
+      ],
+      nextSegments: [],
+    };
+    const staged = await store.stagePlan({
+      id: first!.id,
+      owner: "worker-a",
+      expectedVersion: first!.version,
+      plan,
+    });
+
+    now = new Date("2026-07-31T12:00:31.000Z");
+    const replacement = await store.claim("run-1", ref, "worker-b", 30_000);
+    const failed = await store.recordFailure({
+      id: replacement!.id,
+      owner: "worker-b",
+      expectedVersion: replacement!.version,
+      code: "invalid_request",
+      terminal: true,
+    });
+    expect(failed).toMatchObject({
+      version: staged.version + 1,
+      retry: { attempt: 1, terminal: true, lastErrorCode: "invalid_request" },
+    });
+    expect(await store.claim("run-1", ref, "worker-c", 30_000)).toBeUndefined();
+
+    const pending = await store.recordStopPending({ id: staged.id });
+    expect(pending).toMatchObject({
+      version: failed.version + 1,
+      nativeStopPending: true,
+      retry: { attempt: 0, terminal: false },
+    });
+    expect(pending.retry).not.toHaveProperty("lastErrorCode");
+    expect(pending.retry).not.toHaveProperty("nextAt");
+
+    const resumed = await store.claim("run-1", ref, "worker-c", 30_000);
+    expect(resumed).toMatchObject({
+      nativeStopPending: true,
+      retry: { attempt: 0, terminal: false },
+      lease: { owner: "worker-c" },
+    });
+  });
+
   it("persists a follow-up requirement when a staged plan crosses a truncation", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const changedSegments: RealizedSegment[] = [
