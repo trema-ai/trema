@@ -15,6 +15,7 @@ import {
 
 import type {
   CommitRealizationInput,
+  RecordNativeStopPendingInput,
   RecordRenderFailureInput,
   RecordRenderStopInput,
   StageRenderPlanInput,
@@ -58,6 +59,7 @@ export interface SurfaceRealizationStore {
   ): Promise<SurfaceRealization | undefined>;
   stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization>;
   commit(input: CommitRealizationInput): Promise<SurfaceRealization>;
+  recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization>;
   recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization>;
   recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization>;
   renew(id: string, owner: string, ttlMs: number): Promise<boolean>;
@@ -159,7 +161,14 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
             cause: caught,
             retryable: true,
           });
-    if (error.code === "stopped_by_user") return submitNativeStop(input, current);
+    if (error.code === "stopped_by_user") {
+      const pending = await input.store.recordStopPending({
+        id: current.id,
+        owner: input.owner,
+        expectedVersion: current.version,
+      });
+      return submitNativeStop(input, pending);
+    }
     const retry = retryDecision(error, current.retry.attempt);
     const failed = await input.store.recordFailure({
       id: current.id,
@@ -200,7 +209,6 @@ async function submitNativeStop(
       owner: input.owner,
       expectedVersion: current.version,
       code: requestError.code,
-      nativeStopPending: true,
       ...(retry.disposition === "terminal"
         ? { terminal: true }
         : {

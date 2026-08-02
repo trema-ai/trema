@@ -19,6 +19,7 @@ import {
 } from "#server/services/surfaces/render.js";
 import type {
   CommitRealizationInput,
+  RecordNativeStopPendingInput,
   RecordRenderFailureInput,
   RecordRenderStopInput,
   StageRenderPlanInput,
@@ -113,12 +114,21 @@ class MemoryStore implements SurfaceRealizationStore {
     return this.current;
   }
 
+  async recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization> {
+    expect(input.expectedVersion).toBe(this.current.version);
+    this.current = {
+      ...this.current,
+      nativeStopPending: true,
+      version: this.current.version + 1,
+    };
+    return this.current;
+  }
+
   async recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization> {
     expect(input.expectedVersion).toBe(this.current.version);
     const { lease: _lease, ...current } = this.current;
     this.current = {
       ...current,
-      nativeStopPending: this.current.nativeStopPending || input.nativeStopPending === true,
       version: this.current.version + 1,
       retry: {
         attempt: this.current.retry.attempt + 1,
@@ -454,10 +464,15 @@ describe("renderSurface", () => {
   it("retries the pending native stop without replaying the staged Slack finalize", async () => {
     const store = new MemoryStore();
     const now = new Date("2026-08-01T12:00:00.000Z");
-    const requestRunStop = vi
-      .fn<RenderSurfaceInput["requestRunStop"]>()
-      .mockRejectedValueOnce(new Error("database unavailable"))
-      .mockResolvedValue("recorded");
+    const requestRunStop = vi.fn<RenderSurfaceInput["requestRunStop"]>();
+    requestRunStop.mockImplementationOnce(async () => {
+      expect(store.current.nativeStopPending).toBe(true);
+      throw new Error("database unavailable");
+    });
+    requestRunStop.mockImplementationOnce(async () => {
+      expect(store.current.nativeStopPending).toBe(true);
+      return "recorded";
+    });
     const apply = vi.fn(async () => {
       throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
     });

@@ -60,9 +60,14 @@ export interface RecordRenderFailureInput {
   owner: string;
   expectedVersion: number;
   code: SurfaceErrorCode;
-  nativeStopPending?: true;
   terminal?: boolean;
   nextRetryAt?: Date;
+}
+
+export interface RecordNativeStopPendingInput {
+  id: string;
+  owner: string;
+  expectedVersion: number;
 }
 
 export interface RecordRenderStopInput {
@@ -270,13 +275,40 @@ export class PrismaSurfaceRealizationStore {
     return toRealization(row);
   }
 
+  /** Persists the native-stop outbox marker before its idempotent intent call. */
+  async recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization> {
+    const now = this.#clock.now();
+    const [row] = await this.#db.$queryRaw<RealizationRow[]>`
+      UPDATE "SurfaceRealization"
+      SET "nativeStopPending" = true,
+          "version" = "version" + 1,
+          "updatedAt" = ${now}
+      WHERE "id" = ${input.id}
+        AND "orgId" = ${this.#orgId}
+        AND "leaseOwner" = ${input.owner}
+        AND "leaseUntil" > ${now}
+        AND "version" = ${input.expectedVersion}
+        AND NOT "nativeStopPending"
+      RETURNING
+        "id", "orgId", "runId", "surface", "locationRef", "threadRef",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "nativeStopPending", "version",
+        "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
+        "nextRetryAt", "lastErrorCode"`;
+    if (row === undefined) {
+      throw new SurfaceRealizationConflictError(
+        `surface realization native stop lost its lease or revision: ${input.id}`,
+      );
+    }
+    return toRealization(row);
+  }
+
   /** Records a safe error code, preserves the cursor, and releases the lease. */
   async recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization> {
     const now = this.#clock.now();
     const [row] = await this.#db.$queryRaw<RealizationRow[]>`
       UPDATE "SurfaceRealization"
       SET "version" = "version" + 1,
-          "nativeStopPending" = "nativeStopPending" OR ${input.nativeStopPending ?? false},
           "retryAttempt" = "retryAttempt" + 1,
           "terminalFailure" = ${input.terminal ?? false},
           "nextRetryAt" = ${input.nextRetryAt ?? null},

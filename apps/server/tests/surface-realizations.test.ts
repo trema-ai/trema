@@ -323,14 +323,20 @@ integration("surface realizations", () => {
       plan,
     });
 
-    const pending = await store.recordFailure({
+    const pending = await store.recordStopPending({
       id: staged.id,
       owner: "worker-a",
       expectedVersion: staged.version,
-      code: "unavailable",
-      nativeStopPending: true,
     });
-    expect(pending).toMatchObject({
+    expect(pending).toMatchObject({ nativeStopPending: true, pendingPlan: plan });
+
+    const failed = await store.recordFailure({
+      id: pending.id,
+      owner: "worker-a",
+      expectedVersion: pending.version,
+      code: "unavailable",
+    });
+    expect(failed).toMatchObject({
       nativeStopPending: true,
       pendingPlan: plan,
       retry: { attempt: 1, terminal: false, lastErrorCode: "unavailable" },
