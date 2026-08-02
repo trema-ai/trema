@@ -1135,6 +1135,22 @@ model SurfaceRealization {
   @@index([nextRetryAt])
 }
 
+/// A verified Slack delivery persisted before the webhook is acknowledged.
+/// Processing claims use an expiring lease so another server can recover work
+/// after a crash without concurrently applying the same delivery normally.
+model SlackIngressDelivery {
+  id          String    @id
+  payload     Json
+  attempt     Int       @default(0)
+  receivedAt  DateTime  @default(now())
+  completedAt DateTime?
+  leaseOwner  String?
+  leaseUntil  DateTime?
+
+  @@index([completedAt, receivedAt])
+  @@index([leaseUntil])
+}
+
 /// Input waiting for a turn boundary. Steering waits on a named run;
 /// a follow-up waits on the thread and starts the next run.
 model RunQueuedInput {

@@ -1,3 +1,5 @@
+import { createHash, randomUUID } from "node:crypto";
+
 import {
   type InteractionSurfaceEvent,
   type MessageSurfaceEvent,
@@ -7,6 +9,7 @@ import {
 import { SlackDriver, SlackIngressDriver } from "@trema/chat/slack";
 import type { Engine, PrincipalRef } from "@trema/harness";
 
+import type { Prisma } from "#server/generated/prisma/client.js";
 import type { Database } from "#server/lib/db/index.js";
 import type { Environment } from "#server/lib/env/schema.js";
 import { log } from "#server/lib/logger/index.js";
@@ -38,8 +41,19 @@ const SAFE_REJECTION =
   "Trema can't start work from this Slack account or conversation. Ask a Trema administrator to check the Slack connection, member link, and conversation binding.";
 const SAFE_UNAVAILABLE =
   "Trema can't start work right now. Ask a Trema administrator to check the Slack connection.";
-const SLACK_THREAD_OWNERSHIP_RETRIES = 5;
-const SLACK_THREAD_OWNERSHIP_RETRY_MS = 100;
+const SLACK_INGRESS_LEASE_MS = 30_000;
+const SLACK_INGRESS_RETRY_MS = 1_000;
+
+type ProcessableSurfaceEvent = Exclude<SurfaceEvent, { type: "challenge" | "unsupported" }>;
+
+type SlackIngressPayload =
+  | { kind: "surface"; event: ProcessableSurfaceEvent; connectionIds: string[] }
+  | { kind: "lifecycle"; event: SlackLifecycleEvent; connectionIds: string[] };
+
+type VerifiedSlackEvent = { event: SurfaceEvent; connectionIds: string[] };
+type SlackSigningCandidate = { signingSecret: string; connectionIds: string[] };
+
+type DeliveryOutcome = "completed" | "blocked" | "failed";
 
 export interface SlackIngressAcknowledgement {
   challenge?: string;
@@ -53,6 +67,7 @@ export type SlackIngressNotice = (input: {
   directMessage: boolean;
   visibility: "private" | "channel";
   text: string;
+  connectionIds?: readonly string[];
 }) => Promise<void>;
 
 export interface SlackIngressOptions {
@@ -99,6 +114,9 @@ export class IngressWorkTracker {
 export class SlackIngressService {
   readonly #options: SlackIngressOptions;
   readonly #notify: SlackIngressNotice;
+  #recovery = Promise.resolve();
+  #retryAt: number | undefined;
+  #retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: SlackIngressOptions) {
     this.#options = options;
@@ -107,46 +125,194 @@ export class SlackIngressService {
 
   async accept(request: Request): Promise<SlackIngressAcknowledgement> {
     const body = await request.text();
-    const event = await this.#read(request, body);
+    const verified = await this.#read(request, body);
+    const event = verified.event;
     if (event.type === "challenge") return { challenge: event.challenge };
     if (event.type === "unsupported") {
       const lifecycle = slackLifecycleEvent(event.nativePayload);
       if (lifecycle !== undefined) {
-        this.#options.defer(
-          applySlackLifecycleEvent(
-            this.#options.db,
-            lifecycle,
-            this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
-          ),
-        );
+        await this.#persist(slackLifecycleDeliveryId(event.nativePayload), {
+          kind: "lifecycle",
+          event: lifecycle,
+          connectionIds: verified.connectionIds,
+        });
+        this.#options.defer(this.recoverPending());
         return {};
       }
       log.debug("Slack delivery ignored", { nativeKind: event.nativeType });
       return {};
     }
-    this.#options.defer(this.#process(event));
+    await this.#persist(slackSurfaceDeliveryId(event), {
+      kind: "surface",
+      event,
+      connectionIds: verified.connectionIds,
+    });
+    this.#options.defer(this.recoverPending());
     return {};
   }
 
-  async #read(request: Request, body: string): Promise<SurfaceEvent> {
+  /** Replays every verified delivery that was not durably completed. */
+  recoverPending(): Promise<void> {
+    const recovery = this.#recovery.then(() => this.#drainPending());
+    this.#recovery = recovery.catch(() => undefined);
+    return recovery;
+  }
+
+  async #persist(id: string, payload: SlackIngressPayload): Promise<void> {
+    await this.#options.db.slackIngressDelivery.createMany({
+      data: [
+        {
+          id,
+          payload: payload as unknown as Prisma.InputJsonValue,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  }
+
+  async #drainPending(): Promise<void> {
+    let repeatBlocked = false;
+    do {
+      const now = new Date();
+      const deliveries = await this.#options.db.slackIngressDelivery.findMany({
+        where: {
+          completedAt: null,
+          OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+        },
+        orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      });
+      let completed = false;
+      let blocked = false;
+      for (const delivery of deliveries) {
+        const outcome = await this.#processDelivery(delivery.id);
+        if (outcome === "completed") completed = true;
+        else if (outcome === "blocked") blocked = true;
+      }
+      repeatBlocked = completed && blocked;
+    } while (repeatBlocked);
+
+    const leased = await this.#options.db.slackIngressDelivery.findFirst({
+      where: { completedAt: null, leaseUntil: { gt: new Date() } },
+      orderBy: { leaseUntil: "asc" },
+      select: { leaseUntil: true },
+    });
+    if (leased?.leaseUntil !== null && leased?.leaseUntil !== undefined) {
+      this.#scheduleRecovery(leased.leaseUntil);
+    }
+  }
+
+  async #processDelivery(id: string): Promise<DeliveryOutcome> {
+    const owner = randomUUID();
+    const now = new Date();
+    const claimed = await this.#options.db.slackIngressDelivery.updateMany({
+      where: {
+        id,
+        completedAt: null,
+        OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+      },
+      data: {
+        leaseOwner: owner,
+        leaseUntil: new Date(now.getTime() + SLACK_INGRESS_LEASE_MS),
+        attempt: { increment: 1 },
+      },
+    });
+    if (claimed.count === 0) return "failed";
+    const delivery = await this.#options.db.slackIngressDelivery.findUniqueOrThrow({
+      where: { id },
+      select: { attempt: true, payload: true },
+    });
+    const payload = delivery.payload as unknown as SlackIngressPayload;
+    try {
+      const outcome =
+        payload.kind === "lifecycle"
+          ? await this.#processLifecycle(payload.event, payload.connectionIds)
+          : await this.#process(payload.event, payload.connectionIds);
+      if (outcome === "blocked") {
+        await this.#options.db.slackIngressDelivery.updateMany({
+          where: { id, completedAt: null, leaseOwner: owner },
+          data: { leaseOwner: null, leaseUntil: null },
+        });
+        return "blocked";
+      }
+      await this.#options.db.slackIngressDelivery.updateMany({
+        where: { id, completedAt: null, leaseOwner: owner },
+        data: {
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseUntil: null,
+          // The id remains as the durable dedup tombstone; message content is
+          // needed only while work is pending and is not retained afterward.
+          payload: { kind: "completed" },
+        },
+      });
+      return "completed";
+    } catch (error) {
+      if (delivery.attempt === 1 && payload.kind === "surface") {
+        await this.#safeNotice(payload.event, SAFE_UNAVAILABLE, "private", payload.connectionIds);
+      }
+      const retryAt = new Date(Date.now() + ingressRetryDelay(delivery.attempt));
+      await this.#options.db.slackIngressDelivery.updateMany({
+        where: { id, completedAt: null, leaseOwner: owner },
+        data: { leaseOwner: null, leaseUntil: retryAt },
+      });
+      this.#scheduleRecovery(retryAt);
+      log.error("Slack ingress delivery will retry", { error, deliveryId: id });
+      return "failed";
+    }
+  }
+
+  async #processLifecycle(
+    event: SlackLifecycleEvent,
+    connectionIds: readonly string[],
+  ): Promise<"completed"> {
+    await applySlackLifecycleEvent(
+      this.#options.db,
+      event,
+      this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
+      connectionIds,
+    );
+    return "completed";
+  }
+
+  #scheduleRecovery(at: Date): void {
+    const timestamp = at.getTime();
+    if (this.#retryAt !== undefined && this.#retryAt <= timestamp) return;
+    if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
+    this.#retryAt = timestamp;
+    this.#retryTimer = setTimeout(
+      () => {
+        this.#retryAt = undefined;
+        this.#retryTimer = undefined;
+        this.#options.defer(this.recoverPending());
+      },
+      Math.max(0, timestamp - Date.now()),
+    );
+    this.#retryTimer.unref?.();
+  }
+
+  async #read(request: Request, body: string): Promise<VerifiedSlackEvent> {
     const hint = slackEnvelopeHint(body, request.headers.get("content-type"));
     const signingSecrets = await this.#signingSecrets(hint.workspaceId, hint.urlVerification);
     if (signingSecrets.length === 0) throw new SlackIngressConfigurationError();
 
     let invalidRequest: SurfaceDriverError | undefined;
-    for (const signingSecret of signingSecrets) {
+    for (const candidate of signingSecrets) {
       const driver = new SlackIngressDriver({
-        signingSecret,
+        signingSecret: candidate.signingSecret,
         ...(this.#options.now === undefined ? {} : { now: this.#options.now }),
       });
       try {
-        return await driver.read(
-          new Request(request.url, {
-            method: request.method,
-            headers: request.headers,
-            body,
-          }),
-        );
+        return {
+          event: await driver.read(
+            new Request(request.url, {
+              method: request.method,
+              headers: request.headers,
+              body,
+            }),
+          ),
+          connectionIds: candidate.connectionIds,
+        };
       } catch (error) {
         if (error instanceof SurfaceDriverError && error.category === "invalid-request") {
           invalidRequest = error;
@@ -161,7 +327,7 @@ export class SlackIngressService {
   async #signingSecrets(
     workspaceId: string | undefined,
     allowGlobalFallback: boolean,
-  ): Promise<string[]> {
+  ): Promise<SlackSigningCandidate[]> {
     const matchingConnections = workspaceId
       ? await this.#options.db.connectorConnection.findMany({
           where: {
@@ -170,17 +336,24 @@ export class SlackIngressService {
             config: { path: ["team.id"], equals: workspaceId },
             owner: { kind: "agent", deactivatedAt: null },
           },
-          select: { orgId: true, clientRegistrationId: true },
+          select: { id: true, orgId: true, clientRegistrationId: true },
         })
       : [];
-    const secrets = new Set<string>();
-    const candidates = new Map<string, { orgId: string; registrationId?: string }>();
+    const secrets = new Map<string, Set<string>>();
+    const candidates = new Map<
+      string,
+      { orgId: string; registrationId?: string; connectionIds: Set<string> }
+    >();
     for (const connection of matchingConnections) {
       const registrationId = connection.clientRegistrationId ?? undefined;
-      candidates.set(`${connection.orgId}:${registrationId ?? "preferred"}`, {
+      const key = `${connection.orgId}:${registrationId ?? "preferred"}`;
+      const candidate = candidates.get(key) ?? {
         orgId: connection.orgId,
         ...(registrationId === undefined ? {} : { registrationId }),
-      });
+        connectionIds: new Set<string>(),
+      };
+      candidate.connectionIds.add(connection.id);
+      candidates.set(key, candidate);
     }
     if (candidates.size === 0 && allowGlobalFallback) {
       const registrations = await this.#options.db.clientRegistration.findMany({
@@ -189,7 +362,10 @@ export class SlackIngressService {
         distinct: ["orgId"],
       });
       for (const registration of registrations) {
-        candidates.set(`${registration.orgId}:preferred`, { orgId: registration.orgId });
+        candidates.set(`${registration.orgId}:preferred`, {
+          orgId: registration.orgId,
+          connectionIds: new Set<string>(),
+        });
       }
     }
     for (const candidate of candidates.values()) {
@@ -209,38 +385,58 @@ export class SlackIngressService {
               this.#options.platformApps,
               this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
             );
-        if (registration.signingSecret) secrets.add(registration.signingSecret);
+        if (registration.signingSecret) {
+          const connectionIds = secrets.get(registration.signingSecret) ?? new Set<string>();
+          for (const connectionId of candidate.connectionIds) connectionIds.add(connectionId);
+          secrets.set(registration.signingSecret, connectionIds);
+        }
       } catch (error) {
         if (error instanceof NoClientRegistrationError) continue;
         throw error;
       }
     }
-    return [...secrets];
+    return [...secrets].map(([signingSecret, connectionIds]) => ({
+      signingSecret,
+      connectionIds: [...connectionIds],
+    }));
   }
 
-  async #process(event: Exclude<SurfaceEvent, { type: "challenge" | "unsupported" }>) {
+  async #process(
+    event: ProcessableSurfaceEvent,
+    connectionIds: readonly string[],
+  ): Promise<"completed" | "blocked"> {
     const startedAt = performance.now();
     try {
-      if (event.type === "message") await this.#message(event);
-      else await this.#interaction(event);
+      if (event.type === "message") {
+        const outcome = await this.#message(event, connectionIds);
+        if (outcome === "blocked") return "blocked";
+      } else {
+        await this.#interaction(event, connectionIds);
+      }
       log.info("Slack delivery processed", {
         nativeKind: event.type === "message" ? event.nativeKind : event.action.type,
         durationMs: Math.round(performance.now() - startedAt),
       });
+      return "completed";
     } catch (error) {
       const durationMs = Math.round(performance.now() - startedAt);
       if (error instanceof SlackRequestRejectedError) {
         if (error.reason === "bot_event") {
           log.debug("Slack bot delivery ignored", { durationMs });
-          return;
+          return "completed";
         }
         log.warn("Slack delivery rejected", { reason: error.reason, durationMs });
         if (error.reason === "location_unbound") {
-          await this.#safeNotice(event, this.#channelBindingNotice(event), "channel");
+          await this.#safeNotice(
+            event,
+            this.#channelBindingNotice(event),
+            "channel",
+            connectionIds,
+          );
         } else if (shouldNotify(error.reason)) {
-          await this.#safeNotice(event, SAFE_REJECTION);
+          await this.#safeNotice(event, SAFE_REJECTION, "private", connectionIds);
         }
-        return;
+        return "completed";
       }
       if (
         error instanceof IntentMismatchError ||
@@ -250,25 +446,33 @@ export class SlackIngressService {
         error instanceof SlackTargetMismatchError
       ) {
         log.warn("Slack interaction rejected", { code: intentErrorCode(error), durationMs });
-        await this.#safeNotice(event, SAFE_REJECTION);
-        return;
+        await this.#safeNotice(event, SAFE_REJECTION, "private", connectionIds);
+        return "completed";
+      }
+      if (error instanceof SlackRunSchedulingUnavailableError) {
+        log.warn("Slack run scheduling unavailable", { durationMs });
+        await this.#safeNotice(event, SAFE_UNAVAILABLE, "private", connectionIds);
+        return "completed";
       }
       log.error("Slack delivery processing failed", { error, durationMs });
-      await this.#safeNotice(event, SAFE_UNAVAILABLE);
+      throw error;
     }
   }
 
-  async #message(event: MessageSurfaceEvent): Promise<void> {
-    if (await this.#isMentionShadow(event)) return;
-    if (event.nativeKind === "thread-reply" && !(await this.#waitForOwnedThread(event))) {
-      log.debug("Slack unrelated thread reply ignored");
-      return;
+  async #message(
+    event: MessageSurfaceEvent,
+    connectionIds: readonly string[],
+  ): Promise<"completed" | "blocked"> {
+    if (await this.#isMentionShadow(event, connectionIds)) return "completed";
+    if (event.nativeKind === "thread-reply" && !(await this.#isOwnedThread(event, connectionIds))) {
+      log.debug("Slack thread reply awaiting an owning delivery");
+      return "blocked";
     }
-    const request = await this.#resolve(event);
+    const request = await this.#resolve(event, connectionIds);
     const engine = this.#options.runEngineFor?.(request.orgId);
     if (engine === undefined) throw new SlackRunSchedulingUnavailableError();
     const text = stripBotMention(event.text, request.botUserId);
-    if (text.length === 0) return;
+    if (text.length === 0) return "completed";
     const services = createRunServices({
       db: this.#options.db,
       env: this.#options.env,
@@ -298,13 +502,18 @@ export class SlackIngressService {
         message: { role: "user", blocks: [{ type: "text", text }] },
       },
     });
+    return "completed";
   }
 
-  async #waitForOwnedThread(event: MessageSurfaceEvent): Promise<boolean> {
+  async #isOwnedThread(
+    event: MessageSurfaceEvent,
+    connectionIds: readonly string[],
+  ): Promise<boolean> {
     const workspaceId = event.surfaceRef.teamRef;
     if (workspaceId === undefined) return false;
     const connections = await this.#options.db.connectorConnection.findMany({
       where: {
+        id: { in: [...connectionIds] },
         providerKey: "slack",
         revokedAt: null,
         config: { path: ["team.id"], equals: workspaceId },
@@ -314,30 +523,28 @@ export class SlackIngressService {
     });
     const orgIds = [...new Set(connections.map((connection) => connection.orgId))];
     if (orgIds.length === 0) return false;
-    for (let attempt = 0; attempt < SLACK_THREAD_OWNERSHIP_RETRIES; attempt += 1) {
-      const session = await this.#options.db.contextSession.findFirst({
-        where: {
-          orgId: { in: orgIds },
-          surface: "slack",
-          locationRef: event.surfaceRef.locationRef,
-          threadRef: event.surfaceRef.threadRef,
-        },
-        select: { id: true },
-      });
-      if (session !== null) return true;
-      if (attempt + 1 < SLACK_THREAD_OWNERSHIP_RETRIES) {
-        await new Promise<void>((resolve) => setTimeout(resolve, SLACK_THREAD_OWNERSHIP_RETRY_MS));
-      }
-    }
-    return false;
+    const session = await this.#options.db.contextSession.findFirst({
+      where: {
+        orgId: { in: orgIds },
+        surface: "slack",
+        locationRef: event.surfaceRef.locationRef,
+        threadRef: event.surfaceRef.threadRef,
+      },
+      select: { id: true },
+    });
+    return session !== null;
   }
 
-  async #isMentionShadow(event: MessageSurfaceEvent): Promise<boolean> {
+  async #isMentionShadow(
+    event: MessageSurfaceEvent,
+    connectionIds: readonly string[],
+  ): Promise<boolean> {
     if (event.nativeKind !== "thread-reply" || !event.text.includes("<@")) return false;
     const workspaceId = event.surfaceRef.teamRef;
     if (workspaceId === undefined) return false;
     const connections = await this.#options.db.connectorConnection.findMany({
       where: {
+        id: { in: [...connectionIds] },
         providerKey: "slack",
         revokedAt: null,
         config: { path: ["team.id"], equals: workspaceId },
@@ -353,9 +560,12 @@ export class SlackIngressService {
     });
   }
 
-  async #interaction(event: InteractionSurfaceEvent): Promise<void> {
+  async #interaction(
+    event: InteractionSurfaceEvent,
+    connectionIds: readonly string[],
+  ): Promise<void> {
     if (event.action.type === "native" || event.surfaceRef === undefined) return;
-    const request = await this.#resolve(event);
+    const request = await this.#resolve(event, connectionIds);
     const engine = this.#options.runEngineFor?.(request.orgId);
     if (engine === undefined) throw new SlackRunSchedulingUnavailableError();
     const services = createRunServices({
@@ -390,7 +600,7 @@ export class SlackIngressService {
     });
   }
 
-  #resolve(event: MessageSurfaceEvent | InteractionSurfaceEvent) {
+  #resolve(event: MessageSurfaceEvent | InteractionSurfaceEvent, connectionIds: readonly string[]) {
     const surfaceRef = event.surfaceRef;
     if (surfaceRef === undefined || surfaceRef.teamRef === undefined) {
       throw new SlackRequestRejectedError("not_installed");
@@ -401,6 +611,7 @@ export class SlackIngressService {
       threadTs: surfaceRef.threadRef,
       userId: event.authorRef,
       directMessage: surfaceRef.channelRef.startsWith("D"),
+      connectionIds,
       ...(this.#options.env.TREMA_CREDENTIAL_MASTER_KEY
         ? { masterKey: this.#options.env.TREMA_CREDENTIAL_MASTER_KEY }
         : {}),
@@ -415,6 +626,7 @@ export class SlackIngressService {
     event: MessageSurfaceEvent | InteractionSurfaceEvent,
     text: string,
     visibility: "private" | "channel" = "private",
+    connectionIds?: readonly string[],
   ): Promise<void> {
     if (event.surfaceRef === undefined || event.surfaceRef.teamRef === undefined) return;
     await this.#notify({
@@ -425,6 +637,7 @@ export class SlackIngressService {
       directMessage: event.surfaceRef.channelRef.startsWith("D"),
       visibility,
       text,
+      ...(connectionIds === undefined ? {} : { connectionIds }),
     }).catch(() => {
       // Provider failures can retain request objects containing credentials.
       // Report only that the safe response failed, never the error object.
@@ -445,6 +658,7 @@ export class SlackIngressService {
   async #sendNotice(input: Parameters<SlackIngressNotice>[0]): Promise<void> {
     const connection = await this.#options.db.connectorConnection.findFirst({
       where: {
+        ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
         providerKey: "slack",
         revokedAt: null,
         config: { path: ["team.id"], equals: input.workspaceId },
@@ -523,6 +737,10 @@ function intentErrorCode(error: Error): string {
   return "code" in error && typeof error.code === "string" ? error.code : error.name;
 }
 
+function ingressRetryDelay(attempt: number): number {
+  return Math.min(60_000, SLACK_INGRESS_RETRY_MS * 2 ** Math.min(Math.max(attempt - 1, 0), 6));
+}
+
 function stripBotMention(text: string, botUserId: string | null): string {
   if (botUserId === null) return text.trim();
   return text.replace(new RegExp(`<@${botUserId}>`, "gu"), "").trim();
@@ -582,6 +800,23 @@ function slackLifecycleEvent(payload: unknown): SlackLifecycleEvent | undefined 
     botUserIds: slackIds(tokens.bot),
     oauthUserIds: slackIds(tokens.oauth),
   };
+}
+
+function slackLifecycleDeliveryId(payload: unknown): string {
+  const envelope =
+    typeof payload === "object" && payload !== null && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  const eventId = envelope.event_id;
+  if (typeof eventId === "string" && eventId.length > 0) return `slack:lifecycle:${eventId}`;
+  const digest = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  return `slack:lifecycle:${digest}`;
+}
+
+function slackSurfaceDeliveryId(event: ProcessableSurfaceEvent): string {
+  const workspaceRef = event.surfaceRef?.teamRef ?? event.surfaceRef?.locationRef ?? "unscoped";
+  const channelRef = event.surfaceRef?.channelRef ?? "unscoped";
+  return `slack:delivery:${workspaceRef}:${channelRef}:${event.intentId}`;
 }
 
 function slackId(value: unknown): string | undefined {

@@ -48,6 +48,8 @@ export interface AppDependencies {
   platformApps?: PlatformAppDirectory;
   runEngineFor?: (orgId: string) => Engine;
   ingressWork?: IngressWorkTracker;
+  /** Recover verified webhook deliveries left pending by an earlier process. */
+  recoverIngress?: boolean;
   /** Poll and heartbeat cadence for the run SSE tail. Tests shorten both. */
   runStream?: RunStreamTiming;
 }
@@ -142,6 +144,7 @@ export function createApp({
   platformApps,
   runEngineFor,
   ingressWork,
+  recoverIngress,
   runStream,
 }: AppDependencies): Hono {
   const app = new Hono();
@@ -154,6 +157,7 @@ export function createApp({
     ...(platformApps === undefined ? {} : { platformApps }),
     ...(connectorFetch === undefined ? {} : { fetch: connectorFetch }),
   });
+  if (recoverIngress === true) work.defer(slackIngress.recoverPending());
   const rpcHandler = new RPCHandler<RpcContext>(router, {
     clientInterceptors: [procedureInterceptor],
     interceptors: [onError(reportUnexpected("RPC request failed"))],

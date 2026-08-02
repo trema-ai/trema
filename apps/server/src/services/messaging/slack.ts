@@ -208,9 +208,11 @@ export async function applySlackLifecycleEvent(
   db: Database,
   event: SlackLifecycleEvent,
   masterKey?: string,
+  connectionIds?: readonly string[],
 ): Promise<void> {
   const candidates = await db.connectorConnection.findMany({
     where: {
+      ...(connectionIds === undefined ? {} : { id: { in: [...connectionIds] } }),
       providerKey: SLACK_PROVIDER_KEY,
       revokedAt: null,
       config: { path: ["team.id"], equals: event.workspaceId },
@@ -799,6 +801,8 @@ export interface ResolveSlackRequestInput {
   platformApps?: Parameters<typeof resolveConnectionCredential>[1]["platformApps"];
   fetch?: typeof globalThis.fetch;
   now?: Date;
+  /** Connections whose app secret authenticated this delivery. */
+  connectionIds?: readonly string[];
 }
 
 export async function resolveSlackRequest(db: Database, input: ResolveSlackRequestInput) {
@@ -808,6 +812,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
   const threadTs = assertThreadTs(input.threadTs);
   const candidates = await db.connectorConnection.findMany({
     where: {
+      ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
       providerKey: SLACK_PROVIDER_KEY,
       revokedAt: null,
       config: { path: ["team.id"], equals: workspaceId },
@@ -827,6 +832,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
   if (candidates.length === 0) {
     const revoked = await db.connectorConnection.findFirst({
       where: {
+        ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
         providerKey: SLACK_PROVIDER_KEY,
         config: { path: ["team.id"], equals: workspaceId },
       },

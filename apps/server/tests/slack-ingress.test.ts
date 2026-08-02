@@ -176,7 +176,7 @@ integration("Slack ingress", () => {
   const db = createPrismaClient(databaseUrl);
 
   beforeEach(async () => {
-    await db.$executeRaw`TRUNCATE TABLE "Org", "user", "verification", "BootstrapToken" CASCADE`;
+    await db.$executeRaw`TRUNCATE TABLE "SlackIngressDelivery", "Org", "user", "verification", "BootstrapToken" CASCADE`;
   });
 
   afterAll(async () => {
@@ -354,6 +354,51 @@ integration("Slack ingress", () => {
     await expect(db.contextSession.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
   });
 
+  it("retains an early reply until a later root delivery owns the thread", async () => {
+    const fixture = await setup("TDELAYEDTHREAD");
+    const ingress = subject();
+    const threadTs = "1800000000.000030";
+    const replyId = `slack:delivery:${fixture.workspaceId}:C123ABC:slack:event:Ev-delayed-reply`;
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          threadReply({
+            eventId: "Ev-delayed-reply",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: "1800000000.000031",
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
+    ).resolves.toMatchObject({ completedAt: null });
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-delayed-root",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: threadTs,
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(2);
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: replyId } }),
+    ).resolves.toEqual(expect.objectContaining({ completedAt: expect.any(Date) }));
+  });
+
   it("namespaces equal Slack timestamps by workspace and channel", async () => {
     const fixture = await setup("TTHREADNAMESPACE");
     const existingBinding = await db.binding.findUniqueOrThrow({
@@ -420,10 +465,104 @@ integration("Slack ingress", () => {
     );
 
     await expect(ingress.service.accept(signedRequest(body))).resolves.toEqual({});
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({
+        where: { id: `slack:delivery:${fixture.workspaceId}:C123ABC:slack:event:Ev-slow` },
+      }),
+    ).resolves.toMatchObject({ completedAt: null });
     expect(engine.enqueue).not.toHaveBeenCalled();
     release();
     await ingress.drain();
     expect(engine.enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("recovers a verified delivery left pending by an earlier process", async () => {
+    const fixture = await setup("TRECOVERED");
+    const intentId = "slack:event:Ev-recovered";
+    const deliveryId = `slack:delivery:${fixture.workspaceId}:C123ABC:${intentId}`;
+    await db.slackIngressDelivery.create({
+      data: {
+        id: deliveryId,
+        payload: {
+          kind: "surface",
+          connectionIds: [fixture.connection.id],
+          event: {
+            type: "message",
+            surface: "slack",
+            intentId,
+            surfaceRef: {
+              surface: "slack",
+              locationRef: `${fixture.workspaceId}:C123ABC`,
+              channelRef: "C123ABC",
+              threadRef: "1800000000.000041",
+              teamRef: fixture.workspaceId,
+              recipient: { teamRef: fixture.workspaceId, userRef: "U123ABC" },
+            },
+            authorRef: "U123ABC",
+            text: "<@U999BOT> recover this delivery",
+            at: "2027-01-15T08:00:00.000Z",
+            nativeKind: "app-mention",
+          },
+        },
+      },
+    });
+    const recovered = subject();
+
+    await recovered.service.recoverPending();
+
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+    ).resolves.toEqual(
+      expect.objectContaining({ completedAt: expect.any(Date), payload: { kind: "completed" } }),
+    );
+  });
+
+  it("does not replay a delivery through a replacement installation", async () => {
+    const original = await setup("TREPLAYBOUND");
+    const intentId = "slack:event:Ev-replay-bound";
+    const deliveryId = `slack:delivery:${original.workspaceId}:C123ABC:${intentId}`;
+    await db.slackIngressDelivery.create({
+      data: {
+        id: deliveryId,
+        payload: {
+          kind: "surface",
+          connectionIds: [original.connection.id],
+          event: {
+            type: "message",
+            surface: "slack",
+            intentId,
+            surfaceRef: {
+              surface: "slack",
+              locationRef: `${original.workspaceId}:C123ABC`,
+              channelRef: "C123ABC",
+              threadRef: "1800000000.000042",
+              teamRef: original.workspaceId,
+              recipient: { teamRef: original.workspaceId, userRef: "U123ABC" },
+            },
+            authorRef: "U123ABC",
+            text: "<@U999BOT> do not cross installations",
+            at: "2027-01-15T08:00:00.000Z",
+            nativeKind: "app-mention",
+          },
+        },
+      },
+    });
+    await db.connectorConnection.update({
+      where: { id: original.connection.id },
+      data: { revokedAt: new Date() },
+    });
+    const replacement = await setup(original.workspaceId);
+    const recovered = subject();
+
+    await recovered.service.recoverPending();
+
+    await expect(
+      db.runIntent.count({ where: { orgId: { in: [original.org.id, replacement.org.id] } } }),
+    ).resolves.toBe(0);
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+    ).resolves.toEqual(expect.objectContaining({ completedAt: expect.any(Date) }));
   });
 
   it("resolves direct messages through the linked member's personal scope", async () => {

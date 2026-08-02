@@ -43,6 +43,7 @@ export async function serveTrema({ env }: ServeDependencies) {
     auth,
     env,
     ingressWork,
+    recoverIngress: true,
     ...(runEngineFor ? { runEngineFor } : {}),
   });
   const server = serve({ fetch: app.fetch, hostname: env.HOST, port: env.PORT }, () =>
