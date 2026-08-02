@@ -362,6 +362,54 @@ integration("Slack ingress", () => {
     await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
   });
 
+  it("does not report failure when inbox completion retries after durable routing", async () => {
+    const fixture = await setup("TPOSTROUTINGRETRY");
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+    const ingress = subject({ notify });
+    const deliveryId = `slack:delivery:${fixture.workspaceId}:C123ABC:slack:event:Ev-post-routing-retry`;
+    const originalUpdateMany = db.slackIngressDelivery.updateMany.bind(db.slackIngressDelivery);
+    const updateMany = vi.spyOn(db.slackIngressDelivery, "updateMany");
+    updateMany
+      .mockImplementationOnce(originalUpdateMany)
+      .mockImplementationOnce(originalUpdateMany)
+      .mockImplementationOnce(originalUpdateMany)
+      .mockRejectedValueOnce(new Error("transient completion failure"));
+
+    try {
+      await ingress.service.accept(
+        signedRequest(
+          JSON.stringify(
+            appMention({
+              eventId: "Ev-post-routing-retry",
+              workspaceId: fixture.workspaceId,
+            }),
+          ),
+        ),
+      );
+      await ingress.drain();
+
+      await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+      await expect(
+        db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+      ).resolves.toMatchObject({ completedAt: null, leaseUntil: expect.any(Date) });
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      updateMany.mockRestore();
+    }
+
+    await db.slackIngressDelivery.update({
+      where: { id: deliveryId },
+      data: { leaseUntil: null },
+    });
+    await ingress.service.recoverPending();
+
+    await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+    ).resolves.toMatchObject({ completedAt: expect.any(Date) });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it("keeps out-of-order and concurrent replies on one durable Slack thread", async () => {
     const fixture = await setup();
     const ingress = subject();

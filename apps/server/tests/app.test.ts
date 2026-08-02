@@ -151,6 +151,22 @@ describe("server", () => {
     expect(repeated.status).toBe(200);
     await expect(repeated.json()).resolves.toEqual({ challenge: "challenge-1" });
     expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+
+    const generated = await app.request(
+      `/api/v1/messaging/slack/events?org_id=${registration.orgId}`,
+      {
+        method: "POST",
+        body,
+        headers: {
+          "content-type": "application/json",
+          "x-slack-request-timestamp": String(nowSeconds),
+          "x-slack-signature": signature,
+        },
+      },
+    );
+    expect(generated.status).toBe(200);
+    await expect(generated.json()).resolves.toEqual({ challenge: "challenge-1" });
+    expect(db.clientRegistration.findMany).toHaveBeenCalledOnce();
   });
 
   it("rejects oversized workspace-less challenges before scanning signing secrets", async () => {

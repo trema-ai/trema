@@ -156,7 +156,19 @@ function parseSlackLocationRef(locationRef: string) {
   }
 }
 
-export function slackAppManifest(authBaseUrl: string) {
+export type SlackEventsSelector = { orgId: string } | { registrationId: string };
+
+export function slackEventsUrl(authBaseUrl: string, selector: SlackEventsSelector): string {
+  const url = new URL(SLACK_EVENTS_PATH, authBaseUrl);
+  if ("registrationId" in selector) {
+    url.searchParams.set("registration_id", selector.registrationId);
+  } else {
+    url.searchParams.set("org_id", selector.orgId);
+  }
+  return url.toString();
+}
+
+export function slackAppManifest(authBaseUrl: string, selector: SlackEventsSelector) {
   const base = new URL(authBaseUrl);
   const endpoint = (path: string) => new URL(path, base).toString();
   return {
@@ -178,7 +190,7 @@ export function slackAppManifest(authBaseUrl: string) {
     },
     settings: {
       event_subscriptions: {
-        request_url: endpoint(SLACK_EVENTS_PATH),
+        request_url: slackEventsUrl(authBaseUrl, selector),
         bot_events: [
           "app_mention",
           "app_uninstalled",

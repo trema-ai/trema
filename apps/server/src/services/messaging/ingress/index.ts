@@ -58,6 +58,7 @@ type SlackIngressPayload =
 
 type VerifiedSlackEvent = { event: SurfaceEvent; connectionIds: string[] };
 type SlackSigningCandidate = { signingSecret: string; connectionIds: string[] };
+type SlackSigningSelector = { kind: "org" | "registration"; id: string };
 
 type DeliveryOutcome = "completed" | "blocked" | "failed";
 
@@ -312,9 +313,6 @@ export class SlackIngressService {
       return "completed";
     } catch (error) {
       const claimPending = error instanceof SlackRunClaimPendingError;
-      if (delivery.attempt === 1 && payload.kind === "surface" && !claimPending) {
-        await this.#safeNotice(payload.event, SAFE_UNAVAILABLE, "private", payload.connectionIds);
-      }
       const retryAt = new Date(Date.now() + ingressRetryDelay(delivery.attempt));
       await this.#options.db.slackIngressDelivery.updateMany({
         where: { id, completedAt: null, leaseOwner: owner },
@@ -417,22 +415,20 @@ export class SlackIngressService {
   }
 
   async #selectedSigningSecret(
-    registrationId: string | undefined,
+    selector: SlackSigningSelector | undefined,
   ): Promise<SlackSigningCandidate[]> {
-    if (registrationId === undefined) return [];
-    const selected = await this.#options.db.clientRegistration.findUnique({
-      where: { id: registrationId },
-      select: { orgId: true, providerKey: true },
-    });
-    if (selected === null || selected.providerKey !== "slack") return [];
+    if (selector === undefined) return [];
     try {
-      const registration = await resolveStoredClientRegistration(
-        this.#options.db,
-        selected.orgId,
-        registrationId,
-        this.#options.platformApps,
-        this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
-      );
+      const registration =
+        selector.kind === "registration"
+          ? await this.#selectedStoredRegistration(selector.id)
+          : await resolveClientRegistration(
+              this.#options.db,
+              selector.id,
+              "slack",
+              this.#options.platformApps,
+              this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
+            );
       return registration.signingSecret
         ? [{ signingSecret: registration.signingSecret, connectionIds: [] }]
         : [];
@@ -445,6 +441,23 @@ export class SlackIngressService {
       }
       throw error;
     }
+  }
+
+  async #selectedStoredRegistration(registrationId: string) {
+    const selected = await this.#options.db.clientRegistration.findUnique({
+      where: { id: registrationId },
+      select: { orgId: true, providerKey: true },
+    });
+    if (selected === null || selected.providerKey !== "slack") {
+      throw new ClientRegistrationNotFoundError();
+    }
+    return resolveStoredClientRegistration(
+      this.#options.db,
+      selected.orgId,
+      registrationId,
+      this.#options.platformApps,
+      this.#options.env.TREMA_CREDENTIAL_MASTER_KEY,
+    );
   }
 
   async #signingSecrets(workspaceId: string | undefined): Promise<SlackSigningCandidate[]> {
@@ -1032,12 +1045,18 @@ function stripBotMention(text: string, botUserId: string | null): string {
   return text.replace(new RegExp(`<@${botUserId}>`, "gu"), "").trim();
 }
 
-function slackRegistrationSelector(requestUrl: string): string | undefined {
-  const candidate = new URL(requestUrl).searchParams.get("registration_id");
-  return candidate !== null &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(candidate)
-    ? candidate
-    : undefined;
+function slackRegistrationSelector(requestUrl: string): SlackSigningSelector | undefined {
+  const parameters = new URL(requestUrl).searchParams;
+  const registrationId = parameters.get("registration_id");
+  if (registrationId !== null && isUuid(registrationId)) {
+    return { kind: "registration", id: registrationId };
+  }
+  const orgId = parameters.get("org_id");
+  return orgId !== null && isUuid(orgId) ? { kind: "org", id: orgId } : undefined;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value);
 }
 
 function slackEnvelopeHint(

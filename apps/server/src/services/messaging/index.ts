@@ -29,6 +29,7 @@ export {
   type StartSlackInstallationInput,
   setSlackIdentityLink,
   slackAppManifest,
+  slackEventsUrl,
   slackExternalUserRef,
   slackLocationRef,
   startSlackInstallation,
