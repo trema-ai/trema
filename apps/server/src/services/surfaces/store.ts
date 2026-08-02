@@ -63,6 +63,12 @@ export interface RecordRenderFailureInput {
   nextRetryAt?: Date;
 }
 
+export interface RecordRenderStopInput {
+  id: string;
+  owner: string;
+  expectedVersion: number;
+}
+
 /** The renderer no longer owns the live revision it tried to mutate. */
 export class SurfaceRealizationConflictError extends Error {
   constructor(message: string) {
@@ -138,6 +144,7 @@ export class PrismaSurfaceRealizationStore {
           OR "SurfaceRealization"."nextRetryAt" <= ${now}
         )
         AND NOT "SurfaceRealization"."terminalFailure"
+        AND COALESCE("SurfaceRealization"."presentation"->>'stoppedByUser', 'false') <> 'true'
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
@@ -287,6 +294,41 @@ export class PrismaSurfaceRealizationStore {
     if (row === undefined) {
       throw new SurfaceRealizationConflictError(
         `surface realization failure lost its lease or revision: ${input.id}`,
+      );
+    }
+    return toRealization(row);
+  }
+
+  /** Finalizes a realization whose native stream the user stopped. */
+  async recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization> {
+    const now = this.#clock.now();
+    const [row] = await this.#db.$queryRaw<RealizationRow[]>`
+      UPDATE "SurfaceRealization"
+      SET "pendingPlan" = NULL,
+          "reconciliationRequired" = false,
+          "presentation" = "presentation" || '{"stoppedByUser":true}'::jsonb,
+          "version" = "version" + 1,
+          "retryAttempt" = 0,
+          "terminalFailure" = false,
+          "nextRetryAt" = NULL,
+          "lastErrorCode" = NULL,
+          "leaseOwner" = NULL,
+          "leaseUntil" = NULL,
+          "updatedAt" = ${now}
+      WHERE "id" = ${input.id}
+        AND "orgId" = ${this.#orgId}
+        AND "leaseOwner" = ${input.owner}
+        AND "leaseUntil" > ${now}
+        AND "version" = ${input.expectedVersion}
+      RETURNING
+        "id", "orgId", "runId", "surface", "locationRef", "threadRef",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "version",
+        "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
+        "nextRetryAt", "lastErrorCode"`;
+    if (row === undefined) {
+      throw new SurfaceRealizationConflictError(
+        `surface realization stop lost its lease or revision: ${input.id}`,
       );
     }
     return toRealization(row);

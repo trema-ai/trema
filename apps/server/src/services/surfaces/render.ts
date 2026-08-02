@@ -13,6 +13,7 @@ import {
 import type {
   CommitRealizationInput,
   RecordRenderFailureInput,
+  RecordRenderStopInput,
   StageRenderPlanInput,
 } from "#server/services/surfaces/store.js";
 import { SurfaceRealizationConflictError } from "#server/services/surfaces/store.js";
@@ -30,7 +31,20 @@ export interface RenderSurfaceInput {
   /** Set only after the caller confirms an authoritative event-log truncation. */
   allowCursorRegression?: boolean;
   clock?: { now(): Date };
+  /**
+   * Durably submits a stop intent. `already_terminal` is the successful result
+   * of losing the race to normal run completion, not a rendering failure.
+   */
+  requestRunStop: RequestRunStop;
 }
+
+export interface RunStopRequest {
+  intentId: string;
+  runId: string;
+  ref: SurfaceRef;
+}
+
+export type RequestRunStop = (input: RunStopRequest) => Promise<"recorded" | "already_terminal">;
 
 export interface SurfaceRealizationStore {
   claim(
@@ -42,6 +56,7 @@ export interface SurfaceRealizationStore {
   stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization>;
   commit(input: CommitRealizationInput): Promise<SurfaceRealization>;
   recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization>;
+  recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization>;
   release(id: string, owner: string): Promise<boolean>;
 }
 
@@ -49,6 +64,7 @@ export type RenderSurfaceResult =
   | { status: "busy" }
   | { status: "noop"; realization: SurfaceRealization }
   | { status: "rendered"; operations: number; realization: SurfaceRealization }
+  | { status: "stopped"; realization: SurfaceRealization }
   | {
       status: "retry_scheduled" | "terminal_failure";
       error: SurfaceDriverError;
@@ -138,6 +154,44 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
             cause: caught,
             retryable: true,
           });
+    if (error.code === "stopped_by_user") {
+      try {
+        await input.requestRunStop({
+          intentId: `surface:${current.id}:stopped-by-user`,
+          runId: input.projection.runId,
+          ref: input.ref,
+        });
+      } catch (stopError) {
+        const requestError = new SurfaceDriverError(
+          "unavailable",
+          "Failed to record the Slack stop request",
+          { cause: stopError, retryable: true },
+        );
+        const retry = retryDecision(requestError, current.retry.attempt);
+        const failed = await input.store.recordFailure({
+          id: current.id,
+          owner: input.owner,
+          expectedVersion: current.version,
+          code: requestError.code,
+          ...(retry.disposition === "terminal"
+            ? { terminal: true }
+            : {
+                nextRetryAt: new Date((input.clock?.now() ?? new Date()).getTime() + retry.delayMs),
+              }),
+        });
+        return {
+          status: retry.disposition === "terminal" ? "terminal_failure" : "retry_scheduled",
+          error: requestError,
+          realization: failed,
+        };
+      }
+      const stopped = await input.store.recordStopped({
+        id: current.id,
+        owner: input.owner,
+        expectedVersion: current.version,
+      });
+      return { status: "stopped", realization: stopped };
+    }
     const retry = retryDecision(error, current.retry.attempt);
     const failed = await input.store.recordFailure({
       id: current.id,

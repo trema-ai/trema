@@ -16,6 +16,7 @@ import { renderSurface, type SurfaceRealizationStore } from "#server/services/su
 import type {
   CommitRealizationInput,
   RecordRenderFailureInput,
+  RecordRenderStopInput,
   StageRenderPlanInput,
 } from "#server/services/surfaces/store.js";
 
@@ -72,7 +73,7 @@ class MemoryStore implements SurfaceRealizationStore {
   released = 0;
 
   async claim(): Promise<SurfaceRealization | undefined> {
-    return this.current.retry.terminal
+    return this.current.retry.terminal || this.current.presentation.stoppedByUser === true
       ? undefined
       : { ...this.current, lease: { owner: "worker-1", until: "2026-08-01T12:00:30.000Z" } };
   }
@@ -113,6 +114,19 @@ class MemoryStore implements SurfaceRealizationStore {
     return this.current;
   }
 
+  async recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization> {
+    expect(input.expectedVersion).toBe(this.current.version);
+    const { pendingPlan: _pending, lease: _lease, ...current } = this.current;
+    this.current = {
+      ...current,
+      presentation: { ...this.current.presentation, stoppedByUser: true },
+      reconciliationRequired: false,
+      version: this.current.version + 1,
+      retry: { attempt: 0, terminal: false },
+    };
+    return this.current;
+  }
+
   async release(): Promise<boolean> {
     this.released += 1;
     return true;
@@ -148,6 +162,7 @@ const baseInput = {
   ref,
   owner: "worker-1",
   canonicalRunUrl: "https://trema.test/runs/run-1",
+  requestRunStop: async () => "recorded" as const,
 } as const;
 
 describe("renderSurface", () => {
@@ -296,6 +311,88 @@ describe("renderSurface", () => {
       realization: {
         renderedThroughSeq: 0,
         retry: { terminal: true, lastErrorCode: "revoked" },
+      },
+    });
+  });
+
+  it("turns Slack's native stop into one durable run-stop request", async () => {
+    const store = new MemoryStore();
+    const requestRunStop = vi.fn(async () => "recorded" as const);
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      requestRunStop,
+      driver: fakeDriver(async () => {
+        throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
+      }),
+      projection: projection("Hello"),
+    });
+
+    expect(result).toMatchObject({
+      status: "stopped",
+      realization: {
+        renderedThroughSeq: 0,
+        presentation: { stoppedByUser: true },
+        retry: { attempt: 0, terminal: false },
+      },
+    });
+    if (result.status !== "stopped") throw new Error(`unexpected result: ${result.status}`);
+    expect(result.realization).not.toHaveProperty("pendingPlan");
+    expect(requestRunStop).toHaveBeenCalledOnce();
+    expect(requestRunStop).toHaveBeenCalledWith({
+      intentId: "surface:realization-1:stopped-by-user",
+      runId: "run-1",
+      ref,
+    });
+  });
+
+  it("accepts a native stop that loses the race to run completion", async () => {
+    const store = new MemoryStore();
+    const requestRunStop = vi.fn(async () => "already_terminal" as const);
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      requestRunStop,
+      driver: fakeDriver(async () => {
+        throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
+      }),
+      projection: projection("Hello"),
+    });
+
+    expect(result.status).toBe("stopped");
+    expect(requestRunStop).toHaveBeenCalledOnce();
+  });
+
+  it("retries the staged Slack stop until its durable intent is recorded", async () => {
+    const store = new MemoryStore();
+    const now = new Date("2026-08-01T12:00:00.000Z");
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      requestRunStop: async () => {
+        throw new Error("database unavailable");
+      },
+      driver: fakeDriver(async () => {
+        throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
+      }),
+      projection: projection("Hello"),
+      clock: { now: () => now },
+    });
+
+    expect(result).toMatchObject({
+      status: "retry_scheduled",
+      error: { code: "unavailable", retryable: true },
+      realization: {
+        renderedThroughSeq: 0,
+        pendingPlan: expect.objectContaining({ fromCursor: 0, toCursor: 1 }),
+        retry: {
+          attempt: 1,
+          terminal: false,
+          lastErrorCode: "unavailable",
+        },
       },
     });
   });

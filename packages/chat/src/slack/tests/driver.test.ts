@@ -527,6 +527,7 @@ describe("SlackDriver", () => {
     ["token_revoked", "revoked"],
     ["invalid_auth", "unauthorized"],
     ["message_not_found", "message_not_found"],
+    ["stopped_by_user", "stopped_by_user"],
     ["channel_not_found", "destination_not_found"],
     ["invalid_blocks", "invalid_request"],
     ["service_unavailable", "unavailable"],

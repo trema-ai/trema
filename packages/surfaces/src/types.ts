@@ -188,6 +188,7 @@ export interface SurfaceDriver<NativeEvent = unknown> {
 export type SurfaceErrorCode =
   | "rate_limited"
   | "unavailable"
+  | "stopped_by_user"
   | "unauthorized"
   | "revoked"
   | "message_not_found"

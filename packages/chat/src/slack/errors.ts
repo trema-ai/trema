@@ -57,6 +57,9 @@ function classifyPlatformError(code: string | undefined): {
   if (code === "ratelimited" || code === "rate_limited") {
     return { code: "rate_limited", retryable: true };
   }
+  if (code === "stopped_by_user") {
+    return { code: "stopped_by_user", retryable: false };
+  }
   if (code !== undefined && REVOKED_ERRORS.has(code)) {
     return { code: "revoked", retryable: false };
   }
@@ -134,6 +137,8 @@ function slackErrorMessage(code: SurfaceErrorCode, method: string): string {
       return `Slack rate-limited ${method}`;
     case "unavailable":
       return `Slack ${method} failed temporarily`;
+    case "stopped_by_user":
+      return "The user stopped the Slack response";
     case "unauthorized":
       return `Slack rejected the credential for ${method}`;
     case "revoked":

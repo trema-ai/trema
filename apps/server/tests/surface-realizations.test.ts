@@ -296,6 +296,49 @@ integration("surface realizations", () => {
     expect(committed.pendingPlan).toBeUndefined();
   });
 
+  it("terminalizes a user-stopped realization without claiming its staged cursor", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const plan: RenderPlan = {
+      fromCursor: 0,
+      toCursor: 1,
+      operations: [
+        {
+          id: "run-1:segment:0:message:0:append:0:hash",
+          type: "append",
+          messageId: "run-1:segment:0:message:0",
+          segmentId: "run-1:segment:0",
+          segmentIndex: 0,
+          messageIndex: 0,
+          remoteRef: "171234.0001",
+          text: "more",
+          prior: { text: "Hello", metadata: { mode: "stream" } },
+        },
+      ],
+      nextSegments: [],
+    };
+    const staged = await store.stagePlan({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: 0,
+      plan,
+    });
+
+    const stopped = await store.recordStopped({
+      id: staged.id,
+      owner: "worker-a",
+      expectedVersion: staged.version,
+    });
+
+    expect(stopped).toMatchObject({
+      renderedThroughSeq: 0,
+      presentation: { stoppedByUser: true },
+      retry: { attempt: 0, terminal: false },
+    });
+    expect(stopped.pendingPlan).toBeUndefined();
+    expect(stopped.lease).toBeUndefined();
+    expect(await store.claim("run-1", ref, "worker-b", 30_000)).toBeUndefined();
+  });
+
   it("persists a follow-up requirement when a staged plan crosses a truncation", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const changedSegments: RealizedSegment[] = [
