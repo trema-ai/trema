@@ -367,6 +367,12 @@ integration("Slack ingress", () => {
     );
     await first.drain();
     expect(notify).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        channelId: "C123ABC",
+        visibility: "private",
+      }),
+    );
 
     const revoked = await setup("TREVOKED");
     await db.connectorConnection.update({
@@ -398,6 +404,38 @@ integration("Slack ingress", () => {
 
     await expect(db.runIntent.count()).resolves.toBe(0);
     expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it("posts a public setup link when a conversation is not bound", async () => {
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+    const fixture = await setup("TUNBOUND");
+    await db.binding.deleteMany({
+      where: {
+        orgId: fixture.org.id,
+        surface: "slack",
+        locationRef: `${fixture.workspaceId}:C123ABC`,
+      },
+    });
+    const ingress = subject({ notify });
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(appMention({ eventId: "Ev-unbound", workspaceId: fixture.workspaceId })),
+      ),
+    );
+    await ingress.drain();
+
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "C123ABC",
+        visibility: "channel",
+        text: expect.stringContaining(
+          "http://127.0.0.1:5173/settings/messaging?setup=slack-channel&workspaceId=TUNBOUND&channelId=C123ABC",
+        ),
+      }),
+    );
+    expect(notify.mock.calls[0]?.[0].text).toContain("|Configure channel>");
   });
 
   it("routes approval and cancellation controls through durable target intents", async () => {

@@ -46,6 +46,7 @@ export type SlackIngressNotice = (input: {
   threadTs: string;
   userId: string;
   directMessage: boolean;
+  visibility: "private" | "channel";
   text: string;
 }) => Promise<void>;
 
@@ -195,7 +196,11 @@ export class SlackIngressService {
           return;
         }
         log.warn("Slack delivery rejected", { reason: error.reason, durationMs });
-        if (shouldNotify(error.reason)) await this.#safeNotice(event, SAFE_REJECTION);
+        if (error.reason === "location_unbound") {
+          await this.#safeNotice(event, this.#channelBindingNotice(event), "channel");
+        } else if (shouldNotify(error.reason)) {
+          await this.#safeNotice(event, SAFE_REJECTION);
+        }
         return;
       }
       if (
@@ -320,6 +325,7 @@ export class SlackIngressService {
   async #safeNotice(
     event: MessageSurfaceEvent | InteractionSurfaceEvent,
     text: string,
+    visibility: "private" | "channel" = "private",
   ): Promise<void> {
     if (event.surfaceRef === undefined || event.surfaceRef.teamRef === undefined) return;
     await this.#notify({
@@ -328,12 +334,23 @@ export class SlackIngressService {
       threadTs: event.surfaceRef.threadRef,
       userId: event.authorRef,
       directMessage: event.surfaceRef.channelRef.startsWith("D"),
+      visibility,
       text,
     }).catch(() => {
       // Provider failures can retain request objects containing credentials.
       // Report only that the safe response failed, never the error object.
       log.warn("Slack rejection response failed");
     });
+  }
+
+  #channelBindingNotice(event: MessageSurfaceEvent | InteractionSurfaceEvent): string {
+    const surfaceRef = event.surfaceRef;
+    if (surfaceRef === undefined || surfaceRef.teamRef === undefined) return SAFE_REJECTION;
+    const url = new URL("/settings/messaging", this.#options.env.TREMA_WEB_ORIGINS[0]);
+    url.searchParams.set("setup", "slack-channel");
+    url.searchParams.set("workspaceId", surfaceRef.teamRef);
+    url.searchParams.set("channelId", surfaceRef.channelRef);
+    return `This channel isn't connected to a Trema scope. <${url.toString()}|Configure channel>.`;
   }
 
   async #sendNotice(input: Parameters<SlackIngressNotice>[0]): Promise<void> {
@@ -370,11 +387,13 @@ export class SlackIngressService {
       token,
       ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
     });
-    if (input.directMessage) {
+    if (input.directMessage || input.visibility === "channel") {
       await driver.callNative("chat.postMessage", {
         channel: input.channelId,
         thread_ts: input.threadTs,
         text: input.text,
+        unfurl_links: false,
+        unfurl_media: false,
       });
       return;
     }
@@ -383,6 +402,8 @@ export class SlackIngressService {
       thread_ts: input.threadTs,
       user: input.userId,
       text: input.text,
+      unfurl_links: false,
+      unfurl_media: false,
     });
   }
 }
