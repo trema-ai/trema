@@ -2,26 +2,28 @@
 ALTER TABLE "ConnectorConnection"
 ADD COLUMN "clientRegistrationId" TEXT;
 
--- Existing Slack connections are unambiguous when the organization has one
--- Slack registration. Ambiguous installations must reauthorize rather than
--- silently switching to a different app's signing secret.
+-- BEGIN connector client registration backfill
+-- Existing OAuth connections are unambiguous when the organization has one
+-- registration for that provider. Ambiguous or registration-less connections
+-- must reauthorize rather than silently switching to a different app.
 UPDATE "ConnectorConnection" AS connection
 SET "clientRegistrationId" = registration.id
 FROM (
-  SELECT MIN(id) AS id, "orgId"
+  SELECT MIN(id) AS id, "orgId", "providerKey"
   FROM "ClientRegistration"
-  WHERE "providerKey" = 'slack'
-  GROUP BY "orgId"
+  GROUP BY "orgId", "providerKey"
   HAVING COUNT(*) = 1
 ) AS registration
-WHERE connection."providerKey" = 'slack'
-  AND connection."orgId" = registration."orgId";
+WHERE connection."orgId" = registration."orgId"
+  AND connection."providerKey" = registration."providerKey"
+  AND connection."authMode" IN ('oauth2_code', 'mcp_oauth');
 
 UPDATE "ConnectorConnection"
 SET "revokedAt" = CURRENT_TIMESTAMP
-WHERE "providerKey" = 'slack'
+WHERE "authMode" IN ('oauth2_code', 'mcp_oauth')
   AND "revokedAt" IS NULL
   AND "clientRegistrationId" IS NULL;
+-- END connector client registration backfill
 
 CREATE INDEX "ConnectorConnection_orgId_clientRegistrationId_idx"
 ON "ConnectorConnection"("orgId", "clientRegistrationId");

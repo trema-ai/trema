@@ -77,7 +77,7 @@ beforeEach(() => {
   api.deleteRegistration.mockReset().mockResolvedValue({ id: registration.id });
 });
 
-function renderDialog() {
+function renderDialog(registrationRow = registration) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -93,7 +93,7 @@ function renderDialog() {
     <QueryClientProvider client={queryClient}>
       <RegistrationDialog
         provider={provider}
-        registrations={[registration]}
+        registrations={[registrationRow]}
         callbackUrl="https://trema.example/api/v1/connectors/oauth/callback"
         open
         onOpenChange={() => undefined}
@@ -162,5 +162,21 @@ describe("registration mutation warnings", () => {
       }),
     );
     await expectAffectedQueriesInvalidated(queryClient);
+  });
+
+  it("requires confirmation when a legacy Slack app needs a signing secret", async () => {
+    renderDialog({ ...registration, isUsable: false });
+
+    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "legacy-client-id" } });
+    fireEvent.change(screen.getByLabelText("Signing secret"), {
+      target: { value: "new-signing-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("Client secret"), {
+      target: { value: "legacy-client-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Replace app" }));
+
+    expect(screen.getByRole("heading", { name: "Replace this OAuth app?" })).toBeTruthy();
+    expect(api.createRegistration).not.toHaveBeenCalled();
   });
 });

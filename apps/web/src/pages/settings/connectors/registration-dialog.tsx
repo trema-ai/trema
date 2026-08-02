@@ -113,7 +113,7 @@ export function RegistrationDialog({
       clientSecret: String(data.get("clientSecret")),
       ...(provider.key === "slack" ? { signingSecret: String(data.get("signingSecret")) } : {}),
     };
-    if (editing && customerApp) {
+    if (customerApp) {
       setPendingReplacement(values);
       return;
     }
@@ -226,7 +226,7 @@ export function RegistrationDialog({
                   </Button>
                 ) : null}
                 <Button disabled={save.isPending}>
-                  {save.isPending ? "Saving…" : editing ? "Replace app" : "Save app"}
+                  {save.isPending ? "Saving…" : customerApp ? "Replace app" : "Save app"}
                 </Button>
               </div>
             </form>
