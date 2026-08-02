@@ -55,6 +55,12 @@ export function RegistrationDialog({
   const [editing, setEditing] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const registrationKey = orpc.connectors.registrations.list.queryOptions({}).queryKey;
+  const removalQueryKeys = [
+    registrationKey,
+    orpc.connectors.connections.list.key(),
+    orpc.connectors.installations.list.key(),
+    ...(provider.key === "slack" ? [orpc.messaging.slack.installations.list.key()] : []),
+  ];
   const needsConfiguration =
     provider.key === "slack" && customerApp !== undefined && !customerApp.isUsable;
   const showForm = editing || !customerApp || needsConfiguration;
@@ -80,7 +86,9 @@ export function RegistrationDialog({
   const remove = useMutation({
     mutationFn: (id: string) => rpcClient.connectors.registrations.delete({ id }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: registrationKey });
+      await Promise.all(
+        removalQueryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+      );
       setConfirmRemove(false);
       toast.success("OAuth app removed");
     },
@@ -217,7 +225,8 @@ export function RegistrationDialog({
             <AlertDialogHeader>
               <AlertDialogTitle>Remove this OAuth app?</AlertDialogTitle>
               <AlertDialogDescription>
-                New connections can no longer use it. Existing credentials are unchanged.
+                Every connector account using this app will be revoked and stop working. To use
+                those accounts again, you will need to reconnect them.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
