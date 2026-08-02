@@ -36,6 +36,8 @@ export interface StartRunInput extends RunOrigin {
   intentId: string;
   /** Defaults to the surface and location, so one location is one thread. */
   threadRef?: string;
+  /** Provider-native thread id for the context session; null means the surface has no threads. */
+  surfaceThreadRef?: string | null;
   message: TranscriptMessage;
   author: PrincipalRef;
   /** The picker choice to pin when this message creates a run. */
@@ -105,7 +107,9 @@ function buildDispatcher(
       locationRef: input.locationRef,
       // The session names the thread it serves, so the conversation the run's
       // messages land on is that thread and not the whole location.
-      threadRef: intent.threadRef,
+      ...(input.surfaceThreadRef === null
+        ? {}
+        : { threadRef: input.surfaceThreadRef ?? intent.threadRef }),
       ...(input.directMessage === undefined ? {} : { directMessage: input.directMessage }),
       ...(input.requester === undefined ? {} : { requester: input.requester }),
     });

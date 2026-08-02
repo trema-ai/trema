@@ -148,6 +148,7 @@ function interaction(input: {
   threadTs: string;
   actionId: string;
   value: string;
+  channelId?: string;
 }) {
   return new URLSearchParams({
     payload: JSON.stringify({
@@ -161,7 +162,7 @@ function interaction(input: {
           value: input.value,
         },
       ],
-      channel: { id: "C123ABC" },
+      channel: { id: input.channelId ?? "C123ABC" },
       message: { thread_ts: input.threadTs, ts: "1800000000.000003" },
       team: { id: input.workspaceId },
       trigger_id: input.triggerId,
@@ -348,9 +349,62 @@ integration("Slack ingress", () => {
 
     const runs = await db.agentRun.findMany({ where: { orgId: fixture.org.id } });
     expect(runs).toHaveLength(1);
-    expect(runs[0]?.threadRef).toBe(threadTs);
+    expect(runs[0]?.threadRef).toBe(`slack:${fixture.workspaceId}:C123ABC:${threadTs}`);
     await expect(db.runQueuedInput.count({ where: { orgId: fixture.org.id } })).resolves.toBe(6);
     await expect(db.contextSession.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+  });
+
+  it("namespaces equal Slack timestamps by workspace and channel", async () => {
+    const fixture = await setup("TTHREADNAMESPACE");
+    const existingBinding = await db.binding.findUniqueOrThrow({
+      where: {
+        orgId_surface_locationRef: {
+          orgId: fixture.org.id,
+          surface: "slack",
+          locationRef: `${fixture.workspaceId}:C123ABC`,
+        },
+      },
+    });
+    await createSlackBinding(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      connectionId: fixture.connection.id,
+      workspaceId: fixture.workspaceId,
+      channelId: "C456DEF",
+      scopeId: existingBinding.scopeId,
+    });
+    const ingress = subject();
+    const threadTs = "1800000000.000040";
+
+    await Promise.all(
+      ["C123ABC", "C456DEF"].map((channelId, index) =>
+        ingress.service.accept(
+          signedRequest(
+            JSON.stringify(
+              appMention({
+                eventId: `Ev-namespaced-${index}`,
+                workspaceId: fixture.workspaceId,
+                channelId,
+                threadTs,
+                ts: threadTs,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    const runs = await db.agentRun.findMany({
+      where: { orgId: fixture.org.id },
+      orderBy: { threadRef: "asc" },
+      select: { threadRef: true },
+    });
+    expect(runs).toEqual([
+      { threadRef: `slack:${fixture.workspaceId}:C123ABC:${threadTs}` },
+      { threadRef: `slack:${fixture.workspaceId}:C456DEF:${threadTs}` },
+    ]);
+    await expect(db.contextSession.count({ where: { orgId: fixture.org.id } })).resolves.toBe(2);
   });
 
   it("acknowledges before slow run scheduling completes", async () => {
@@ -397,6 +451,7 @@ integration("Slack ingress", () => {
     });
     expect(run.threadRef).toBe(`slack:${fixture.workspaceId}:D123ABC`);
     expect(run.session?.scope.kind).toBe("personal");
+    expect(run.session?.threadRef).toBeNull();
     await expect(db.agentRun.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
     await expect(db.runQueuedInput.count({ where: { orgId: fixture.org.id } })).resolves.toBe(2);
     await expect(
@@ -410,6 +465,40 @@ integration("Slack ingress", () => {
         },
       }),
     ).resolves.toMatchObject({ scopeId: run.session?.scopeId });
+
+    await db.agentRun.update({ where: { id: run.id }, data: { state: "awaiting_input" } });
+    await db.runElicitation.create({
+      data: {
+        id: "elicitation-slack-dm",
+        orgId: fixture.org.id,
+        runId: run.id,
+        event: {
+          type: "elicitation",
+          elicitationId: "elicitation-slack-dm",
+          kind: "choice",
+          prompt: "Choose",
+          options: [{ id: "approve", label: "Approve" }],
+          blocking: true,
+        },
+      },
+    });
+    await ingress.service.accept(
+      signedRequest(
+        interaction({
+          workspaceId: fixture.workspaceId,
+          channelId: "D123ABC",
+          triggerId: "trigger-dm-approve",
+          threadTs: "1800000000.000021",
+          actionId: "input:elicitation-slack-dm:button:0",
+          value: "approve",
+        }),
+        "application/x-www-form-urlencoded",
+      ),
+    );
+    await ingress.drain();
+    await expect(
+      db.runElicitation.findUniqueOrThrow({ where: { id: "elicitation-slack-dm" } }),
+    ).resolves.toMatchObject({ resolution: { optionId: "approve" } });
   });
 
   it("ignores unmentioned replies outside Trema-owned Slack threads", async () => {

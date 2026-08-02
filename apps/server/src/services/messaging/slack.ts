@@ -33,6 +33,10 @@ export const SLACK_USER_SCOPES = (slackProvider.auth.authorizationParams?.user_s
 export const SLACK_EVENTS_PATH = "/api/v1/messaging/slack/events";
 export const SLACK_INTERACTIONS_PATH = "/api/v1/messaging/slack/interactions";
 
+export function slackLogicalThreadRef(locationRef: string, threadTs?: string): string {
+  return `slack:${locationRef}${threadTs === undefined ? "" : `:${threadTs}`}`;
+}
+
 type SlackRejectReason =
   | "not_installed"
   | "ambiguous_installation"
@@ -923,8 +927,11 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("connector_mismatch");
   }
 
-  const logicalThreadRef = input.directMessage ? `slack:${locationRef}` : threadTs;
-  const conversationThreadRef = logicalThreadRef ?? "";
+  const logicalThreadRef = slackLogicalThreadRef(
+    locationRef,
+    input.directMessage ? undefined : threadTs,
+  );
+  const conversationThreadRef = input.directMessage ? "" : (threadTs ?? "");
   const [binding, conversation, run] = await Promise.all([
     db.binding.findUnique({
       where: {
@@ -949,11 +956,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     db.agentRun.findFirst({
       where: {
         orgId: connection.orgId,
-        session: {
-          surface: SLACK_PROVIDER_KEY,
-          locationRef,
-          threadRef: logicalThreadRef ?? null,
-        },
+        threadRef: logicalThreadRef,
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: { id: true },
@@ -976,6 +979,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     enterpriseId: storedEnterpriseId,
     channelId,
     threadTs: threadTs ?? null,
+    logicalThreadRef,
     userId,
     locationRef,
     externalUserId,

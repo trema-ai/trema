@@ -286,7 +286,8 @@ export class SlackIngressService {
         trigger: "message",
         surface: "slack",
         locationRef: request.locationRef,
-        ...(event.nativeKind === "direct-message" ? {} : { threadRef: event.surfaceRef.threadRef }),
+        ...(event.nativeKind === "direct-message" ? {} : { threadRef: request.logicalThreadRef }),
+        surfaceThreadRef: event.nativeKind === "direct-message" ? null : event.surfaceRef.threadRef,
         ...(event.nativeKind === "direct-message"
           ? {
               directMessage: true,
@@ -372,7 +373,7 @@ export class SlackIngressService {
         orgId: request.orgId,
         elicitationId: event.action.elicitationId,
         locationRef: request.locationRef,
-        threadRef: event.surfaceRef.threadRef,
+        threadRef: event.surfaceRef.channelRef.startsWith("D") ? null : event.surfaceRef.threadRef,
       });
       await submitTargetIntent({
         services,
@@ -598,7 +599,7 @@ function slackIds(value: unknown): string[] {
 
 async function requireSlackElicitationTarget(
   db: Database,
-  input: { orgId: string; elicitationId: string; locationRef: string; threadRef: string },
+  input: { orgId: string; elicitationId: string; locationRef: string; threadRef: string | null },
 ): Promise<void> {
   const elicitation = await db.runElicitation.findUnique({
     where: { orgId_id: { orgId: input.orgId, id: input.elicitationId } },
