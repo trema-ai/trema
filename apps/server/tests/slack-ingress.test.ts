@@ -729,6 +729,42 @@ integration("Slack ingress", () => {
     );
   });
 
+  it("retries a top-level inbox failure without another Slack webhook", async () => {
+    const fixture = await setup("TRECOVERYRETRY");
+    const ingress = subject();
+    const findMany = vi
+      .spyOn(db.slackIngressDelivery, "findMany")
+      .mockRejectedValueOnce(new Error("transient inbox query failure"));
+
+    try {
+      await ingress.service.accept(
+        signedRequest(
+          JSON.stringify(
+            appMention({
+              eventId: "Ev-recovery-retry",
+              workspaceId: fixture.workspaceId,
+            }),
+          ),
+        ),
+      );
+      await expect(ingress.drain()).rejects.toThrow("transient inbox query failure");
+
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      await ingress.drain();
+
+      await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(1);
+      await expect(
+        db.slackIngressDelivery.findUniqueOrThrow({
+          where: {
+            id: `slack:delivery:${fixture.workspaceId}:C123ABC:slack:event:Ev-recovery-retry`,
+          },
+        }),
+      ).resolves.toMatchObject({ completedAt: expect.any(Date) });
+    } finally {
+      findMany.mockRestore();
+    }
+  });
+
   it("prunes only completed ingress tombstones after the retention window", async () => {
     const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1_000);
     const recent = new Date();

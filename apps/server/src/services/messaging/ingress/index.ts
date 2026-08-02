@@ -158,7 +158,15 @@ export class SlackIngressService {
 
   /** Replays every verified delivery that was not durably completed. */
   recoverPending(): Promise<void> {
-    const recovery = this.#recovery.then(() => this.#drainPending());
+    const recovery = this.#recovery
+      .then(() => this.#drainPending())
+      .catch((error: unknown) => {
+        // Slack has already received 200 once a delivery reaches this path. A
+        // failure before an individual delivery is claimed therefore needs its
+        // own wake-up; a quiet deployment cannot rely on another webhook.
+        this.#scheduleRecovery(new Date(Date.now() + SLACK_INGRESS_RETRY_MS));
+        throw error;
+      });
     this.#recovery = recovery.catch(() => undefined);
     return recovery;
   }
