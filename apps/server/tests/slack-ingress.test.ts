@@ -916,6 +916,67 @@ integration("Slack ingress", () => {
     ).resolves.toMatchObject({ resolution: { optionId: "approve" } });
   });
 
+  it("re-resolves a direct message personal scope after identity relinking", async () => {
+    const fixture = await setup("TDMRELINK");
+    await setPersonalPolicy(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      enabled: true,
+    });
+    const ingress = subject();
+
+    await ingress.service.accept(
+      signedRequest(JSON.stringify(directMessage(fixture.workspaceId, "Ev-dm-before-relink"))),
+    );
+    await ingress.drain();
+
+    const replacementMember = await db.principal.create({
+      data: { orgId: fixture.org.id, kind: "human", displayName: "Grace" },
+    });
+    await setSlackIdentityLink(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      workspaceId: fixture.workspaceId,
+      userId: "U123ABC",
+      principalId: replacementMember.id,
+    });
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          directMessage(fixture.workspaceId, "Ev-dm-after-relink", "1800000000.000022"),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    const runs = await db.agentRun.findMany({
+      where: { orgId: fixture.org.id },
+      orderBy: { createdAt: "asc" },
+      include: { session: { include: { scope: true } } },
+    });
+    expect(runs).toHaveLength(2);
+    expect(runs.map((run) => run.session?.requesterPrincipalId)).toEqual([
+      fixture.member.id,
+      replacementMember.id,
+    ]);
+    expect(runs.map((run) => run.session?.scope.ownerId)).toEqual([
+      fixture.member.id,
+      replacementMember.id,
+    ]);
+    expect(runs[0]?.session?.scopeId).not.toBe(runs[1]?.session?.scopeId);
+    await expect(
+      db.binding.findUnique({
+        where: {
+          orgId_surface_locationRef: {
+            orgId: fixture.org.id,
+            surface: "slack",
+            locationRef: `${fixture.workspaceId}:D123ABC`,
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ scopeId: runs[1]?.session?.scopeId });
+  });
+
   it("ignores unmentioned replies outside Trema-owned Slack threads", async () => {
     const notify = vi.fn<SlackIngressNotice>(async () => undefined);
     const fixture = await setup("TUNRELATEDTHREAD", false);

@@ -6,6 +6,7 @@ export {
   type SlackIngressNotice,
   type SlackIngressOptions,
   SlackIngressService,
+  SlackIngressVerificationThrottledError,
 } from "#server/services/messaging/ingress/index.js";
 export {
   applySlackLifecycleEvent,

@@ -70,8 +70,9 @@ describe("server", () => {
       signingSecretCiphertext: null,
       sharedRef: "slack-app",
     };
+    const db = databaseMock(vi.fn().mockResolvedValue([]), [registration]);
     const app = createApp({
-      ...appDependencies(databaseMock(vi.fn().mockResolvedValue([]), [registration])),
+      ...appDependencies(db),
       platformApps: {
         get: () => ({
           clientId: "slack-client-id",
@@ -92,8 +93,32 @@ describe("server", () => {
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ challenge: "challenge-1" });
+    const verificationQueryCount = vi.mocked(db.clientRegistration.findMany).mock.calls.length;
 
-    const invalid = await app.request("/api/v1/messaging/slack/events", {
+    const limited = await app.request("/api/v1/messaging/slack/events", {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature,
+      },
+    });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("60");
+    expect(db.clientRegistration.findMany).toHaveBeenCalledTimes(verificationQueryCount);
+
+    const invalidApp = createApp({
+      ...appDependencies(databaseMock(vi.fn().mockResolvedValue([]), [registration])),
+      platformApps: {
+        get: () => ({
+          clientId: "slack-client-id",
+          clientSecret: "slack-client-secret",
+          signingSecret,
+        }),
+      },
+    });
+    const invalid = await invalidApp.request("/api/v1/messaging/slack/events", {
       method: "POST",
       body,
       headers: {

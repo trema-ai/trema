@@ -38,6 +38,7 @@ import {
   SlackIngressBodyTooLargeError,
   SlackIngressConfigurationError,
   SlackIngressService,
+  SlackIngressVerificationThrottledError,
 } from "./services/messaging/index.js";
 
 export interface AppDependencies {
@@ -224,6 +225,13 @@ export function createApp({
       if (error instanceof SlackIngressBodyTooLargeError) {
         log.warn("Slack webhook body rejected as too large");
         return new Response(null, { status: 413 });
+      }
+      if (error instanceof SlackIngressVerificationThrottledError) {
+        log.warn("Slack URL verification rate limited");
+        return new Response(null, {
+          status: 429,
+          headers: { "retry-after": String(error.retryAfterSeconds) },
+        });
       }
       if (error instanceof SurfaceDriverError && error.category === "invalid-request") {
         log.warn("Slack webhook rejected", { code: error.method ?? "invalid_request" });

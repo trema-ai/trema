@@ -32,6 +32,8 @@ import {
   type Registration,
 } from "#web/pages/settings/connectors/shared.tsx";
 
+type RegistrationValues = { clientId: string; clientSecret: string; signingSecret?: string };
+
 export function RegistrationDialog({
   provider,
   registrations,
@@ -53,9 +55,10 @@ export function RegistrationDialog({
     (registration) => registration.source === "platform" && registration.isUsable,
   );
   const [editing, setEditing] = useState(false);
+  const [pendingReplacement, setPendingReplacement] = useState<RegistrationValues>();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const registrationKey = orpc.connectors.registrations.list.queryOptions({}).queryKey;
-  const removalQueryKeys = [
+  const registrationMutationQueryKeys = [
     registrationKey,
     orpc.connectors.connections.list.key(),
     orpc.connectors.installations.list.key(),
@@ -66,7 +69,7 @@ export function RegistrationDialog({
   const showForm = editing || !customerApp || needsConfiguration;
 
   const save = useMutation({
-    mutationFn: (values: { clientId: string; clientSecret: string; signingSecret?: string }) =>
+    mutationFn: (values: RegistrationValues) =>
       rpcClient.connectors.registrations.create({
         providerKey: provider.key,
         source: "customer",
@@ -76,8 +79,13 @@ export function RegistrationDialog({
         replace: true,
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: registrationKey });
+      await Promise.all(
+        registrationMutationQueryKeys.map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey }),
+        ),
+      );
       setEditing(false);
+      setPendingReplacement(undefined);
       toast.success(`${provider.displayName} app saved`);
       onSaved?.();
     },
@@ -87,7 +95,9 @@ export function RegistrationDialog({
     mutationFn: (id: string) => rpcClient.connectors.registrations.delete({ id }),
     onSuccess: async () => {
       await Promise.all(
-        removalQueryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+        registrationMutationQueryKeys.map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey }),
+        ),
       );
       setConfirmRemove(false);
       toast.success("OAuth app removed");
@@ -98,11 +108,16 @@ export function RegistrationDialog({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    save.mutate({
+    const values = {
       clientId: String(data.get("clientId")),
       clientSecret: String(data.get("clientSecret")),
       ...(provider.key === "slack" ? { signingSecret: String(data.get("signingSecret")) } : {}),
-    });
+    };
+    if (editing && customerApp) {
+      setPendingReplacement(values);
+      return;
+    }
+    save.mutate(values);
   }
 
   const truncatedClientId = customerApp?.clientId
@@ -116,7 +131,10 @@ export function RegistrationDialog({
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next);
-        if (!next) setEditing(false);
+        if (!next) {
+          setEditing(false);
+          setPendingReplacement(undefined);
+        }
       }}
     >
       <DialogContent>
@@ -220,6 +238,32 @@ export function RegistrationDialog({
             </p>
           ) : null}
         </div>
+        <AlertDialog
+          open={pendingReplacement !== undefined}
+          onOpenChange={(next) => {
+            if (!next) setPendingReplacement(undefined);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Replace this OAuth app?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Every connector account using this app will be revoked and stop working. To use
+                those accounts again, you will need to reconnect them.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={save.isPending}
+                onClick={() => pendingReplacement && save.mutate(pendingReplacement)}
+              >
+                {save.isPending ? "Replacing…" : "Replace app and revoke accounts"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
           <AlertDialogContent>
             <AlertDialogHeader>

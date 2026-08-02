@@ -47,6 +47,7 @@ const SLACK_INGRESS_TOMBSTONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const SLACK_INGRESS_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 const SLACK_THREAD_OWNERSHIP_WAIT_MS = 60_000;
 const SLACK_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
+const SLACK_GLOBAL_VERIFICATION_INTERVAL_MS = 60_000;
 
 type ProcessableSurfaceEvent = Exclude<SurfaceEvent, { type: "challenge" | "unsupported" }>;
 
@@ -122,6 +123,7 @@ export class SlackIngressService {
   #nextPruneAt = 0;
   #retryAt: number | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
+  #nextGlobalVerificationAt = 0;
 
   constructor(options: SlackIngressOptions) {
     this.#options = options;
@@ -360,7 +362,9 @@ export class SlackIngressService {
 
   async #read(request: Request, body: string): Promise<VerifiedSlackEvent> {
     const hint = slackEnvelopeHint(body, request.headers.get("content-type"));
-    const signingSecrets = await this.#signingSecrets(hint.workspaceId, hint.urlVerification);
+    const allowGlobalFallback = hint.urlVerification && hint.workspaceId === undefined;
+    if (allowGlobalFallback) this.#claimGlobalVerification();
+    const signingSecrets = await this.#signingSecrets(hint.workspaceId, allowGlobalFallback);
     if (signingSecrets.length === 0) throw new SlackIngressConfigurationError();
 
     let invalidRequest: SurfaceDriverError | undefined;
@@ -389,6 +393,17 @@ export class SlackIngressService {
       }
     }
     throw invalidRequest ?? new SlackIngressConfigurationError();
+  }
+
+  #claimGlobalVerification(): void {
+    const now = this.#options.now?.() ?? Date.now();
+    if (now < this.#nextGlobalVerificationAt) {
+      throw new SlackIngressVerificationThrottledError(this.#nextGlobalVerificationAt - now);
+    }
+    // Slack's URL-verification envelope has no workspace or app selector. A
+    // deployment-wide secret scan is therefore permitted only at this bounded
+    // cadence; workspace-qualified deliveries never enter this fallback.
+    this.#nextGlobalVerificationAt = now + SLACK_GLOBAL_VERIFICATION_INTERVAL_MS;
   }
 
   async #signingSecrets(
@@ -810,6 +825,16 @@ export class SlackIngressBodyTooLargeError extends Error {
   constructor() {
     super("Slack webhook body exceeds the size limit");
     this.name = "SlackIngressBodyTooLargeError";
+  }
+}
+
+export class SlackIngressVerificationThrottledError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterMs: number) {
+    super("Slack URL verification is temporarily rate limited");
+    this.name = "SlackIngressVerificationThrottledError";
+    this.retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1_000));
   }
 }
 

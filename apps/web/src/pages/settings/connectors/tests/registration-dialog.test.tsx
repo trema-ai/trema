@@ -73,35 +73,52 @@ const registration: Registration = {
 afterEach(cleanup);
 
 beforeEach(() => {
-  api.createRegistration.mockReset();
+  api.createRegistration.mockReset().mockResolvedValue(registration);
   api.deleteRegistration.mockReset().mockResolvedValue({ id: registration.id });
 });
 
-describe("registration removal", () => {
-  it("warns that accounts are revoked and refreshes every affected Slack query", async () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+function renderDialog() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  for (const queryKey of [
+    api.registrationKey,
+    api.connectionKey,
+    api.connectorInstallationKey,
+    api.slackInstallationKey,
+  ]) {
+    queryClient.setQueryData(queryKey, {});
+  }
+  render(
+    <QueryClientProvider client={queryClient}>
+      <RegistrationDialog
+        provider={provider}
+        registrations={[registration]}
+        callbackUrl="https://trema.example/api/v1/connectors/oauth/callback"
+        open
+        onOpenChange={() => undefined}
+      />
+    </QueryClientProvider>,
+  );
+  return queryClient;
+}
+
+async function expectAffectedQueriesInvalidated(queryClient: QueryClient) {
+  await waitFor(() => {
     for (const queryKey of [
       api.registrationKey,
       api.connectionKey,
       api.connectorInstallationKey,
       api.slackInstallationKey,
     ]) {
-      queryClient.setQueryData(queryKey, {});
+      expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
     }
+  });
+}
 
-    render(
-      <QueryClientProvider client={queryClient}>
-        <RegistrationDialog
-          provider={provider}
-          registrations={[registration]}
-          callbackUrl="https://trema.example/api/v1/connectors/oauth/callback"
-          open
-          onOpenChange={() => undefined}
-        />
-      </QueryClientProvider>,
-    );
+describe("registration mutation warnings", () => {
+  it("warns that accounts are revoked and refreshes every affected Slack query", async () => {
+    const queryClient = renderDialog();
 
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
 
@@ -112,15 +129,38 @@ describe("registration removal", () => {
     await waitFor(() =>
       expect(api.deleteRegistration).toHaveBeenCalledWith({ id: registration.id }),
     );
-    await waitFor(() => {
-      for (const queryKey of [
-        api.registrationKey,
-        api.connectionKey,
-        api.connectorInstallationKey,
-        api.slackInstallationKey,
-      ]) {
-        expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
-      }
+    await expectAffectedQueriesInvalidated(queryClient);
+  });
+
+  it("requires confirmation before replacement revokes accounts", async () => {
+    const queryClient = renderDialog();
+
+    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
+    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "new-client-id" } });
+    fireEvent.change(screen.getByLabelText("Signing secret"), {
+      target: { value: "new-signing-secret" },
     });
+    fireEvent.change(screen.getByLabelText("Client secret"), {
+      target: { value: "new-client-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Replace app" }));
+
+    expect(screen.getByRole("heading", { name: "Replace this OAuth app?" })).toBeTruthy();
+    expect(screen.getByText(/Every connector account using this app will be revoked/)).toBeTruthy();
+    expect(api.createRegistration).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Replace app and revoke accounts" }));
+
+    await waitFor(() =>
+      expect(api.createRegistration).toHaveBeenCalledWith({
+        providerKey: "slack",
+        source: "customer",
+        clientId: "new-client-id",
+        clientSecret: "new-client-secret",
+        signingSecret: "new-signing-secret",
+        replace: true,
+      }),
+    );
+    await expectAffectedQueriesInvalidated(queryClient);
   });
 });
