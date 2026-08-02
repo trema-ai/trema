@@ -164,8 +164,6 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
     if (error.code === "stopped_by_user") {
       const pending = await input.store.recordStopPending({
         id: current.id,
-        owner: input.owner,
-        expectedVersion: current.version,
       });
       return submitNativeStop(input, pending);
     }
@@ -223,8 +221,6 @@ async function submitNativeStop(
   }
   const stopped = await input.store.recordStopped({
     id: current.id,
-    owner: input.owner,
-    expectedVersion: current.version,
   });
   return { status: "stopped", realization: stopped };
 }

@@ -66,14 +66,10 @@ export interface RecordRenderFailureInput {
 
 export interface RecordNativeStopPendingInput {
   id: string;
-  owner: string;
-  expectedVersion: number;
 }
 
 export interface RecordRenderStopInput {
   id: string;
-  owner: string;
-  expectedVersion: number;
 }
 
 /** The renderer no longer owns the live revision it tried to mutate. */
@@ -275,20 +271,21 @@ export class PrismaSurfaceRealizationStore {
     return toRealization(row);
   }
 
-  /** Persists the native-stop outbox marker before its idempotent intent call. */
+  /**
+   * Persists the native-stop outbox marker before its idempotent intent call.
+   * This observed remote fact supersedes lease ownership and stale revisions:
+   * incrementing the current version prevents any in-flight renderer commit.
+   */
   async recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization> {
     const now = this.#clock.now();
     const [row] = await this.#db.$queryRaw<RealizationRow[]>`
       UPDATE "SurfaceRealization"
       SET "nativeStopPending" = true,
-          "version" = "version" + 1,
+          "version" = "version" + CASE WHEN "nativeStopPending" THEN 0 ELSE 1 END,
           "updatedAt" = ${now}
       WHERE "id" = ${input.id}
         AND "orgId" = ${this.#orgId}
-        AND "leaseOwner" = ${input.owner}
-        AND "leaseUntil" > ${now}
-        AND "version" = ${input.expectedVersion}
-        AND NOT "nativeStopPending"
+        AND COALESCE("presentation"->>'stoppedByUser', 'false') <> 'true'
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
@@ -297,7 +294,7 @@ export class PrismaSurfaceRealizationStore {
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
       throw new SurfaceRealizationConflictError(
-        `surface realization native stop lost its lease or revision: ${input.id}`,
+        `surface realization native stop was already finalized: ${input.id}`,
       );
     }
     return toRealization(row);
@@ -335,7 +332,7 @@ export class PrismaSurfaceRealizationStore {
     return toRealization(row);
   }
 
-  /** Finalizes a realization whose native stream the user stopped. */
+  /** Finalizes a durable native-stop marker after its run-stop intent succeeds. */
   async recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization> {
     const now = this.#clock.now();
     const [row] = await this.#db.$queryRaw<RealizationRow[]>`
@@ -354,9 +351,7 @@ export class PrismaSurfaceRealizationStore {
           "updatedAt" = ${now}
       WHERE "id" = ${input.id}
         AND "orgId" = ${this.#orgId}
-        AND "leaseOwner" = ${input.owner}
-        AND "leaseUntil" > ${now}
-        AND "version" = ${input.expectedVersion}
+        AND "nativeStopPending"
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
@@ -365,7 +360,7 @@ export class PrismaSurfaceRealizationStore {
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
       throw new SurfaceRealizationConflictError(
-        `surface realization stop lost its lease or revision: ${input.id}`,
+        `surface realization has no pending native stop: ${input.id}`,
       );
     }
     return toRealization(row);
