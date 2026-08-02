@@ -31,5 +31,12 @@ describe("client registration validation", () => {
         clientId: "copied-client",
       }),
     ).toThrow(ClientRegistrationValidationError);
+    expect(() =>
+      validateRegistrationFields({
+        source: "platform",
+        sharedRef: "slack",
+        signingSecret: "copied-signing-secret",
+      }),
+    ).toThrow(ClientRegistrationValidationError);
   });
 });

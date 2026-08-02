@@ -137,6 +137,7 @@ export interface InteractionSurfaceEvent extends SurfaceEventBase {
   authorRef: string;
   action:
     | { type: "resolve"; elicitationId: string; optionId: string }
+    | { type: "stop"; runId: string }
     | { type: "native"; actionId: string; value?: string };
 }
 

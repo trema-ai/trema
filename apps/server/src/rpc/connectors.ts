@@ -272,6 +272,7 @@ const createRegistration = requireCapability("manage_connectors")
       source: sourceSchema,
       clientId: z.string().trim().min(1).optional(),
       clientSecret: z.string().min(1).optional(),
+      signingSecret: z.string().min(1).optional(),
       sharedRef: z.string().trim().min(1).optional(),
       adminConsentGranted: z.boolean().optional(),
       notes: z.string().optional(),
@@ -288,6 +289,7 @@ const createRegistration = requireCapability("manage_connectors")
           source: input.source,
           ...(input.clientId ? { clientId: input.clientId } : {}),
           ...(input.clientSecret ? { clientSecret: input.clientSecret } : {}),
+          ...(input.signingSecret ? { signingSecret: input.signingSecret } : {}),
           ...(input.sharedRef ? { sharedRef: input.sharedRef } : {}),
           ...(input.adminConsentGranted !== undefined
             ? { adminConsentGranted: input.adminConsentGranted }
@@ -317,12 +319,23 @@ const listRegistrations = requireCapability("manage_connectors")
     const registrations = await listClientRegistrations(context.db, context.org.id);
     const secretRows = await context.db.clientRegistration.findMany({
       where: { orgId: context.org.id },
-      select: { id: true, clientSecretCiphertext: true },
+      select: {
+        id: true,
+        providerKey: true,
+        clientSecretCiphertext: true,
+        signingSecretCiphertext: true,
+      },
     });
     const hasSecret = new Map(
       secretRows.map((registration) => [
         registration.id,
         registration.clientSecretCiphertext !== null,
+      ]),
+    );
+    const hasSigningSecret = new Map(
+      secretRows.map((registration) => [
+        registration.id,
+        registration.signingSecretCiphertext !== null,
       ]),
     );
     return Promise.all(
@@ -333,8 +346,16 @@ const listRegistrations = requireCapability("manage_connectors")
             : registration.source === "customer" &&
               registration.clientId !== null &&
               hasSecret.get(registration.id) === true;
+        if (
+          registration.providerKey === "slack" &&
+          registration.source !== "platform" &&
+          hasSigningSecret.get(registration.id) !== true
+        ) {
+          isUsable = false;
+        }
         if (registration.source === "platform" && registration.sharedRef && context.platformApps) {
-          isUsable = Boolean(await context.platformApps.get(registration.sharedRef));
+          const app = await context.platformApps.get(registration.sharedRef);
+          isUsable = Boolean(app && (registration.providerKey !== "slack" || app.signingSecret));
         }
         return { ...serializeRegistration(registration), isUsable };
       }),

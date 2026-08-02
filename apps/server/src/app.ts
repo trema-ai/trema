@@ -4,6 +4,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
+import { SurfaceDriverError } from "@trema/chat";
 import type { Engine } from "@trema/harness";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -30,7 +31,13 @@ import {
   type PlatformAppDirectory,
 } from "./services/connectors/index.js";
 import { handleDataPlaneRequest } from "./services/dataplane/mcp.js";
-import { SLACK_EVENTS_PATH, SLACK_INTERACTIONS_PATH } from "./services/messaging/index.js";
+import {
+  IngressWorkTracker,
+  SLACK_EVENTS_PATH,
+  SLACK_INTERACTIONS_PATH,
+  SlackIngressConfigurationError,
+  SlackIngressService,
+} from "./services/messaging/index.js";
 
 export interface AppDependencies {
   db: Database;
@@ -40,6 +47,7 @@ export interface AppDependencies {
   mcpClientFactory?: McpClientFactory;
   platformApps?: PlatformAppDirectory;
   runEngineFor?: (orgId: string) => Engine;
+  ingressWork?: IngressWorkTracker;
   /** Poll and heartbeat cadence for the run SSE tail. Tests shorten both. */
   runStream?: RunStreamTiming;
 }
@@ -133,9 +141,19 @@ export function createApp({
   mcpClientFactory,
   platformApps,
   runEngineFor,
+  ingressWork,
   runStream,
 }: AppDependencies): Hono {
   const app = new Hono();
+  const work = ingressWork ?? new IngressWorkTracker();
+  const slackIngress = new SlackIngressService({
+    db,
+    env,
+    defer: (task) => work.defer(task),
+    ...(runEngineFor === undefined ? {} : { runEngineFor }),
+    ...(platformApps === undefined ? {} : { platformApps }),
+    ...(connectorFetch === undefined ? {} : { fetch: connectorFetch }),
+  });
   const rpcHandler = new RPCHandler<RpcContext>(router, {
     clientInterceptors: [procedureInterceptor],
     interceptors: [onError(reportUnexpected("RPC request failed"))],
@@ -191,16 +209,26 @@ export function createApp({
     }
   });
 
-  // DEV-93 reserves the public Slack ingress URLs carried by the generated
-  // app manifest. DEV-94 replaces these explicit closed responses with signed
-  // event and interaction ingestion; accepting unverified payloads here would
-  // turn an installation feature into an authentication bypass.
-  app.post(SLACK_EVENTS_PATH, (context) =>
-    context.json({ error: "Slack event ingestion is not enabled" }, 501),
-  );
-  app.post(SLACK_INTERACTIONS_PATH, (context) =>
-    context.json({ error: "Slack interaction ingestion is not enabled" }, 501),
-  );
+  const acceptSlack = async (request: Request): Promise<Response> => {
+    try {
+      const acknowledgement = await slackIngress.accept(request);
+      return acknowledgement.challenge === undefined
+        ? new Response(null, { status: 200 })
+        : Response.json({ challenge: acknowledgement.challenge });
+    } catch (error) {
+      if (error instanceof SurfaceDriverError && error.category === "invalid-request") {
+        log.warn("Slack webhook rejected", { code: error.method ?? "invalid_request" });
+        return new Response(null, { status: 401 });
+      }
+      if (error instanceof SlackIngressConfigurationError) {
+        log.warn("Slack webhook has no configured signing secret");
+        return Response.json({ error: "Slack event ingestion is not configured" }, { status: 503 });
+      }
+      throw error;
+    }
+  };
+  app.post(SLACK_EVENTS_PATH, (context) => acceptSlack(context.req.raw));
+  app.post(SLACK_INTERACTIONS_PATH, (context) => acceptSlack(context.req.raw));
 
   app.get("/connect/callback", async (context) => {
     const state = context.req.query("state");

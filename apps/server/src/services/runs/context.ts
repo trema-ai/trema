@@ -67,6 +67,7 @@ export class ServerContextSession implements ContextSession {
       surface: request.surface,
       locationRef: String(request.locationRef),
       ...(request.threadRef === undefined ? {} : { threadRef: request.threadRef }),
+      ...(request.directMessage === undefined ? {} : { dm: request.directMessage }),
       ...(request.requester === undefined ? {} : { requester: request.requester }),
       ...(this.#standingBudgetTokens === undefined
         ? {}

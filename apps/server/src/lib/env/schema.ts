@@ -65,6 +65,7 @@ const environmentSchema = z
       .min(1)
       .default(DEFAULT_STANDING_BUDGET_TOKENS),
     TREMA_CREDENTIAL_MASTER_KEY: optionalString,
+    TREMA_INGRESS_DRAIN_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
     // Model endpoints seed an empty provider registry and are ignored
     // thereafter. The registry is the configuration; this is bootstrap.
     TREMA_MODEL_ENDPOINTS: optionalString,

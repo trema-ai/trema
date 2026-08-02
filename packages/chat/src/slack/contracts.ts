@@ -1,7 +1,7 @@
 export type SlackToken = string | (() => Promise<string> | string);
 
 export interface SlackDriverOptions {
-  signingSecret: string;
+  signingSecret?: string;
   token: SlackToken;
   apiUrl?: string;
   fetch?: typeof fetch;

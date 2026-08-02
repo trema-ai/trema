@@ -40,7 +40,8 @@ type SlackRejectReason =
   | "location_unbound"
   | "identity_unlinked"
   | "personal_scopes_disabled"
-  | "connector_mismatch";
+  | "connector_mismatch"
+  | "bot_event";
 
 export class SlackMessagingValidationError extends Error {
   constructor(message: string) {
@@ -735,6 +736,10 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("ambiguous_installation");
   }
   const connection = candidates[0]!;
+  const botUserId = stringField(connection.config, "bot_user_id");
+  if (botUserId !== null && userId === botUserId) {
+    throw new SlackRequestRejectedError("bot_event");
+  }
   const storedEnterpriseId = stringField(connection.config, "enterprise.id");
   if (input.enterpriseId && storedEnterpriseId && input.enterpriseId !== storedEnterpriseId) {
     log.warn("Slack enterprise did not match installation", { workspaceId });
@@ -860,8 +865,10 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     connectionId: connection.id,
     installationItemId: installation.installationItemId,
     credentialOwnerPrincipalId: installation.credentialOwnerPrincipalId,
+    botUserId,
     scopeId: location.scope.id,
     requesterPrincipalId: identity.principal.id,
+    requesterDisplayName: identity.principal.displayName,
     bindingId: binding?.id ?? null,
     conversationId: conversation?.id ?? null,
     runId: run?.id ?? null,

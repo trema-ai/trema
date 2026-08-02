@@ -19,6 +19,8 @@ export interface RunOrigin {
   trigger: "message" | "api" | "schedule";
   surface: string;
   locationRef: string;
+  /** A one-to-one location on a surface that also has shared locations. */
+  directMessage?: boolean;
   /**
    * The person who asked. Scheduled work names the principal who activated the
    * schedule. Omit it when nobody did, such as a service call as the agent.
@@ -104,6 +106,7 @@ function buildDispatcher(
       // The session names the thread it serves, so the conversation the run's
       // messages land on is that thread and not the whole location.
       threadRef: intent.threadRef,
+      ...(input.directMessage === undefined ? {} : { directMessage: input.directMessage }),
       ...(input.requester === undefined ? {} : { requester: input.requester }),
     });
     const run = await services.lifecycle.create({

@@ -40,6 +40,7 @@ integration("Slack installation and conversation bindings", () => {
       source: "customer",
       clientId: "slack-client-id",
       clientSecret: "slack-client-secret",
+      signingSecret: "slack-signing-secret",
       masterKey,
     });
     const agent = await db.principal.create({

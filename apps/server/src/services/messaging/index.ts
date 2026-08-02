@@ -1,4 +1,12 @@
 export {
+  IngressWorkTracker,
+  type SlackIngressAcknowledgement,
+  SlackIngressConfigurationError,
+  type SlackIngressNotice,
+  type SlackIngressOptions,
+  SlackIngressService,
+} from "#server/services/messaging/ingress/index.js";
+export {
   createSlackBinding,
   deleteSlackBinding,
   deleteSlackIdentityLink,

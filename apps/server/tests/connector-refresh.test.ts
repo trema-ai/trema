@@ -61,6 +61,7 @@ integration("connector credential refresh", () => {
         clientId: providerKey === "google_workspace" ? "google-client-id" : "slack-client-id",
         clientSecret:
           providerKey === "google_workspace" ? "google-client-secret" : "slack-client-secret",
+        ...(providerKey === "slack" ? { signingSecret: "slack-signing-secret" } : {}),
         masterKey,
       });
     }

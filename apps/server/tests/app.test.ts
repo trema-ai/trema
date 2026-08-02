@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,9 +16,14 @@ const environment = parseEnv({
   TREMA_AUTH_SECRET: "app-test-auth-secret-at-least-32-characters",
 });
 
-function databaseMock(query: () => Promise<unknown>): Database {
+function databaseMock(
+  query: () => Promise<unknown>,
+  clientRegistrations: Array<Record<string, unknown>> = [],
+): Database {
   return {
     $queryRaw: query,
+    connectorConnection: { findMany: vi.fn().mockResolvedValue([]) },
+    clientRegistration: { findMany: vi.fn().mockResolvedValue(clientRegistrations) },
   } as unknown as Database;
 }
 
@@ -45,6 +51,67 @@ describe("server", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
+  });
+
+  it("verifies Slack deliveries and answers URL challenges", async () => {
+    const signingSecret = "app-route-slack-signing-secret";
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const body = JSON.stringify({ challenge: "challenge-1", type: "url_verification" });
+    const signature = `v0=${createHmac("sha256", signingSecret)
+      .update(`v0:${nowSeconds}:${body}`)
+      .digest("hex")}`;
+    const registration = {
+      id: "01900000-0000-7000-8000-000000000001",
+      orgId: "01900000-0000-7000-8000-000000000002",
+      providerKey: "slack",
+      source: "platform",
+      clientId: null,
+      clientSecretCiphertext: null,
+      signingSecretCiphertext: null,
+      sharedRef: "slack-app",
+    };
+    const app = createApp({
+      ...appDependencies(databaseMock(vi.fn().mockResolvedValue([]), [registration])),
+      platformApps: {
+        get: () => ({
+          clientId: "slack-client-id",
+          clientSecret: "slack-client-secret",
+          signingSecret,
+        }),
+      },
+    });
+
+    const response = await app.request("/api/v1/messaging/slack/events", {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature,
+      },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ challenge: "challenge-1" });
+
+    const invalid = await app.request("/api/v1/messaging/slack/events", {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": "v0=00",
+      },
+    });
+    expect(invalid.status).toBe(401);
+    await expect(invalid.text()).resolves.toBe("");
+  });
+
+  it("keeps Slack ingress closed when the UI has no signing secret configured", async () => {
+    const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
+
+    const response = await app.request("/api/v1/messaging/slack/events", { method: "POST" });
+
+    expect(response.status).toBe(503);
   });
 
   it("reports readiness when the database is reachable", async () => {

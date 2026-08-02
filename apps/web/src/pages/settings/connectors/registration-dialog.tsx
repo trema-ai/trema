@@ -55,15 +55,18 @@ export function RegistrationDialog({
   const [editing, setEditing] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const registrationKey = orpc.connectors.registrations.list.queryOptions({}).queryKey;
-  const showForm = editing || !customerApp;
+  const needsConfiguration =
+    provider.key === "slack" && customerApp !== undefined && !customerApp.isUsable;
+  const showForm = editing || !customerApp || needsConfiguration;
 
   const save = useMutation({
-    mutationFn: (values: { clientId: string; clientSecret: string }) =>
+    mutationFn: (values: { clientId: string; clientSecret: string; signingSecret?: string }) =>
       rpcClient.connectors.registrations.create({
         providerKey: provider.key,
         source: "customer",
         clientId: values.clientId,
         clientSecret: values.clientSecret,
+        ...(values.signingSecret ? { signingSecret: values.signingSecret } : {}),
         replace: true,
       }),
     onSuccess: async () => {
@@ -90,6 +93,7 @@ export function RegistrationDialog({
     save.mutate({
       clientId: String(data.get("clientId")),
       clientSecret: String(data.get("clientSecret")),
+      ...(provider.key === "slack" ? { signingSecret: String(data.get("signingSecret")) } : {}),
     });
   }
 
@@ -135,7 +139,7 @@ export function RegistrationDialog({
               shows where.
             </p>
           </div>
-          {customerApp && !editing ? (
+          {customerApp && !editing && !needsConfiguration ? (
             <div className="flex items-center justify-between gap-4 rounded-md border p-3">
               <div className="min-w-0 text-chrome">
                 <p className="font-mono text-meta">{truncatedClientId}</p>
@@ -160,6 +164,22 @@ export function RegistrationDialog({
                 <Label htmlFor={`client-id-${provider.key}`}>Client ID</Label>
                 <Input id={`client-id-${provider.key}`} name="clientId" required />
               </div>
+              {provider.key === "slack" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="signing-secret-slack">Signing secret</Label>
+                  <Input
+                    id="signing-secret-slack"
+                    name="signingSecret"
+                    type="password"
+                    required
+                    autoComplete="new-password"
+                  />
+                  <p className="text-meta text-muted-foreground">
+                    Copy this value from your Slack app's Basic Information page. Trema stores it
+                    encrypted and write-only.
+                  </p>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label htmlFor={`client-secret-${provider.key}`}>Client secret</Label>
                 <Input

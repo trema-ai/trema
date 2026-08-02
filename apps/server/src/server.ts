@@ -8,6 +8,7 @@ import type { Environment } from "#server/lib/env/schema.js";
 import { configureLogger, log } from "#server/lib/logger/index.js";
 import { initializeBootstrap } from "#server/services/bootstrap/index.js";
 import { loadProviderCatalog } from "#server/services/connectors/index.js";
+import { IngressWorkTracker } from "#server/services/messaging/index.js";
 import { seedModelProvidersFromEnv } from "#server/services/model-providers/index.js";
 import { createRunEngineFactory } from "#server/services/runs/index.js";
 
@@ -36,7 +37,14 @@ export async function serveTrema({ env }: ServeDependencies) {
   if (runEngineFor === undefined) {
     log.warn("Run scheduling is disabled: HATCHET_CLIENT_TOKEN is not set");
   }
-  const app = createApp({ db, auth, env, ...(runEngineFor ? { runEngineFor } : {}) });
+  const ingressWork = new IngressWorkTracker();
+  const app = createApp({
+    db,
+    auth,
+    env,
+    ingressWork,
+    ...(runEngineFor ? { runEngineFor } : {}),
+  });
   const server = serve({ fetch: app.fetch, hostname: env.HOST, port: env.PORT }, () =>
     log.info("Server listening", { url: `http://${env.HOST}:${env.PORT}` }),
   );
@@ -49,13 +57,21 @@ export async function serveTrema({ env }: ServeDependencies) {
   const shutdown = (signal: NodeJS.Signals): void => {
     log.info("Shutting down", { signal });
     server.close((error) => {
-      void db.$disconnect().finally(() => {
-        if (error) {
-          log.error("Shutdown failed", { error });
-          process.exitCode = 1;
-        }
-        log.info("Shutdown complete", { signal });
-      });
+      void ingressWork
+        .drain(env.TREMA_INGRESS_DRAIN_TIMEOUT_MS)
+        .then((drained) => {
+          if (!drained) {
+            log.warn("Ingress drain timed out", { count: ingressWork.size });
+          }
+          return db.$disconnect();
+        })
+        .finally(() => {
+          if (error) {
+            log.error("Shutdown failed", { error });
+            process.exitCode = 1;
+          }
+          log.info("Shutdown complete", { signal });
+        });
     });
   };
   process.once("SIGINT", shutdown);

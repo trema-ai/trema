@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { SurfaceDriverError } from "#chat/index.js";
-import { SlackIngressDriver } from "#chat/slack/index.js";
+import { SLACK_STOP_ACTION_ID, SlackIngressDriver } from "#chat/slack/index.js";
 
 const SIGNING_SECRET = "test-signing-secret";
 const NOW_SECONDS = 1_800_000_000;
@@ -132,6 +132,85 @@ describe("Slack ingress driver", () => {
         elicitationId: "approval-1",
         optionId: "approve",
       },
+    });
+  });
+
+  it("normalizes Trema cancellation controls into stop intents", async () => {
+    const payload = {
+      actions: [
+        {
+          action_id: SLACK_STOP_ACTION_ID,
+          action_ts: "1800000001.000001",
+          block_id: "run-controls",
+          text: { text: "Cancel", type: "plain_text" },
+          type: "button",
+          value: "run-1",
+        },
+      ],
+      channel: { id: "C1" },
+      message: { thread_ts: "1800000000.000001", ts: "1800000000.000003" },
+      team: { id: "T1" },
+      trigger_id: "trigger-stop-1",
+      type: "block_actions",
+      user: { id: "U1", team_id: "T1" },
+    };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+
+    await expect(
+      driver().read(signedRequest(body, { contentType: "application/x-www-form-urlencoded" })),
+    ).resolves.toMatchObject({
+      type: "interaction",
+      intentId: "slack:interaction:trigger-stop-1",
+      action: { type: "stop", runId: "run-1" },
+    });
+  });
+
+  it("normalizes a human channel thread reply and ignores bot-message shapes", async () => {
+    const body = JSON.stringify({
+      event: {
+        channel: "C1",
+        event_ts: "1800000000.000004",
+        text: "one more constraint",
+        thread_ts: "1800000000.000001",
+        ts: "1800000000.000004",
+        type: "message",
+        user: "U1",
+      },
+      event_id: "Ev-thread-1",
+      event_time: NOW_SECONDS,
+      team_id: "T1",
+      type: "event_callback",
+    });
+
+    await expect(driver().read(signedRequest(body))).resolves.toMatchObject({
+      type: "message",
+      intentId: "slack:event:Ev-thread-1",
+      authorRef: "U1",
+      text: "one more constraint",
+      nativeKind: "thread-reply",
+      surfaceRef: {
+        locationRef: "T1:C1",
+        threadRef: "1800000000.000001",
+      },
+    });
+
+    const botBody = JSON.stringify({
+      event: {
+        bot_id: "B1",
+        channel: "C1",
+        subtype: "bot_message",
+        text: "agent output",
+        thread_ts: "1800000000.000001",
+        ts: "1800000000.000005",
+        type: "message",
+      },
+      event_id: "Ev-bot-1",
+      team_id: "T1",
+      type: "event_callback",
+    });
+    await expect(driver().read(signedRequest(botBody))).resolves.toMatchObject({
+      type: "unsupported",
+      nativeType: "message",
     });
   });
 

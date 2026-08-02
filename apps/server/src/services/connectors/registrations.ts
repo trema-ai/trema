@@ -10,6 +10,7 @@ type ClientRegistrationDatabase = Pick<Database, "clientRegistration">;
 export interface PlatformApp {
   clientId: string;
   clientSecret: string;
+  signingSecret?: string;
 }
 
 export interface PlatformAppDirectory {
@@ -69,6 +70,7 @@ export interface RegistrationFields {
   source: ClientRegistrationSource;
   clientId?: string;
   clientSecret?: string;
+  signingSecret?: string;
   sharedRef?: string;
 }
 
@@ -77,7 +79,7 @@ export function validateRegistrationFields(input: RegistrationFields): void {
     if (!input.sharedRef) {
       throw new ClientRegistrationValidationError("Platform registration requires sharedRef");
     }
-    if (input.clientId || input.clientSecret) {
+    if (input.clientId || input.clientSecret || input.signingSecret) {
       throw new ClientRegistrationValidationError(
         "Platform registration cannot store client credentials",
       );
@@ -123,11 +125,22 @@ const registrationMetadataSelect = {
 export async function createClientRegistration(db: Database, input: CreateClientRegistrationInput) {
   assertProvider(input.catalog ?? defaultCatalog, input.providerKey);
   validateRegistrationFields(input);
+  if (input.providerKey === "slack" && input.source !== "platform" && !input.signingSecret) {
+    throw new ClientRegistrationValidationError("Slack registration requires a signing secret");
+  }
+  if (input.providerKey !== "slack" && input.signingSecret) {
+    throw new ClientRegistrationValidationError(
+      "Signing secrets are supported only for Slack registrations",
+    );
+  }
 
   const values = {
     clientId: input.clientId ?? null,
     clientSecretCiphertext: input.clientSecret
       ? encryptEnvelope(input.clientSecret, input.masterKey)
+      : null,
+    signingSecretCiphertext: input.signingSecret
+      ? encryptEnvelope(input.signingSecret, input.masterKey)
       : null,
     sharedRef: input.sharedRef ?? null,
     adminConsentGranted: input.adminConsentGranted ?? null,
@@ -200,6 +213,7 @@ export interface ResolvedClientRegistration {
   source: ClientRegistrationSource;
   clientId: string;
   clientSecret: string;
+  signingSecret?: string;
 }
 
 export async function resolveClientRegistration(
@@ -221,6 +235,14 @@ export async function resolveClientRegistration(
         source: registration.source,
         clientId: registration.clientId,
         clientSecret: decryptEnvelope<string>(registration.clientSecretCiphertext, masterKey),
+        ...(registration.signingSecretCiphertext
+          ? {
+              signingSecret: decryptEnvelope<string>(
+                registration.signingSecretCiphertext,
+                masterKey,
+              ),
+            }
+          : {}),
       };
     }
   }
@@ -234,6 +256,7 @@ export async function resolveClientRegistration(
         source: platform.source,
         clientId: app.clientId,
         clientSecret: app.clientSecret,
+        ...(app.signingSecret ? { signingSecret: app.signingSecret } : {}),
       };
     }
   }
@@ -261,6 +284,7 @@ export async function resolveStoredClientRegistration(
       source: registration.source,
       clientId: app.clientId,
       clientSecret: app.clientSecret,
+      ...(app.signingSecret ? { signingSecret: app.signingSecret } : {}),
     };
   }
 
@@ -272,5 +296,10 @@ export async function resolveStoredClientRegistration(
     source: registration.source,
     clientId: registration.clientId,
     clientSecret: decryptEnvelope<string>(registration.clientSecretCiphertext, masterKey),
+    ...(registration.signingSecretCiphertext
+      ? {
+          signingSecret: decryptEnvelope<string>(registration.signingSecretCiphertext, masterKey),
+        }
+      : {}),
   };
 }
