@@ -1111,6 +1111,8 @@ model SurfaceRealization {
   pendingPlan            Json?
   /// True when a staged target crossed a truncation and needs one fresh plan.
   reconciliationRequired Boolean   @default(false)
+  /// A native surface stop was observed but its durable run intent is not submitted yet.
+  nativeStopPending      Boolean   @default(false)
   /// Optimistic revision. Every successful state transition increments it.
   version                Int       @default(0)
   leaseOwner             String?

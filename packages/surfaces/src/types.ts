@@ -59,6 +59,14 @@ interface OperationBase {
   messageIndex: number;
 }
 
+/** Previously acknowledged driver state for one mutable remote message. */
+export interface PriorRenderState {
+  /** Tier-zero content previously acknowledged by the destination. */
+  text: string;
+  /** Opaque driver state returned by the previous acknowledgement. */
+  metadata?: Record<string, unknown>;
+}
+
 export type RenderOperation =
   | (OperationBase & {
       type: "create";
@@ -70,16 +78,19 @@ export type RenderOperation =
       type: "append";
       remoteRef: string;
       text: string;
+      prior: PriorRenderState;
     })
   | (OperationBase & {
       type: "replace";
       remoteRef: string;
       content: RenderContent;
+      prior: PriorRenderState;
     })
   | (OperationBase & {
       type: "finalize";
       remoteRef: string;
       content: RenderContent;
+      prior: PriorRenderState;
     })
   | (OperationBase & {
       type: "delete";
@@ -131,6 +142,8 @@ export interface SurfaceRealization {
   pendingPlan?: RenderPlan;
   /** A truncated staged batch was applied and needs one authoritative follow-up plan. */
   reconciliationRequired: boolean;
+  /** A native surface stop was observed and its durable run intent still needs submission. */
+  nativeStopPending: boolean;
   /** Optimistic concurrency revision, incremented after every state transition. */
   version: number;
   lease?: { owner: string; until: string };
@@ -177,6 +190,7 @@ export interface SurfaceDriver<NativeEvent = unknown> {
 export type SurfaceErrorCode =
   | "rate_limited"
   | "unavailable"
+  | "stopped_by_user"
   | "unauthorized"
   | "revoked"
   | "message_not_found"

@@ -56,6 +56,7 @@ function realization(overrides: Partial<SurfaceRealization> = {}): SurfaceRealiz
     segments: [],
     presentation: {},
     reconciliationRequired: false,
+    nativeStopPending: false,
     version: 0,
     retry: { attempt: 0, terminal: false },
     ...overrides,
@@ -76,7 +77,13 @@ describe("planRender", () => {
 
     const applied = acknowledge(initial, {
       appliedOperationIds: initial.operations.map(({ id }) => id),
-      messages: [{ messageId: "run-1:segment:0:message:0", remoteRef: "remote-1" }],
+      messages: [
+        {
+          messageId: "run-1:segment:0:message:0",
+          remoteRef: "remote-1",
+          metadata: { streamCursor: "durable-driver-state" },
+        },
+      ],
     });
     const incremental = planRender(
       projection("Hello world", { lastSeq: 2 }),
@@ -85,7 +92,15 @@ describe("planRender", () => {
     );
 
     expect(incremental.operations).toEqual([
-      expect.objectContaining({ type: "append", remoteRef: "remote-1", text: " world" }),
+      expect.objectContaining({
+        type: "append",
+        remoteRef: "remote-1",
+        text: " world",
+        prior: {
+          text: "Hello",
+          metadata: { streamCursor: "durable-driver-state" },
+        },
+      }),
     ]);
     expect(incremental.nextSegments[0]?.messages[0]?.id).toBe("run-1:segment:0:message:0");
   });

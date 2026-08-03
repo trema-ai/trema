@@ -4,6 +4,7 @@ import {
   SlackWebhookParseError,
   SlackWebhookVerificationError,
 } from "@chat-adapter/slack/webhook";
+import { SurfaceDriverError } from "@trema/surfaces";
 import type {
   DeliveryRetry,
   InteractionSurfaceEvent,
@@ -11,7 +12,6 @@ import type {
   SurfaceIngressDriver,
   SurfaceRef,
 } from "#chat/contracts.js";
-import { SurfaceDriverError } from "#chat/errors.js";
 import type { SlackDriverOptions } from "#chat/slack/contracts.js";
 
 export class SlackIngressDriver implements SurfaceIngressDriver {
@@ -84,18 +84,14 @@ export class SlackIngressDriver implements SurfaceIngressDriver {
       );
     } catch (error) {
       if (error instanceof SlackWebhookVerificationError) {
-        throw new SurfaceDriverError("Slack webhook verification failed", {
-          category: "invalid-request",
+        throw new SurfaceDriverError("invalid_request", "Slack webhook verification failed", {
           cause: error,
-          method: "webhook.verify",
           retryable: false,
         });
       }
       if (error instanceof SlackWebhookParseError) {
-        throw new SurfaceDriverError("Slack webhook parsing failed", {
-          category: "invalid-request",
+        throw new SurfaceDriverError("invalid_request", "Slack webhook parsing failed", {
           cause: error,
-          method: "webhook.parse",
           retryable: false,
         });
       }

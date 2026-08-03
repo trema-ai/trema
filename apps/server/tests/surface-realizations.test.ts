@@ -296,6 +296,179 @@ integration("surface realizations", () => {
     expect(committed.pendingPlan).toBeUndefined();
   });
 
+  it("persists a pending native stop until it terminalizes the realization", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const plan: RenderPlan = {
+      fromCursor: 0,
+      toCursor: 1,
+      operations: [
+        {
+          id: "run-1:segment:0:message:0:append:0:hash",
+          type: "append",
+          messageId: "run-1:segment:0:message:0",
+          segmentId: "run-1:segment:0",
+          segmentIndex: 0,
+          messageIndex: 0,
+          remoteRef: "171234.0001",
+          text: "more",
+          prior: { text: "Hello", metadata: { mode: "stream" } },
+        },
+      ],
+      nextSegments: [],
+    };
+    const staged = await store.stagePlan({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: 0,
+      plan,
+    });
+
+    const pending = await store.recordStopPending({
+      id: staged.id,
+    });
+    expect(pending).toMatchObject({ nativeStopPending: true, pendingPlan: plan });
+
+    const failed = await store.recordFailure({
+      id: pending.id,
+      owner: "worker-a",
+      expectedVersion: pending.version,
+      code: "unavailable",
+    });
+    expect(failed).toMatchObject({
+      nativeStopPending: true,
+      pendingPlan: plan,
+      retry: { attempt: 1, terminal: false, lastErrorCode: "unavailable" },
+    });
+
+    const retried = await store.claim("run-1", ref, "worker-b", 30_000);
+    expect(retried).toMatchObject({ nativeStopPending: true, pendingPlan: plan });
+    const stopped = await store.recordStopped({
+      id: retried!.id,
+    });
+
+    expect(stopped).toMatchObject({
+      renderedThroughSeq: 0,
+      nativeStopPending: false,
+      presentation: { stoppedByUser: true },
+      retry: { attempt: 0, terminal: false },
+    });
+    expect(stopped.pendingPlan).toBeUndefined();
+    expect(stopped.lease).toBeUndefined();
+    expect(await store.claim("run-1", ref, "worker-b", 30_000)).toBeUndefined();
+  });
+
+  it("persists and finalizes a native stop after a replacement commits", async () => {
+    const first = await store.claim("run-1", ref, "worker-a", 30_000);
+    const plan: RenderPlan = {
+      fromCursor: 0,
+      toCursor: 1,
+      operations: [
+        {
+          id: "run-1:segment:0:message:0:create:hash",
+          type: "create",
+          messageId: "run-1:segment:0:message:0",
+          segmentId: "run-1:segment:0",
+          segmentIndex: 0,
+          messageIndex: 0,
+          content: { text: "Hello", parts: [] },
+          finalized: false,
+        },
+      ],
+      nextSegments: [],
+    };
+    const staged = await store.stagePlan({
+      id: first!.id,
+      owner: "worker-a",
+      expectedVersion: first!.version,
+      plan,
+    });
+
+    now = new Date("2026-07-31T12:00:31.000Z");
+    const replacement = await store.claim("run-1", ref, "worker-b", 30_000);
+    const committed = await store.commit({
+      id: replacement!.id,
+      owner: "worker-b",
+      expectedVersion: replacement!.version,
+      renderedThroughSeq: 1,
+      segments: [],
+    });
+    expect(committed).toMatchObject({ version: staged.version + 1, nativeStopPending: false });
+
+    const pending = await store.recordStopPending({ id: staged.id });
+    expect(pending).toMatchObject({
+      version: committed.version + 1,
+      nativeStopPending: true,
+      lease: { owner: "worker-b" },
+    });
+
+    const stopped = await store.recordStopped({ id: staged.id });
+    expect(stopped).toMatchObject({
+      version: pending.version + 1,
+      nativeStopPending: false,
+      presentation: { stoppedByUser: true },
+    });
+    expect(stopped.lease).toBeUndefined();
+    expect(await store.claim("run-1", ref, "worker-b", 30_000)).toBeUndefined();
+  });
+
+  it("makes a native stop claimable after a replacement records terminal failure", async () => {
+    const first = await store.claim("run-1", ref, "worker-a", 30_000);
+    const plan: RenderPlan = {
+      fromCursor: 0,
+      toCursor: 1,
+      operations: [
+        {
+          id: "run-1:segment:0:message:0:create:hash",
+          type: "create",
+          messageId: "run-1:segment:0:message:0",
+          segmentId: "run-1:segment:0",
+          segmentIndex: 0,
+          messageIndex: 0,
+          content: { text: "Hello", parts: [] },
+          finalized: false,
+        },
+      ],
+      nextSegments: [],
+    };
+    const staged = await store.stagePlan({
+      id: first!.id,
+      owner: "worker-a",
+      expectedVersion: first!.version,
+      plan,
+    });
+
+    now = new Date("2026-07-31T12:00:31.000Z");
+    const replacement = await store.claim("run-1", ref, "worker-b", 30_000);
+    const failed = await store.recordFailure({
+      id: replacement!.id,
+      owner: "worker-b",
+      expectedVersion: replacement!.version,
+      code: "invalid_request",
+      terminal: true,
+    });
+    expect(failed).toMatchObject({
+      version: staged.version + 1,
+      retry: { attempt: 1, terminal: true, lastErrorCode: "invalid_request" },
+    });
+    expect(await store.claim("run-1", ref, "worker-c", 30_000)).toBeUndefined();
+
+    const pending = await store.recordStopPending({ id: staged.id });
+    expect(pending).toMatchObject({
+      version: failed.version + 1,
+      nativeStopPending: true,
+      retry: { attempt: 0, terminal: false },
+    });
+    expect(pending.retry).not.toHaveProperty("lastErrorCode");
+    expect(pending.retry).not.toHaveProperty("nextAt");
+
+    const resumed = await store.claim("run-1", ref, "worker-c", 30_000);
+    expect(resumed).toMatchObject({
+      nativeStopPending: true,
+      retry: { attempt: 0, terminal: false },
+      lease: { owner: "worker-c" },
+    });
+  });
+
   it("persists a follow-up requirement when a staged plan crosses a truncation", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const changedSegments: RealizedSegment[] = [
@@ -364,6 +537,7 @@ integration("surface realizations", () => {
           messageIndex: 0,
           remoteRef: "remote-1",
           content: { text: "Original", parts: [] },
+          prior: { text: "Changed" },
         },
       ],
       nextSegments: [

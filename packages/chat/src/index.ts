@@ -1,23 +1,11 @@
+export { SurfaceDriverError, type SurfaceErrorCode } from "@trema/surfaces";
 export type {
-  AppendStreamOperation,
-  AppliedOperation,
-  ApplyResult,
-  CapabilityDescriptor,
   ChallengeSurfaceEvent,
   DeliveryRetry,
-  ElicitationContent,
   InteractionSurfaceEvent,
-  MessageContent,
   MessageSurfaceEvent,
-  PostOperation,
-  RenderOperation,
-  ReplaceOperation,
-  StartStreamOperation,
-  StopStreamOperation,
   SurfaceEvent,
   SurfaceIngressDriver,
   SurfaceRef,
-  SurfaceRenderDriver,
   UnsupportedSurfaceEvent,
 } from "#chat/contracts.js";
-export { SurfaceDriverError, type SurfaceErrorCategory } from "#chat/errors.js";

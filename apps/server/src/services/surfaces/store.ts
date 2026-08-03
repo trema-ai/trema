@@ -23,6 +23,7 @@ type RealizationRow = {
   presentation: Prisma.JsonValue;
   pendingPlan: Prisma.JsonValue | null;
   reconciliationRequired: boolean;
+  nativeStopPending: boolean;
   version: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
@@ -61,6 +62,14 @@ export interface RecordRenderFailureInput {
   code: SurfaceErrorCode;
   terminal?: boolean;
   nextRetryAt?: Date;
+}
+
+export interface RecordNativeStopPendingInput {
+  id: string;
+}
+
+export interface RecordRenderStopInput {
+  id: string;
 }
 
 /** The renderer no longer owns the live revision it tried to mutate. */
@@ -138,10 +147,11 @@ export class PrismaSurfaceRealizationStore {
           OR "SurfaceRealization"."nextRetryAt" <= ${now}
         )
         AND NOT "SurfaceRealization"."terminalFailure"
+        AND COALESCE("SurfaceRealization"."presentation"->>'stoppedByUser', 'false') <> 'true'
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     return row === undefined ? undefined : toRealization(row);
@@ -180,7 +190,7 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
@@ -223,6 +233,7 @@ export class PrismaSurfaceRealizationStore {
             WHEN realization."pendingPlan" IS NULL THEN false
             ELSE (realization."pendingPlan"->>'toCursor')::integer > ${input.renderedThroughSeq}
           END,
+          "nativeStopPending" = false,
           "pendingPlan" = NULL,
           "version" = "version" + 1,
           "retryAttempt" = 0,
@@ -249,12 +260,46 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
       throw new SurfaceRealizationConflictError(
         `surface realization commit lost its lease or revision: ${input.id}`,
+      );
+    }
+    return toRealization(row);
+  }
+
+  /**
+   * Persists the native-stop outbox marker before its idempotent intent call.
+   * This observed remote fact supersedes lease ownership and stale revisions:
+   * incrementing the current version prevents any in-flight renderer commit,
+   * while a new marker clears unrelated render failure and backoff state.
+   */
+  async recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization> {
+    const now = this.#clock.now();
+    const [row] = await this.#db.$queryRaw<RealizationRow[]>`
+      UPDATE "SurfaceRealization"
+      SET "nativeStopPending" = true,
+          "version" = "version" + CASE WHEN "nativeStopPending" THEN 0 ELSE 1 END,
+          "retryAttempt" = CASE WHEN "nativeStopPending" THEN "retryAttempt" ELSE 0 END,
+          "terminalFailure" = CASE WHEN "nativeStopPending" THEN "terminalFailure" ELSE false END,
+          "nextRetryAt" = CASE WHEN "nativeStopPending" THEN "nextRetryAt" ELSE NULL END,
+          "lastErrorCode" = CASE WHEN "nativeStopPending" THEN "lastErrorCode" ELSE NULL END,
+          "updatedAt" = ${now}
+      WHERE "id" = ${input.id}
+        AND "orgId" = ${this.#orgId}
+        AND COALESCE("presentation"->>'stoppedByUser', 'false') <> 'true'
+      RETURNING
+        "id", "orgId", "runId", "surface", "locationRef", "threadRef",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "nativeStopPending", "version",
+        "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
+        "nextRetryAt", "lastErrorCode"`;
+    if (row === undefined) {
+      throw new SurfaceRealizationConflictError(
+        `surface realization native stop was already finalized: ${input.id}`,
       );
     }
     return toRealization(row);
@@ -281,12 +326,46 @@ export class PrismaSurfaceRealizationStore {
       RETURNING
         "id", "orgId", "runId", "surface", "locationRef", "threadRef",
         "renderedThroughSeq", "segments", "presentation", "pendingPlan",
-        "reconciliationRequired", "version",
+        "reconciliationRequired", "nativeStopPending", "version",
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     if (row === undefined) {
       throw new SurfaceRealizationConflictError(
         `surface realization failure lost its lease or revision: ${input.id}`,
+      );
+    }
+    return toRealization(row);
+  }
+
+  /** Finalizes a durable native-stop marker after its run-stop intent succeeds. */
+  async recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization> {
+    const now = this.#clock.now();
+    const [row] = await this.#db.$queryRaw<RealizationRow[]>`
+      UPDATE "SurfaceRealization"
+      SET "pendingPlan" = NULL,
+          "reconciliationRequired" = false,
+          "nativeStopPending" = false,
+          "presentation" = "presentation" || '{"stoppedByUser":true}'::jsonb,
+          "version" = "version" + 1,
+          "retryAttempt" = 0,
+          "terminalFailure" = false,
+          "nextRetryAt" = NULL,
+          "lastErrorCode" = NULL,
+          "leaseOwner" = NULL,
+          "leaseUntil" = NULL,
+          "updatedAt" = ${now}
+      WHERE "id" = ${input.id}
+        AND "orgId" = ${this.#orgId}
+        AND "nativeStopPending"
+      RETURNING
+        "id", "orgId", "runId", "surface", "locationRef", "threadRef",
+        "renderedThroughSeq", "segments", "presentation", "pendingPlan",
+        "reconciliationRequired", "nativeStopPending", "version",
+        "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
+        "nextRetryAt", "lastErrorCode"`;
+    if (row === undefined) {
+      throw new SurfaceRealizationConflictError(
+        `surface realization has no pending native stop: ${input.id}`,
       );
     }
     return toRealization(row);
@@ -322,6 +401,7 @@ function toRealization(row: RealizationRow): SurfaceRealization {
     presentation: row.presentation as Record<string, unknown>,
     ...(row.pendingPlan === null ? {} : { pendingPlan: row.pendingPlan as unknown as RenderPlan }),
     reconciliationRequired: row.reconciliationRequired,
+    nativeStopPending: row.nativeStopPending,
     version: row.version,
     ...(row.leaseOwner === null || row.leaseUntil === null
       ? {}

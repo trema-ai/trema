@@ -47,6 +47,7 @@
     "@trema/connectors": "workspace:*",
     "@trema/harness": "workspace:*",
     "@trema/models": "workspace:*",
+    "@trema/projection": "workspace:*",
     "@trema/surfaces": "workspace:*",
     "aws4fetch": "^1.0.20",
     "better-auth": "^1.6.23",
@@ -59,7 +60,6 @@
   },
   "devDependencies": {
     "@better-auth/cli": "^1.4.21",
-    "@trema/projection": "workspace:*",
     "@types/node": "catalog:",
     "tsx": "^4.23.1",
     "typescript": "catalog:",

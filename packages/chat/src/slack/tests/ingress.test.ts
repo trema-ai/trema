@@ -177,8 +177,7 @@ describe("Slack ingress driver", () => {
 
     expect(error).toBeInstanceOf(SurfaceDriverError);
     expect(error).toMatchObject({
-      category: "invalid-request",
-      method: "webhook.verify",
+      code: "invalid_request",
       retryable: false,
     });
   });
