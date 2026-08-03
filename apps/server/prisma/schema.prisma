@@ -913,6 +913,7 @@ model ClientRegistration {
   source                  ClientRegistrationSource
   clientId                String?
   clientSecretCiphertext  String?
+  signingSecretCiphertext String?
   tokenEndpointAuthMethod String?
   sharedRef               String?
   adminConsentGranted     Boolean?
@@ -921,6 +922,7 @@ model ClientRegistration {
   updatedAt               DateTime                 @updatedAt
   org                     Org                      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   oauthStates             ConnectorOAuthState[]
+  connections             ConnectorConnection[]
 
   @@unique([orgId, providerKey, source])
   @@unique([orgId, id])
@@ -931,6 +933,7 @@ model ConnectorConnection {
   id                      String                @id @default(uuid(7))
   orgId                   String
   providerKey             String
+  clientRegistrationId    String?
   ownerPrincipalId        String
   authMode                String
   config                  Json
@@ -947,10 +950,12 @@ model ConnectorConnection {
   createdAt               DateTime              @default(now())
   updatedAt               DateTime              @updatedAt
   org                     Org                   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  clientRegistration      ClientRegistration?   @relation(fields: [orgId, clientRegistrationId], references: [orgId, id], onDelete: Restrict)
   owner                   Principal             @relation(fields: [orgId, ownerPrincipalId], references: [orgId, id], onDelete: Cascade)
   oauthStates             ConnectorOAuthState[]
 
   @@index([orgId, providerKey])
+  @@index([orgId, clientRegistrationId])
   @@index([orgId, ownerPrincipalId])
 }
 
@@ -1132,6 +1137,29 @@ model SurfaceRealization {
   @@index([nextRetryAt])
 }
 
+/// A verified Slack delivery persisted before the webhook is acknowledged.
+/// Processing claims use an expiring lease so another server can recover work
+/// after a crash without concurrently applying the same delivery normally.
+model SlackIngressDelivery {
+  id             String    @id
+  payload        Json
+  attempt        Int       @default(0)
+  receivedAt     DateTime  @default(now())
+  completedAt    DateTime?
+  leaseOwner     String?
+  leaseUntil     DateTime?
+  threadKey      String?
+  nativeOrder    BigInt?
+  ownsThread     Boolean   @default(false)
+  opensThread    Boolean   @default(false)
+  awaitingThread Boolean   @default(false)
+
+  @@index([completedAt, receivedAt])
+  @@index([leaseUntil])
+  @@index([threadKey, opensThread, awaitingThread, completedAt])
+  @@index([threadKey, ownsThread, nativeOrder])
+}
+
 /// Input waiting for a turn boundary. Steering waits on a named run;
 /// a follow-up waits on the thread and starts the next run.
 model RunQueuedInput {
@@ -1160,17 +1188,20 @@ model RunQueuedInput {
 /// callers, exactly-once runs. The outcome is recorded so a duplicate call can
 /// be answered with where the first one landed.
 model RunIntent {
-  id        String
-  orgId     String
-  runId     String?
-  outcome   String?
+  id          String
+  orgId       String
+  runId       String?
+  outcome     String?
   /// The intent kind the claim was made for. A reuse of the id with a
   /// different kind or target is a mismatch to refuse, never a replay.
-  kind      String?
+  kind        String?
   /// The run or elicitation the claimed intent addressed, when it had one.
-  targetId  String?
-  createdAt DateTime @default(now())
-  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  targetId    String?
+  /// Fingerprints the caller-controlled message routing values. A changed
+  /// retry cannot replace a partially routed run's opening input or allowlist.
+  requestHash String?
+  createdAt   DateTime @default(now())
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@id([orgId, id])
   @@index([orgId, createdAt])

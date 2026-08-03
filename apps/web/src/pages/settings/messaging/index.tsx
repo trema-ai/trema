@@ -126,6 +126,18 @@ function statusFor(installation: SlackInstallation) {
   return { label: "Needs attention", variant: "outline" as const };
 }
 
+const slackId = /^[A-Z][A-Z0-9]{1,31}$/;
+
+export function slackBindingRequest(searchParams: URLSearchParams) {
+  if (searchParams.get("setup") !== "slack-channel") return undefined;
+  const workspaceId = searchParams.get("workspaceId")?.trim().toUpperCase();
+  const channelId = searchParams.get("channelId")?.trim().toUpperCase();
+  if (!workspaceId || !channelId || !slackId.test(workspaceId) || !slackId.test(channelId)) {
+    return undefined;
+  }
+  return { workspaceId, channelId };
+}
+
 export function SettingsMessagingPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -140,6 +152,7 @@ export function SettingsMessagingPage() {
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [installOpen, setInstallOpen] = useState(false);
   const [reauthorize, setReauthorize] = useState<SlackInstallation>();
+  const bindingRequest = slackBindingRequest(searchParams);
 
   const provider = ((catalog.data ?? []) as CatalogProvider[]).find(({ key }) => key === "slack");
   const registrationRows = ((registrations.data ?? []) as Registration[]).filter(
@@ -175,6 +188,19 @@ export function SettingsMessagingPage() {
       queryClient.invalidateQueries({ queryKey: orpc.connectors.installations.list.key() }),
     ]);
   }, [queryClient]);
+
+  const clearBindingRequest = useCallback(() => {
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("setup");
+        next.delete("workspaceId");
+        next.delete("channelId");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
 
   useEffect(() => {
     const connectorError = searchParams.get("connector_error");
@@ -278,6 +304,9 @@ export function SettingsMessagingPage() {
           installations={activeInstallations}
           scopes={scopeRows}
           bindings={bindingRows}
+          requestedWorkspaceId={bindingRequest?.workspaceId}
+          requestedChannelId={bindingRequest?.channelId}
+          onRequestHandled={clearBindingRequest}
           onChanged={invalidate}
         />
         <IdentitiesSection
@@ -492,11 +521,17 @@ function BindingsSection({
   installations,
   scopes,
   bindings,
+  requestedWorkspaceId,
+  requestedChannelId,
+  onRequestHandled,
   onChanged,
 }: {
   installations: SlackInstallation[];
   scopes: Scope[];
   bindings: SlackBinding[];
+  requestedWorkspaceId: string | undefined;
+  requestedChannelId: string | undefined;
+  onRequestHandled: () => void;
   onChanged: () => Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
@@ -511,6 +546,17 @@ function BindingsSection({
       setInstallationId(installations[0]?.id ?? "");
     }
   }, [installations, installationId]);
+  useEffect(() => {
+    if (!requestedWorkspaceId || !requestedChannelId) return;
+    const requestedInstallation = installations.find(
+      ({ workspaceId }) => workspaceId === requestedWorkspaceId,
+    );
+    if (requestedInstallation === undefined) return;
+    setInstallationId(requestedInstallation.id);
+    setChannelId(requestedChannelId);
+    setAdding(true);
+    onRequestHandled();
+  }, [installations, onRequestHandled, requestedChannelId, requestedWorkspaceId]);
   const create = useMutation({
     mutationFn: () =>
       rpcClient.messaging.slack.bindings.create({

@@ -76,6 +76,9 @@ A dedicated deployment accepts open account creation only until its first organi
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TREMA_CREDENTIAL_MASTER_KEY` | Dedicated mode | unset | Base64-encoded 32-byte key that encrypts connector credentials and OAuth client secrets at rest. A dedicated deployment refuses to start without it. Generate it with `openssl rand -base64 32`. See [credential security](/credential-security). |
+| `TREMA_INGRESS_DRAIN_TIMEOUT_MS` | No | `30000` | Maximum shutdown wait, in milliseconds, for acknowledged webhook deliveries to commit. |
+
+Configure the Slack signing secret with the Slack OAuth app in **Settings → Messaging**. Trema encrypts it with `TREMA_CREDENTIAL_MASTER_KEY` and never returns it through the API.
 
 ## Search
 

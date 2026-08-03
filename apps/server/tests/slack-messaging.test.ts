@@ -40,6 +40,7 @@ integration("Slack installation and conversation bindings", () => {
       source: "customer",
       clientId: "slack-client-id",
       clientSecret: "slack-client-secret",
+      signingSecret: "slack-signing-secret",
       masterKey,
     });
     const agent = await db.principal.create({
@@ -150,7 +151,7 @@ integration("Slack installation and conversation bindings", () => {
       data: {
         id: `run-${randomUUID()}`,
         orgId: fixture.org.id,
-        threadRef: "thread-internal",
+        threadRef: `slack:${fixture.workspaceId}:C123ABC:1720000000.000001:binding:${binding.id}:requester:${fixture.member.id}`,
         state: "completed",
         trigger: "message",
         sessionId: session.id,

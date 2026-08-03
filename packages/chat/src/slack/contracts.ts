@@ -8,7 +8,7 @@ export interface SlackRecipient {
 }
 
 export interface SlackDriverOptions {
-  signingSecret: string;
+  signingSecret?: string;
   token: SlackToken;
   apiUrl?: string;
   fetch?: typeof fetch;

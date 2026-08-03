@@ -7,6 +7,7 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
 const databaseUrl = testDatabaseUrl ?? "postgresql://localhost/trema_test";
 const conflictPreflight = "20260730175000_connector_identity_conflict_preflight";
+const clientRegistrationMigration = "20260802154500_connector_client_registration";
 
 function migrationSource(name: string): string {
   const path = fileURLToPath(
@@ -151,6 +152,95 @@ integration("connector identity migrations", () => {
             access: { kind: "scope" },
           }),
         },
+      ]),
+    );
+  });
+
+  it("backfills unambiguous OAuth registrations across providers and revokes ambiguity", async () => {
+    const setup = await fixture();
+    const [githubRegistration, linearRegistration] = await Promise.all([
+      db.clientRegistration.create({
+        data: { orgId: setup.org.id, providerKey: "github", source: "customer" },
+      }),
+      db.clientRegistration.create({
+        data: { orgId: setup.org.id, providerKey: "linear", source: "dynamic" },
+      }),
+    ]);
+    await Promise.all([
+      db.clientRegistration.create({
+        data: { orgId: setup.org.id, providerKey: "google_workspace", source: "customer" },
+      }),
+      db.clientRegistration.create({
+        data: { orgId: setup.org.id, providerKey: "google_workspace", source: "platform" },
+      }),
+    ]);
+    const [ambiguousGoogle, linear, staticGoogle] = await Promise.all([
+      db.connectorConnection.create({
+        data: {
+          orgId: setup.org.id,
+          providerKey: "google_workspace",
+          ownerPrincipalId: setup.human.id,
+          authMode: "oauth2_code",
+          config: {},
+          ciphertext: "ambiguous-google",
+        },
+      }),
+      db.connectorConnection.create({
+        data: {
+          orgId: setup.org.id,
+          providerKey: "linear",
+          ownerPrincipalId: setup.human.id,
+          authMode: "mcp_oauth",
+          config: {},
+          ciphertext: "unambiguous-linear",
+        },
+      }),
+      db.connectorConnection.create({
+        data: {
+          orgId: setup.org.id,
+          providerKey: "google_workspace",
+          ownerPrincipalId: setup.human.id,
+          authMode: "api_key",
+          config: {},
+          ciphertext: "static-google",
+        },
+      }),
+    ]);
+
+    await db.$executeRawUnsafe(
+      migrationBlock(clientRegistrationMigration, "connector client registration backfill"),
+    );
+
+    await expect(
+      db.connectorConnection.findMany({
+        where: {
+          id: {
+            in: [
+              setup.humanConnection.id,
+              setup.agentConnection.id,
+              ambiguousGoogle.id,
+              linear.id,
+              staticGoogle.id,
+            ],
+          },
+        },
+        select: { id: true, clientRegistrationId: true, revokedAt: true },
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        {
+          id: setup.humanConnection.id,
+          clientRegistrationId: githubRegistration.id,
+          revokedAt: null,
+        },
+        {
+          id: setup.agentConnection.id,
+          clientRegistrationId: null,
+          revokedAt: expect.any(Date),
+        },
+        { id: ambiguousGoogle.id, clientRegistrationId: null, revokedAt: expect.any(Date) },
+        { id: linear.id, clientRegistrationId: linearRegistration.id, revokedAt: null },
+        { id: staticGoogle.id, clientRegistrationId: null, revokedAt: null },
       ]),
     );
   });

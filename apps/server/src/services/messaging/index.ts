@@ -1,4 +1,14 @@
 export {
+  IngressWorkTracker,
+  type SlackIngressAcknowledgement,
+  SlackIngressBodyTooLargeError,
+  SlackIngressConfigurationError,
+  type SlackIngressNotice,
+  type SlackIngressOptions,
+  SlackIngressService,
+} from "#server/services/messaging/ingress/index.js";
+export {
+  applySlackLifecycleEvent,
   createSlackBinding,
   deleteSlackBinding,
   deleteSlackIdentityLink,
@@ -11,6 +21,7 @@ export {
   SLACK_EVENTS_PATH,
   SLACK_INTERACTIONS_PATH,
   SlackInstallationNotFoundError,
+  type SlackLifecycleEvent,
   SlackMessagingConflictError,
   SlackMessagingValidationError,
   SlackRequestRejectedError,
@@ -18,6 +29,7 @@ export {
   type StartSlackInstallationInput,
   setSlackIdentityLink,
   slackAppManifest,
+  slackEventsUrl,
   slackExternalUserRef,
   slackLocationRef,
   startSlackInstallation,

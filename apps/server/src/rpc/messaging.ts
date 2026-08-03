@@ -12,7 +12,6 @@ import {
   listSlackBindings,
   listSlackIdentityLinks,
   listSlackInstallations,
-  SLACK_EVENTS_PATH,
   SLACK_INTERACTIONS_PATH,
   SlackInstallationNotFoundError,
   SlackMessagingConflictError,
@@ -20,6 +19,7 @@ import {
   SlackUninstallError,
   setSlackIdentityLink,
   slackAppManifest,
+  slackEventsUrl,
   startSlackInstallation,
   uninstallSlackInstallation,
 } from "#server/services/messaging/index.js";
@@ -193,12 +193,15 @@ const manifest = requireCapability("manage_connectors")
       interactionsUrl: z.url(),
     }),
   )
-  .handler(({ context }) => ({
-    manifest: slackAppManifest(context.env.TREMA_AUTH_BASE_URL),
-    callbackUrl: new URL("/connect/callback", context.env.TREMA_AUTH_BASE_URL).toString(),
-    eventsUrl: new URL(SLACK_EVENTS_PATH, context.env.TREMA_AUTH_BASE_URL).toString(),
-    interactionsUrl: new URL(SLACK_INTERACTIONS_PATH, context.env.TREMA_AUTH_BASE_URL).toString(),
-  }));
+  .handler(({ context }) => {
+    const selector = { orgId: context.org.id };
+    return {
+      manifest: slackAppManifest(context.env.TREMA_AUTH_BASE_URL, selector),
+      callbackUrl: new URL("/connect/callback", context.env.TREMA_AUTH_BASE_URL).toString(),
+      eventsUrl: slackEventsUrl(context.env.TREMA_AUTH_BASE_URL, selector),
+      interactionsUrl: new URL(SLACK_INTERACTIONS_PATH, context.env.TREMA_AUTH_BASE_URL).toString(),
+    };
+  });
 
 const bindingSchema = z.object({
   id: z.uuid(),

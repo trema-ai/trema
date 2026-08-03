@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,9 +16,32 @@ const environment = parseEnv({
   TREMA_AUTH_SECRET: "app-test-auth-secret-at-least-32-characters",
 });
 
-function databaseMock(query: () => Promise<unknown>): Database {
+function databaseMock(
+  query: () => Promise<unknown>,
+  clientRegistrations: Array<Record<string, unknown>> = [],
+): Database {
   return {
     $queryRaw: query,
+    connectorConnection: { findMany: vi.fn().mockResolvedValue([]) },
+    clientRegistration: {
+      findMany: vi.fn().mockResolvedValue(clientRegistrations),
+      findUnique: vi
+        .fn()
+        .mockImplementation(({ where }: { where: { id: string } }) =>
+          Promise.resolve(
+            clientRegistrations.find((registration) => registration.id === where.id) ?? null,
+          ),
+        ),
+      findFirst: vi
+        .fn()
+        .mockImplementation(({ where }: { where: { id: string; orgId: string } }) =>
+          Promise.resolve(
+            clientRegistrations.find(
+              (registration) => registration.id === where.id && registration.orgId === where.orgId,
+            ) ?? null,
+          ),
+        ),
+    },
   } as unknown as Database;
 }
 
@@ -46,6 +70,187 @@ describe("server", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
+
+  it("verifies Slack deliveries and answers URL challenges", async () => {
+    const signingSecret = "app-route-slack-signing-secret";
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const body = JSON.stringify({ challenge: "challenge-1", type: "url_verification" });
+    const signature = `v0=${createHmac("sha256", signingSecret)
+      .update(`v0:${nowSeconds}:${body}`)
+      .digest("hex")}`;
+    const registration = {
+      id: "01900000-0000-7000-8000-000000000001",
+      orgId: "01900000-0000-7000-8000-000000000002",
+      providerKey: "slack",
+      source: "platform",
+      clientId: null,
+      clientSecretCiphertext: null,
+      signingSecretCiphertext: null,
+      sharedRef: "slack-app",
+    };
+    const db = databaseMock(vi.fn().mockResolvedValue([]), [registration]);
+    const app = createApp({
+      ...appDependencies(db),
+      platformApps: {
+        get: () => ({
+          clientId: "slack-client-id",
+          clientSecret: "slack-client-secret",
+          signingSecret,
+        }),
+      },
+    });
+
+    const unselected = await app.request("/api/v1/messaging/slack/events", {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature,
+      },
+    });
+    expect(unselected.status).toBe(503);
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+    expect(db.clientRegistration.findUnique).not.toHaveBeenCalled();
+
+    const eventsUrl = `/api/v1/messaging/slack/events?registration_id=${registration.id}`;
+    const invalidRequest = app.request(eventsUrl, {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": "v0=00",
+      },
+    });
+    const validRequest = app.request(eventsUrl, {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature,
+      },
+    });
+    const [invalid, response] = await Promise.all([invalidRequest, validRequest]);
+    expect(invalid.status).toBe(401);
+    await expect(invalid.text()).resolves.toBe("");
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ challenge: "challenge-1" });
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+
+    const repeated = await app.request(eventsUrl, {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature,
+      },
+    });
+    expect(repeated.status).toBe(200);
+    await expect(repeated.json()).resolves.toEqual({ challenge: "challenge-1" });
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+
+    const generated = await app.request(
+      `/api/v1/messaging/slack/events?org_id=${registration.orgId}`,
+      {
+        method: "POST",
+        body,
+        headers: {
+          "content-type": "application/json",
+          "x-slack-request-timestamp": String(nowSeconds),
+          "x-slack-signature": signature,
+        },
+      },
+    );
+    expect(generated.status).toBe(200);
+    await expect(generated.json()).resolves.toEqual({ challenge: "challenge-1" });
+    expect(db.clientRegistration.findMany).toHaveBeenCalledOnce();
+  });
+
+  it("rejects oversized workspace-less challenges before scanning signing secrets", async () => {
+    const signingSecret = "app-route-slack-signing-secret";
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const body = JSON.stringify({ challenge: "x".repeat(20_000), type: "url_verification" });
+    const signature = `v0=${createHmac("sha256", signingSecret)
+      .update(`v0:${nowSeconds}:${body}`)
+      .digest("hex")}`;
+    const db = databaseMock(vi.fn().mockResolvedValue([]), [
+      {
+        id: "01900000-0000-7000-8000-000000000001",
+        orgId: "01900000-0000-7000-8000-000000000002",
+        providerKey: "slack",
+        source: "platform",
+        clientId: null,
+        clientSecretCiphertext: null,
+        signingSecretCiphertext: null,
+        sharedRef: "slack-app",
+      },
+    ]);
+    const app = createApp({
+      ...appDependencies(db),
+      platformApps: {
+        get: () => ({
+          clientId: "slack-client-id",
+          clientSecret: "slack-client-secret",
+          signingSecret,
+        }),
+      },
+    });
+
+    const response = await app.request(
+      "/api/v1/messaging/slack/events?registration_id=01900000-0000-7000-8000-000000000001",
+      {
+        method: "POST",
+        body,
+        headers: {
+          "content-type": "application/json",
+          "x-slack-request-timestamp": String(nowSeconds),
+          "x-slack-signature": signature,
+        },
+      },
+    );
+
+    expect(response.status).toBe(413);
+    expect(db.clientRegistration.findMany).not.toHaveBeenCalled();
+    expect(db.clientRegistration.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("keeps Slack ingress closed when the UI has no signing secret configured", async () => {
+    const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
+
+    const response = await app.request("/api/v1/messaging/slack/events", { method: "POST" });
+
+    expect(response.status).toBe(503);
+  });
+
+  it.each(["events", "interactions"])(
+    "caps streamed Slack %s webhook bodies before verification",
+    async (route) => {
+      const app = createApp(appDependencies(databaseMock(vi.fn().mockResolvedValue([]))));
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>({
+        cancel,
+        pull(controller) {
+          // The stream deliberately never closes. Three chunks exceed the
+          // ingress cap, so the handler must stop reading and cancel it.
+          controller.enqueue(new Uint8Array(400_000));
+        },
+      });
+      const request = new Request(`https://trema.test/api/v1/messaging/slack/${route}`, {
+        method: "POST",
+        body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+
+      const response = await app.fetch(request);
+
+      expect(response.status).toBe(413);
+      await expect(response.text()).resolves.toBe("");
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
 
   it("reports readiness when the database is reachable", async () => {
     const query = vi.fn().mockResolvedValue([{ "?column?": 1 }]);

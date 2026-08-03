@@ -32,6 +32,18 @@ import {
   type Registration,
 } from "#web/pages/settings/connectors/shared.tsx";
 
+type RegistrationValues = { clientId: string; clientSecret: string; signingSecret?: string };
+
+function slackEventsRequestUrl(callbackUrl: string, registrationId: string): string | undefined {
+  try {
+    const url = new URL("/api/v1/messaging/slack/events", callbackUrl);
+    url.searchParams.set("registration_id", registrationId);
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export function RegistrationDialog({
   provider,
   registrations,
@@ -53,22 +65,41 @@ export function RegistrationDialog({
     (registration) => registration.source === "platform" && registration.isUsable,
   );
   const [editing, setEditing] = useState(false);
+  const [pendingReplacement, setPendingReplacement] = useState<RegistrationValues>();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const registrationKey = orpc.connectors.registrations.list.queryOptions({}).queryKey;
-  const showForm = editing || !customerApp;
+  const registrationMutationQueryKeys = [
+    registrationKey,
+    orpc.connectors.connections.list.key(),
+    orpc.connectors.installations.list.key(),
+    ...(provider.key === "slack" ? [orpc.messaging.slack.installations.list.key()] : []),
+  ];
+  const needsConfiguration =
+    provider.key === "slack" && customerApp !== undefined && !customerApp.isUsable;
+  const showForm = editing || !customerApp || needsConfiguration;
+  const eventsRequestUrl =
+    provider.key === "slack" && customerApp
+      ? slackEventsRequestUrl(callbackUrl, customerApp.id)
+      : undefined;
 
   const save = useMutation({
-    mutationFn: (values: { clientId: string; clientSecret: string }) =>
+    mutationFn: (values: RegistrationValues) =>
       rpcClient.connectors.registrations.create({
         providerKey: provider.key,
         source: "customer",
         clientId: values.clientId,
         clientSecret: values.clientSecret,
+        ...(values.signingSecret ? { signingSecret: values.signingSecret } : {}),
         replace: true,
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: registrationKey });
+      await Promise.all(
+        registrationMutationQueryKeys.map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey }),
+        ),
+      );
       setEditing(false);
+      setPendingReplacement(undefined);
       toast.success(`${provider.displayName} app saved`);
       onSaved?.();
     },
@@ -77,7 +108,11 @@ export function RegistrationDialog({
   const remove = useMutation({
     mutationFn: (id: string) => rpcClient.connectors.registrations.delete({ id }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: registrationKey });
+      await Promise.all(
+        registrationMutationQueryKeys.map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey }),
+        ),
+      );
       setConfirmRemove(false);
       toast.success("OAuth app removed");
     },
@@ -87,10 +122,16 @@ export function RegistrationDialog({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    save.mutate({
+    const values = {
       clientId: String(data.get("clientId")),
       clientSecret: String(data.get("clientSecret")),
-    });
+      ...(provider.key === "slack" ? { signingSecret: String(data.get("signingSecret")) } : {}),
+    };
+    if (customerApp) {
+      setPendingReplacement(values);
+      return;
+    }
+    save.mutate(values);
   }
 
   const truncatedClientId = customerApp?.clientId
@@ -104,7 +145,10 @@ export function RegistrationDialog({
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next);
-        if (!next) setEditing(false);
+        if (!next) {
+          setEditing(false);
+          setPendingReplacement(undefined);
+        }
       }}
     >
       <DialogContent>
@@ -135,7 +179,20 @@ export function RegistrationDialog({
               shows where.
             </p>
           </div>
-          {customerApp && !editing ? (
+          {eventsRequestUrl ? (
+            <div className="space-y-2">
+              <Label>Events request URL</Label>
+              <div className="flex items-center rounded-sm border bg-muted/30 px-3 py-0.5">
+                <code className="min-w-0 flex-1 truncate text-sm">{eventsRequestUrl}</code>
+                <CopyButton value={eventsRequestUrl} />
+              </div>
+              <p className="text-meta text-muted-foreground">
+                Register this app-specific URL under Event Subscriptions in Slack. Its selector lets
+                Trema verify the challenge against only this app's signing secret.
+              </p>
+            </div>
+          ) : null}
+          {customerApp && !editing && !needsConfiguration ? (
             <div className="flex items-center justify-between gap-4 rounded-md border p-3">
               <div className="min-w-0 text-chrome">
                 <p className="font-mono text-meta">{truncatedClientId}</p>
@@ -160,6 +217,23 @@ export function RegistrationDialog({
                 <Label htmlFor={`client-id-${provider.key}`}>Client ID</Label>
                 <Input id={`client-id-${provider.key}`} name="clientId" required />
               </div>
+              {provider.key === "slack" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="signing-secret-slack">Signing secret</Label>
+                  <Input
+                    id="signing-secret-slack"
+                    name="signingSecret"
+                    type="password"
+                    required
+                    autoComplete="new-password"
+                  />
+                  <p className="text-meta text-muted-foreground">
+                    Copy this value from your Slack app's Basic Information page. Trema stores it
+                    encrypted and write-only. After saving, Trema shows the app-specific Events
+                    request URL.
+                  </p>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label htmlFor={`client-secret-${provider.key}`}>Client secret</Label>
                 <Input
@@ -180,7 +254,7 @@ export function RegistrationDialog({
                   </Button>
                 ) : null}
                 <Button disabled={save.isPending}>
-                  {save.isPending ? "Saving…" : editing ? "Replace app" : "Save app"}
+                  {save.isPending ? "Saving…" : customerApp ? "Replace app" : "Save app"}
                 </Button>
               </div>
             </form>
@@ -192,12 +266,39 @@ export function RegistrationDialog({
             </p>
           ) : null}
         </div>
+        <AlertDialog
+          open={pendingReplacement !== undefined}
+          onOpenChange={(next) => {
+            if (!next) setPendingReplacement(undefined);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Replace this OAuth app?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Every connector account using this app will be revoked and stop working. To use
+                those accounts again, you will need to reconnect them.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={save.isPending}
+                onClick={() => pendingReplacement && save.mutate(pendingReplacement)}
+              >
+                {save.isPending ? "Replacing…" : "Replace app and revoke accounts"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Remove this OAuth app?</AlertDialogTitle>
               <AlertDialogDescription>
-                New connections can no longer use it. Existing credentials are unchanged.
+                Every connector account using this app will be revoked and stop working. To use
+                those accounts again, you will need to reconnect them.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

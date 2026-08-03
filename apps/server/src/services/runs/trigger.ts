@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   DispatchIntent,
   DispatchResult,
@@ -9,6 +11,7 @@ import type {
 } from "@trema/harness";
 import { InputDispatcher } from "@trema/harness";
 
+import type { Prisma } from "#server/generated/prisma/client.js";
 import { log } from "#server/lib/logger/index.js";
 import type { ModelChainEntry } from "#server/services/model-providers/index.js";
 import type { RunServices } from "#server/services/runs/index.js";
@@ -19,6 +22,8 @@ export interface RunOrigin {
   trigger: "message" | "api" | "schedule";
   surface: string;
   locationRef: string;
+  /** A one-to-one location on a surface that also has shared locations. */
+  directMessage?: boolean;
   /**
    * The person who asked. Scheduled work names the principal who activated the
    * schedule. Omit it when nobody did, such as a service call as the agent.
@@ -34,6 +39,8 @@ export interface StartRunInput extends RunOrigin {
   intentId: string;
   /** Defaults to the surface and location, so one location is one thread. */
   threadRef?: string;
+  /** Provider-native thread id for the context session; null means the surface has no threads. */
+  surfaceThreadRef?: string | null;
   message: TranscriptMessage;
   author: PrincipalRef;
   /** The picker choice to pin when this message creates a run. */
@@ -66,6 +73,25 @@ export interface StartRunOptions {
 
 function threadRefFor(input: StartRunInput): string {
   return input.threadRef ?? `${input.surface}:${input.locationRef}`;
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
+    );
+  }
+  return value;
+}
+
+/** Fingerprints every caller-controlled value that can affect message routing. */
+function startRunRequestHash(input: StartRunInput): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(input)), "utf8")
+    .digest("hex");
 }
 
 function buildDispatcher(
@@ -103,7 +129,10 @@ function buildDispatcher(
       locationRef: input.locationRef,
       // The session names the thread it serves, so the conversation the run's
       // messages land on is that thread and not the whole location.
-      threadRef: intent.threadRef,
+      ...(input.surfaceThreadRef === null
+        ? {}
+        : { threadRef: input.surfaceThreadRef ?? intent.threadRef }),
+      ...(input.directMessage === undefined ? {} : { directMessage: input.directMessage }),
       ...(input.requester === undefined ? {} : { requester: input.requester }),
     });
     const run = await services.lifecycle.create({
@@ -216,13 +245,14 @@ async function dispatchRun(
     threadRef,
     author: input.author,
     message: input.message,
+    requestHash: startRunRequestHash(input),
   });
 
   if (result.outcome === "duplicate") {
     const claim = await claimForDuplicate(
       services,
       input.intentId,
-      MESSAGE_FINGERPRINT,
+      messageFingerprint(input),
       reclaimStale,
     );
     if (claim.kind === "reclaimed") {
@@ -231,6 +261,9 @@ async function dispatchRun(
         { services, input, ...(validateModel === undefined ? {} : { validateModel }) },
         false,
       );
+    }
+    if (claim.runId !== null && claim.outcome === null) {
+      await resumeClaimedMessageRouting(services, input, claim.runId);
     }
     log.info("Run request was a duplicate", { threadRef, runId: claim.runId });
     return { outcome: "duplicate", runId: claim.runId, threadRef };
@@ -258,16 +291,83 @@ async function dispatchRun(
   return { outcome, runId, threadRef };
 }
 
-type DuplicateClaim = { kind: "duplicate"; runId: string | null } | { kind: "reclaimed" };
+/** Finishes the durable steps left between recording a new run and routing it. */
+async function resumeClaimedMessageRouting(
+  services: RunServices,
+  input: StartRunInput,
+  runId: string,
+): Promise<void> {
+  const wasQueued = await services.db.$transaction(async (tx) => {
+    const [run] = await tx.$queryRaw<{ state: string; threadRef: string }[]>`
+      SELECT "state", "threadRef" FROM "AgentRun"
+      WHERE "id" = ${runId} AND "orgId" = ${services.orgId}
+      FOR UPDATE`;
+    if (run === undefined) throw new Error(`claimed run does not exist: ${runId}`);
+    if (run.state !== "queued") return false;
+
+    if (input.toolAllowlist !== undefined && input.toolAllowlist.length > 0) {
+      await tx.agentRun.update({
+        where: { id: runId },
+        data: { toolAllowlist: input.toolAllowlist },
+      });
+    }
+    const inserted = await tx.runQueuedInput.createMany({
+      data: [
+        {
+          id: input.intentId,
+          orgId: services.orgId,
+          kind: "steering",
+          runId,
+          threadRef: run.threadRef,
+          message: input.message as unknown as Prisma.InputJsonValue,
+          author: input.author as unknown as Prisma.InputJsonValue,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    if (inserted.count === 0) {
+      const existing = await tx.runQueuedInput.findUnique({
+        where: { id: input.intentId },
+        select: { orgId: true, kind: true, runId: true },
+      });
+      if (
+        existing?.orgId !== services.orgId ||
+        existing.kind !== "steering" ||
+        existing.runId !== runId
+      ) {
+        throw new Error(`queued input id belongs to a different route: ${input.intentId}`);
+      }
+    }
+    return true;
+  });
+
+  if (wasQueued) {
+    const run = await services.store.getRun(runId);
+    if (run === undefined) throw new Error(`claimed run does not exist: ${runId}`);
+    if (run.state === "queued") await services.enqueue(run);
+  }
+  await services.db.runIntent.updateMany({
+    where: { orgId: services.orgId, id: input.intentId, runId, outcome: null },
+    data: { outcome: "started" },
+  });
+  log.warn("Resumed a partially routed run request", { runId, threadRef: threadRefFor(input) });
+}
+
+type DuplicateClaim =
+  | { kind: "duplicate"; runId: string | null; outcome: string | null }
+  | { kind: "reclaimed" };
 
 /** What the current call asks, checked against what a claim was made for. */
 interface ClaimFingerprint {
   kind: string;
   targetId?: string;
+  requestHash?: string;
 }
 
 /** The fingerprint the message dispatch claims an id under. */
-const MESSAGE_FINGERPRINT: ClaimFingerprint = { kind: "message" };
+function messageFingerprint(input: StartRunInput): ClaimFingerprint {
+  return { kind: "message", requestHash: startRunRequestHash(input) };
+}
 
 /** The fingerprint a target intent claims an id under, mirroring dispatch. */
 function targetFingerprint(intent: TargetIntent): ClaimFingerprint {
@@ -282,12 +382,16 @@ function targetFingerprint(intent: TargetIntent): ClaimFingerprint {
  * @throws {IntentMismatchError} When the stored fingerprint differs.
  */
 function assertClaimMatches(
-  stored: { kind: string | null; targetId: string | null },
+  stored: { kind: string | null; targetId: string | null; requestHash: string | null },
   expected: ClaimFingerprint,
   intentId: string,
 ): void {
   if (stored.kind === null) return;
-  if (stored.kind === expected.kind && (stored.targetId ?? undefined) === expected.targetId) {
+  if (
+    stored.kind === expected.kind &&
+    (stored.targetId ?? undefined) === expected.targetId &&
+    (stored.requestHash === null || stored.requestHash === expected.requestHash)
+  ) {
     return;
   }
   throw new IntentMismatchError(`Intent id '${intentId}' was already used for a different intent`);
@@ -307,7 +411,14 @@ async function claimForDuplicate(
 ): Promise<DuplicateClaim> {
   const claimed = await services.db.runIntent.findUnique({
     where: { orgId_id: { orgId: services.orgId, id: intentId } },
-    select: { runId: true, createdAt: true, kind: true, targetId: true },
+    select: {
+      runId: true,
+      outcome: true,
+      createdAt: true,
+      kind: true,
+      targetId: true,
+      requestHash: true,
+    },
   });
   if (claimed !== null) assertClaimMatches(claimed, expected, intentId);
   if (
@@ -321,7 +432,11 @@ async function claimForDuplicate(
     });
     if (released.count === 1) return { kind: "reclaimed" };
   }
-  return { kind: "duplicate", runId: claimed?.runId ?? null };
+  return {
+    kind: "duplicate",
+    runId: claimed?.runId ?? null,
+    outcome: claimed?.outcome ?? null,
+  };
 }
 
 /** The elicitation decision, stop, retry, or feedback a caller aims at existing work. */
@@ -571,7 +686,7 @@ async function routedDuplicate(
 ): Promise<TargetIntentResult | undefined> {
   const claimed = await services.db.runIntent.findUnique({
     where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
-    select: { runId: true, kind: true, targetId: true },
+    select: { runId: true, kind: true, targetId: true, requestHash: true },
   });
   if (claimed === null) return undefined;
   assertClaimMatches(claimed, targetFingerprint(input.intent), input.intentId);

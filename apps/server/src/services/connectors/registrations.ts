@@ -10,6 +10,7 @@ type ClientRegistrationDatabase = Pick<Database, "clientRegistration">;
 export interface PlatformApp {
   clientId: string;
   clientSecret: string;
+  signingSecret?: string;
 }
 
 export interface PlatformAppDirectory {
@@ -69,6 +70,7 @@ export interface RegistrationFields {
   source: ClientRegistrationSource;
   clientId?: string;
   clientSecret?: string;
+  signingSecret?: string;
   sharedRef?: string;
 }
 
@@ -77,7 +79,7 @@ export function validateRegistrationFields(input: RegistrationFields): void {
     if (!input.sharedRef) {
       throw new ClientRegistrationValidationError("Platform registration requires sharedRef");
     }
-    if (input.clientId || input.clientSecret) {
+    if (input.clientId || input.clientSecret || input.signingSecret) {
       throw new ClientRegistrationValidationError(
         "Platform registration cannot store client credentials",
       );
@@ -123,11 +125,22 @@ const registrationMetadataSelect = {
 export async function createClientRegistration(db: Database, input: CreateClientRegistrationInput) {
   assertProvider(input.catalog ?? defaultCatalog, input.providerKey);
   validateRegistrationFields(input);
+  if (input.providerKey === "slack" && input.source !== "platform" && !input.signingSecret) {
+    throw new ClientRegistrationValidationError("Slack registration requires a signing secret");
+  }
+  if (input.providerKey !== "slack" && input.signingSecret) {
+    throw new ClientRegistrationValidationError(
+      "Signing secrets are supported only for Slack registrations",
+    );
+  }
 
   const values = {
     clientId: input.clientId ?? null,
     clientSecretCiphertext: input.clientSecret
       ? encryptEnvelope(input.clientSecret, input.masterKey)
+      : null,
+    signingSecretCiphertext: input.signingSecret
+      ? encryptEnvelope(input.signingSecret, input.masterKey)
       : null,
     sharedRef: input.sharedRef ?? null,
     adminConsentGranted: input.adminConsentGranted ?? null,
@@ -135,22 +148,34 @@ export async function createClientRegistration(db: Database, input: CreateClient
   };
 
   if (input.replace) {
-    const registration = await db.clientRegistration.upsert({
-      where: {
-        orgId_providerKey_source: {
+    const registration = await db.$transaction(async (transaction) => {
+      const stored = await transaction.clientRegistration.upsert({
+        where: {
+          orgId_providerKey_source: {
+            orgId: input.orgId,
+            providerKey: input.providerKey,
+            source: input.source,
+          },
+        },
+        create: {
           orgId: input.orgId,
           providerKey: input.providerKey,
           source: input.source,
+          ...values,
         },
-      },
-      create: {
-        orgId: input.orgId,
-        providerKey: input.providerKey,
-        source: input.source,
-        ...values,
-      },
-      update: values,
-      select: registrationMetadataSelect,
+        update: values,
+        select: registrationMetadataSelect,
+      });
+      await transaction.connectorConnection.updateMany({
+        where: {
+          orgId: input.orgId,
+          providerKey: input.providerKey,
+          clientRegistrationId: stored.id,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      });
+      return stored;
     });
     log.info("Client registration replaced", { provider: input.providerKey, kind: input.source });
     return registration;
@@ -186,7 +211,16 @@ export function listClientRegistrations(db: Database, orgId: string) {
 }
 
 export async function deleteClientRegistration(db: Database, orgId: string, id: string) {
-  const result = await db.clientRegistration.deleteMany({ where: { id, orgId } });
+  const result = await db.$transaction(async (transaction) => {
+    await transaction.connectorConnection.updateMany({
+      where: {
+        orgId,
+        clientRegistrationId: id,
+      },
+      data: { revokedAt: new Date(), clientRegistrationId: null },
+    });
+    return transaction.clientRegistration.deleteMany({ where: { id, orgId } });
+  });
   if (result.count === 0) {
     log.warn("Client registration not found", { registrationId: id });
     throw new ClientRegistrationNotFoundError();
@@ -200,6 +234,7 @@ export interface ResolvedClientRegistration {
   source: ClientRegistrationSource;
   clientId: string;
   clientSecret: string;
+  signingSecret?: string;
 }
 
 export async function resolveClientRegistration(
@@ -221,6 +256,14 @@ export async function resolveClientRegistration(
         source: registration.source,
         clientId: registration.clientId,
         clientSecret: decryptEnvelope<string>(registration.clientSecretCiphertext, masterKey),
+        ...(registration.signingSecretCiphertext
+          ? {
+              signingSecret: decryptEnvelope<string>(
+                registration.signingSecretCiphertext,
+                masterKey,
+              ),
+            }
+          : {}),
       };
     }
   }
@@ -234,6 +277,7 @@ export async function resolveClientRegistration(
         source: platform.source,
         clientId: app.clientId,
         clientSecret: app.clientSecret,
+        ...(app.signingSecret ? { signingSecret: app.signingSecret } : {}),
       };
     }
   }
@@ -261,6 +305,7 @@ export async function resolveStoredClientRegistration(
       source: registration.source,
       clientId: app.clientId,
       clientSecret: app.clientSecret,
+      ...(app.signingSecret ? { signingSecret: app.signingSecret } : {}),
     };
   }
 
@@ -272,5 +317,10 @@ export async function resolveStoredClientRegistration(
     source: registration.source,
     clientId: registration.clientId,
     clientSecret: decryptEnvelope<string>(registration.clientSecretCiphertext, masterKey),
+    ...(registration.signingSecretCiphertext
+      ? {
+          signingSecret: decryptEnvelope<string>(registration.signingSecretCiphertext, masterKey),
+        }
+      : {}),
   };
 }

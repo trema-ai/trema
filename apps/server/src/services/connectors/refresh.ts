@@ -16,12 +16,14 @@ import {
   discoverMcpAuthServer,
   type ResolvedMcpClient,
   resolveExistingMcpClientRegistration,
+  resolveStoredMcpClientRegistration,
 } from "#server/services/connectors/mcp-oauth.js";
 import {
   ConnectorProviderNotFoundError,
   emptyPlatformAppDirectory,
   type PlatformAppDirectory,
   resolveClientRegistration,
+  resolveStoredClientRegistration,
 } from "#server/services/connectors/registrations.js";
 
 const defaultCatalog = loadProviderCatalog();
@@ -528,24 +530,39 @@ async function exchangeRefreshToken(
       if (!endpoint) {
         endpoint = (await discoverMcpAuthServer(resource, input.fetch)).tokenEndpoint;
       }
-      mcpClient = await resolveExistingMcpClientRegistration(transaction, {
-        orgId: connection.orgId,
-        providerKey: connection.providerKey,
-        platformApps,
-        ...(input.masterKey ? { masterKey: input.masterKey } : {}),
-      });
+      mcpClient = connection.clientRegistrationId
+        ? await resolveStoredMcpClientRegistration(transaction, {
+            orgId: connection.orgId,
+            registrationId: connection.clientRegistrationId,
+            platformApps,
+            ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+          })
+        : await resolveExistingMcpClientRegistration(transaction, {
+            orgId: connection.orgId,
+            providerKey: connection.providerKey,
+            platformApps,
+            ...(input.masterKey ? { masterKey: input.masterKey } : {}),
+          });
       if (!mcpClient) return { ok: false };
       clientId = mcpClient.clientId;
       clientSecret = mcpClient.clientSecret;
     } else {
       if (!endpoint) return { ok: false };
-      const client = await resolveClientRegistration(
-        transaction,
-        connection.orgId,
-        connection.providerKey,
-        platformApps,
-        input.masterKey,
-      );
+      const client = connection.clientRegistrationId
+        ? await resolveStoredClientRegistration(
+            transaction,
+            connection.orgId,
+            connection.clientRegistrationId,
+            platformApps,
+            input.masterKey,
+          )
+        : await resolveClientRegistration(
+            transaction,
+            connection.orgId,
+            connection.providerKey,
+            platformApps,
+            input.masterKey,
+          );
       clientId = client.clientId;
       clientSecret = client.clientSecret;
     }

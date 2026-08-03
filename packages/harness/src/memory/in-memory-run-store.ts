@@ -149,6 +149,7 @@ export class InMemoryRunStore implements RunStore {
     if (queue === undefined) {
       throw new Error(`unknown run: ${runId}`);
     }
+    if (queue.some((queued) => queued.id === input.id)) return;
     queue.push(input);
   }
 

@@ -294,6 +294,9 @@ integration("connector connection flows", () => {
       ownerPrincipalId: org.agent.id,
       providerScopes: ["repo", "read:org"],
     });
+    await expect(
+      db.connectorConnection.findUniqueOrThrow({ where: { id: completed.connection.id } }),
+    ).resolves.toMatchObject({ clientRegistrationId: pending.registrationId });
     expect(completed.installation).toMatchObject({
       scopeId: org.orgScope.id,
       body: {

@@ -27,6 +27,8 @@ export interface OpenSessionRequest {
   locationRef: unknown;
   /** The thread the session serves, where the surface has threads. */
   threadRef?: string;
+  /** Marks a one-to-one location on a surface whose locations are otherwise bindable. */
+  directMessage?: boolean;
   /** Who asked. Omitted for work nobody triggered, such as a scheduled run. */
   requester?: { externalUserId: string } | { principalId: string };
 }

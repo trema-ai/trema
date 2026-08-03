@@ -1,6 +1,6 @@
 import { loadProviderCatalog } from "@trema/connectors";
 
-import { encryptEnvelope } from "#server/lib/crypto/index.js";
+import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import type { Database } from "#server/lib/db/index.js";
 import { log } from "#server/lib/logger/index.js";
 import { createBinding, deleteBinding, resolveLocation } from "#server/services/bindings/index.js";
@@ -17,6 +17,7 @@ import {
   resolveClientRegistration,
   resolveConnectionCredential,
   resolveConnectorInstallation,
+  resolveStoredClientRegistration,
   startOAuthConnect,
 } from "#server/services/connectors/index.js";
 
@@ -32,6 +33,17 @@ export const SLACK_USER_SCOPES = (slackProvider.auth.authorizationParams?.user_s
 export const SLACK_EVENTS_PATH = "/api/v1/messaging/slack/events";
 export const SLACK_INTERACTIONS_PATH = "/api/v1/messaging/slack/interactions";
 
+export function slackLogicalThreadRef(
+  locationRef: string,
+  threadTs?: string,
+  authorization?: { bindingId: string; requesterPrincipalId: string },
+): string {
+  const surfaceThread = `slack:${locationRef}${threadTs === undefined ? "" : `:${threadTs}`}`;
+  return authorization === undefined
+    ? surfaceThread
+    : `${surfaceThread}:binding:${authorization.bindingId}:requester:${authorization.requesterPrincipalId}`;
+}
+
 type SlackRejectReason =
   | "not_installed"
   | "ambiguous_installation"
@@ -40,7 +52,8 @@ type SlackRejectReason =
   | "location_unbound"
   | "identity_unlinked"
   | "personal_scopes_disabled"
-  | "connector_mismatch";
+  | "connector_mismatch"
+  | "bot_event";
 
 export class SlackMessagingValidationError extends Error {
   constructor(message: string) {
@@ -143,7 +156,19 @@ function parseSlackLocationRef(locationRef: string) {
   }
 }
 
-export function slackAppManifest(authBaseUrl: string) {
+export type SlackEventsSelector = { orgId: string } | { registrationId: string };
+
+export function slackEventsUrl(authBaseUrl: string, selector: SlackEventsSelector): string {
+  const url = new URL(SLACK_EVENTS_PATH, authBaseUrl);
+  if ("registrationId" in selector) {
+    url.searchParams.set("registration_id", selector.registrationId);
+  } else {
+    url.searchParams.set("org_id", selector.orgId);
+  }
+  return url.toString();
+}
+
+export function slackAppManifest(authBaseUrl: string, selector: SlackEventsSelector) {
   const base = new URL(authBaseUrl);
   const endpoint = (path: string) => new URL(path, base).toString();
   return {
@@ -165,7 +190,7 @@ export function slackAppManifest(authBaseUrl: string) {
     },
     settings: {
       event_subscriptions: {
-        request_url: endpoint(SLACK_EVENTS_PATH),
+        request_url: slackEventsUrl(authBaseUrl, selector),
         bot_events: [
           "app_mention",
           "app_uninstalled",
@@ -185,6 +210,98 @@ export function slackAppManifest(authBaseUrl: string) {
       token_rotation_enabled: true,
     },
   };
+}
+
+export type SlackLifecycleEvent =
+  | { type: "app_uninstalled"; workspaceId: string; appId: string }
+  | {
+      type: "tokens_revoked";
+      workspaceId: string;
+      appId: string;
+      botUserIds: readonly string[];
+      oauthUserIds: readonly string[];
+    };
+
+/** Applies provider-originated installation and credential lifecycle changes. */
+export async function applySlackLifecycleEvent(
+  db: Database,
+  event: SlackLifecycleEvent,
+  masterKey?: string,
+  connectionIds?: readonly string[],
+): Promise<void> {
+  const candidates = await db.connectorConnection.findMany({
+    where: {
+      ...(connectionIds === undefined ? {} : { id: { in: [...connectionIds] } }),
+      providerKey: SLACK_PROVIDER_KEY,
+      revokedAt: null,
+      config: { path: ["team.id"], equals: event.workspaceId },
+      owner: { kind: "agent", deactivatedAt: null },
+    },
+    select: { id: true, orgId: true, config: true, ciphertext: true },
+  });
+  const matching = candidates.filter((connection) => {
+    const storedAppId = stringField(connection.config, "app_id");
+    return storedAppId === null || storedAppId === event.appId;
+  });
+  if (matching.length === 0) return;
+  if (matching.length !== 1) {
+    log.warn("Slack lifecycle event resolved ambiguously", {
+      nativeKind: event.type,
+      workspaceId: event.workspaceId,
+      count: matching.length,
+    });
+    return;
+  }
+  const connection = matching[0]!;
+  if (
+    event.type === "app_uninstalled" ||
+    event.botUserIds.includes(stringField(connection.config, "bot_user_id") ?? "")
+  ) {
+    const revokedAt = new Date();
+    const updated = await db.connectorConnection.updateMany({
+      where: { id: connection.id, orgId: connection.orgId, revokedAt: null },
+      data: { revokedAt },
+    });
+    if (updated.count > 0) {
+      log.info("Slack installation revoked by provider", { connectionId: connection.id });
+    }
+    return;
+  }
+
+  const installerUserId = stringField(connection.config, "authed_user.id");
+  if (installerUserId === null || !event.oauthUserIds.includes(installerUserId)) return;
+  let credential: Record<string, unknown>;
+  try {
+    credential = record(decryptEnvelope<unknown>(connection.ciphertext, masterKey));
+  } catch {
+    log.warn("Slack revoked user credential could not be removed", {
+      connectionId: connection.id,
+    });
+    return;
+  }
+  const raw = record(credential.raw);
+  const authedUser = record(raw.authed_user);
+  const revokedFields = new Set(["access_token", "refresh_token", "expires_in", "expires_at"]);
+  if (!Object.keys(authedUser).some((key) => revokedFields.has(key))) return;
+  const retainedUser = Object.fromEntries(
+    Object.entries(authedUser).filter(([key]) => !revokedFields.has(key)),
+  );
+  const ciphertext = encryptEnvelope(
+    { ...credential, raw: { ...raw, authed_user: retainedUser } },
+    masterKey,
+  );
+  const updated = await db.connectorConnection.updateMany({
+    where: {
+      id: connection.id,
+      orgId: connection.orgId,
+      revokedAt: null,
+      ciphertext: connection.ciphertext,
+    },
+    data: { ciphertext },
+  });
+  if (updated.count > 0) {
+    log.info("Slack installer credential revoked by provider", { connectionId: connection.id });
+  }
 }
 
 export interface StartSlackInstallationInput {
@@ -314,7 +431,7 @@ export async function uninstallSlackInstallation(
       providerKey: SLACK_PROVIDER_KEY,
       revokedAt: null,
     },
-    select: { id: true, config: true },
+    select: { id: true, config: true, clientRegistrationId: true },
   });
   if (!connection) throw new SlackInstallationNotFoundError();
 
@@ -327,13 +444,21 @@ export async function uninstallSlackInstallation(
   });
   let registration: Awaited<ReturnType<typeof resolveClientRegistration>>;
   try {
-    registration = await resolveClientRegistration(
-      db,
-      input.orgId,
-      SLACK_PROVIDER_KEY,
-      input.platformApps ?? emptyPlatformAppDirectory,
-      input.masterKey,
-    );
+    registration = connection.clientRegistrationId
+      ? await resolveStoredClientRegistration(
+          db,
+          input.orgId,
+          connection.clientRegistrationId,
+          input.platformApps ?? emptyPlatformAppDirectory,
+          input.masterKey,
+        )
+      : await resolveClientRegistration(
+          db,
+          input.orgId,
+          SLACK_PROVIDER_KEY,
+          input.platformApps ?? emptyPlatformAppDirectory,
+          input.masterKey,
+        );
   } catch (error) {
     log.warn("Slack uninstall request preparation failed", {
       connectionId: connection.id,
@@ -695,6 +820,8 @@ export interface ResolveSlackRequestInput {
   platformApps?: Parameters<typeof resolveConnectionCredential>[1]["platformApps"];
   fetch?: typeof globalThis.fetch;
   now?: Date;
+  /** Connections whose app secret authenticated this delivery. */
+  connectionIds?: readonly string[];
 }
 
 export async function resolveSlackRequest(db: Database, input: ResolveSlackRequestInput) {
@@ -704,6 +831,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
   const threadTs = assertThreadTs(input.threadTs);
   const candidates = await db.connectorConnection.findMany({
     where: {
+      ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
       providerKey: SLACK_PROVIDER_KEY,
       revokedAt: null,
       config: { path: ["team.id"], equals: workspaceId },
@@ -723,6 +851,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
   if (candidates.length === 0) {
     const revoked = await db.connectorConnection.findFirst({
       where: {
+        ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
         providerKey: SLACK_PROVIDER_KEY,
         config: { path: ["team.id"], equals: workspaceId },
       },
@@ -735,6 +864,10 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("ambiguous_installation");
   }
   const connection = candidates[0]!;
+  const botUserId = stringField(connection.config, "bot_user_id");
+  if (botUserId !== null && userId === botUserId) {
+    throw new SlackRequestRejectedError("bot_event");
+  }
   const storedEnterpriseId = stringField(connection.config, "enterprise.id");
   if (input.enterpriseId && storedEnterpriseId && input.enterpriseId !== storedEnterpriseId) {
     log.warn("Slack enterprise did not match installation", { workspaceId });
@@ -819,8 +952,8 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("connector_mismatch");
   }
 
-  const conversationThreadRef = threadTs ?? "";
-  const [binding, conversation, run] = await Promise.all([
+  const conversationThreadRef = input.directMessage ? "" : (threadTs ?? "");
+  const [binding, conversation] = await Promise.all([
     db.binding.findUnique({
       where: {
         orgId_surface_locationRef: {
@@ -841,27 +974,37 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
       },
       select: { id: true },
     }),
-    db.agentRun.findFirst({
-      where: {
-        orgId: connection.orgId,
-        session: {
-          surface: SLACK_PROVIDER_KEY,
-          locationRef,
-          threadRef: threadTs ?? null,
-        },
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      select: { id: true },
-    }),
   ]);
+  if (binding === null) {
+    throw new SlackRequestRejectedError("location_unbound");
+  }
+  // The binding and requester together are the authorization epoch. Rebinding
+  // a channel or relinking a Slack user must not steer an active run whose
+  // session pinned the old scope, requester, and policy snapshot, even though
+  // Slack's native thread id is stable.
+  const logicalThreadRef = slackLogicalThreadRef(
+    locationRef,
+    input.directMessage ? undefined : threadTs,
+    { bindingId: binding.id, requesterPrincipalId: identity.principal.id },
+  );
+  const run = await db.agentRun.findFirst({
+    where: {
+      orgId: connection.orgId,
+      threadRef: logicalThreadRef,
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { id: true },
+  });
 
   return {
     orgId: connection.orgId,
     connectionId: connection.id,
     installationItemId: installation.installationItemId,
     credentialOwnerPrincipalId: installation.credentialOwnerPrincipalId,
+    botUserId,
     scopeId: location.scope.id,
     requesterPrincipalId: identity.principal.id,
+    requesterDisplayName: identity.principal.displayName,
     bindingId: binding?.id ?? null,
     conversationId: conversation?.id ?? null,
     runId: run?.id ?? null,
@@ -869,6 +1012,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     enterpriseId: storedEnterpriseId,
     channelId,
     threadTs: threadTs ?? null,
+    logicalThreadRef,
     userId,
     locationRef,
     externalUserId,

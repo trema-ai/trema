@@ -4209,6 +4209,10 @@
                     "type": "string",
                     "minLength": 1
                   },
+                  "signingSecret": {
+                    "type": "string",
+                    "minLength": 1
+                  },
                   "sharedRef": {
                     "type": "string",
                     "minLength": 1
