@@ -1399,7 +1399,7 @@ integration("Slack ingress", () => {
 
     await expect(
       ingress.service.accept(signedRequest(body, "application/json", retiredSecret)),
-    ).rejects.toMatchObject({ category: "invalid-request" });
+    ).rejects.toMatchObject({ code: "invalid_request" });
     await expect(
       ingress.service.accept(signedRequest(body, "application/json", activeSecret)),
     ).resolves.toEqual({});

@@ -404,7 +404,7 @@ export class SlackIngressService {
           connectionIds: candidate.connectionIds,
         };
       } catch (error) {
-        if (error instanceof SurfaceDriverError && error.category === "invalid-request") {
+        if (error instanceof SurfaceDriverError && error.code === "invalid_request") {
           invalidRequest = error;
           continue;
         }

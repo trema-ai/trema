@@ -225,8 +225,8 @@ export function createApp({
         log.warn("Slack webhook body rejected as too large");
         return new Response(null, { status: 413 });
       }
-      if (error instanceof SurfaceDriverError && error.category === "invalid-request") {
-        log.warn("Slack webhook rejected", { code: error.method ?? "invalid_request" });
+      if (error instanceof SurfaceDriverError && error.code === "invalid_request") {
+        log.warn("Slack webhook rejected", { code: error.code });
         return new Response(null, { status: 401 });
       }
       if (error instanceof SlackIngressConfigurationError) {

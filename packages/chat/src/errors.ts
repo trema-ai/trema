@@ -7,6 +7,8 @@ export type SurfaceErrorCategory =
   | "transient";
 
 export class SurfaceDriverError extends Error {
+  /** Compatibility with the shared surface error used after branch integration. */
+  readonly code: "invalid_request" | "unknown";
   readonly category: SurfaceErrorCategory;
   readonly method: string | undefined;
   readonly retryable: boolean;
@@ -24,6 +26,7 @@ export class SurfaceDriverError extends Error {
   ) {
     super(message, { cause: options.cause });
     this.name = "SurfaceDriverError";
+    this.code = options.category === "invalid-request" ? "invalid_request" : "unknown";
     this.category = options.category;
     this.method = options.method;
     this.retryable = options.retryable;
