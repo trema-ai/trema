@@ -743,7 +743,7 @@ integration("connector credential refresh", () => {
     });
   });
 
-  it("refreshes stale MCP OAuth credentials with the persisted DCR client before sync", async () => {
+  it("refreshes stale MCP OAuth credentials with the connection's persisted DCR client", async () => {
     const now = new Date("2026-07-24T12:00:00.000Z");
     const owner = await connectorOwner("notion");
     const scope = await db.scope.create({
@@ -753,7 +753,7 @@ integration("connector credential refresh", () => {
         name: "Organization",
       },
     });
-    await db.clientRegistration.create({
+    const dynamicRegistration = await db.clientRegistration.create({
       data: {
         orgId: owner.org.id,
         providerKey: "notion",
@@ -763,12 +763,22 @@ integration("connector credential refresh", () => {
         tokenEndpointAuthMethod: "client_secret_post",
       },
     });
+    await db.clientRegistration.create({
+      data: {
+        orgId: owner.org.id,
+        providerKey: "notion",
+        source: "customer",
+        clientId: "new-customer-client",
+        clientSecretCiphertext: encryptEnvelope("new-customer-secret", masterKey),
+      },
+    });
     const connection = await db.connectorConnection.create({
       data: {
         orgId: owner.org.id,
         ownerPrincipalId: owner.principal.id,
         providerKey: "notion",
         authMode: "mcp_oauth",
+        clientRegistrationId: dynamicRegistration.id,
         config: {},
         ciphertext: encryptEnvelope(
           {

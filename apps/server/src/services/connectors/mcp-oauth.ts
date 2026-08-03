@@ -291,7 +291,7 @@ export async function resolveMcpClientRegistration(
 // Mirrors resolveMcpClientRegistration's tolerance for secret-less public
 // clients.
 export async function resolveStoredMcpClientRegistration(
-  db: Database,
+  db: McpClientRegistrationReadDatabase,
   input: {
     orgId: string;
     registrationId: string;
