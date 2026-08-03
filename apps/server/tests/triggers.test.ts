@@ -403,6 +403,69 @@ integration("triggers", () => {
       },
     );
 
+    it("rejects a changed request before resuming a claimed run", async () => {
+      const { engine, org, owner } = await setup();
+      const services = servicesFor(org.id, engine);
+      const enqueue = vi
+        .spyOn(engine, "enqueue")
+        .mockRejectedValueOnce(new Error("transient routing failure"));
+      const original = {
+        intentId: "partial-original-payload",
+        trigger: "api" as const,
+        surface: "api",
+        locationRef: "ops",
+        threadRef: "api:ops",
+        toolAllowlist: ["original_tool"],
+        message: {
+          role: "user" as const,
+          blocks: [{ type: "text" as const, text: "Keep the original request." }],
+        },
+        author: { principalId: owner.id, displayName: owner.displayName },
+      };
+
+      try {
+        await expect(startRun({ services, input: original })).rejects.toThrow(
+          "transient routing failure",
+        );
+        const claim = await db.runIntent.findUniqueOrThrow({
+          where: { orgId_id: { orgId: org.id, id: original.intentId } },
+        });
+        await db.runQueuedInput.delete({ where: { id: original.intentId } });
+
+        await expect(
+          startRun({
+            services,
+            input: {
+              ...original,
+              toolAllowlist: ["replacement_tool"],
+              message: {
+                role: "user",
+                blocks: [{ type: "text", text: "Replace the original request." }],
+              },
+              author: { principalId: "replacement-principal", displayName: "Mallory" },
+            },
+          }),
+        ).rejects.toMatchObject({ code: "intent_mismatch" });
+
+        await expect(
+          db.runQueuedInput.count({ where: { orgId: org.id, id: original.intentId } }),
+        ).resolves.toBe(0);
+        await expect(startRun({ services, input: original })).resolves.toMatchObject({
+          outcome: "duplicate",
+          runId: claim.runId,
+        });
+
+        await expect(
+          db.runQueuedInput.findUniqueOrThrow({ where: { id: original.intentId } }),
+        ).resolves.toMatchObject({ message: original.message, author: original.author });
+        await expect(
+          db.agentRun.findUniqueOrThrow({ where: { id: claim.runId! } }),
+        ).resolves.toMatchObject({ toolAllowlist: original.toolAllowlist });
+      } finally {
+        enqueue.mockRestore();
+      }
+    });
+
     it("keeps a steered input routed when final response bookkeeping fails", async () => {
       const { engine, org, owner } = await setup();
       const services = servicesFor(org.id, engine);

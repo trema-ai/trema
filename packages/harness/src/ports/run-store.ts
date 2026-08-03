@@ -124,6 +124,8 @@ export interface IntentClaimMeta {
   kind: string;
   /** The run or elicitation the intent addressed, when it had one. */
   targetId?: string;
+  /** Caller-controlled routing values, used to reject a changed idempotent retry. */
+  requestHash?: string;
 }
 /** Result of the first or a later elicitation resolution attempt. */
 export type ResolveElicitationResult = "resolved" | "already-resolved";

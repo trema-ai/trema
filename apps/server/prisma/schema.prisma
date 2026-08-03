@@ -1186,17 +1186,20 @@ model RunQueuedInput {
 /// callers, exactly-once runs. The outcome is recorded so a duplicate call can
 /// be answered with where the first one landed.
 model RunIntent {
-  id        String
-  orgId     String
-  runId     String?
-  outcome   String?
+  id          String
+  orgId       String
+  runId       String?
+  outcome     String?
   /// The intent kind the claim was made for. A reuse of the id with a
   /// different kind or target is a mismatch to refuse, never a replay.
-  kind      String?
+  kind        String?
   /// The run or elicitation the claimed intent addressed, when it had one.
-  targetId  String?
-  createdAt DateTime @default(now())
-  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  targetId    String?
+  /// Fingerprints the caller-controlled message routing values. A changed
+  /// retry cannot replace a partially routed run's opening input or allowlist.
+  requestHash String?
+  createdAt   DateTime @default(now())
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@id([orgId, id])
   @@index([orgId, createdAt])

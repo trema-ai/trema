@@ -13,6 +13,8 @@ export interface MessageIntent extends IntentBase {
   threadRef: string;
   author: PrincipalRef;
   message: TranscriptMessage;
+  /** Stable fingerprint of every caller-controlled value that affects routing. */
+  requestHash?: string;
 }
 
 /** Decision that resolves a run's blocking elicitation. */
@@ -147,7 +149,10 @@ function claimMeta(intent: DispatchIntent): IntentClaimMeta {
   if (intent.type === "stop" || intent.type === "retry" || intent.type === "feedback") {
     return { kind: intent.type, targetId: intent.runId };
   }
-  return { kind: intent.type };
+  return {
+    kind: intent.type,
+    ...(intent.requestHash === undefined ? {} : { requestHash: intent.requestHash }),
+  };
 }
 
 function queuedInput(intent: MessageIntent): QueuedInput {

@@ -806,19 +806,21 @@ export class SlackIngressService {
         locationRef: request.locationRef,
         threadRef: event.surfaceRef.channelRef.startsWith("D") ? null : event.surfaceRef.threadRef,
       });
-      await submitTargetIntent({
+      const submitted = await submitTargetIntent({
         services,
         input: { intentId: event.intentId, by, intent: event.action },
       });
+      if (submitted.runId === null) throw new SlackRunClaimPendingError();
       return;
     }
     if (request.runId === null || request.runId !== event.action.runId) {
       throw new SlackTargetMismatchError();
     }
-    await submitTargetIntent({
+    const submitted = await submitTargetIntent({
       services,
       input: { intentId: event.intentId, by, intent: event.action },
     });
+    if (submitted.runId === null) throw new SlackRunClaimPendingError();
   }
 
   #resolve(event: MessageSurfaceEvent | InteractionSurfaceEvent, connectionIds: readonly string[]) {

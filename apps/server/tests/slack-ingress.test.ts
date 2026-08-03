@@ -1589,6 +1589,85 @@ integration("Slack ingress", () => {
     });
   });
 
+  it("keeps an interaction pending until an unresolved intent claim can be reclaimed", async () => {
+    const fixture = await setup("TPENDINGINTERACTION");
+    const ingress = subject();
+    const threadTs = "1800000000.000061";
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({
+            eventId: "Ev-pending-interaction-root",
+            workspaceId: fixture.workspaceId,
+            threadTs,
+            ts: threadTs,
+          }),
+        ),
+      ),
+    );
+    await ingress.drain();
+    const run = await db.agentRun.findFirstOrThrow({ where: { orgId: fixture.org.id } });
+    await db.agentRun.update({ where: { id: run.id }, data: { state: "awaiting_input" } });
+    const elicitationId = "elicitation-pending-interaction";
+    await db.runElicitation.create({
+      data: {
+        id: elicitationId,
+        orgId: fixture.org.id,
+        runId: run.id,
+        event: {
+          type: "elicitation",
+          elicitationId,
+          kind: "choice",
+          prompt: "Choose",
+          options: [{ id: "approve", label: "Approve" }],
+          blocking: true,
+        },
+      },
+    });
+    const intentId = "slack:interaction:trigger-pending-interaction";
+    await db.runIntent.create({
+      data: { orgId: fixture.org.id, id: intentId, kind: "resolve", targetId: elicitationId },
+    });
+    await ingress.service.accept(
+      signedRequest(
+        interaction({
+          workspaceId: fixture.workspaceId,
+          triggerId: "trigger-pending-interaction",
+          threadTs,
+          actionId: `input:${elicitationId}:button:0`,
+          value: "approve",
+        }),
+        "application/x-www-form-urlencoded",
+      ),
+    );
+    await ingress.drain();
+
+    const deliveryId = `slack:delivery:${fixture.workspaceId}:C123ABC:${intentId}`;
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+    ).resolves.toMatchObject({ attempt: 1, completedAt: null, leaseUntil: expect.any(Date) });
+    await expect(
+      db.runElicitation.findUniqueOrThrow({ where: { id: elicitationId } }),
+    ).resolves.toMatchObject({ resolution: null });
+
+    await db.runIntent.update({
+      where: { orgId_id: { orgId: fixture.org.id, id: intentId } },
+      data: { createdAt: new Date(Date.now() - 61_000) },
+    });
+    await db.slackIngressDelivery.update({
+      where: { id: deliveryId },
+      data: { leaseUntil: null },
+    });
+    await ingress.service.recoverPending();
+
+    await expect(
+      db.runElicitation.findUniqueOrThrow({ where: { id: elicitationId } }),
+    ).resolves.toMatchObject({ resolution: { optionId: "approve" } });
+    await expect(
+      db.slackIngressDelivery.findUniqueOrThrow({ where: { id: deliveryId } }),
+    ).resolves.toMatchObject({ completedAt: expect.any(Date), payload: { kind: "completed" } });
+  });
+
   it("rejects stale approval controls after a channel rebind or user relink", async () => {
     const notify = vi.fn<SlackIngressNotice>(async () => undefined);
     const ingress = subject({ notify });

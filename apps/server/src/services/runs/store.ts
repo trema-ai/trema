@@ -479,6 +479,7 @@ export class PrismaRunStore implements RunStore {
           orgId: this.#orgId,
           ...(meta === undefined ? {} : { kind: meta.kind }),
           ...(meta?.targetId === undefined ? {} : { targetId: meta.targetId }),
+          ...(meta?.requestHash === undefined ? {} : { requestHash: meta.requestHash }),
         },
       });
       return "recorded";

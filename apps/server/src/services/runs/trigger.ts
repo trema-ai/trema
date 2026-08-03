@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   DispatchIntent,
   DispatchResult,
@@ -71,6 +73,25 @@ export interface StartRunOptions {
 
 function threadRefFor(input: StartRunInput): string {
   return input.threadRef ?? `${input.surface}:${input.locationRef}`;
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
+    );
+  }
+  return value;
+}
+
+/** Fingerprints every caller-controlled value that can affect message routing. */
+function startRunRequestHash(input: StartRunInput): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(input)), "utf8")
+    .digest("hex");
 }
 
 function buildDispatcher(
@@ -224,13 +245,14 @@ async function dispatchRun(
     threadRef,
     author: input.author,
     message: input.message,
+    requestHash: startRunRequestHash(input),
   });
 
   if (result.outcome === "duplicate") {
     const claim = await claimForDuplicate(
       services,
       input.intentId,
-      MESSAGE_FINGERPRINT,
+      messageFingerprint(input),
       reclaimStale,
     );
     if (claim.kind === "reclaimed") {
@@ -339,10 +361,13 @@ type DuplicateClaim =
 interface ClaimFingerprint {
   kind: string;
   targetId?: string;
+  requestHash?: string;
 }
 
 /** The fingerprint the message dispatch claims an id under. */
-const MESSAGE_FINGERPRINT: ClaimFingerprint = { kind: "message" };
+function messageFingerprint(input: StartRunInput): ClaimFingerprint {
+  return { kind: "message", requestHash: startRunRequestHash(input) };
+}
 
 /** The fingerprint a target intent claims an id under, mirroring dispatch. */
 function targetFingerprint(intent: TargetIntent): ClaimFingerprint {
@@ -357,12 +382,16 @@ function targetFingerprint(intent: TargetIntent): ClaimFingerprint {
  * @throws {IntentMismatchError} When the stored fingerprint differs.
  */
 function assertClaimMatches(
-  stored: { kind: string | null; targetId: string | null },
+  stored: { kind: string | null; targetId: string | null; requestHash: string | null },
   expected: ClaimFingerprint,
   intentId: string,
 ): void {
   if (stored.kind === null) return;
-  if (stored.kind === expected.kind && (stored.targetId ?? undefined) === expected.targetId) {
+  if (
+    stored.kind === expected.kind &&
+    (stored.targetId ?? undefined) === expected.targetId &&
+    (stored.requestHash === null || stored.requestHash === expected.requestHash)
+  ) {
     return;
   }
   throw new IntentMismatchError(`Intent id '${intentId}' was already used for a different intent`);
@@ -382,7 +411,14 @@ async function claimForDuplicate(
 ): Promise<DuplicateClaim> {
   const claimed = await services.db.runIntent.findUnique({
     where: { orgId_id: { orgId: services.orgId, id: intentId } },
-    select: { runId: true, outcome: true, createdAt: true, kind: true, targetId: true },
+    select: {
+      runId: true,
+      outcome: true,
+      createdAt: true,
+      kind: true,
+      targetId: true,
+      requestHash: true,
+    },
   });
   if (claimed !== null) assertClaimMatches(claimed, expected, intentId);
   if (
@@ -650,7 +686,7 @@ async function routedDuplicate(
 ): Promise<TargetIntentResult | undefined> {
   const claimed = await services.db.runIntent.findUnique({
     where: { orgId_id: { orgId: services.orgId, id: input.intentId } },
-    select: { runId: true, kind: true, targetId: true },
+    select: { runId: true, kind: true, targetId: true, requestHash: true },
   });
   if (claimed === null) return undefined;
   assertClaimMatches(claimed, targetFingerprint(input.intent), input.intentId);
