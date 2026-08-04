@@ -66,6 +66,37 @@ integration("surface realizations", () => {
     expect(await store.renew(first!.id, "worker-a", 30_000)).toBe(false);
   });
 
+  it("serializes presence claims and rejects stale realization versions", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const committed = await store.commit({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: claimed!.version,
+      renderedThroughSeq: 1,
+      segments: [],
+    });
+    expect(await store.release(committed.id, "worker-a")).toBe(true);
+
+    expect(await store.claimPresence(committed.id, "presence-a", committed.version, 30_000)).toBe(
+      true,
+    );
+    expect(await store.claim("run-1", ref, "worker-b", 30_000)).toBeUndefined();
+    expect(await store.claimPresence(committed.id, "presence-a", committed.version, 30_000)).toBe(
+      false,
+    );
+    expect(await store.claimPresence(committed.id, "presence-b", committed.version, 30_000)).toBe(
+      false,
+    );
+    expect(await store.release(committed.id, "presence-a")).toBe(true);
+    expect(
+      await store.claimPresence(committed.id, "presence-b", committed.version - 1, 30_000),
+    ).toBe(false);
+    expect(await store.claim("run-1", ref, "worker-b", 30_000)).toMatchObject({
+      version: committed.version,
+      lease: { owner: "worker-b" },
+    });
+  });
+
   it("persists the cursor, stable message refs, metadata, and version for restart", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const segments: RealizedSegment[] = [

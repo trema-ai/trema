@@ -60,6 +60,12 @@ export interface SurfaceRealizationStore {
   ): Promise<SurfaceRealization | undefined>;
   stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization>;
   commit(input: CommitRealizationInput): Promise<SurfaceRealization>;
+  claimPresence(
+    id: string,
+    owner: string,
+    expectedVersion: number,
+    ttlMs: number,
+  ): Promise<boolean>;
   recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization>;
   recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization>;
   recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization>;
@@ -201,19 +207,46 @@ async function updateAdvisoryPresence(
   input: RenderSurfaceInput,
   result: ClaimedRenderSurfaceResult,
 ): Promise<void> {
+  let claimed = false;
   try {
+    const ttlMs = input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
+    claimed = await input.store.claimPresence(
+      result.realization.id,
+      input.owner,
+      result.realization.version,
+      ttlMs,
+    );
+    if (!claimed) return;
     const presence =
       result.status === "stopped" || result.status === "terminal_failure"
         ? "idle"
         : presenceFor(input.projection);
-    await input.driver.presence(presence, {
-      runId: input.projection.runId,
-      ref: input.ref,
-      canonicalRunUrl: input.canonicalRunUrl,
-      realizationVersion: result.realization.version,
-    });
+    await withLeaseHeartbeat(
+      input,
+      result.realization.id,
+      () =>
+        input.driver.presence(presence, {
+          runId: input.projection.runId,
+          ref: input.ref,
+          canonicalRunUrl: input.canonicalRunUrl,
+          realizationVersion: result.realization.version,
+        }),
+      "advisory presence update",
+    );
   } catch (error) {
     log.warn("Surface presence update failed", { error });
+  } finally {
+    if (claimed) {
+      try {
+        if (!(await input.store.release(result.realization.id, input.owner))) {
+          log.warn("Surface presence lease release failed", {
+            realizationId: result.realization.id,
+          });
+        }
+      } catch (error) {
+        log.warn("Surface presence lease release failed", { error });
+      }
+    }
   }
 }
 
@@ -282,6 +315,22 @@ async function applyWithLeaseHeartbeat(
   operations: RenderOperation[],
   context: SurfaceApplyContext,
 ): Promise<ApplyResult> {
+  return withLeaseHeartbeat(
+    input,
+    realizationId,
+    () => input.driver.apply(operations, context),
+    "remote apply",
+    (error) => error instanceof SurfaceDriverError && error.code === "stopped_by_user",
+  );
+}
+
+async function withLeaseHeartbeat<Result>(
+  input: RenderSurfaceInput,
+  realizationId: string,
+  operation: () => Promise<Result>,
+  phase: string,
+  prioritizeOperationError: (error: unknown) => boolean = () => false,
+): Promise<Result> {
   const ttlMs = input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
   const intervalMs = Math.max(1, Math.floor(ttlMs / 3));
   let renewal: Promise<void> | undefined;
@@ -294,7 +343,7 @@ async function applyWithLeaseHeartbeat(
       .then((renewed) => {
         if (!renewed) {
           throw new SurfaceRealizationConflictError(
-            `surface realization lost its lease during remote apply: ${realizationId}`,
+            `surface realization lost its lease during ${phase}: ${realizationId}`,
           );
         }
       })
@@ -308,14 +357,14 @@ async function applyWithLeaseHeartbeat(
 
   const timer = setInterval(beginRenewal, intervalMs);
   timer.unref();
-  let result: ApplyResult | undefined;
-  let applyFailed = false;
-  let applyError: unknown;
+  let result: Result | undefined;
+  let operationFailed = false;
+  let operationError: unknown;
   try {
-    result = await input.driver.apply(operations, context);
+    result = await operation();
   } catch (error) {
-    applyFailed = true;
-    applyError = error;
+    operationFailed = true;
+    operationError = error;
   } finally {
     clearInterval(timer);
     await renewal;
@@ -324,20 +373,14 @@ async function applyWithLeaseHeartbeat(
   // A native stop is an observed remote side effect with a separate durable
   // obligation. Let the caller persist it before surfacing lease-renewal
   // trouble, otherwise a replay may falsely acknowledge the stopped stream.
-  if (
-    applyFailed &&
-    applyError instanceof SurfaceDriverError &&
-    applyError.code === "stopped_by_user"
-  ) {
-    throw applyError;
-  }
+  if (operationFailed && prioritizeOperationError(operationError)) throw operationError;
   if (heartbeatError !== undefined) throw heartbeatError;
   if (!(await input.store.renew(realizationId, input.owner, ttlMs))) {
     throw new SurfaceRealizationConflictError(
-      `surface realization lost its lease after remote apply: ${realizationId}`,
+      `surface realization lost its lease after ${phase}: ${realizationId}`,
     );
   }
-  if (applyFailed) throw applyError;
+  if (operationFailed) throw operationError;
   return result!;
 }
 

@@ -157,6 +157,33 @@ export class PrismaSurfaceRealizationStore {
     return row === undefined ? undefined : toRealization(row);
   }
 
+  /**
+   * Claims the current revision for one advisory presence write. The exact
+   * revision check drops stale writes, while the lease serializes live writes
+   * with renderers and other workers without extending the prior render claim.
+   */
+  async claimPresence(
+    id: string,
+    owner: string,
+    expectedVersion: number,
+    ttlMs: number,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
+      throw new Error("surface realization lease TTL must be a positive integer");
+    }
+    const now = this.#clock.now();
+    const result = await this.#db.surfaceRealization.updateMany({
+      where: {
+        id,
+        orgId: this.#orgId,
+        version: expectedVersion,
+        OR: [{ leaseOwner: null }, { leaseUntil: null }, { leaseUntil: { lte: now } }],
+      },
+      data: { leaseOwner: owner, leaseUntil: new Date(now.getTime() + ttlMs) },
+    });
+    return result.count === 1;
+  }
+
   /** Durably stages a non-empty batch before any remote operation is attempted. */
   async stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization> {
     if (input.plan.operations.length === 0) {

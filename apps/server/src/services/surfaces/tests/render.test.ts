@@ -83,15 +83,35 @@ class MemoryStore implements SurfaceRealizationStore {
   renewalError: unknown;
   renewalResult = true;
 
-  async claim(): Promise<SurfaceRealization | undefined> {
+  async claim(
+    _runId: string,
+    _ref: SurfaceRef,
+    owner: string,
+  ): Promise<SurfaceRealization | undefined> {
     if (this.current.retry.terminal || this.current.presentation.stoppedByUser === true) {
       return undefined;
     }
+    if (this.current.lease !== undefined && this.current.lease.owner !== owner) return undefined;
     this.current = {
       ...this.current,
-      lease: { owner: "worker-1", until: "2026-08-01T12:00:30.000Z" },
+      lease: { owner, until: "2026-08-01T12:00:30.000Z" },
     };
     return this.current;
+  }
+
+  async claimPresence(id: string, owner: string, expectedVersion: number): Promise<boolean> {
+    if (
+      id !== this.current.id ||
+      expectedVersion !== this.current.version ||
+      this.current.lease !== undefined
+    ) {
+      return false;
+    }
+    this.current = {
+      ...this.current,
+      lease: { owner, until: "2026-08-01T12:00:30.000Z" },
+    };
+    return true;
   }
 
   async stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization> {
@@ -230,12 +250,16 @@ describe("renderSurface", () => {
     expect(apply).toHaveBeenCalledOnce();
   });
 
-  it("updates advisory presence only after releasing the realization lease", async () => {
+  it("updates advisory presence under a separate lease after releasing the render claim", async () => {
     const store = new MemoryStore();
     const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    let renderClaimReleased: boolean | undefined;
     let presenceHeldLease: boolean | undefined;
+    let renewalsBeforePresence: number | undefined;
     const presence = vi.fn(async () => {
+      renewalsBeforePresence = store.renewed;
       await new Promise((resolve) => setTimeout(resolve, 25));
+      renderClaimReleased = store.released === 1;
       presenceHeldLease = store.current.lease !== undefined;
     });
 
@@ -249,7 +273,65 @@ describe("renderSurface", () => {
 
     expect(result.status).toBe("rendered");
     expect(presence).toHaveBeenCalledOnce();
-    expect(presenceHeldLease).toBe(false);
+    expect(renderClaimReleased).toBe(true);
+    expect(presenceHeldLease).toBe(true);
+    expect(store.renewed).toBeGreaterThan(renewalsBeforePresence! + 1);
+    expect(store.released).toBe(2);
+  });
+
+  it("serializes presence so an older working write cannot follow a newer idle write", async () => {
+    const store = new MemoryStore();
+    let workingStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      workingStarted = resolve;
+    });
+    let finishWorking: (() => void) | undefined;
+    const stalled = new Promise<void>((resolve) => {
+      finishWorking = resolve;
+    });
+    const presenceStates: Array<"working" | "idle"> = [];
+    const presence = vi.fn<SurfaceDriver["presence"]>(async (state) => {
+      if (state === "working") {
+        workingStarted?.();
+        await stalled;
+      }
+      presenceStates.push(state);
+    });
+    const driver = fakeDriver(
+      async (operations: RenderOperation[]) => createdResult(operations),
+      presence,
+    );
+
+    const older = renderSurface({
+      ...baseInput,
+      owner: "worker-1",
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+    await started;
+
+    const concurrent = await renderSurface({
+      ...baseInput,
+      owner: "worker-2",
+      store,
+      driver,
+      projection: { ...projection("Hello", 2), status: "completed" },
+    });
+    finishWorking?.();
+    await older;
+
+    const retried = await renderSurface({
+      ...baseInput,
+      owner: "worker-2",
+      store,
+      driver,
+      projection: { ...projection("Hello", 2), status: "completed" },
+    });
+
+    expect(concurrent.status).toBe("busy");
+    expect(retried.status).toBe("rendered");
+    expect(presenceStates).toEqual(["working", "idle"]);
   });
 
   it("logs advisory presence failures without failing the durable render", async () => {
