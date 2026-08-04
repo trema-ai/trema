@@ -60,6 +60,8 @@ export {
   type RecordRenderFailureInput,
   type RecordRenderStopInput,
   type StageRenderPlanInput,
+  type SurfacePresenceClaim,
+  type SurfacePresenceState,
   SurfaceRealizationConflictError,
   type SurfaceRealizationStoreOptions,
 } from "#server/services/surfaces/store.js";

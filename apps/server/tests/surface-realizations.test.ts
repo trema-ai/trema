@@ -66,6 +66,83 @@ integration("surface realizations", () => {
     expect(await store.renew(first!.id, "worker-a", 30_000)).toBe(false);
   });
 
+  it("gates presence on the newest revision without excluding a content render", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const committed = await store.commit({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: claimed!.version,
+      renderedThroughSeq: 1,
+      segments: [],
+    });
+    expect(await store.release(committed.id, "worker-a")).toBe(true);
+
+    expect(await store.claimPresence(committed.id, committed.version, "working")).toBe(true);
+    // A claimed presence write is advisory: it neither takes nor blocks the
+    // render lease, so newer content still reaches the surface while it runs.
+    const rendering = await store.claim("run-1", ref, "worker-b", 30_000);
+    expect(rendering).toMatchObject({
+      version: committed.version,
+      lease: { owner: "worker-b" },
+    });
+
+    // Duplicate and stale presence writes drop instead of queueing behind it.
+    expect(await store.claimPresence(committed.id, committed.version, "working")).toBe(false);
+    expect(await store.claimPresence(committed.id, committed.version - 1, "working")).toBe(false);
+
+    const advanced = await store.commit({
+      id: committed.id,
+      owner: "worker-b",
+      expectedVersion: committed.version,
+      renderedThroughSeq: 2,
+      segments: [],
+    });
+    expect(await store.claimPresence(advanced.id, advanced.version, "idle")).toBe(true);
+  });
+
+  it("releases failed presence claims and reports superseding ones", async () => {
+    const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
+    const committed = await store.commit({
+      id: claimed!.id,
+      owner: "worker-a",
+      expectedVersion: claimed!.version,
+      renderedThroughSeq: 1,
+      segments: [],
+    });
+    expect(await store.release(committed.id, "worker-a")).toBe(true);
+
+    expect(await store.claimPresence(committed.id, committed.version, "working")).toBe(true);
+    expect(await store.supersedingPresenceClaim(committed.id, committed.version)).toBeUndefined();
+
+    // A released claim lets a later render of the same revision retry the
+    // write; without it a failed terminal status could never be repaired.
+    await store.releasePresenceClaim(committed.id, committed.version);
+    expect(await store.claimPresence(committed.id, committed.version, "working")).toBe(true);
+
+    const rendering = await store.claim("run-1", ref, "worker-b", 30_000);
+    const advanced = await store.commit({
+      id: committed.id,
+      owner: "worker-b",
+      expectedVersion: rendering!.version,
+      renderedThroughSeq: 2,
+      segments: [],
+    });
+    expect(await store.release(advanced.id, "worker-b")).toBe(true);
+    expect(await store.claimPresence(advanced.id, advanced.version, "idle")).toBe(true);
+
+    // The older write, landing late, finds the newer claim to reassert. Its
+    // own release is a no-op once a newer revision holds the claim.
+    expect(await store.supersedingPresenceClaim(advanced.id, committed.version)).toEqual({
+      version: advanced.version,
+      state: "idle",
+    });
+    await store.releasePresenceClaim(advanced.id, committed.version);
+    expect(await store.supersedingPresenceClaim(advanced.id, committed.version)).toEqual({
+      version: advanced.version,
+      state: "idle",
+    });
+  });
+
   it("persists the cursor, stable message refs, metadata, and version for restart", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const segments: RealizedSegment[] = [
@@ -311,6 +388,7 @@ integration("surface realizations", () => {
           messageIndex: 0,
           remoteRef: "171234.0001",
           text: "more",
+          content: { text: "Hellomore", parts: [] },
           prior: { text: "Hello", metadata: { mode: "stream" } },
         },
       ],

@@ -72,6 +72,13 @@ export interface RecordRenderStopInput {
   id: string;
 }
 
+export type SurfacePresenceState = "working" | "idle";
+
+export interface SurfacePresenceClaim {
+  version: number;
+  state: SurfacePresenceState;
+}
+
 /** The renderer no longer owns the live revision it tried to mutate. */
 export class SurfaceRealizationConflictError extends Error {
   constructor(message: string) {
@@ -155,6 +162,65 @@ export class PrismaSurfaceRealizationStore {
         "leaseOwner", "leaseUntil", "retryAttempt", "terminalFailure",
         "nextRetryAt", "lastErrorCode"`;
     return row === undefined ? undefined : toRealization(row);
+  }
+
+  /**
+   * Reserves one advisory presence write for the caller's revision. The exact
+   * revision check drops stale writes and the monotonic presence marker drops
+   * duplicate and superseded ones, so presence writes are *started* in revision
+   * order. They are deliberately not fenced, so a write already in flight may
+   * still land after a newer one: the claimed state is recorded so whoever
+   * lands last can detect the newer claim and reassert its state. Presence
+   * never touches the render lease, because an advisory request that stalls
+   * must not exclude content rendering.
+   */
+  async claimPresence(
+    id: string,
+    expectedVersion: number,
+    state: SurfacePresenceState,
+  ): Promise<boolean> {
+    const result = await this.#db.surfaceRealization.updateMany({
+      where: {
+        id,
+        orgId: this.#orgId,
+        version: expectedVersion,
+        presenceVersion: { lt: expectedVersion },
+      },
+      data: { presenceVersion: expectedVersion, presenceState: state },
+    });
+    return result.count === 1;
+  }
+
+  /**
+   * Returns the newest presence claim when it supersedes the given revision.
+   * A write that lands and finds itself superseded reasserts that claim's
+   * state, because its own landing may have clobbered the newer write.
+   */
+  async supersedingPresenceClaim(
+    id: string,
+    version: number,
+  ): Promise<SurfacePresenceClaim | undefined> {
+    const row = await this.#db.surfaceRealization.findFirst({
+      where: { id, orgId: this.#orgId, presenceVersion: { gt: version } },
+      select: { presenceVersion: true, presenceState: true },
+    });
+    if (row === null || (row.presenceState !== "working" && row.presenceState !== "idle")) {
+      return undefined;
+    }
+    return { version: row.presenceVersion, state: row.presenceState };
+  }
+
+  /**
+   * Releases a claim whose write did not land, so a later render of the same
+   * realization revision can retry it. A terminal revision has no successor to
+   * repair its status, which is why a failed claim must not stay consumed.
+   * The compare-and-set leaves a claim that a newer revision took untouched.
+   */
+  async releasePresenceClaim(id: string, version: number): Promise<void> {
+    await this.#db.surfaceRealization.updateMany({
+      where: { id, orgId: this.#orgId, presenceVersion: version },
+      data: { presenceVersion: version - 1 },
+    });
   }
 
   /** Durably stages a non-empty batch before any remote operation is attempted. */

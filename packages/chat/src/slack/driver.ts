@@ -20,7 +20,6 @@ import {
 import type { SlackDriverOptions, SlackRecipient } from "#chat/slack/contracts.js";
 import { isSlackPlatformError, mapSlackError } from "#chat/slack/errors.js";
 import {
-  appendThinkingText,
   changedThinkingChunks,
   initialThinkingChunks,
   parseThinkingState,
@@ -115,9 +114,14 @@ export class SlackDriver implements SurfaceDriver {
     return { appliedOperationIds, messages };
   }
 
-  async presence(_state: "working" | "idle", _context: SurfaceApplyContext): Promise<void> {
-    // DEV-97 owns Slack lifecycle and presence UI. Presence is advisory and is
-    // deliberately a no-op until it can be derived from committed run state.
+  async presence(state: "working" | "idle", context: SurfaceApplyContext): Promise<void> {
+    const destination = slackDestination(context.ref);
+    if (destination.threadRef === undefined) return;
+    await this.#call("assistant.threads.setStatus", destination.channelRef, {
+      channel_id: destination.channelRef,
+      thread_ts: destination.threadRef,
+      status: state === "working" ? "Working…" : "",
+    });
   }
 
   normalize(_event: unknown, _ref: SurfaceRef): SurfaceEvent | null {
@@ -154,14 +158,20 @@ export class SlackDriver implements SurfaceDriver {
       case "create":
         return this.#create(operation, context, destination);
       case "append": {
+        // Deployments can replay plans staged before append operations carried
+        // their typed target content. The raw tier-zero text in those plans is
+        // not a verified Slack-safe source, so acknowledge it without sending
+        // or deriving adapter state from it. A later durable projection can
+        // reconcile the message from typed content.
+        const targetContent = (operation as { content?: RenderContent }).content;
+        if (targetContent === undefined) {
+          return appliedMessage(operation, operation.remoteRef, operation.prior.metadata ?? {});
+        }
         const prior =
           parseThinkingState(operation.prior.metadata) ?? emptyThinkingState(operation.prior.text);
-        const next = appendThinkingText(prior, operation.text);
         if (operation.prior.metadata?.mode !== "stream") {
-          // The planner emits append only for text-only growth, so the prior
-          // tier-zero text plus its delta is the complete next snapshot.
           const realized = realizeMessage(
-            { text: `${operation.prior.text}${operation.text}`, parts: [] },
+            targetContent,
             operation.messageId,
             context.canonicalRunUrl,
           );
@@ -174,19 +184,47 @@ export class SlackDriver implements SurfaceDriver {
           return appliedMessage(
             operation,
             operation.remoteRef,
-            slackMetadata(operation.prior.metadata, "snapshot", next),
+            slackMetadata(
+              operation.prior.metadata,
+              "snapshot",
+              initialThinkingChunks(realizeSlackThinking(targetContent, operation.messageId)).state,
+            ),
+          );
+        }
+        const targetThinking = realizeSlackThinking(targetContent, operation.messageId);
+        const changed = changedThinkingChunks(targetThinking, prior);
+        if (changed.narrativeReplaced || changed.removedTask) {
+          const realized = realizeMessage(
+            targetContent,
+            operation.messageId,
+            context.canonicalRunUrl,
+          );
+          await this.#call("chat.update", destination.channelRef, {
+            blocks: realized.blocks,
+            channel: destination.channelRef,
+            text: realized.text,
+            ts: operation.remoteRef,
+          });
+          return appliedMessage(
+            operation,
+            operation.remoteRef,
+            slackMetadata(
+              operation.prior.metadata,
+              "snapshot",
+              initialThinkingChunks(targetThinking).state,
+            ),
           );
         }
         await this.#call("chat.appendStream", destination.channelRef, {
           channel: destination.channelRef,
           client_msg_id: slackClientMessageId(operation.id),
-          chunks: [{ type: "markdown_text", text: nonEmpty(operation.text) }],
+          chunks: nonEmptyChunks(changed.chunks),
           ts: operation.remoteRef,
         });
         return appliedMessage(
           operation,
           operation.remoteRef,
-          slackMetadata(operation.prior.metadata, "stream", next),
+          slackMetadata(operation.prior.metadata, "stream", changed.state),
         );
       }
       case "replace": {
@@ -350,10 +388,11 @@ export class SlackDriver implements SurfaceDriver {
         ts: operation.remoteRef,
       });
     } else {
+      const narrative = toSlackMrkdwn(thinking.narrativeText);
       await this.#stopStream(destination.channelRef, {
         channel: destination.channelRef,
         client_msg_id: slackClientMessageId(operation.id),
-        markdown_text: nonEmpty(operation.content.text),
+        markdown_text: realizeMessageFallback(operation.content, narrative),
         ...finalizeBlocks(operation.content, context.canonicalRunUrl),
         ts: operation.remoteRef,
       });
@@ -478,9 +517,10 @@ function realizeMessage(
 ): RealizedMessage {
   const thinking = realizeSlackThinking(content, messageId);
   const narrative = toSlackMrkdwn(thinking.narrativeText);
-  const text = nonEmpty(toSlackMrkdwn(content.text));
+  const text = realizeMessageFallback(content, narrative);
   const plan = staticThinkingBlock(thinking);
-  const controls = unresolvedElicitationBlocks(content);
+  const elicitation = unresolvedElicitation(content);
+  const controls = elicitation === undefined ? [] : realizeElicitation(elicitation);
   const runLink = canonicalRunLinkBlock(canonicalRunUrl);
   const sectionLimit =
     SLACK_MESSAGE_BLOCK_LIMIT - (plan === undefined ? 0 : 1) - controls.length - 1;
@@ -493,6 +533,32 @@ function realizeMessage(
       runLink,
     ],
   };
+}
+
+function realizeMessageFallback(content: RenderContent, narrative: string): string {
+  const elicitation = unresolvedElicitation(content);
+  const fallback = [
+    narrative,
+    ...(narrative.length === 0 && content.lifecycle !== undefined
+      ? [lifecycleFallback(content.lifecycle.state)]
+      : []),
+    ...(elicitation === undefined ? [] : [toSlackMrkdwn(elicitation.prompt)]),
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  return nonEmpty(fallback);
+}
+
+function lifecycleFallback(state: NonNullable<RenderContent["lifecycle"]>["state"]): string {
+  return {
+    queued: "Queued",
+    running: "Running",
+    waiting_for_approval: "Waiting for approval",
+    paused: "Paused",
+    completed: "Completed",
+    failed: "Failed",
+    cancelled: "Canceled",
+  }[state];
 }
 
 function finalizeBlocks(content: RenderContent, canonicalRunUrl: string): { blocks: unknown[] } {
@@ -522,11 +588,15 @@ function canonicalRunLinkBlock(canonicalRunUrl: string): Record<string, unknown>
 }
 
 function unresolvedElicitationBlocks(content: RenderContent): unknown[] {
-  const elicitation = content.parts.find(
+  const elicitation = unresolvedElicitation(content);
+  return elicitation === undefined ? [] : realizeElicitation(elicitation);
+}
+
+function unresolvedElicitation(content: RenderContent): ElicitationPart | undefined {
+  return content.parts.find(
     (part): part is ElicitationPart =>
       part.kind === "elicitation" && part.blocking && part.resolution === undefined,
   );
-  return elicitation === undefined ? [] : realizeElicitation(elicitation);
 }
 
 function realizeElicitation(elicitation: ElicitationPart): unknown[] {

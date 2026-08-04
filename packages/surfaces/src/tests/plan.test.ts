@@ -64,6 +64,148 @@ function realization(overrides: Partial<SurfaceRealization> = {}): SurfaceRealiz
 }
 
 describe("planRender", () => {
+  it("creates one stable lifecycle message before a queued run has content", () => {
+    const queued: Projection = {
+      runId: "run-1",
+      status: "pending",
+      segments: [],
+      unknownEvents: 0,
+      lastSeq: 0,
+    };
+
+    const plan = planRender(queued, realization(), deltaCapabilities);
+
+    expect(plan.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:0",
+        content: {
+          text: "Queued",
+          parts: [],
+          lifecycle: { state: "queued" },
+        },
+        finalized: false,
+      }),
+    ]);
+  });
+
+  it("reconciles zero-content lifecycle changes through the same message", () => {
+    const zeroContent = (status: Projection["status"], lastSeq: number): Projection => ({
+      runId: "run-1",
+      status,
+      segments: [],
+      unknownEvents: 0,
+      lastSeq,
+    });
+    const queued = planRender(zeroContent("pending", 0), realization(), deltaCapabilities);
+    const queuedSegments = acknowledge(queued, {
+      appliedOperationIds: queued.operations.map(({ id }) => id),
+      messages: [{ messageId: queued.operations[0]!.messageId, remoteRef: "remote-1" }],
+    });
+
+    const running = planRender(
+      zeroContent("running", 1),
+      realization({ segments: queuedSegments }),
+      deltaCapabilities,
+    );
+    expect(running.operations).toEqual([
+      expect.objectContaining({
+        type: "replace",
+        messageId: "run-1:segment:0:message:0",
+        remoteRef: "remote-1",
+        content: {
+          text: "Running",
+          parts: [],
+          lifecycle: { state: "running" },
+        },
+      }),
+    ]);
+    const runningSegments = acknowledge(running, {
+      appliedOperationIds: running.operations.map(({ id }) => id),
+      messages: [],
+    });
+
+    const cancelled = planRender(
+      zeroContent("cancelled", 2),
+      realization({ renderedThroughSeq: 1, segments: runningSegments }),
+      deltaCapabilities,
+    );
+    expect(cancelled.operations).toEqual([
+      expect.objectContaining({
+        type: "finalize",
+        messageId: "run-1:segment:0:message:0",
+        remoteRef: "remote-1",
+        content: {
+          text: "Canceled",
+          parts: [],
+          lifecycle: { state: "cancelled" },
+        },
+      }),
+    ]);
+  });
+
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "renders a zero-content %s run instead of deleting its lifecycle message",
+    (status) => {
+      const plan = planRender(
+        {
+          runId: "run-1",
+          status,
+          segments: [],
+          unknownEvents: 0,
+          lastSeq: 1,
+        },
+        realization(),
+        deltaCapabilities,
+      );
+
+      expect(plan.operations).toEqual([
+        expect.objectContaining({
+          type: "create",
+          messageId: "run-1:segment:0:message:0",
+          content: expect.objectContaining({ lifecycle: { state: status } }),
+          finalized: true,
+        }),
+      ]);
+    },
+  );
+
+  it.each(["approval", "confirmation"] as const)(
+    "projects an unresolved blocking %s as waiting for approval",
+    (elicitationKind) => {
+      const waiting: Projection = {
+        runId: "run-1",
+        status: "paused",
+        segments: [
+          {
+            index: 0,
+            parts: [
+              {
+                kind: "elicitation",
+                id: "approval-1",
+                elicitationId: "approval-1",
+                elicitationKind,
+                prompt: "Deploy?",
+                options: [{ id: "approve", label: "Approve" }],
+                blocking: true,
+              },
+            ],
+            end: { reason: "paused" },
+          },
+        ],
+        unknownEvents: 0,
+        lastSeq: 2,
+      };
+
+      const plan = planRender(waiting, realization(), deltaCapabilities);
+
+      expect(plan.operations[0]).toMatchObject({
+        type: "create",
+        content: { lifecycle: { state: "waiting_for_approval" } },
+      });
+    },
+  );
+
   it("creates an initial realization and then appends only the new projection text", () => {
     const initial = planRender(projection("Hello"), realization(), deltaCapabilities);
     expect(initial.operations).toEqual([
@@ -96,6 +238,10 @@ describe("planRender", () => {
         type: "append",
         remoteRef: "remote-1",
         text: " world",
+        content: expect.objectContaining({
+          text: "Hello world",
+          lifecycle: { state: "running" },
+        }),
         prior: {
           text: "Hello",
           metadata: { streamCursor: "durable-driver-state" },
@@ -355,6 +501,7 @@ describe("planRender", () => {
         content: {
           text: "",
           parts: [expect.objectContaining({ kind: "data", data: { value: 1 } })],
+          lifecycle: { state: "running" },
         },
       }),
     ]);
@@ -405,6 +552,7 @@ describe("planRender", () => {
         content: {
           text: "Reasoning redacted",
           parts: [expect.objectContaining({ kind: "reasoning", redacted: true, text: "" })],
+          lifecycle: { state: "running" },
         },
       }),
     ]);

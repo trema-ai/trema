@@ -47,6 +47,17 @@ export interface RenderContent {
   text: string;
   /** Typed source parts for drivers capable of richer presentation. */
   parts: Part[];
+  /** Durable lifecycle projection for advisory surface presentation. */
+  lifecycle?: {
+    state:
+      | "queued"
+      | "running"
+      | "waiting_for_approval"
+      | "paused"
+      | "completed"
+      | "failed"
+      | "cancelled";
+  };
 }
 
 interface OperationBase {
@@ -78,6 +89,8 @@ export type RenderOperation =
       type: "append";
       remoteRef: string;
       text: string;
+      /** Authoritative target snapshot for drivers that cannot apply a native delta. */
+      content: RenderContent;
       prior: PriorRenderState;
     })
   | (OperationBase & {

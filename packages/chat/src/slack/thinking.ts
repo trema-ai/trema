@@ -51,6 +51,10 @@ export function realizeSlackThinking(
   const narrative: string[] = [];
   const tasks: SlackTaskUpdate[] = [];
 
+  if (content.lifecycle !== undefined) {
+    tasks.push(lifecycleTask(content.lifecycle.state, messageId));
+  }
+
   for (const part of content.parts) {
     const narrativeText = narrativePartText(part);
     if (narrativeText !== undefined && narrativeText.length > 0) narrative.push(narrativeText);
@@ -59,8 +63,7 @@ export function realizeSlackThinking(
     if (task !== undefined) tasks.push(task);
   }
 
-  const narrativeText =
-    narrative.length === 0 && content.parts.length === 0 ? content.text : narrative.join("\n\n");
+  const narrativeText = narrative.join("\n\n");
   const narrativeSources = markdownSources(narrativeText);
   if (narrativeSources.length > 0) {
     tasks.push({
@@ -169,21 +172,41 @@ export function staticThinkingBlock(
 
 function taskForPart(part: Part, messageId: string): SlackTaskUpdate | undefined {
   if (part.kind === "reasoning") {
-    if (part.redacted === true) return undefined;
     return {
       type: "task_update",
       id: stableTaskId(messageId, part.kind, part.id),
-      title: "Reasoning",
+      title: "Thinking",
       status: part.status === "streaming" ? "in_progress" : "complete",
-      ...taskOutput(part.text),
-      ...taskSources(part.text),
+    };
+  }
+  if (
+    part.kind === "elicitation" &&
+    (part.elicitationKind === "approval" ||
+      (part.elicitationKind === "confirmation" && part.blocking))
+  ) {
+    const resolution = part.resolution;
+    const label = part.elicitationKind === "approval" ? "Approval" : "Confirmation";
+    const selected =
+      resolution === undefined
+        ? undefined
+        : (part.options.find((option) => option.id === resolution.optionId)?.label ??
+          resolution.optionId);
+    const actor = resolution?.by.displayName ?? resolution?.by.principalId;
+    return {
+      type: "task_update",
+      id: stableTaskId(messageId, part.elicitationKind, part.elicitationId),
+      title: resolution === undefined ? `${label} required` : `${label} resolved`,
+      status:
+        resolution?.optionId === "expired"
+          ? "error"
+          : resolution === undefined
+            ? "pending"
+            : "complete",
+      ...(resolution === undefined ? {} : taskOutput(`${selected} by ${actor}`)),
     };
   }
   if (part.kind !== "activity") return undefined;
 
-  const summary = [...part.notes, ...(part.result === undefined ? [] : [part.result.summary])].join(
-    "\n",
-  );
   return {
     type: "task_update",
     id: stableTaskId(messageId, part.kind, part.id),
@@ -194,8 +217,28 @@ function taskForPart(part: Part, messageId: string): SlackTaskUpdate | undefined
         : part.result !== undefined || part.status === "done"
           ? "complete"
           : "in_progress",
-    ...taskOutput(summary),
-    ...taskSources([part.title, summary].join("\n")),
+  };
+}
+
+function lifecycleTask(
+  state: NonNullable<RenderContent["lifecycle"]>["state"],
+  messageId: string,
+): SlackTaskUpdate {
+  const presentation = {
+    queued: ["Run queued", "pending"],
+    running: ["Run active", "in_progress"],
+    waiting_for_approval: ["Waiting for approval", "pending"],
+    paused: ["Run paused", "pending"],
+    completed: ["Run completed", "complete"],
+    failed: ["Run failed", "error"],
+    cancelled: ["Run canceled", "complete"],
+  } as const;
+  const [title, status] = presentation[state];
+  return {
+    type: "task_update",
+    id: stableTaskId(messageId, "lifecycle", "run"),
+    title,
+    status,
   };
 }
 
@@ -225,11 +268,6 @@ function narrativePartText(part: Part): string | undefined {
 function taskOutput(value: string): { output?: string } {
   const output = boundedText(plainText(value), CHUNK_TEXT_LIMIT);
   return output.length === 0 ? {} : { output };
-}
-
-function taskSources(value: string): { sources?: SlackUrlSource[] } {
-  const sources = markdownSources(value);
-  return sources.length === 0 ? {} : { sources };
 }
 
 function markdownSources(value: string): SlackUrlSource[] {

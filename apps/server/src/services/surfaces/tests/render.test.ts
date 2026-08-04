@@ -12,6 +12,7 @@ import {
   type SurfaceRef,
 } from "@trema/surfaces";
 import { describe, expect, it, vi } from "vitest";
+import { configureLogger } from "#server/lib/logger/index.js";
 import {
   type RenderSurfaceInput,
   renderSurface,
@@ -77,20 +78,64 @@ class MemoryStore implements SurfaceRealizationStore {
     version: 0,
     retry: { attempt: 0, terminal: false },
   };
+  presenceVersion = -1;
+  presenceState: "working" | "idle" | undefined;
   released = 0;
   renewed = 0;
   renewalError: unknown;
   renewalResult = true;
 
-  async claim(): Promise<SurfaceRealization | undefined> {
+  async claim(
+    _runId: string,
+    _ref: SurfaceRef,
+    owner: string,
+  ): Promise<SurfaceRealization | undefined> {
     if (this.current.retry.terminal || this.current.presentation.stoppedByUser === true) {
       return undefined;
     }
+    if (this.current.lease !== undefined && this.current.lease.owner !== owner) return undefined;
     this.current = {
       ...this.current,
-      lease: { owner: "worker-1", until: "2026-08-01T12:00:30.000Z" },
+      lease: { owner, until: "2026-08-01T12:00:30.000Z" },
     };
     return this.current;
+  }
+
+  async claimPresence(
+    id: string,
+    expectedVersion: number,
+    state: "working" | "idle",
+  ): Promise<boolean> {
+    if (
+      id !== this.current.id ||
+      expectedVersion !== this.current.version ||
+      expectedVersion <= this.presenceVersion
+    ) {
+      return false;
+    }
+    this.presenceVersion = expectedVersion;
+    this.presenceState = state;
+    return true;
+  }
+
+  async supersedingPresenceClaim(
+    id: string,
+    version: number,
+  ): Promise<{ version: number; state: "working" | "idle" } | undefined> {
+    if (
+      id !== this.current.id ||
+      this.presenceVersion <= version ||
+      this.presenceState === undefined
+    ) {
+      return undefined;
+    }
+    return { version: this.presenceVersion, state: this.presenceState };
+  }
+
+  async releasePresenceClaim(id: string, version: number): Promise<void> {
+    if (id === this.current.id && this.presenceVersion === version) {
+      this.presenceVersion = version - 1;
+    }
   }
 
   async stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization> {
@@ -176,11 +221,12 @@ class MemoryStore implements SurfaceRealizationStore {
 
 function fakeDriver(
   apply: (operations: RenderOperation[], context: SurfaceApplyContext) => Promise<ApplyResult>,
+  presence: SurfaceDriver["presence"] = async () => undefined,
 ): SurfaceDriver {
   return {
     capabilities,
     apply,
-    async presence() {},
+    presence,
     normalize(_event: unknown, _ref: SurfaceRef): SurfaceEvent | null {
       return null;
     },
@@ -207,6 +253,306 @@ const baseInput = {
 } as const;
 
 describe("renderSurface", () => {
+  it("does not make advisory presence a rendering dependency", async () => {
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    const presence = vi.fn(async () => {
+      throw new SurfaceDriverError("unavailable", "Slack status unavailable", {
+        retryable: true,
+      });
+    });
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(apply, presence),
+      projection: projection("Hello"),
+    });
+
+    expect(result.status).toBe("rendered");
+    expect(presence).toHaveBeenCalledWith("working", expect.objectContaining({ runId: "run-1" }));
+    expect(apply).toHaveBeenCalledOnce();
+  });
+
+  it("updates advisory presence after releasing the render claim and without a lease", async () => {
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    let renderClaimReleased: boolean | undefined;
+    let presenceHeldLease: boolean | undefined;
+    let renewalsBeforePresence: number | undefined;
+    const presence = vi.fn(async () => {
+      renewalsBeforePresence = store.renewed;
+      await new Promise((resolve) => setTimeout(resolve, 45));
+      renderClaimReleased = store.released === 1;
+      presenceHeldLease = store.current.lease !== undefined;
+    });
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(apply, presence),
+      projection: projection("Hello"),
+      leaseTtlMs: 15,
+    });
+
+    expect(result.status).toBe("rendered");
+    expect(presence).toHaveBeenCalledOnce();
+    expect(renderClaimReleased).toBe(true);
+    expect(presenceHeldLease).toBe(false);
+    // The advisory write outlived the render lease TTL without renewing it.
+    expect(store.renewed).toBe(renewalsBeforePresence);
+    expect(store.released).toBe(1);
+  });
+
+  it("lets a newer content render proceed while an advisory presence write stalls", async () => {
+    const store = new MemoryStore();
+    let workingStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      workingStarted = resolve;
+    });
+    let finishWorking: (() => void) | undefined;
+    const stalled = new Promise<void>((resolve) => {
+      finishWorking = resolve;
+    });
+    const presenceStates: Array<"working" | "idle"> = [];
+    const presence = vi.fn<SurfaceDriver["presence"]>(async (state) => {
+      if (state === "working") {
+        workingStarted?.();
+        await stalled;
+      }
+      presenceStates.push(state);
+    });
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    const driver = fakeDriver(apply, presence);
+
+    const older = renderSurface({
+      ...baseInput,
+      owner: "worker-1",
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+    await started;
+
+    const concurrent = await renderSurface({
+      ...baseInput,
+      owner: "worker-2",
+      store,
+      driver,
+      projection: { ...projection("Hello", 2), status: "completed" },
+    });
+    finishWorking?.();
+    await older;
+
+    expect(concurrent.status).toBe("rendered");
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(store.current.renderedThroughSeq).toBe(2);
+    // The older request was already in flight, so its advisory status landed
+    // after the newer one without ever holding back the durable content. On
+    // landing it found the superseding claim and reasserted its state, so the
+    // surface converged on "idle" even though the run is already terminal.
+    expect(presenceStates).toEqual(["idle", "working", "idle"]);
+  });
+
+  it("retries a rejected presence write and keeps the claim", async () => {
+    const store = new MemoryStore();
+    const presence = vi
+      .fn<SurfaceDriver["presence"]>()
+      .mockRejectedValueOnce(new Error("transient Slack failure"))
+      .mockResolvedValue(undefined);
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(
+        async (operations: RenderOperation[]) => createdResult(operations),
+        presence,
+      ),
+      projection: projection("Hello"),
+    });
+
+    expect(result.status).toBe("rendered");
+    expect(presence).toHaveBeenCalledTimes(2);
+    expect(store.presenceVersion).toBe(store.current.version);
+  });
+
+  it("releases a failed presence claim so a later render can reassert it", async () => {
+    const store = new MemoryStore();
+    const presence = vi
+      .fn<SurfaceDriver["presence"]>()
+      .mockRejectedValueOnce(new Error("Slack status unavailable"))
+      .mockRejectedValueOnce(new Error("Slack status unavailable"))
+      .mockResolvedValue(undefined);
+    const driver = fakeDriver(
+      async (operations: RenderOperation[]) => createdResult(operations),
+      presence,
+    );
+
+    const failed = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+    expect(failed.status).toBe("rendered");
+    // Both attempts failed, so the claim went back for a later render to take.
+    expect(presence).toHaveBeenCalledTimes(2);
+    expect(store.presenceVersion).toBe(store.current.version - 1);
+
+    const replay = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+
+    expect(replay.status).toBe("noop");
+    expect(presence).toHaveBeenCalledTimes(3);
+    expect(store.presenceVersion).toBe(store.current.version);
+  });
+
+  it("reasserts the newest claim after an abandoned write lands late", async () => {
+    const store = new MemoryStore();
+    const landed: Array<"working" | "idle"> = [];
+    let releaseStalled: (() => void) | undefined;
+    const presence = vi.fn<SurfaceDriver["presence"]>(async (state) => {
+      if (state === "working" && releaseStalled === undefined) {
+        await new Promise<void>((resolve) => {
+          releaseStalled = resolve;
+        });
+      }
+      landed.push(state);
+    });
+    const driver = fakeDriver(
+      async (operations: RenderOperation[]) => createdResult(operations),
+      presence,
+    );
+
+    const first = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+      presenceTimeoutMs: 10,
+    });
+    expect(first.status).toBe("rendered");
+    // The stalled "working" write was abandoned and its claim released.
+    expect(store.presenceVersion).toBe(store.current.version - 1);
+
+    const terminal = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: { ...projection("Hello", 2), status: "completed" },
+      presenceTimeoutMs: 10,
+    });
+    expect(terminal.status).toBe("rendered");
+    expect(landed).toEqual(["idle"]);
+
+    // The abandoned write lands after the terminal "idle". Without the late
+    // reconciliation it would leave "working" on a completed thread forever.
+    releaseStalled?.();
+    await vi.waitFor(() => expect(landed).toEqual(["idle", "working", "idle"]));
+  });
+
+  it("drops a presence write for a revision that already started one", async () => {
+    const store = new MemoryStore();
+    const presence = vi.fn<SurfaceDriver["presence"]>(async () => undefined);
+    const driver = fakeDriver(
+      async (operations: RenderOperation[]) => createdResult(operations),
+      presence,
+    );
+
+    const first = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+    const replay = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+
+    expect(first.status).toBe("rendered");
+    expect(replay.status).toBe("noop");
+    expect(presence).toHaveBeenCalledOnce();
+  });
+
+  it("abandons a stalled advisory presence write instead of holding the render loop", async () => {
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    let releaseStall: (() => void) | undefined;
+    const presence = vi.fn<SurfaceDriver["presence"]>(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseStall = resolve;
+        }),
+    );
+
+    try {
+      const result = await renderSurface({
+        ...baseInput,
+        store,
+        driver: fakeDriver(apply, presence),
+        projection: projection("Hello"),
+        presenceTimeoutMs: 10,
+      });
+
+      expect(result.status).toBe("rendered");
+      expect(presence).toHaveBeenCalledOnce();
+      expect(store.current.renderedThroughSeq).toBe(1);
+      // The abandoned claim is released so a later render can reassert it.
+      expect(store.presenceVersion).toBe(store.current.version - 1);
+    } finally {
+      releaseStall?.();
+    }
+  });
+
+  it("logs advisory presence failures without failing the durable render", async () => {
+    const lines: string[] = [];
+    configureLogger(
+      { TREMA_LOG_FORMAT: "json", TREMA_LOG_LEVEL: "warn" },
+      {
+        write: (line) => lines.push(line),
+        now: () => new Date("2026-08-04T12:00:00.000Z"),
+      },
+    );
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    const presenceError = new SurfaceDriverError("revoked", "Slack status unavailable", {
+      retryable: false,
+    });
+
+    try {
+      const result = await renderSurface({
+        ...baseInput,
+        store,
+        driver: fakeDriver(apply, async () => {
+          throw presenceError;
+        }),
+        projection: projection("Hello"),
+      });
+
+      expect(result.status).toBe("rendered");
+    } finally {
+      configureLogger({ TREMA_LOG_FORMAT: "logfmt", TREMA_LOG_LEVEL: "silent" });
+    }
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        msg: "Surface presence update failed",
+        error: expect.objectContaining({
+          code: "revoked",
+          message: "Slack status unavailable",
+          name: "SurfaceDriverError",
+        }),
+      }),
+    ]);
+  });
+
   it("stages, applies, and persists one Slack realization without replay duplicates", async () => {
     const store = new MemoryStore();
     const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
@@ -250,7 +596,7 @@ describe("renderSurface", () => {
     expect(store.current).not.toHaveProperty("pendingPlan");
   });
 
-  it("returns a released realization when only the durable cursor advances", async () => {
+  it("renders and releases a zero-content running lifecycle", async () => {
     const store = new MemoryStore();
     const result = await renderSurface({
       ...baseInput,
@@ -265,10 +611,15 @@ describe("renderSurface", () => {
       },
     });
 
-    expect(result).toMatchObject({ status: "rendered", operations: 0 });
+    expect(result).toMatchObject({ status: "rendered", operations: 1 });
     if (result.status !== "rendered") throw new Error(`unexpected result: ${result.status}`);
     expect(result.realization).not.toHaveProperty("lease");
     expect(store.current).not.toHaveProperty("lease");
+    expect(store.current.segments[0]?.messages[0]).toMatchObject({
+      id: "run-1:segment:0:message:0",
+      text: "Running",
+      finalized: false,
+    });
   });
 
   it("renews its lease while a remote batch runs longer than the original TTL", async () => {
@@ -399,12 +750,13 @@ describe("renderSurface", () => {
 
   it("marks a revoked Slack installation terminal without advancing the cursor", async () => {
     const store = new MemoryStore();
+    const presence = vi.fn<SurfaceDriver["presence"]>();
     const result = await renderSurface({
       ...baseInput,
       store,
       driver: fakeDriver(async () => {
         throw new SurfaceDriverError("revoked", "installation revoked", { retryable: false });
-      }),
+      }, presence),
       projection: projection("Hello"),
     });
 
@@ -415,11 +767,13 @@ describe("renderSurface", () => {
         retry: { terminal: true, lastErrorCode: "revoked" },
       },
     });
+    expect(presence).toHaveBeenCalledWith("idle", expect.objectContaining({ runId: "run-1" }));
   });
 
   it("turns Slack's native stop into one durable run-stop request", async () => {
     const store = new MemoryStore();
     const requestRunStop = vi.fn(async () => "recorded" as const);
+    const presence = vi.fn<SurfaceDriver["presence"]>();
 
     const result = await renderSurface({
       ...baseInput,
@@ -427,7 +781,7 @@ describe("renderSurface", () => {
       requestRunStop,
       driver: fakeDriver(async () => {
         throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
-      }),
+      }, presence),
       projection: projection("Hello"),
     });
 
@@ -447,6 +801,7 @@ describe("renderSurface", () => {
       runId: "run-1",
       ref,
     });
+    expect(presence).toHaveBeenCalledWith("idle", expect.objectContaining({ runId: "run-1" }));
   });
 
   it("persists a native stop before surfacing a concurrent renewal failure", async () => {
