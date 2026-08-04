@@ -835,6 +835,50 @@ describe("SlackDriver", () => {
     expect(JSON.stringify(slack.calls[1]?.body)).not.toContain("secret tool result");
   });
 
+  it("preserves safe fallback text when finalizing a reconciled stream", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+    const started = await render.apply(
+      [
+        create("Working", {
+          parts: [
+            {
+              kind: "activity",
+              id: "call-1",
+              status: "streaming",
+              callId: "call-1",
+              name: "deploy",
+              title: "Preparing deployment",
+              toolKind: "other",
+              notes: [],
+            },
+          ],
+        }),
+      ],
+      context,
+    );
+    const metadata = started.messages[0]?.metadata;
+    const operation = mutation("finalize", {
+      text: "Deploy version 2.4.1?",
+      parts: [pendingElicitation()],
+      prior: { text: "Working", ...(metadata === undefined ? {} : { metadata }) },
+    });
+    if (operation.type !== "finalize") throw new Error("Expected finalize operation");
+    operation.content.lifecycle = { state: "waiting_for_approval" };
+
+    await render.apply([operation], context);
+
+    expect(slack.calls[1]).toMatchObject({
+      method: "chat.stopStream",
+      body: {
+        markdown_text: "Waiting for approval\n\n*Deploy* version 2.4.1?",
+      },
+    });
+  });
+
   it("rate-limits advisory assistant presence in a thread", async () => {
     const slack = fakeSlack([{ body: { ok: true } }]);
 

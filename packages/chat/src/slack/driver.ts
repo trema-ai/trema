@@ -411,10 +411,11 @@ export class SlackDriver implements SurfaceDriver {
         ts: operation.remoteRef,
       });
     } else {
+      const narrative = toSlackMrkdwn(thinking.narrativeText);
       await this.#stopStream(destination.channelRef, {
         channel: destination.channelRef,
         client_msg_id: slackClientMessageId(operation.id),
-        markdown_text: nonEmpty(thinking.narrativeText),
+        markdown_text: realizeMessageFallback(operation.content, narrative),
         ...finalizeBlocks(operation.content, context.canonicalRunUrl),
         ts: operation.remoteRef,
       });
@@ -539,18 +540,9 @@ function realizeMessage(
 ): RealizedMessage {
   const thinking = realizeSlackThinking(content, messageId);
   const narrative = toSlackMrkdwn(thinking.narrativeText);
-  const elicitation = unresolvedElicitation(content);
-  const fallback = [
-    narrative,
-    ...(narrative.length === 0 && content.lifecycle !== undefined
-      ? [lifecycleFallback(content.lifecycle.state)]
-      : []),
-    ...(elicitation === undefined ? [] : [toSlackMrkdwn(elicitation.prompt)]),
-  ]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
-  const text = nonEmpty(fallback);
+  const text = realizeMessageFallback(content, narrative);
   const plan = staticThinkingBlock(thinking);
+  const elicitation = unresolvedElicitation(content);
   const controls = elicitation === undefined ? [] : realizeElicitation(elicitation);
   const runLink = canonicalRunLinkBlock(canonicalRunUrl);
   const sectionLimit =
@@ -564,6 +556,20 @@ function realizeMessage(
       runLink,
     ],
   };
+}
+
+function realizeMessageFallback(content: RenderContent, narrative: string): string {
+  const elicitation = unresolvedElicitation(content);
+  const fallback = [
+    narrative,
+    ...(narrative.length === 0 && content.lifecycle !== undefined
+      ? [lifecycleFallback(content.lifecycle.state)]
+      : []),
+    ...(elicitation === undefined ? [] : [toSlackMrkdwn(elicitation.prompt)]),
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  return nonEmpty(fallback);
 }
 
 function lifecycleFallback(state: NonNullable<RenderContent["lifecycle"]>["state"]): string {
