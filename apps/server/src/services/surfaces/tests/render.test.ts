@@ -512,6 +512,7 @@ describe("renderSurface", () => {
   it("turns Slack's native stop into one durable run-stop request", async () => {
     const store = new MemoryStore();
     const requestRunStop = vi.fn(async () => "recorded" as const);
+    const presence = vi.fn<SurfaceDriver["presence"]>();
 
     const result = await renderSurface({
       ...baseInput,
@@ -519,7 +520,7 @@ describe("renderSurface", () => {
       requestRunStop,
       driver: fakeDriver(async () => {
         throw new SurfaceDriverError("stopped_by_user", "stopped", { retryable: false });
-      }),
+      }, presence),
       projection: projection("Hello"),
     });
 
@@ -539,6 +540,7 @@ describe("renderSurface", () => {
       runId: "run-1",
       ref,
     });
+    expect(presence).toHaveBeenCalledWith("idle", expect.objectContaining({ runId: "run-1" }));
   });
 
   it("persists a native stop before surfacing a concurrent renewal failure", async () => {

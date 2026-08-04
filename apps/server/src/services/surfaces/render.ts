@@ -94,7 +94,7 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
   );
   if (realization === undefined) return { status: "busy" };
   const result = await renderClaimedSurface(input, realization);
-  await updateAdvisoryPresence(input, result.realization.version);
+  await updateAdvisoryPresence(input, result);
   return result;
 }
 
@@ -199,14 +199,15 @@ async function renderClaimedSurface(
 
 async function updateAdvisoryPresence(
   input: RenderSurfaceInput,
-  realizationVersion: number,
+  result: ClaimedRenderSurfaceResult,
 ): Promise<void> {
   try {
-    await input.driver.presence(presenceFor(input.projection), {
+    const presence = result.status === "stopped" ? "idle" : presenceFor(input.projection);
+    await input.driver.presence(presence, {
       runId: input.projection.runId,
       ref: input.ref,
       canonicalRunUrl: input.canonicalRunUrl,
-      realizationVersion,
+      realizationVersion: result.realization.version,
     });
   } catch (error) {
     log.warn("Surface presence update failed", { error });
