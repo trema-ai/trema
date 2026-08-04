@@ -12,6 +12,7 @@ import {
   type SurfaceRef,
 } from "@trema/surfaces";
 import { describe, expect, it, vi } from "vitest";
+import { configureLogger } from "#server/lib/logger/index.js";
 import {
   type RenderSurfaceInput,
   renderSurface,
@@ -227,6 +228,70 @@ describe("renderSurface", () => {
     expect(result.status).toBe("rendered");
     expect(presence).toHaveBeenCalledWith("working", expect.objectContaining({ runId: "run-1" }));
     expect(apply).toHaveBeenCalledOnce();
+  });
+
+  it("updates advisory presence only after releasing the realization lease", async () => {
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    let presenceHeldLease: boolean | undefined;
+    const presence = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      presenceHeldLease = store.current.lease !== undefined;
+    });
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(apply, presence),
+      projection: projection("Hello"),
+      leaseTtlMs: 15,
+    });
+
+    expect(result.status).toBe("rendered");
+    expect(presence).toHaveBeenCalledOnce();
+    expect(presenceHeldLease).toBe(false);
+  });
+
+  it("logs advisory presence failures without failing the durable render", async () => {
+    const lines: string[] = [];
+    configureLogger(
+      { TREMA_LOG_FORMAT: "json", TREMA_LOG_LEVEL: "warn" },
+      {
+        write: (line) => lines.push(line),
+        now: () => new Date("2026-08-04T12:00:00.000Z"),
+      },
+    );
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    const presenceError = new SurfaceDriverError("revoked", "Slack status unavailable", {
+      retryable: false,
+    });
+
+    try {
+      const result = await renderSurface({
+        ...baseInput,
+        store,
+        driver: fakeDriver(apply, async () => {
+          throw presenceError;
+        }),
+        projection: projection("Hello"),
+      });
+
+      expect(result.status).toBe("rendered");
+    } finally {
+      configureLogger({ TREMA_LOG_FORMAT: "logfmt", TREMA_LOG_LEVEL: "silent" });
+    }
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        msg: "Surface presence update failed",
+        error: expect.objectContaining({
+          code: "revoked",
+          message: "Slack status unavailable",
+          name: "SurfaceDriverError",
+        }),
+      }),
+    ]);
   });
 
   it("stages, applies, and persists one Slack realization without replay duplicates", async () => {

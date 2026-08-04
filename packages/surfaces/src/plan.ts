@@ -194,6 +194,7 @@ export function planRender(
           !target.finalized &&
           capabilities.streaming === "delta" &&
           projection.lastSeq === realization.renderedThroughSeq + 1 &&
+          target.content.parts.length > 0 &&
           target.content.parts.every((part) => part.kind === "text") &&
           target.text.startsWith(prior.text)
         ) {

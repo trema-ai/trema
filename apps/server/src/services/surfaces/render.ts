@@ -13,6 +13,7 @@ import {
   type SurfaceRef,
 } from "@trema/surfaces";
 
+import { log } from "#server/lib/logger/index.js";
 import type {
   CommitRealizationInput,
   RecordNativeStopPendingInput,
@@ -77,6 +78,8 @@ export type RenderSurfaceResult =
       realization: SurfaceRealization;
     };
 
+type ClaimedRenderSurfaceResult = Exclude<RenderSurfaceResult, { status: "busy" }>;
+
 /**
  * Advances one persisted realization from a durable projection. The plan is
  * staged before Slack is called, and the cursor moves only after the driver
@@ -90,16 +93,15 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
     input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
   );
   if (realization === undefined) return { status: "busy" };
-  // Presence mirrors an already committed projection. It is advisory: Slack
-  // status failures must never hold the realization cursor or run lifecycle.
-  await input.driver
-    .presence(presenceFor(input.projection), {
-      runId: input.projection.runId,
-      ref: input.ref,
-      canonicalRunUrl: input.canonicalRunUrl,
-      realizationVersion: realization.version,
-    })
-    .catch(() => undefined);
+  const result = await renderClaimedSurface(input, realization);
+  await updateAdvisoryPresence(input, result.realization.version);
+  return result;
+}
+
+async function renderClaimedSurface(
+  input: RenderSurfaceInput,
+  realization: SurfaceRealization,
+): Promise<ClaimedRenderSurfaceResult> {
   if (realization.nativeStopPending) return submitNativeStop(input, realization);
 
   let current = realization;
@@ -195,6 +197,22 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
   }
 }
 
+async function updateAdvisoryPresence(
+  input: RenderSurfaceInput,
+  realizationVersion: number,
+): Promise<void> {
+  try {
+    await input.driver.presence(presenceFor(input.projection), {
+      runId: input.projection.runId,
+      ref: input.ref,
+      canonicalRunUrl: input.canonicalRunUrl,
+      realizationVersion,
+    });
+  } catch (error) {
+    log.warn("Surface presence update failed", { error });
+  }
+}
+
 function presenceFor(projection: Projection): "working" | "idle" {
   return projection.status === "pending" || projection.status === "running" ? "working" : "idle";
 }
@@ -202,7 +220,7 @@ function presenceFor(projection: Projection): "working" | "idle" {
 async function submitNativeStop(
   input: RenderSurfaceInput,
   current: SurfaceRealization,
-): Promise<RenderSurfaceResult> {
+): Promise<ClaimedRenderSurfaceResult> {
   try {
     await input.requestRunStop({
       intentId: `surface:${current.id}:stopped-by-user`,

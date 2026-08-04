@@ -1,5 +1,6 @@
 import type { Part, Projection } from "@trema/projection";
 import {
+  acknowledge,
   planRender,
   type RenderContent,
   type RenderOperation,
@@ -488,6 +489,81 @@ describe("SlackDriver", () => {
       expect(JSON.stringify(call.body)).not.toContain("secret tool note");
       expect(JSON.stringify(call.body)).not.toContain("secret tool result");
     }
+  });
+
+  it("replaces an untyped activity continuation instead of appending its raw delta", async () => {
+    const initialNote = "x".repeat(slackCapabilities.budgets.messageChars * 2);
+    const activityProjection = (note: string, lastSeq: number): Projection => ({
+      runId: "run-1",
+      status: "running",
+      segments: [
+        {
+          index: 0,
+          parts: [
+            {
+              kind: "activity",
+              id: "call-1",
+              status: "streaming",
+              callId: "call-1",
+              name: "lookup",
+              title: "Looking up deployment",
+              toolKind: "other",
+              notes: [note],
+            },
+          ],
+        },
+      ],
+      unknownEvents: 0,
+      lastSeq,
+    });
+    const realization: SurfaceRealization = {
+      id: "realization-1",
+      orgId: "org-1",
+      runId: "run-1",
+      ref: context.ref,
+      renderedThroughSeq: 0,
+      segments: [],
+      presentation: {},
+      reconciliationRequired: false,
+      nativeStopPending: false,
+      version: 0,
+      retry: { attempt: 0, terminal: false },
+    };
+    const initialPlan = planRender(
+      activityProjection(initialNote, 1),
+      realization,
+      slackCapabilities,
+    );
+    const slack = fakeSlack(
+      [...initialPlan.operations, {}, {}].map(() => ({
+        body: { ok: true, channel: "C1", ts: "1800000001.000001" },
+      })),
+    );
+    const render = driver({ fetch: slack.fetch });
+    const initialResult = await render.apply(initialPlan.operations, context);
+    const appendedSecret = "LIVE_SECRET_DELTA";
+    const incrementalPlan = planRender(
+      activityProjection(`${initialNote}${appendedSecret}`, 2),
+      {
+        ...realization,
+        renderedThroughSeq: 1,
+        segments: acknowledge(initialPlan, initialResult),
+      },
+      slackCapabilities,
+    );
+
+    expect(incrementalPlan.operations.find(({ messageIndex }) => messageIndex === 2)).toMatchObject(
+      {
+        type: "replace",
+        content: { parts: [], text: expect.stringContaining(appendedSecret) },
+      },
+    );
+
+    const initialCallCount = slack.calls.length;
+    await render.apply(incrementalPlan.operations, context);
+
+    expect(slack.calls).toHaveLength(initialCallCount);
+    expect(JSON.stringify(slack.calls)).not.toContain(appendedSecret);
   });
 
   it("uses only safe narrative when finalizing a reconciled stream", async () => {
