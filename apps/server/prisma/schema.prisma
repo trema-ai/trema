@@ -1120,6 +1120,10 @@ model SurfaceRealization {
   nativeStopPending      Boolean   @default(false)
   /// Optimistic revision. Every successful state transition increments it.
   version                Int       @default(0)
+  /// Highest revision an advisory presence write has already started for. It
+  /// gates presence separately from the render lease, so a stalled advisory
+  /// request can never keep content from reaching the surface.
+  presenceVersion        Int       @default(-1)
   leaseOwner             String?
   leaseUntil             DateTime?
   retryAttempt           Int       @default(0)

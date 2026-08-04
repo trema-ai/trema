@@ -78,6 +78,7 @@ class MemoryStore implements SurfaceRealizationStore {
     version: 0,
     retry: { attempt: 0, terminal: false },
   };
+  presenceVersion = -1;
   released = 0;
   renewed = 0;
   renewalError: unknown;
@@ -99,18 +100,15 @@ class MemoryStore implements SurfaceRealizationStore {
     return this.current;
   }
 
-  async claimPresence(id: string, owner: string, expectedVersion: number): Promise<boolean> {
+  async claimPresence(id: string, expectedVersion: number): Promise<boolean> {
     if (
       id !== this.current.id ||
       expectedVersion !== this.current.version ||
-      this.current.lease !== undefined
+      expectedVersion <= this.presenceVersion
     ) {
       return false;
     }
-    this.current = {
-      ...this.current,
-      lease: { owner, until: "2026-08-01T12:00:30.000Z" },
-    };
+    this.presenceVersion = expectedVersion;
     return true;
   }
 
@@ -250,7 +248,7 @@ describe("renderSurface", () => {
     expect(apply).toHaveBeenCalledOnce();
   });
 
-  it("updates advisory presence under a separate lease after releasing the render claim", async () => {
+  it("updates advisory presence after releasing the render claim and without a lease", async () => {
     const store = new MemoryStore();
     const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
     let renderClaimReleased: boolean | undefined;
@@ -258,7 +256,7 @@ describe("renderSurface", () => {
     let renewalsBeforePresence: number | undefined;
     const presence = vi.fn(async () => {
       renewalsBeforePresence = store.renewed;
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 45));
       renderClaimReleased = store.released === 1;
       presenceHeldLease = store.current.lease !== undefined;
     });
@@ -274,12 +272,13 @@ describe("renderSurface", () => {
     expect(result.status).toBe("rendered");
     expect(presence).toHaveBeenCalledOnce();
     expect(renderClaimReleased).toBe(true);
-    expect(presenceHeldLease).toBe(true);
-    expect(store.renewed).toBeGreaterThan(renewalsBeforePresence! + 1);
-    expect(store.released).toBe(2);
+    expect(presenceHeldLease).toBe(false);
+    // The advisory write outlived the render lease TTL without renewing it.
+    expect(store.renewed).toBe(renewalsBeforePresence);
+    expect(store.released).toBe(1);
   });
 
-  it("serializes presence so an older working write cannot follow a newer idle write", async () => {
+  it("lets a newer content render proceed while an advisory presence write stalls", async () => {
     const store = new MemoryStore();
     let workingStarted: (() => void) | undefined;
     const started = new Promise<void>((resolve) => {
@@ -297,10 +296,8 @@ describe("renderSurface", () => {
       }
       presenceStates.push(state);
     });
-    const driver = fakeDriver(
-      async (operations: RenderOperation[]) => createdResult(operations),
-      presence,
-    );
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    const driver = fakeDriver(apply, presence);
 
     const older = renderSurface({
       ...baseInput,
@@ -321,17 +318,67 @@ describe("renderSurface", () => {
     finishWorking?.();
     await older;
 
-    const retried = await renderSurface({
+    expect(concurrent.status).toBe("rendered");
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(store.current.renderedThroughSeq).toBe(2);
+    // Presence writes are ordered by the revision that starts them. The older
+    // request was already in flight, so its advisory status may still land
+    // late; the durable content it accompanied was never held back for it.
+    expect(presenceStates).toEqual(["idle", "working"]);
+  });
+
+  it("drops a presence write for a revision that already started one", async () => {
+    const store = new MemoryStore();
+    const presence = vi.fn<SurfaceDriver["presence"]>(async () => undefined);
+    const driver = fakeDriver(
+      async (operations: RenderOperation[]) => createdResult(operations),
+      presence,
+    );
+
+    const first = await renderSurface({
       ...baseInput,
-      owner: "worker-2",
       store,
       driver,
-      projection: { ...projection("Hello", 2), status: "completed" },
+      projection: projection("Hello"),
+    });
+    const replay = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
     });
 
-    expect(concurrent.status).toBe("busy");
-    expect(retried.status).toBe("rendered");
-    expect(presenceStates).toEqual(["working", "idle"]);
+    expect(first.status).toBe("rendered");
+    expect(replay.status).toBe("noop");
+    expect(presence).toHaveBeenCalledOnce();
+  });
+
+  it("abandons a stalled advisory presence write instead of holding the render loop", async () => {
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    let releaseStall: (() => void) | undefined;
+    const presence = vi.fn<SurfaceDriver["presence"]>(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseStall = resolve;
+        }),
+    );
+
+    try {
+      const result = await renderSurface({
+        ...baseInput,
+        store,
+        driver: fakeDriver(apply, presence),
+        projection: projection("Hello"),
+        presenceTimeoutMs: 10,
+      });
+
+      expect(result.status).toBe("rendered");
+      expect(presence).toHaveBeenCalledOnce();
+      expect(store.current.renderedThroughSeq).toBe(1);
+    } finally {
+      releaseStall?.();
+    }
   });
 
   it("logs advisory presence failures without failing the durable render", async () => {

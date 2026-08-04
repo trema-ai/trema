@@ -158,28 +158,21 @@ export class PrismaSurfaceRealizationStore {
   }
 
   /**
-   * Claims the current revision for one advisory presence write. The exact
-   * revision check drops stale writes, while the lease serializes live writes
-   * with renderers and other workers without extending the prior render claim.
+   * Reserves one advisory presence write for the caller's revision. The exact
+   * revision check drops stale writes and the monotonic presence marker drops
+   * duplicate and superseded ones, so presence writes stay ordered by the
+   * revision that started them. Presence deliberately never touches the render
+   * lease: an advisory request that stalls must not exclude content rendering.
    */
-  async claimPresence(
-    id: string,
-    owner: string,
-    expectedVersion: number,
-    ttlMs: number,
-  ): Promise<boolean> {
-    if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
-      throw new Error("surface realization lease TTL must be a positive integer");
-    }
-    const now = this.#clock.now();
+  async claimPresence(id: string, expectedVersion: number): Promise<boolean> {
     const result = await this.#db.surfaceRealization.updateMany({
       where: {
         id,
         orgId: this.#orgId,
         version: expectedVersion,
-        OR: [{ leaseOwner: null }, { leaseUntil: null }, { leaseUntil: { lte: now } }],
+        presenceVersion: { lt: expectedVersion },
       },
-      data: { leaseOwner: owner, leaseUntil: new Date(now.getTime() + ttlMs) },
+      data: { presenceVersion: expectedVersion },
     });
     return result.count === 1;
   }

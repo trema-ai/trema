@@ -66,7 +66,7 @@ integration("surface realizations", () => {
     expect(await store.renew(first!.id, "worker-a", 30_000)).toBe(false);
   });
 
-  it("serializes presence claims and rejects stale realization versions", async () => {
+  it("gates presence on the newest revision without excluding a content render", async () => {
     const claimed = await store.claim("run-1", ref, "worker-a", 30_000);
     const committed = await store.commit({
       id: claimed!.id,
@@ -77,24 +77,27 @@ integration("surface realizations", () => {
     });
     expect(await store.release(committed.id, "worker-a")).toBe(true);
 
-    expect(await store.claimPresence(committed.id, "presence-a", committed.version, 30_000)).toBe(
-      true,
-    );
-    expect(await store.claim("run-1", ref, "worker-b", 30_000)).toBeUndefined();
-    expect(await store.claimPresence(committed.id, "presence-a", committed.version, 30_000)).toBe(
-      false,
-    );
-    expect(await store.claimPresence(committed.id, "presence-b", committed.version, 30_000)).toBe(
-      false,
-    );
-    expect(await store.release(committed.id, "presence-a")).toBe(true);
-    expect(
-      await store.claimPresence(committed.id, "presence-b", committed.version - 1, 30_000),
-    ).toBe(false);
-    expect(await store.claim("run-1", ref, "worker-b", 30_000)).toMatchObject({
+    expect(await store.claimPresence(committed.id, committed.version)).toBe(true);
+    // A claimed presence write is advisory: it neither takes nor blocks the
+    // render lease, so newer content still reaches the surface while it runs.
+    const rendering = await store.claim("run-1", ref, "worker-b", 30_000);
+    expect(rendering).toMatchObject({
       version: committed.version,
       lease: { owner: "worker-b" },
     });
+
+    // Duplicate and stale presence writes drop instead of queueing behind it.
+    expect(await store.claimPresence(committed.id, committed.version)).toBe(false);
+    expect(await store.claimPresence(committed.id, committed.version - 1)).toBe(false);
+
+    const advanced = await store.commit({
+      id: committed.id,
+      owner: "worker-b",
+      expectedVersion: committed.version,
+      renderedThroughSeq: 2,
+      segments: [],
+    });
+    expect(await store.claimPresence(advanced.id, advanced.version)).toBe(true);
   });
 
   it("persists the cursor, stable message refs, metadata, and version for restart", async () => {
