@@ -79,6 +79,7 @@ class MemoryStore implements SurfaceRealizationStore {
     retry: { attempt: 0, terminal: false },
   };
   presenceVersion = -1;
+  presenceState: "working" | "idle" | undefined;
   released = 0;
   renewed = 0;
   renewalError: unknown;
@@ -100,7 +101,11 @@ class MemoryStore implements SurfaceRealizationStore {
     return this.current;
   }
 
-  async claimPresence(id: string, expectedVersion: number): Promise<boolean> {
+  async claimPresence(
+    id: string,
+    expectedVersion: number,
+    state: "working" | "idle",
+  ): Promise<boolean> {
     if (
       id !== this.current.id ||
       expectedVersion !== this.current.version ||
@@ -109,7 +114,28 @@ class MemoryStore implements SurfaceRealizationStore {
       return false;
     }
     this.presenceVersion = expectedVersion;
+    this.presenceState = state;
     return true;
+  }
+
+  async supersedingPresenceClaim(
+    id: string,
+    version: number,
+  ): Promise<{ version: number; state: "working" | "idle" } | undefined> {
+    if (
+      id !== this.current.id ||
+      this.presenceVersion <= version ||
+      this.presenceState === undefined
+    ) {
+      return undefined;
+    }
+    return { version: this.presenceVersion, state: this.presenceState };
+  }
+
+  async releasePresenceClaim(id: string, version: number): Promise<void> {
+    if (id === this.current.id && this.presenceVersion === version) {
+      this.presenceVersion = version - 1;
+    }
   }
 
   async stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization> {
@@ -321,10 +347,112 @@ describe("renderSurface", () => {
     expect(concurrent.status).toBe("rendered");
     expect(apply).toHaveBeenCalledTimes(2);
     expect(store.current.renderedThroughSeq).toBe(2);
-    // Presence writes are ordered by the revision that starts them. The older
-    // request was already in flight, so its advisory status may still land
-    // late; the durable content it accompanied was never held back for it.
-    expect(presenceStates).toEqual(["idle", "working"]);
+    // The older request was already in flight, so its advisory status landed
+    // after the newer one without ever holding back the durable content. On
+    // landing it found the superseding claim and reasserted its state, so the
+    // surface converged on "idle" even though the run is already terminal.
+    expect(presenceStates).toEqual(["idle", "working", "idle"]);
+  });
+
+  it("retries a rejected presence write and keeps the claim", async () => {
+    const store = new MemoryStore();
+    const presence = vi
+      .fn<SurfaceDriver["presence"]>()
+      .mockRejectedValueOnce(new Error("transient Slack failure"))
+      .mockResolvedValue(undefined);
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(
+        async (operations: RenderOperation[]) => createdResult(operations),
+        presence,
+      ),
+      projection: projection("Hello"),
+    });
+
+    expect(result.status).toBe("rendered");
+    expect(presence).toHaveBeenCalledTimes(2);
+    expect(store.presenceVersion).toBe(store.current.version);
+  });
+
+  it("releases a failed presence claim so a later render can reassert it", async () => {
+    const store = new MemoryStore();
+    const presence = vi
+      .fn<SurfaceDriver["presence"]>()
+      .mockRejectedValueOnce(new Error("Slack status unavailable"))
+      .mockRejectedValueOnce(new Error("Slack status unavailable"))
+      .mockResolvedValue(undefined);
+    const driver = fakeDriver(
+      async (operations: RenderOperation[]) => createdResult(operations),
+      presence,
+    );
+
+    const failed = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+    expect(failed.status).toBe("rendered");
+    // Both attempts failed, so the claim went back for a later render to take.
+    expect(presence).toHaveBeenCalledTimes(2);
+    expect(store.presenceVersion).toBe(store.current.version - 1);
+
+    const replay = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+    });
+
+    expect(replay.status).toBe("noop");
+    expect(presence).toHaveBeenCalledTimes(3);
+    expect(store.presenceVersion).toBe(store.current.version);
+  });
+
+  it("reasserts the newest claim after an abandoned write lands late", async () => {
+    const store = new MemoryStore();
+    const landed: Array<"working" | "idle"> = [];
+    let releaseStalled: (() => void) | undefined;
+    const presence = vi.fn<SurfaceDriver["presence"]>(async (state) => {
+      if (state === "working" && releaseStalled === undefined) {
+        await new Promise<void>((resolve) => {
+          releaseStalled = resolve;
+        });
+      }
+      landed.push(state);
+    });
+    const driver = fakeDriver(
+      async (operations: RenderOperation[]) => createdResult(operations),
+      presence,
+    );
+
+    const first = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: projection("Hello"),
+      presenceTimeoutMs: 10,
+    });
+    expect(first.status).toBe("rendered");
+    // The stalled "working" write was abandoned and its claim released.
+    expect(store.presenceVersion).toBe(store.current.version - 1);
+
+    const terminal = await renderSurface({
+      ...baseInput,
+      store,
+      driver,
+      projection: { ...projection("Hello", 2), status: "completed" },
+      presenceTimeoutMs: 10,
+    });
+    expect(terminal.status).toBe("rendered");
+    expect(landed).toEqual(["idle"]);
+
+    // The abandoned write lands after the terminal "idle". Without the late
+    // reconciliation it would leave "working" on a completed thread forever.
+    releaseStalled?.();
+    await vi.waitFor(() => expect(landed).toEqual(["idle", "working", "idle"]));
   });
 
   it("drops a presence write for a revision that already started one", async () => {
@@ -376,6 +504,8 @@ describe("renderSurface", () => {
       expect(result.status).toBe("rendered");
       expect(presence).toHaveBeenCalledOnce();
       expect(store.current.renderedThroughSeq).toBe(1);
+      // The abandoned claim is released so a later render can reassert it.
+      expect(store.presenceVersion).toBe(store.current.version - 1);
     } finally {
       releaseStall?.();
     }

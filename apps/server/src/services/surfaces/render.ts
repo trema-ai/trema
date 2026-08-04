@@ -20,6 +20,8 @@ import type {
   RecordRenderFailureInput,
   RecordRenderStopInput,
   StageRenderPlanInput,
+  SurfacePresenceClaim,
+  SurfacePresenceState,
 } from "#server/services/surfaces/store.js";
 import { SurfaceRealizationConflictError } from "#server/services/surfaces/store.js";
 
@@ -68,7 +70,9 @@ export interface SurfaceRealizationStore {
   ): Promise<SurfaceRealization | undefined>;
   stagePlan(input: StageRenderPlanInput): Promise<SurfaceRealization>;
   commit(input: CommitRealizationInput): Promise<SurfaceRealization>;
-  claimPresence(id: string, expectedVersion: number): Promise<boolean>;
+  claimPresence(id: string, expectedVersion: number, state: SurfacePresenceState): Promise<boolean>;
+  supersedingPresenceClaim(id: string, version: number): Promise<SurfacePresenceClaim | undefined>;
+  releasePresenceClaim(id: string, version: number): Promise<void>;
   recordStopPending(input: RecordNativeStopPendingInput): Promise<SurfaceRealization>;
   recordFailure(input: RecordRenderFailureInput): Promise<SurfaceRealization>;
   recordStopped(input: RecordRenderStopInput): Promise<SurfaceRealization>;
@@ -209,54 +213,112 @@ async function renderClaimedSurface(
 /**
  * Mirrors the committed projection in the surface's advisory status. The claim
  * is a revision gate rather than a render lease, and the request is bounded, so
- * a slow or stalled status write can neither exclude nor delay content: at
- * worst this presence write is dropped and the next render reasserts it.
+ * a slow or stalled status write can neither exclude nor delay content. A
+ * failed write releases its claim for a later render to retry, and a write
+ * that lands after being superseded reasserts the newest claimed state, so the
+ * surface converges even at a terminal revision, where no version bump would
+ * ever repair a stale status.
  */
 async function updateAdvisoryPresence(
   input: RenderSurfaceInput,
   result: ClaimedRenderSurfaceResult,
 ): Promise<void> {
+  const state: SurfacePresenceState =
+    result.status === "stopped" || result.status === "terminal_failure"
+      ? "idle"
+      : presenceFor(input.projection);
   try {
-    if (!(await input.store.claimPresence(result.realization.id, result.realization.version))) {
-      return;
-    }
-    const presence =
-      result.status === "stopped" || result.status === "terminal_failure"
-        ? "idle"
-        : presenceFor(input.projection);
-    await withDeadline(
-      input.driver.presence(presence, {
-        runId: input.projection.runId,
-        ref: input.ref,
-        canonicalRunUrl: input.canonicalRunUrl,
-        realizationVersion: result.realization.version,
-      }),
-      input.presenceTimeoutMs ?? DEFAULT_PRESENCE_TIMEOUT_MS,
-    );
+    const { id, version } = result.realization;
+    if (!(await input.store.claimPresence(id, version, state))) return;
+    await assertClaimedPresence(input, id, { version, state });
   } catch (error) {
     log.warn("Surface presence update failed", { error });
   }
 }
 
+/** Writes claimed advisory states until the newest claim has landed. */
+async function assertClaimedPresence(
+  input: RenderSurfaceInput,
+  realizationId: string,
+  claim: SurfacePresenceClaim,
+): Promise<void> {
+  let current: SurfacePresenceClaim | undefined = claim;
+  while (current !== undefined) {
+    if (!(await landPresenceWrite(input, realizationId, current))) return;
+    current = await input.store.supersedingPresenceClaim(realizationId, current.version);
+  }
+}
+
 /**
- * Stops waiting on an advisory request once it exceeds its budget. The pending
- * promise stays subscribed here, so abandoning it cannot surface as an
+ * Lands one claimed presence write. A rejected write is retried once, then
+ * releases its claim so a later render of the same revision can reassert it.
+ * A write that exceeds its deadline is abandoned rather than awaited, but it
+ * stays subscribed: if it lands late it re-checks for a superseding claim, so
+ * an out-of-order landing cannot leave a stale status behind.
+ */
+async function landPresenceWrite(
+  input: RenderSurfaceInput,
+  realizationId: string,
+  claim: SurfacePresenceClaim,
+): Promise<boolean> {
+  const timeoutMs = input.presenceTimeoutMs ?? DEFAULT_PRESENCE_TIMEOUT_MS;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const write = input.driver.presence(claim.state, {
+      runId: input.projection.runId,
+      ref: input.ref,
+      canonicalRunUrl: input.canonicalRunUrl,
+      realizationVersion: claim.version,
+    });
+    try {
+      if ((await raceDeadline(write, timeoutMs)) === "landed") return true;
+      write.then(
+        () => reconcileLateLanding(input, realizationId, claim.version),
+        () => undefined,
+      );
+      log.warn("Surface presence update abandoned", { timeoutMs });
+      break;
+    } catch (error) {
+      if (attempt === 0) {
+        log.debug("Surface presence write failed once; retrying", { error });
+        continue;
+      }
+      log.warn("Surface presence update failed", { error });
+    }
+  }
+  await input.store.releasePresenceClaim(realizationId, claim.version);
+  return false;
+}
+
+/** An abandoned write landed after its deadline; reassert any newer claim it may have clobbered. */
+async function reconcileLateLanding(
+  input: RenderSurfaceInput,
+  realizationId: string,
+  version: number,
+): Promise<void> {
+  try {
+    const superseding = await input.store.supersedingPresenceClaim(realizationId, version);
+    if (superseding !== undefined) await assertClaimedPresence(input, realizationId, superseding);
+  } catch (error) {
+    log.warn("Surface presence reconciliation failed", { error });
+  }
+}
+
+/**
+ * Bounds an advisory request without cancelling it. The operation stays
+ * subscribed through the race, so abandoning it cannot surface as an
  * unhandled rejection.
  */
-async function withDeadline<Result>(
-  operation: Promise<Result>,
+async function raceDeadline(
+  operation: Promise<unknown>,
   timeoutMs: number,
-): Promise<Result> {
+): Promise<"landed" | "abandoned"> {
   let timer: NodeJS.Timeout | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`advisory surface request exceeded ${timeoutMs}ms`)),
-      timeoutMs,
-    );
+  const deadline = new Promise<"abandoned">((resolve) => {
+    timer = setTimeout(() => resolve("abandoned"), timeoutMs);
     timer.unref();
   });
   try {
-    return await Promise.race([operation, deadline]);
+    return await Promise.race([operation.then(() => "landed" as const), deadline]);
   } finally {
     clearTimeout(timer);
   }
