@@ -280,6 +280,12 @@ describe("SlackDriver", () => {
       expect.objectContaining({
         type: "task_update",
         id: expect.stringMatching(/^task_[0-9a-f]{32}$/),
+        title: "Thinking",
+        status: "complete",
+      }),
+      expect.objectContaining({
+        type: "task_update",
+        id: expect.stringMatching(/^task_[0-9a-f]{32}$/),
         title: "Checking deployment",
         status: "in_progress",
       }),
@@ -310,6 +316,7 @@ describe("SlackDriver", () => {
     const started = await render.apply(
       [
         create("Waiting for approval", {
+          finalized: true,
           parts: [pending],
         }),
       ],
@@ -327,7 +334,7 @@ describe("SlackDriver", () => {
 
     await render.apply(
       [
-        mutation("replace", {
+        mutation("finalize", {
           text: "Approved",
           parts: [resolved],
           prior: {
@@ -339,17 +346,133 @@ describe("SlackDriver", () => {
       context,
     );
 
-    const initial = slack.calls[0]?.body.chunks as Array<Record<string, unknown>>;
-    const updatePlan = (slack.calls[1]?.body.blocks as Array<Record<string, unknown>>)[0];
-    const update = updatePlan?.tasks as Array<Record<string, unknown>>;
-    const pendingTask = initial.find(({ title }) => title === "Approval required");
-    const resolvedTask = update.find(({ title }) => title === "Approval resolved");
+    const initialBlocks = slack.calls[0]?.body.blocks as Array<Record<string, unknown>>;
+    const initialPlan = initialBlocks[0];
+    const initialTasks = initialPlan?.tasks as Array<Record<string, unknown>>;
+    const updateBlocks = slack.calls[1]?.body.blocks as Array<Record<string, unknown>>;
+    const updatePlan = updateBlocks[0];
+    const updateTasks = updatePlan?.tasks as Array<Record<string, unknown>>;
+    const pendingTask = initialTasks.find(({ title }) => title === "Approval required");
+    const resolvedTask = updateTasks.find(({ title }) => title === "Approval resolved");
+    expect(slack.calls.map(({ method }) => method)).toEqual(["chat.postMessage", "chat.update"]);
+    expect(JSON.stringify(slack.calls[0]?.body)).toContain('"type":"actions"');
     expect(resolvedTask).toMatchObject({
-      task_id: pendingTask?.id,
+      task_id: pendingTask?.task_id,
       status: "complete",
     });
     expect(JSON.stringify(resolvedTask?.output)).toContain("Approve by Ada");
     expect(JSON.stringify(slack.calls[1]?.body)).not.toContain('"type":"actions"');
+  });
+
+  it("keeps sensitive progress detail out of snapshot bodies and fallback text", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+    const sensitiveParts: Part[] = [
+      {
+        kind: "reasoning",
+        id: "reason-1",
+        status: "done",
+        text: "private reasoning detail",
+      },
+      {
+        kind: "activity",
+        id: "call-1",
+        status: "done",
+        callId: "call-1",
+        name: "lookup",
+        title: "Looking up deployment",
+        toolKind: "other",
+        input: "secret tool input",
+        notes: ["secret tool note"],
+        result: { status: "ok", summary: "secret tool result" },
+      },
+      { kind: "text", id: "text-1", status: "done", markdown: "Visible answer" },
+    ];
+
+    await render.apply(
+      [
+        create("private reasoning detail\nsecret tool note\nsecret tool result\nVisible answer", {
+          finalized: true,
+          parts: sensitiveParts,
+        }),
+        mutation("replace", {
+          text: "private reasoning detail\nsecret tool note\nsecret tool result\nVisible answer",
+          parts: sensitiveParts,
+          prior: { text: "Original", metadata: { mode: "snapshot" } },
+        }),
+      ],
+      context,
+    );
+
+    expect(slack.calls.map(({ method }) => method)).toEqual(["chat.postMessage", "chat.update"]);
+    for (const call of slack.calls) {
+      expect(call.body.text).toBe("Visible answer");
+      expect(JSON.stringify(call.body)).not.toContain("private reasoning detail");
+      expect(JSON.stringify(call.body)).not.toContain("secret tool input");
+      expect(JSON.stringify(call.body)).not.toContain("secret tool note");
+      expect(JSON.stringify(call.body)).not.toContain("secret tool result");
+    }
+  });
+
+  it("uses only safe narrative when finalizing a reconciled stream", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+    const started = await render.apply(
+      [
+        create("Visible draft", {
+          parts: [{ kind: "text", id: "text-1", status: "streaming", markdown: "Visible draft" }],
+        }),
+      ],
+      context,
+    );
+    const metadata = started.messages[0]?.metadata;
+
+    await render.apply(
+      [
+        mutation("finalize", {
+          text: "private reasoning detail\nsecret tool note\nsecret tool result\nVisible final",
+          parts: [
+            {
+              kind: "reasoning",
+              id: "reason-1",
+              status: "done",
+              text: "private reasoning detail",
+            },
+            {
+              kind: "activity",
+              id: "call-1",
+              status: "done",
+              callId: "call-1",
+              name: "lookup",
+              title: "Looking up deployment",
+              toolKind: "other",
+              notes: ["secret tool note"],
+              result: { status: "ok", summary: "secret tool result" },
+            },
+            { kind: "text", id: "text-1", status: "done", markdown: "Visible final" },
+          ],
+          prior: {
+            text: "Visible draft",
+            ...(metadata === undefined ? {} : { metadata }),
+          },
+        }),
+      ],
+      context,
+    );
+
+    expect(slack.calls[1]).toMatchObject({
+      method: "chat.stopStream",
+      body: { markdown_text: "Visible final" },
+    });
+    expect(JSON.stringify(slack.calls[1]?.body)).not.toContain("private reasoning detail");
+    expect(JSON.stringify(slack.calls[1]?.body)).not.toContain("secret tool note");
+    expect(JSON.stringify(slack.calls[1]?.body)).not.toContain("secret tool result");
   });
 
   it("rate-limits advisory assistant presence in a thread", async () => {
@@ -393,9 +516,7 @@ describe("SlackDriver", () => {
     const tasks = chunks.filter(({ type }) => type === "task_update");
     expect(tasks).toHaveLength(2);
     expect(
-      tasks.every(
-        ({ title }) => typeof title === "string" && Array.from(title).length <= 256,
-      ),
+      tasks.every(({ title }) => typeof title === "string" && Array.from(title).length <= 256),
     ).toBe(true);
     expect(tasks.every((task) => !("output" in task))).toBe(true);
   });
@@ -732,6 +853,7 @@ describe("SlackDriver", () => {
       method: "chat.postMessage",
       body: {
         blocks: [
+          expect.objectContaining({ type: "plan" }),
           { type: "section", text: { type: "mrkdwn", text: "*Deploy* version 2.4.1?" } },
           { type: "actions", elements: expect.arrayContaining([expect.any(Object)]) },
           canonicalRunLinkBlock,

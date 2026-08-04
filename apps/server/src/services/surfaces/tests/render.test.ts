@@ -225,10 +225,7 @@ describe("renderSurface", () => {
     });
 
     expect(result.status).toBe("rendered");
-    expect(presence).toHaveBeenCalledWith(
-      "working",
-      expect.objectContaining({ runId: "run-1" }),
-    );
+    expect(presence).toHaveBeenCalledWith("working", expect.objectContaining({ runId: "run-1" }));
     expect(apply).toHaveBeenCalledOnce();
   });
 
@@ -275,7 +272,7 @@ describe("renderSurface", () => {
     expect(store.current).not.toHaveProperty("pendingPlan");
   });
 
-  it("returns a released realization when only the durable cursor advances", async () => {
+  it("renders and releases a zero-content running lifecycle", async () => {
     const store = new MemoryStore();
     const result = await renderSurface({
       ...baseInput,
@@ -290,10 +287,15 @@ describe("renderSurface", () => {
       },
     });
 
-    expect(result).toMatchObject({ status: "rendered", operations: 0 });
+    expect(result).toMatchObject({ status: "rendered", operations: 1 });
     if (result.status !== "rendered") throw new Error(`unexpected result: ${result.status}`);
     expect(result.realization).not.toHaveProperty("lease");
     expect(store.current).not.toHaveProperty("lease");
+    expect(store.current.segments[0]?.messages[0]).toMatchObject({
+      id: "run-1:segment:0:message:0",
+      text: "Running",
+      finalized: false,
+    });
   });
 
   it("renews its lease while a remote batch runs longer than the original TTL", async () => {

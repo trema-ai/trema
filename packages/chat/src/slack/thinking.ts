@@ -185,14 +185,19 @@ function taskForPart(part: Part, messageId: string): SlackTaskUpdate | undefined
     const selected =
       resolution === undefined
         ? undefined
-        : part.options.find((option) => option.id === resolution.optionId)?.label ??
-          resolution.optionId;
+        : (part.options.find((option) => option.id === resolution.optionId)?.label ??
+          resolution.optionId);
     const actor = resolution?.by.displayName ?? resolution?.by.principalId;
     return {
       type: "task_update",
       id: stableTaskId(messageId, "approval", part.elicitationId),
       title: resolution === undefined ? "Approval required" : "Approval resolved",
-      status: resolution?.optionId === "expired" ? "error" : resolution === undefined ? "pending" : "complete",
+      status:
+        resolution?.optionId === "expired"
+          ? "error"
+          : resolution === undefined
+            ? "pending"
+            : "complete",
       ...(resolution === undefined ? {} : taskOutput(`${selected} by ${actor}`)),
     };
   }
@@ -259,11 +264,6 @@ function narrativePartText(part: Part): string | undefined {
 function taskOutput(value: string): { output?: string } {
   const output = boundedText(plainText(value), CHUNK_TEXT_LIMIT);
   return output.length === 0 ? {} : { output };
-}
-
-function taskSources(value: string): { sources?: SlackUrlSource[] } {
-  const sources = markdownSources(value);
-  return sources.length === 0 ? {} : { sources };
 }
 
 function markdownSources(value: string): SlackUrlSource[] {

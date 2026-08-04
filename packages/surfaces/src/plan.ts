@@ -84,10 +84,11 @@ export function planRender(
   const nextSegments: RealizedSegment[] = [];
   let deferred = false;
 
-  // A newly queued run has no content events yet. Give editable, streaming
-  // surfaces one stable message that later reconciles into segment zero.
+  // A run can change lifecycle before it has content events. Give editable,
+  // streaming surfaces one stable message that later reconciles into segment
+  // zero, including when the run reaches a terminal state without content.
   const projectedSegments =
-    projection.segments.length === 0 && projection.status === "pending"
+    projection.segments.length === 0
       ? [{ index: 0, parts: [] } satisfies Segment]
       : projection.segments;
 

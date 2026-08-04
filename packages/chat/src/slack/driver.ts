@@ -358,7 +358,7 @@ export class SlackDriver implements SurfaceDriver {
       await this.#stopStream(destination.channelRef, {
         channel: destination.channelRef,
         client_msg_id: slackClientMessageId(operation.id),
-        markdown_text: nonEmpty(operation.content.text),
+        markdown_text: nonEmpty(thinking.narrativeText),
         ...finalizeBlocks(operation.content, context.canonicalRunUrl),
         ts: operation.remoteRef,
       });
@@ -483,7 +483,7 @@ function realizeMessage(
 ): RealizedMessage {
   const thinking = realizeSlackThinking(content, messageId);
   const narrative = toSlackMrkdwn(thinking.narrativeText);
-  const text = nonEmpty(toSlackMrkdwn(content.text));
+  const text = nonEmpty(narrative);
   const plan = staticThinkingBlock(thinking);
   const controls = unresolvedElicitationBlocks(content);
   const runLink = canonicalRunLinkBlock(canonicalRunUrl);
