@@ -64,7 +64,11 @@ export function realizeSlackThinking(
   }
 
   const narrativeText =
-    narrative.length === 0 && content.parts.length === 0 ? content.text : narrative.join("\n\n");
+    narrative.length > 0
+      ? narrative.join("\n\n")
+      : content.parts.length === 0 && content.lifecycle !== undefined
+        ? lifecycleNarrative(content.lifecycle.state)
+        : "";
   const narrativeSources = markdownSources(narrativeText);
   if (narrativeSources.length > 0) {
     tasks.push({
@@ -236,6 +240,18 @@ function lifecycleTask(
     title,
     status,
   };
+}
+
+function lifecycleNarrative(state: NonNullable<RenderContent["lifecycle"]>["state"]): string {
+  return {
+    queued: "Queued",
+    running: "Running",
+    waiting_for_approval: "Waiting for approval",
+    paused: "Paused",
+    completed: "Completed",
+    failed: "Failed",
+    cancelled: "Canceled",
+  }[state];
 }
 
 function narrativePartText(part: Part): string | undefined {

@@ -165,8 +165,19 @@ export class SlackDriver implements SurfaceDriver {
         if (operation.prior.metadata?.mode !== "stream") {
           // The planner emits append only for text-only growth, so the prior
           // tier-zero text plus its delta is the complete next snapshot.
+          const text = `${operation.prior.text}${operation.text}`;
           const realized = realizeMessage(
-            { text: `${operation.prior.text}${operation.text}`, parts: [] },
+            {
+              text,
+              parts: [
+                {
+                  kind: "text",
+                  id: `${operation.messageId}:text`,
+                  status: "streaming",
+                  markdown: text,
+                },
+              ],
+            },
             operation.messageId,
             context.canonicalRunUrl,
           );

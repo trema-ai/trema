@@ -1,9 +1,15 @@
-import type { Part } from "@trema/projection";
-import type { RenderContent, RenderOperation, SurfaceApplyContext } from "@trema/surfaces";
+import type { Part, Projection } from "@trema/projection";
+import {
+  planRender,
+  type RenderContent,
+  type RenderOperation,
+  type SurfaceApplyContext,
+  type SurfaceRealization,
+} from "@trema/surfaces";
 import { describe, expect, it, vi } from "vitest";
 
 import { SurfaceDriverError } from "#chat/index.js";
-import { SlackDriver, type SlackDriverOptions } from "#chat/slack/index.js";
+import { SlackDriver, type SlackDriverOptions, slackCapabilities } from "#chat/slack/index.js";
 
 const context = {
   runId: "run-1",
@@ -68,8 +74,11 @@ function driver(options: Partial<SlackDriverOptions> = {}): SlackDriver {
   });
 }
 
-function content(text: string, parts: Part[] = []): RenderContent {
-  return { text, parts };
+function content(text: string, parts?: Part[]): RenderContent {
+  return {
+    text,
+    parts: parts ?? [{ kind: "text", id: "text-1", status: "streaming", markdown: text }],
+  };
 }
 
 function create(
@@ -412,6 +421,70 @@ describe("SlackDriver", () => {
       expect(call.body.text).toBe("Visible answer");
       expect(JSON.stringify(call.body)).not.toContain("private reasoning detail");
       expect(JSON.stringify(call.body)).not.toContain("secret tool input");
+      expect(JSON.stringify(call.body)).not.toContain("secret tool note");
+      expect(JSON.stringify(call.body)).not.toContain("secret tool result");
+    }
+  });
+
+  it("omits sensitive activity continuations that have no typed source part", async () => {
+    const sensitiveNote = "secret tool note ".repeat(1_000);
+    const projection: Projection = {
+      runId: "run-1",
+      status: "completed",
+      segments: [
+        {
+          index: 0,
+          parts: [
+            {
+              kind: "activity",
+              id: "call-1",
+              status: "done",
+              callId: "call-1",
+              name: "lookup",
+              title: "Looking up deployment",
+              toolKind: "other",
+              notes: [sensitiveNote],
+              result: { status: "ok", summary: "secret tool result" },
+            },
+          ],
+        },
+      ],
+      unknownEvents: 0,
+      lastSeq: 1,
+    };
+    const realization: SurfaceRealization = {
+      id: "realization-1",
+      orgId: "org-1",
+      runId: "run-1",
+      ref: context.ref,
+      renderedThroughSeq: 0,
+      segments: [],
+      presentation: {},
+      reconciliationRequired: false,
+      nativeStopPending: false,
+      version: 0,
+      retry: { attempt: 0, terminal: false },
+    };
+    const plan = planRender(projection, realization, slackCapabilities);
+    const continuation = plan.operations[1];
+    expect(continuation).toMatchObject({
+      type: "create",
+      content: { parts: [], text: expect.stringContaining("secret tool note") },
+    });
+    const slack = fakeSlack(
+      plan.operations.map(() => ({
+        body: { ok: true, channel: "C1", ts: "1800000001.000001" },
+      })),
+    );
+
+    await driver({ fetch: slack.fetch }).apply(plan.operations, context);
+
+    expect(slack.calls).toHaveLength(2);
+    expect(slack.calls.map(({ method }) => method)).toEqual([
+      "chat.postMessage",
+      "chat.postMessage",
+    ]);
+    for (const call of slack.calls) {
       expect(JSON.stringify(call.body)).not.toContain("secret tool note");
       expect(JSON.stringify(call.body)).not.toContain("secret tool result");
     }
