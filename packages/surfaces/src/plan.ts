@@ -354,7 +354,7 @@ function lifecycleState(projection: Projection): RenderContent["lifecycle"] {
       segment.parts.some(
         (part) =>
           part.kind === "elicitation" &&
-          part.elicitationKind === "approval" &&
+          (part.elicitationKind === "approval" || part.elicitationKind === "confirmation") &&
           part.blocking &&
           part.resolution === undefined,
       ),

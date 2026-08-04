@@ -179,8 +179,13 @@ function taskForPart(part: Part, messageId: string): SlackTaskUpdate | undefined
       status: part.status === "streaming" ? "in_progress" : "complete",
     };
   }
-  if (part.kind === "elicitation" && part.elicitationKind === "approval") {
+  if (
+    part.kind === "elicitation" &&
+    (part.elicitationKind === "approval" ||
+      (part.elicitationKind === "confirmation" && part.blocking))
+  ) {
     const resolution = part.resolution;
+    const label = part.elicitationKind === "approval" ? "Approval" : "Confirmation";
     const selected =
       resolution === undefined
         ? undefined
@@ -189,8 +194,8 @@ function taskForPart(part: Part, messageId: string): SlackTaskUpdate | undefined
     const actor = resolution?.by.displayName ?? resolution?.by.principalId;
     return {
       type: "task_update",
-      id: stableTaskId(messageId, "approval", part.elicitationId),
-      title: resolution === undefined ? "Approval required" : "Approval resolved",
+      id: stableTaskId(messageId, part.elicitationKind, part.elicitationId),
+      title: resolution === undefined ? `${label} required` : `${label} resolved`,
       status:
         resolution?.optionId === "expired"
           ? "error"

@@ -491,12 +491,13 @@ describe("renderSurface", () => {
 
   it("marks a revoked Slack installation terminal without advancing the cursor", async () => {
     const store = new MemoryStore();
+    const presence = vi.fn<SurfaceDriver["presence"]>();
     const result = await renderSurface({
       ...baseInput,
       store,
       driver: fakeDriver(async () => {
         throw new SurfaceDriverError("revoked", "installation revoked", { retryable: false });
-      }),
+      }, presence),
       projection: projection("Hello"),
     });
 
@@ -507,6 +508,7 @@ describe("renderSurface", () => {
         retry: { terminal: true, lastErrorCode: "revoked" },
       },
     });
+    expect(presence).toHaveBeenCalledWith("idle", expect.objectContaining({ runId: "run-1" }));
   });
 
   it("turns Slack's native stop into one durable run-stop request", async () => {

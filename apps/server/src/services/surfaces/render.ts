@@ -202,7 +202,10 @@ async function updateAdvisoryPresence(
   result: ClaimedRenderSurfaceResult,
 ): Promise<void> {
   try {
-    const presence = result.status === "stopped" ? "idle" : presenceFor(input.projection);
+    const presence =
+      result.status === "stopped" || result.status === "terminal_failure"
+        ? "idle"
+        : presenceFor(input.projection);
     await input.driver.presence(presence, {
       runId: input.projection.runId,
       ref: input.ref,
