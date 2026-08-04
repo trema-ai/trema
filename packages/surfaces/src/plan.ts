@@ -203,6 +203,7 @@ export function planRender(
             type: "append",
             remoteRef: prior.remoteRef,
             text: target.text.slice(prior.text.length),
+            content: target.content,
             prior: priorRenderState(prior),
           });
         } else {

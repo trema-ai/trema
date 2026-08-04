@@ -311,6 +311,7 @@ integration("surface realizations", () => {
           messageIndex: 0,
           remoteRef: "171234.0001",
           text: "more",
+          content: { text: "Hellomore", parts: [] },
           prior: { text: "Hello", metadata: { mode: "stream" } },
         },
       ],

@@ -115,7 +115,10 @@ function mutation(
     remoteRef: "1800000001.000001",
   };
   const prior = options.prior ?? { text: "Starting" };
-  if (type === "append") return { ...base, type, text: options.text ?? " more", prior };
+  if (type === "append") {
+    const delta = options.text ?? " more";
+    return { ...base, type, text: delta, content: content(`${prior.text}${delta}`), prior };
+  }
   if (type === "delete") return { ...base, type };
   return {
     ...base,
@@ -307,6 +310,67 @@ describe("SlackDriver", () => {
       { type: "section", text: { type: "mrkdwn", text: "Complete" } },
       canonicalRunLinkBlock,
     ]);
+  });
+
+  it("preserves lifecycle tasks when appending to a threadless snapshot", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+    const realization: SurfaceRealization = {
+      id: "realization-1",
+      orgId: "org-1",
+      runId: "run-1",
+      ref: threadlessContext.ref,
+      renderedThroughSeq: 0,
+      segments: [],
+      presentation: {},
+      reconciliationRequired: false,
+      nativeStopPending: false,
+      version: 0,
+      retry: { attempt: 0, terminal: false },
+    };
+    const runningProjection = (markdown: string, lastSeq: number): Projection => ({
+      runId: "run-1",
+      status: "running",
+      segments: [
+        {
+          index: 0,
+          parts: [{ kind: "text", id: "text-1", status: "streaming", markdown }],
+        },
+      ],
+      unknownEvents: 0,
+      lastSeq,
+    });
+    const initialPlan = planRender(
+      runningProjection("Starting", 1),
+      realization,
+      slackCapabilities,
+    );
+    const started = await render.apply(initialPlan.operations, threadlessContext);
+    const appendPlan = planRender(
+      runningProjection("Starting more", 2),
+      {
+        ...realization,
+        renderedThroughSeq: 1,
+        segments: acknowledge(initialPlan, started),
+      },
+      slackCapabilities,
+    );
+
+    expect(appendPlan.operations[0]).toMatchObject({ type: "append", text: " more" });
+    await render.apply(appendPlan.operations, threadlessContext);
+
+    const updatedBlocks = slack.calls[1]?.body.blocks as Array<Record<string, unknown>>;
+    expect(updatedBlocks[0]).toMatchObject({
+      type: "plan",
+      tasks: [expect.objectContaining({ title: "Run active", status: "in_progress" })],
+    });
+    expect(updatedBlocks[1]).toEqual({
+      type: "section",
+      text: { type: "mrkdwn", text: "Starting more" },
+    });
   });
 
   it("streams safe reasoning, tool progress, and citations as native Thinking Steps", async () => {
@@ -551,6 +615,27 @@ describe("SlackDriver", () => {
       expect(JSON.stringify(call.body)).not.toContain("secret tool note");
       expect(JSON.stringify(call.body)).not.toContain("secret tool result");
     }
+  });
+
+  it("uses lifecycle fallback text when task-only content has no safe narrative", async () => {
+    const slack = fakeSlack([{ body: { ok: true, channel: "C1", ts: "1800000001.000001" } }]);
+    const operation = create("private reasoning detail", {
+      finalized: true,
+      parts: [
+        {
+          kind: "reasoning",
+          id: "reason-1",
+          status: "done",
+          text: "private reasoning detail",
+        },
+      ],
+    });
+    operation.content.lifecycle = { state: "completed" };
+
+    await driver({ fetch: slack.fetch }).apply([operation], threadlessContext);
+
+    expect(slack.calls[0]?.body.text).toBe("Completed");
+    expect(JSON.stringify(slack.calls[0]?.body)).not.toContain("private reasoning detail");
   });
 
   it("omits sensitive activity continuations that have no typed source part", async () => {

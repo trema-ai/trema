@@ -238,6 +238,10 @@ describe("planRender", () => {
         type: "append",
         remoteRef: "remote-1",
         text: " world",
+        content: expect.objectContaining({
+          text: "Hello world",
+          lifecycle: { state: "running" },
+        }),
         prior: {
           text: "Hello",
           metadata: { streamCursor: "durable-driver-state" },

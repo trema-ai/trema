@@ -89,6 +89,8 @@ export type RenderOperation =
       type: "append";
       remoteRef: string;
       text: string;
+      /** Authoritative target snapshot for drivers that cannot apply a native delta. */
+      content: RenderContent;
       prior: PriorRenderState;
     })
   | (OperationBase & {
