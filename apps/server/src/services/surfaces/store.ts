@@ -160,9 +160,12 @@ export class PrismaSurfaceRealizationStore {
   /**
    * Reserves one advisory presence write for the caller's revision. The exact
    * revision check drops stale writes and the monotonic presence marker drops
-   * duplicate and superseded ones, so presence writes stay ordered by the
-   * revision that started them. Presence deliberately never touches the render
-   * lease: an advisory request that stalls must not exclude content rendering.
+   * duplicate and superseded ones, so presence writes are *started* in revision
+   * order. They are deliberately not fenced, so a write already in flight may
+   * still land after a newer one: presence is an advisory view that the next
+   * render reasserts, never a value a run's correctness depends on. Presence
+   * also never touches the render lease, because an advisory request that
+   * stalls must not exclude content rendering.
    */
   async claimPresence(id: string, expectedVersion: number): Promise<boolean> {
     const result = await this.#db.surfaceRealization.updateMany({
