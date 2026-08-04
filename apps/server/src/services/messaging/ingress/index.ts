@@ -162,7 +162,10 @@ export class SlackIngressService {
   /** Replays every verified delivery that was not durably completed. */
   recoverPending(): Promise<void> {
     const recovery = this.#recovery
-      .then(() => this.#drainPending())
+      .then(() => {
+        this.#cancelScheduledRecovery();
+        return this.#drainPending();
+      })
       .catch((error: unknown) => {
         // Slack has already received 200 once a delivery reaches this path. A
         // failure before an individual delivery is claimed therefore needs its
@@ -172,6 +175,12 @@ export class SlackIngressService {
       });
     this.#recovery = recovery.catch(() => undefined);
     return recovery;
+  }
+
+  #cancelScheduledRecovery(): void {
+    if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
+    this.#retryAt = undefined;
+    this.#retryTimer = undefined;
   }
 
   async #persist(id: string, payload: SlackIngressPayload): Promise<void> {
