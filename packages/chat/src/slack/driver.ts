@@ -20,7 +20,6 @@ import {
 import type { SlackDriverOptions, SlackRecipient } from "#chat/slack/contracts.js";
 import { isSlackPlatformError, mapSlackError } from "#chat/slack/errors.js";
 import {
-  appendThinkingText,
   changedThinkingChunks,
   initialThinkingChunks,
   parseThinkingState,
@@ -159,30 +158,23 @@ export class SlackDriver implements SurfaceDriver {
       case "create":
         return this.#create(operation, context, destination);
       case "append": {
+        // Deployments can replay plans staged before append operations carried
+        // their typed target content. The raw tier-zero text in those plans is
+        // not a verified Slack-safe source, so acknowledge it without sending
+        // or deriving adapter state from it. A later durable projection can
+        // reconcile the message from typed content.
+        const targetContent = (operation as { content?: RenderContent }).content;
+        if (targetContent === undefined) {
+          return appliedMessage(operation, operation.remoteRef, operation.prior.metadata ?? {});
+        }
         const prior =
           parseThinkingState(operation.prior.metadata) ?? emptyThinkingState(operation.prior.text);
-        // Plans staged before target content was added to append operations
-        // can still replay after a deployment. Preserve their prior delta path.
-        const targetContent = (operation as { content?: RenderContent }).content;
-        const legacyNext = appendThinkingText(prior, operation.text);
         if (operation.prior.metadata?.mode !== "stream") {
-          const text = `${operation.prior.text}${operation.text}`;
-          // The planner emits append only for text-only growth. Legacy staged
-          // plans therefore still have a complete tier-zero text snapshot.
-          const content =
-            targetContent ??
-            ({
-              text,
-              parts: [
-                {
-                  kind: "text",
-                  id: `${operation.messageId}:text`,
-                  status: "streaming",
-                  markdown: text,
-                },
-              ],
-            } satisfies RenderContent);
-          const realized = realizeMessage(content, operation.messageId, context.canonicalRunUrl);
+          const realized = realizeMessage(
+            targetContent,
+            operation.messageId,
+            context.canonicalRunUrl,
+          );
           await this.#call("chat.update", destination.channelRef, {
             blocks: realized.blocks,
             channel: destination.channelRef,
@@ -195,25 +187,13 @@ export class SlackDriver implements SurfaceDriver {
             slackMetadata(
               operation.prior.metadata,
               "snapshot",
-              targetContent === undefined
-                ? legacyNext
-                : initialThinkingChunks(realizeSlackThinking(targetContent, operation.messageId))
-                    .state,
+              initialThinkingChunks(realizeSlackThinking(targetContent, operation.messageId)).state,
             ),
           );
         }
-        const targetThinking =
-          targetContent === undefined
-            ? undefined
-            : realizeSlackThinking(targetContent, operation.messageId);
-        const changed =
-          targetThinking === undefined ? undefined : changedThinkingChunks(targetThinking, prior);
-        if (
-          targetContent !== undefined &&
-          targetThinking !== undefined &&
-          changed !== undefined &&
-          (changed.narrativeReplaced || changed.removedTask)
-        ) {
+        const targetThinking = realizeSlackThinking(targetContent, operation.messageId);
+        const changed = changedThinkingChunks(targetThinking, prior);
+        if (changed.narrativeReplaced || changed.removedTask) {
           const realized = realizeMessage(
             targetContent,
             operation.messageId,
@@ -238,16 +218,13 @@ export class SlackDriver implements SurfaceDriver {
         await this.#call("chat.appendStream", destination.channelRef, {
           channel: destination.channelRef,
           client_msg_id: slackClientMessageId(operation.id),
-          chunks:
-            changed === undefined
-              ? [{ type: "markdown_text", text: nonEmpty(operation.text) }]
-              : nonEmptyChunks(changed.chunks),
+          chunks: nonEmptyChunks(changed.chunks),
           ts: operation.remoteRef,
         });
         return appliedMessage(
           operation,
           operation.remoteRef,
-          slackMetadata(operation.prior.metadata, "stream", changed?.state ?? legacyNext),
+          slackMetadata(operation.prior.metadata, "stream", changed.state),
         );
       }
       case "replace": {

@@ -1128,6 +1128,43 @@ describe("SlackDriver", () => {
     });
   });
 
+  it("drops staged legacy appends without verified typed target content", async () => {
+    const legacyAppend = (
+      mode: "legacy" | "stream",
+      suffix: string,
+    ): Extract<RenderOperation, { type: "append" }> =>
+      ({
+        id: `run-1:segment:0:message:0:append:1:${mode}`,
+        type: "append",
+        messageId: "run-1:segment:0:message:0",
+        segmentId: "run-1:segment:0",
+        segmentIndex: 0,
+        messageIndex: 0,
+        remoteRef: "1800000001.000001",
+        text: suffix,
+        prior: {
+          text: "Looking up deployment",
+          metadata: { mode },
+        },
+      }) as unknown as Extract<RenderOperation, { type: "append" }>;
+    const operations = [
+      legacyAppend("legacy", "\nsecret tool note"),
+      legacyAppend("stream", "\nsecret tool result"),
+    ];
+    const slack = fakeSlack([]);
+
+    const result = await driver({ fetch: slack.fetch }).apply(operations, context);
+
+    expect(slack.calls).toEqual([]);
+    expect(result).toEqual({
+      appliedOperationIds: operations.map(({ id }) => id),
+      messages: [
+        expect.objectContaining({ metadata: { mode: "legacy" } }),
+        expect.objectContaining({ metadata: { mode: "stream" } }),
+      ],
+    });
+  });
+
   it("updates messages when prior Slack mode is absent or unrecognized", async () => {
     const slack = fakeSlack([
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
