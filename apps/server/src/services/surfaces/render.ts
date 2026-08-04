@@ -90,6 +90,16 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
     input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
   );
   if (realization === undefined) return { status: "busy" };
+  // Presence mirrors an already committed projection. It is advisory: Slack
+  // status failures must never hold the realization cursor or run lifecycle.
+  await input.driver
+    .presence(presenceFor(input.projection), {
+      runId: input.projection.runId,
+      ref: input.ref,
+      canonicalRunUrl: input.canonicalRunUrl,
+      realizationVersion: realization.version,
+    })
+    .catch(() => undefined);
   if (realization.nativeStopPending) return submitNativeStop(input, realization);
 
   let current = realization;
@@ -183,6 +193,10 @@ export async function renderSurface(input: RenderSurfaceInput): Promise<RenderSu
       realization: failed,
     };
   }
+}
+
+function presenceFor(projection: Projection): "working" | "idle" {
+  return projection.status === "pending" || projection.status === "running" ? "working" : "idle";
 }
 
 async function submitNativeStop(

@@ -274,17 +274,14 @@ describe("SlackDriver", () => {
       expect.objectContaining({
         type: "task_update",
         id: expect.stringMatching(/^task_[0-9a-f]{32}$/),
-        title: "Reasoning",
+        title: "Thinking",
         status: "in_progress",
-        output: "Check the deployment state",
       }),
       expect.objectContaining({
         type: "task_update",
         id: expect.stringMatching(/^task_[0-9a-f]{32}$/),
         title: "Checking deployment",
         status: "in_progress",
-        output: "Reading deploy docs",
-        sources: [{ type: "url", text: "deploy docs", url: "https://example.com/deploy" }],
       }),
       expect.objectContaining({
         type: "task_update",
@@ -298,10 +295,82 @@ describe("SlackDriver", () => {
       },
     ]);
     expect(JSON.stringify(call?.body)).not.toContain("private chain of thought");
+    expect(JSON.stringify(call?.body)).not.toContain("Check the deployment state");
     expect(JSON.stringify(call?.body)).not.toContain("super-secret tool input");
+    expect(JSON.stringify(call?.body)).not.toContain("Reading deploy docs");
   });
 
-  it("bounds native Thinking Step text to Slack's chunk limit", async () => {
+  it("reconciles approval tasks from committed state with stable ids and actor attribution", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+    const pending = pendingElicitation();
+    const started = await render.apply(
+      [
+        create("Waiting for approval", {
+          parts: [pending],
+        }),
+      ],
+      context,
+    );
+    const metadata = started.messages[0]?.metadata;
+    const resolved: Part = {
+      ...pending,
+      resolution: {
+        optionId: "approve",
+        by: { principalId: "principal-1", displayName: "Ada" },
+        at: "2026-08-04T00:00:00.000Z",
+      },
+    };
+
+    await render.apply(
+      [
+        mutation("replace", {
+          text: "Approved",
+          parts: [resolved],
+          prior: {
+            text: "Waiting for approval",
+            ...(metadata === undefined ? {} : { metadata }),
+          },
+        }),
+      ],
+      context,
+    );
+
+    const initial = slack.calls[0]?.body.chunks as Array<Record<string, unknown>>;
+    const updatePlan = (slack.calls[1]?.body.blocks as Array<Record<string, unknown>>)[0];
+    const update = updatePlan?.tasks as Array<Record<string, unknown>>;
+    const pendingTask = initial.find(({ title }) => title === "Approval required");
+    const resolvedTask = update.find(({ title }) => title === "Approval resolved");
+    expect(resolvedTask).toMatchObject({
+      task_id: pendingTask?.id,
+      status: "complete",
+    });
+    expect(JSON.stringify(resolvedTask?.output)).toContain("Approve by Ada");
+    expect(JSON.stringify(slack.calls[1]?.body)).not.toContain('"type":"actions"');
+  });
+
+  it("rate-limits advisory assistant presence in a thread", async () => {
+    const slack = fakeSlack([{ body: { ok: true } }]);
+
+    await driver({ fetch: slack.fetch }).presence("working", context);
+
+    expect(slack.calls).toEqual([
+      {
+        method: "assistant.threads.setStatus",
+        contentType: "application/json",
+        body: {
+          channel_id: "C1",
+          thread_ts: "1800000000.000001",
+          status: "Working…",
+        },
+      },
+    ]);
+  });
+
+  it("bounds native Thinking Step titles and omits unclassified detail", async () => {
     const longText = "x".repeat(400);
     const parts: Part[] = [
       { kind: "reasoning", id: "reason-1", status: "done", text: longText },
@@ -325,16 +394,13 @@ describe("SlackDriver", () => {
     expect(tasks).toHaveLength(2);
     expect(
       tasks.every(
-        ({ title, output }) =>
-          typeof title === "string" &&
-          Array.from(title).length <= 256 &&
-          typeof output === "string" &&
-          Array.from(output).length <= 256,
+        ({ title }) => typeof title === "string" && Array.from(title).length <= 256,
       ),
     ).toBe(true);
+    expect(tasks.every((task) => !("output" in task))).toBe(true);
   });
 
-  it("reconciles a task card by stable id using replacement output", async () => {
+  it("reconciles a task card by stable id without exposing result detail", async () => {
     const slack = fakeSlack([
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
@@ -381,9 +447,9 @@ describe("SlackDriver", () => {
       id: initialTask?.id,
       title: "Searching",
       status: "complete",
-      output: "Found Slack docs\nReady",
-      sources: [{ type: "url", text: "Slack docs", url: "https://docs.slack.dev/" }],
     });
+    expect(updatedTask).not.toHaveProperty("output");
+    expect(updatedTask).not.toHaveProperty("sources");
     expect(updatedTask).not.toHaveProperty("details");
   });
 
@@ -438,7 +504,6 @@ describe("SlackDriver", () => {
             type: "task_update",
             title: "Building",
             status: "complete",
-            output: "Build passed",
           }),
           { type: "markdown_text", text: " complete" },
         ],

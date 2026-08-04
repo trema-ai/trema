@@ -64,6 +64,64 @@ function realization(overrides: Partial<SurfaceRealization> = {}): SurfaceRealiz
 }
 
 describe("planRender", () => {
+  it("creates one stable lifecycle message before a queued run has content", () => {
+    const queued: Projection = {
+      runId: "run-1",
+      status: "pending",
+      segments: [],
+      unknownEvents: 0,
+      lastSeq: 0,
+    };
+
+    const plan = planRender(queued, realization(), deltaCapabilities);
+
+    expect(plan.operations).toEqual([
+      expect.objectContaining({
+        type: "create",
+        messageId: "run-1:segment:0:message:0",
+        content: {
+          text: "Queued",
+          parts: [],
+          lifecycle: { state: "queued" },
+        },
+        finalized: false,
+      }),
+    ]);
+  });
+
+  it("projects an unresolved blocking approval as waiting for approval", () => {
+    const waiting: Projection = {
+      runId: "run-1",
+      status: "paused",
+      segments: [
+        {
+          index: 0,
+          parts: [
+            {
+              kind: "elicitation",
+              id: "approval-1",
+              elicitationId: "approval-1",
+              elicitationKind: "approval",
+              prompt: "Deploy?",
+              options: [{ id: "approve", label: "Approve" }],
+              blocking: true,
+            },
+          ],
+          end: { reason: "paused" },
+        },
+      ],
+      unknownEvents: 0,
+      lastSeq: 2,
+    };
+
+    const plan = planRender(waiting, realization(), deltaCapabilities);
+
+    expect(plan.operations[0]).toMatchObject({
+      type: "create",
+      content: { lifecycle: { state: "waiting_for_approval" } },
+    });
+  });
+
   it("creates an initial realization and then appends only the new projection text", () => {
     const initial = planRender(projection("Hello"), realization(), deltaCapabilities);
     expect(initial.operations).toEqual([

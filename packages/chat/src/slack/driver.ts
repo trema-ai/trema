@@ -115,9 +115,14 @@ export class SlackDriver implements SurfaceDriver {
     return { appliedOperationIds, messages };
   }
 
-  async presence(_state: "working" | "idle", _context: SurfaceApplyContext): Promise<void> {
-    // DEV-97 owns Slack lifecycle and presence UI. Presence is advisory and is
-    // deliberately a no-op until it can be derived from committed run state.
+  async presence(state: "working" | "idle", context: SurfaceApplyContext): Promise<void> {
+    const destination = slackDestination(context.ref);
+    if (destination.threadRef === undefined) return;
+    await this.#call("assistant.threads.setStatus", destination.channelRef, {
+      channel_id: destination.channelRef,
+      thread_ts: destination.threadRef,
+      status: state === "working" ? "Working…" : "",
+    });
   }
 
   normalize(_event: unknown, _ref: SurfaceRef): SurfaceEvent | null {

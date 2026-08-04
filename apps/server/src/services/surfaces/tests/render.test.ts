@@ -176,11 +176,12 @@ class MemoryStore implements SurfaceRealizationStore {
 
 function fakeDriver(
   apply: (operations: RenderOperation[], context: SurfaceApplyContext) => Promise<ApplyResult>,
+  presence: SurfaceDriver["presence"] = async () => undefined,
 ): SurfaceDriver {
   return {
     capabilities,
     apply,
-    async presence() {},
+    presence,
     normalize(_event: unknown, _ref: SurfaceRef): SurfaceEvent | null {
       return null;
     },
@@ -207,6 +208,30 @@ const baseInput = {
 } as const;
 
 describe("renderSurface", () => {
+  it("does not make advisory presence a rendering dependency", async () => {
+    const store = new MemoryStore();
+    const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));
+    const presence = vi.fn(async () => {
+      throw new SurfaceDriverError("unavailable", "Slack status unavailable", {
+        retryable: true,
+      });
+    });
+
+    const result = await renderSurface({
+      ...baseInput,
+      store,
+      driver: fakeDriver(apply, presence),
+      projection: projection("Hello"),
+    });
+
+    expect(result.status).toBe("rendered");
+    expect(presence).toHaveBeenCalledWith(
+      "working",
+      expect.objectContaining({ runId: "run-1" }),
+    );
+    expect(apply).toHaveBeenCalledOnce();
+  });
+
   it("stages, applies, and persists one Slack realization without replay duplicates", async () => {
     const store = new MemoryStore();
     const apply = vi.fn(async (operations: RenderOperation[]) => createdResult(operations));

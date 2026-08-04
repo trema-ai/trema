@@ -84,7 +84,14 @@ export function planRender(
   const nextSegments: RealizedSegment[] = [];
   let deferred = false;
 
-  for (const segment of projection.segments) {
+  // A newly queued run has no content events yet. Give editable, streaming
+  // surfaces one stable message that later reconciles into segment zero.
+  const projectedSegments =
+    projection.segments.length === 0 && projection.status === "pending"
+      ? [{ index: 0, parts: [] } satisfies Segment]
+      : projection.segments;
+
+  for (const segment of projectedSegments) {
     const segmentId = segmentIdentity(projection.runId, segment.index);
     // Immutable and non-streaming destinations wait for a semantic boundary,
     // then receive the settled snapshot once.
@@ -101,7 +108,13 @@ export function planRender(
     }
 
     const existing = existingById.get(segmentId);
-    const planned = realizeSegment(segment, segmentId, capabilities.budgets.messageChars, terminal);
+    const planned = realizeSegment(
+      segment,
+      segmentId,
+      capabilities.budgets.messageChars,
+      terminal,
+      segment.index === 0 ? lifecycleState(projection) : undefined,
+    );
     const messages: RealizedMessage[] =
       capabilities.mutation === "append-only" ? [...(existing?.messages ?? [])] : [];
     const plannedIds = new Set(planned.map((message) => message.id));
@@ -305,12 +318,19 @@ function realizeSegment(
   segmentId: string,
   budget: number,
   terminal: boolean,
+  lifecycle: RenderContent["lifecycle"],
 ): PlannedMessage[] {
   const content = segment.parts.map((part) => ({
     part: driverPart(part),
     text: partText(part),
   }));
   const chunks = chunkContent(content, budget);
+  if (chunks.length === 0 && lifecycle !== undefined) {
+    chunks.push({ text: lifecycleText(lifecycle), parts: [] });
+  }
+  if (chunks[0] !== undefined && lifecycle !== undefined) {
+    chunks[0] = { ...chunks[0], lifecycle };
+  }
   const finalized = terminal || segment.end !== undefined;
   return chunks.map((renderContent, index) => {
     const id = `${segmentId}:message:${index}`;
@@ -323,6 +343,31 @@ function realizeSegment(
       content: renderContent,
     };
   });
+}
+
+function lifecycleState(projection: Projection): RenderContent["lifecycle"] {
+  if (projection.status === "pending") return { state: "queued" };
+  if (projection.status === "paused") {
+    const waitingForApproval = projection.segments.some((segment) =>
+      segment.parts.some(
+        (part) =>
+          part.kind === "elicitation" &&
+          part.elicitationKind === "approval" &&
+          part.blocking &&
+          part.resolution === undefined,
+      ),
+    );
+    return { state: waitingForApproval ? "waiting_for_approval" : "paused" };
+  }
+  return { state: projection.status };
+}
+
+function lifecycleText(lifecycle: NonNullable<RenderContent["lifecycle"]>): string {
+  return lifecycle.state === "waiting_for_approval"
+    ? "Waiting for approval"
+    : lifecycle.state === "cancelled"
+      ? "Canceled"
+      : `${lifecycle.state[0]?.toUpperCase()}${lifecycle.state.slice(1)}`;
 }
 
 function driverPart(part: Part): Part {
