@@ -178,6 +178,76 @@ describe("SlackDriver", () => {
     ]);
   });
 
+  it("preserves stream mode across lifecycle-only transitions", async () => {
+    const slack = fakeSlack([
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+      { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
+    ]);
+    const render = driver({ fetch: slack.fetch });
+    const realization: SurfaceRealization = {
+      id: "realization-1",
+      orgId: "org-1",
+      runId: "run-1",
+      ref: context.ref,
+      renderedThroughSeq: 0,
+      segments: [],
+      presentation: {},
+      reconciliationRequired: false,
+      nativeStopPending: false,
+      version: 0,
+      retry: { attempt: 0, terminal: false },
+    };
+    const projection = (
+      status: Projection["status"],
+      lastSeq: number,
+      parts: Part[] = [],
+    ): Projection => ({
+      runId: "run-1",
+      status,
+      segments: parts.length === 0 ? [] : [{ index: 0, parts }],
+      unknownEvents: 0,
+      lastSeq,
+    });
+
+    const queuedPlan = planRender(projection("pending", 0), realization, slackCapabilities);
+    const queued = await render.apply(queuedPlan.operations, context);
+    const runningPlan = planRender(
+      projection("running", 1),
+      { ...realization, segments: acknowledge(queuedPlan, queued) },
+      slackCapabilities,
+    );
+    const running = await render.apply(runningPlan.operations, context);
+    const answerPlan = planRender(
+      projection("running", 2, [
+        { kind: "text", id: "text-1", status: "streaming", markdown: "Answer" },
+      ]),
+      {
+        ...realization,
+        renderedThroughSeq: 1,
+        segments: acknowledge(runningPlan, running),
+      },
+      slackCapabilities,
+    );
+    const appended = await render.apply(answerPlan.operations, context);
+
+    expect(slack.calls.map(({ method }) => method)).toEqual([
+      "chat.startStream",
+      "chat.appendStream",
+      "chat.appendStream",
+    ]);
+    expect(slack.calls[0]?.body.chunks).toEqual([
+      { type: "plan_update", title: "Progress" },
+      expect.objectContaining({ type: "task_update", title: "Run queued", status: "pending" }),
+    ]);
+    expect(slack.calls[1]?.body.chunks).toEqual([
+      expect.objectContaining({ type: "task_update", title: "Run active", status: "in_progress" }),
+    ]);
+    expect(slack.calls[2]?.body.chunks).toEqual([{ type: "markdown_text", text: "Answer" }]);
+    expect(running.messages[0]).toMatchObject({ metadata: { mode: "stream" } });
+    expect(appended.messages[0]).toMatchObject({ metadata: { mode: "stream" } });
+  });
+
   it("keeps threadless in-progress deliveries in editable snapshot mode", async () => {
     const slack = fakeSlack([
       { body: { ok: true, channel: "C1", ts: "1800000001.000001" } },
@@ -365,6 +435,7 @@ describe("SlackDriver", () => {
     const pendingTask = initialTasks.find(({ title }) => title === "Approval required");
     const resolvedTask = updateTasks.find(({ title }) => title === "Approval resolved");
     expect(slack.calls.map(({ method }) => method)).toEqual(["chat.postMessage", "chat.update"]);
+    expect(slack.calls[0]?.body.text).toBe("*Deploy* version 2.4.1?");
     expect(JSON.stringify(slack.calls[0]?.body)).toContain('"type":"actions"');
     expect(resolvedTask).toMatchObject({
       task_id: pendingTask?.task_id,

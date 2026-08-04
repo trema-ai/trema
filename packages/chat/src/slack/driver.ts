@@ -494,9 +494,19 @@ function realizeMessage(
 ): RealizedMessage {
   const thinking = realizeSlackThinking(content, messageId);
   const narrative = toSlackMrkdwn(thinking.narrativeText);
-  const text = nonEmpty(narrative);
+  const elicitation = unresolvedElicitation(content);
+  const fallback = [
+    narrative,
+    ...(content.parts.length === 0 && content.lifecycle !== undefined
+      ? [lifecycleFallback(content.lifecycle.state)]
+      : []),
+    ...(elicitation === undefined ? [] : [toSlackMrkdwn(elicitation.prompt)]),
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  const text = nonEmpty(fallback);
   const plan = staticThinkingBlock(thinking);
-  const controls = unresolvedElicitationBlocks(content);
+  const controls = elicitation === undefined ? [] : realizeElicitation(elicitation);
   const runLink = canonicalRunLinkBlock(canonicalRunUrl);
   const sectionLimit =
     SLACK_MESSAGE_BLOCK_LIMIT - (plan === undefined ? 0 : 1) - controls.length - 1;
@@ -509,6 +519,18 @@ function realizeMessage(
       runLink,
     ],
   };
+}
+
+function lifecycleFallback(state: NonNullable<RenderContent["lifecycle"]>["state"]): string {
+  return {
+    queued: "Queued",
+    running: "Running",
+    waiting_for_approval: "Waiting for approval",
+    paused: "Paused",
+    completed: "Completed",
+    failed: "Failed",
+    cancelled: "Canceled",
+  }[state];
 }
 
 function finalizeBlocks(content: RenderContent, canonicalRunUrl: string): { blocks: unknown[] } {
@@ -538,11 +560,15 @@ function canonicalRunLinkBlock(canonicalRunUrl: string): Record<string, unknown>
 }
 
 function unresolvedElicitationBlocks(content: RenderContent): unknown[] {
-  const elicitation = content.parts.find(
+  const elicitation = unresolvedElicitation(content);
+  return elicitation === undefined ? [] : realizeElicitation(elicitation);
+}
+
+function unresolvedElicitation(content: RenderContent): ElicitationPart | undefined {
+  return content.parts.find(
     (part): part is ElicitationPart =>
       part.kind === "elicitation" && part.blocking && part.resolution === undefined,
   );
-  return elicitation === undefined ? [] : realizeElicitation(elicitation);
 }
 
 function realizeElicitation(elicitation: ElicitationPart): unknown[] {
