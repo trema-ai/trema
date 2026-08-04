@@ -1228,8 +1228,21 @@ integration("Slack ingress", () => {
       expect.objectContaining({
         channelId: "C123ABC",
         visibility: "private",
+        text: expect.stringMatching(
+          /http:\/\/127\.0\.0\.1:5173\/link\/slack\?token=[^|>]+\|Link your Trema account>/,
+        ),
       }),
     );
+    await expect(
+      db.identityLinkChallenge.count({
+        where: {
+          orgId: unlinked.org.id,
+          surface: "slack",
+          externalUserId: `${unlinked.workspaceId}:U123ABC`,
+        },
+      }),
+    ).resolves.toBe(1);
+    expect(notify.mock.calls[0]?.[0].text).not.toMatch(/tokenHash|xoxb-/);
 
     const revoked = await setup("TREVOKED");
     await db.connectorConnection.update({
@@ -1525,6 +1538,45 @@ integration("Slack ingress", () => {
       }),
     );
     expect(notify.mock.calls[0]?.[0].text).toContain("|Configure channel>");
+  });
+
+  it("delivers an unlinked Slack identity notice privately in channels and DMs", async () => {
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+
+    const channel = await setup("TSELFLINKCH", false);
+    const channelIngress = subject({ notify });
+    await channelIngress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({ eventId: "Ev-self-link-channel", workspaceId: channel.workspaceId }),
+        ),
+      ),
+    );
+    await channelIngress.drain();
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "C123ABC",
+        directMessage: false,
+        visibility: "private",
+        text: expect.stringContaining("/link/slack?token="),
+      }),
+    );
+
+    const dm = await setup("TSELFLINKDM", false);
+    const dmIngress = subject({ notify });
+    await dmIngress.service.accept(
+      signedRequest(JSON.stringify(directMessage(dm.workspaceId, "Ev-self-link-dm"))),
+    );
+    await dmIngress.drain();
+    expect(notify).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        channelId: "D123ABC",
+        directMessage: true,
+        visibility: "private",
+        text: expect.stringContaining("/link/slack?token="),
+      }),
+    );
+    await expect(db.runIntent.count()).resolves.toBe(0);
   });
 
   it("routes approval and cancellation controls through durable target intents", async () => {

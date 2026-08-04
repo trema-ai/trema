@@ -239,38 +239,39 @@ model Org {
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   principals            Principal[]
-  identityLinks         IdentityLink[]
-  scopes                Scope[]
-  grants                Grant[]
-  policies              Policy[]
-  approvals             Approval[]
-  toolGrants            ToolGrant[]
-  invites               Invite[]
-  serviceCredentials    ServiceCredential[]
-  auditLogs             AuditLog[]
-  bindings              Binding[]
-  items                 Item[]
-  itemVersions          ItemVersion[]
-  clientRegistrations   ClientRegistration[]
-  connectorConnections  ConnectorConnection[]
-  connectorOAuthStates  ConnectorOAuthState[]
-  modelProviders        ModelProvider[]
-  modelDefaults         ModelDefault[]
-  capabilityProviders   CapabilityProvider[]
-  capabilityRoutes      CapabilityRoute[]
-  contextSessions       ContextSession[]
-  conversations         Conversation[]
-  messages              Message[]
-  agentRuns             AgentRun[]
-  turns                 Turn[]
-  runEvents             RunEvent[]
-  runQueuedInputs       RunQueuedInput[]
-  runIntents            RunIntent[]
-  runStops              RunStop[]
-  runElicitations       RunElicitation[]
-  surfaceRealizations   SurfaceRealization[]
-  schedules             Schedule[]
-  scheduleFirings       ScheduleFiring[]
+  identityLinks              IdentityLink[]
+  identityLinkChallenges     IdentityLinkChallenge[]
+  scopes                     Scope[]
+  grants                     Grant[]
+  policies                   Policy[]
+  approvals                  Approval[]
+  toolGrants                 ToolGrant[]
+  invites                    Invite[]
+  serviceCredentials         ServiceCredential[]
+  auditLogs                  AuditLog[]
+  bindings                   Binding[]
+  items                      Item[]
+  itemVersions               ItemVersion[]
+  clientRegistrations        ClientRegistration[]
+  connectorConnections       ConnectorConnection[]
+  connectorOAuthStates       ConnectorOAuthState[]
+  modelProviders             ModelProvider[]
+  modelDefaults              ModelDefault[]
+  capabilityProviders        CapabilityProvider[]
+  capabilityRoutes           CapabilityRoute[]
+  contextSessions            ContextSession[]
+  conversations              Conversation[]
+  messages                   Message[]
+  agentRuns                  AgentRun[]
+  turns                      Turn[]
+  runEvents                  RunEvent[]
+  runQueuedInputs            RunQueuedInput[]
+  runIntents                 RunIntent[]
+  runStops                   RunStop[]
+  runElicitations            RunElicitation[]
+  surfaceRealizations        SurfaceRealization[]
+  schedules                  Schedule[]
+  scheduleFirings            ScheduleFiring[]
 }
 
 /// Active agent uniqueness is enforced by the DB-level partial unique index
@@ -332,6 +333,23 @@ model IdentityLink {
 
   @@unique([orgId, surface, externalUserId])
   @@index([orgId, principalId])
+}
+
+/// Single-use self-link challenge delivered into a surface account. The
+/// plaintext token appears only in the magic link; only `tokenHash` is stored.
+model IdentityLinkChallenge {
+  id             String    @id @default(uuid(7))
+  orgId          String
+  surface        String
+  externalUserId String
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  redeemedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  org            Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, surface, externalUserId])
+  @@index([expiresAt])
 }
 
 /// Personal-scope uniqueness is enforced by the DB-level partial unique index

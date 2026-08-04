@@ -28,6 +28,9 @@ const CustomizePage = lazy(() =>
 );
 const Gallery = lazy(() => import("#web/pages/gallery.tsx").then((m) => ({ default: m.Gallery })));
 const JoinPage = lazy(() => import("#web/pages/join.tsx").then((m) => ({ default: m.JoinPage })));
+const LinkSlackPage = lazy(() =>
+  import("#web/pages/link-slack.tsx").then((m) => ({ default: m.LinkSlackPage })),
+);
 const RunPage = lazy(() =>
   import("#web/pages/runs/detail.tsx").then((m) => ({ default: m.RunPage })),
 );
@@ -153,6 +156,7 @@ function AppRoutes() {
           }
         />
         <Route path="/join" element={<JoinPage />} />
+        <Route path="/link/slack" element={<LinkSlackPage />} />
         <Route path="/gallery" element={shell(<Gallery />)} />
         <Route path="/automations" element={shell(<AutomationsPage />)} />
         <Route path="/runs" element={shell(<RunsPage />)} />
