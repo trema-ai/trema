@@ -200,7 +200,10 @@ integration("Slack installation and conversation bindings", () => {
         userId: "U123ABC",
         masterKey,
       }),
-    ).rejects.toMatchObject({ reason: "identity_unlinked" });
+    ).rejects.toMatchObject({
+      reason: "identity_unlinked",
+      context: { orgId: fixture.org.id, connectionId: fixture.connection.id },
+    });
 
     await setSlackIdentityLink(db, {
       orgId: fixture.org.id,
@@ -239,6 +242,41 @@ integration("Slack installation and conversation bindings", () => {
         masterKey,
       }),
     ).rejects.toBeInstanceOf(SlackRequestRejectedError);
+  });
+
+  it("rejects deactivated linked members without treating them as unlinked", async () => {
+    const fixture = await setup("TDEACTIVATED");
+    await createSlackBinding(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      connectionId: fixture.connection.id,
+      workspaceId: fixture.workspaceId,
+      channelId: "C123ABC",
+      scopeId: fixture.sharedScope.id,
+    });
+    await setSlackIdentityLink(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: fixture.member.id,
+      workspaceId: fixture.workspaceId,
+      userId: "U123ABC",
+      principalId: fixture.member.id,
+    });
+    await db.principal.update({
+      where: { id: fixture.member.id },
+      data: { deactivatedAt: new Date() },
+    });
+
+    await expect(
+      resolveSlackRequest(db, {
+        workspaceId: fixture.workspaceId,
+        channelId: "C123ABC",
+        userId: "U123ABC",
+        masterKey,
+      }),
+    ).rejects.toMatchObject({
+      reason: "identity_deactivated",
+      context: { orgId: fixture.org.id, connectionId: fixture.connection.id },
+    });
   });
 
   it("enforces one active Trema organization per Slack workspace", async () => {

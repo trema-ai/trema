@@ -11,7 +11,6 @@ import { messagingRouter } from "#server/rpc/messaging.js";
 import { createClientRegistration } from "#server/services/connectors/index.js";
 import {
   hashIdentityLinkChallengeToken,
-  IdentityLinkChallengeConflictError,
   IdentityLinkChallengeNotFoundError,
   mintSlackIdentityLinkChallenge,
   previewSlackIdentityLinkChallenge,
@@ -296,7 +295,7 @@ integration("Slack identity link challenges", () => {
         token: minted.token,
         authId: other.user.id,
       }),
-    ).rejects.toBeInstanceOf(IdentityLinkChallengeConflictError);
+    ).rejects.toMatchObject({ reason: "not_a_member" });
 
     await expect(
       call(
@@ -304,7 +303,7 @@ integration("Slack identity link challenges", () => {
         { token: minted.token },
         { context: other.context },
       ),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+    ).rejects.toMatchObject({ code: "CONFLICT", data: { reason: "not_a_member" } });
 
     await expect(db.identityLink.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
     await expect(
@@ -358,7 +357,7 @@ integration("Slack identity link challenges", () => {
         token: minted.token,
         authId: fixture.user.id,
       }),
-    ).rejects.toBeInstanceOf(IdentityLinkChallengeConflictError);
+    ).rejects.toMatchObject({ reason: "identity_conflict" });
 
     await expect(
       db.identityLink.findUniqueOrThrow({
@@ -393,7 +392,7 @@ integration("Slack identity link challenges", () => {
         token: minted.token,
         authId: fixture.user.id,
       }),
-    ).rejects.toBeInstanceOf(IdentityLinkChallengeConflictError);
+    ).rejects.toMatchObject({ reason: "deactivated" });
     await expect(db.identityLink.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
     await expect(
       db.identityLinkChallenge.findUniqueOrThrow({ where: { id: minted.challenge.id } }),

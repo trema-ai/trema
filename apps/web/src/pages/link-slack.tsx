@@ -7,6 +7,39 @@ import { Button } from "#web/components/ui/button.tsx";
 import { authClient, orpc, rpcClient } from "#web/lib/api.ts";
 import { Loading } from "#web/pages/home.tsx";
 
+type IdentityLinkConflictReason = "identity_conflict" | "deactivated" | "not_a_member";
+
+function identityLinkConflictReason(cause: unknown): IdentityLinkConflictReason | undefined {
+  if (
+    typeof cause !== "object" ||
+    cause === null ||
+    !("data" in cause) ||
+    typeof cause.data !== "object" ||
+    cause.data === null ||
+    !("reason" in cause.data)
+  ) {
+    return undefined;
+  }
+  const reason = cause.data.reason;
+  if (reason === "identity_conflict" || reason === "deactivated" || reason === "not_a_member") {
+    return reason;
+  }
+  return undefined;
+}
+
+function redeemFailureMessage(cause: unknown): string {
+  switch (identityLinkConflictReason(cause)) {
+    case "identity_conflict":
+      return "This Slack account is already linked to another Trema member. Ask a Trema administrator to resolve the conflict.";
+    case "deactivated":
+      return "A deactivated member cannot link a Slack identity.";
+    case "not_a_member":
+      return "You must be an active member of this organization to link this Slack account.";
+    default:
+      return "This link is invalid, expired, or has already been used.";
+  }
+}
+
 export function LinkSlackPage() {
   const session = authClient.useSession();
   const [search] = useSearchParams();
@@ -78,18 +111,7 @@ export function LinkSlackPage() {
       queryClient.invalidateQueries();
       setLinked({ workspaceId: result.workspaceId, userId: result.userId });
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Identity link failed";
-      if (/already linked to another/i.test(message)) {
-        setError(
-          "This Slack account is already linked to another Trema member. Ask a Trema administrator to resolve the conflict.",
-        );
-      } else if (/deactivated/i.test(message)) {
-        setError("A deactivated member cannot link a Slack identity.");
-      } else if (/active member/i.test(message)) {
-        setError("You must be an active member of this organization to link this Slack account.");
-      } else {
-        setError("This link is invalid, expired, or has already been used.");
-      }
+      setError(redeemFailureMessage(cause));
     } finally {
       setBusy(false);
     }

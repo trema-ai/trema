@@ -26,7 +26,9 @@ import { mintSlackIdentityLinkChallenge } from "#server/services/messaging/ident
 import {
   applySlackLifecycleEvent,
   resolveSlackRequest,
+  SLACK_PROVIDER_KEY,
   type SlackLifecycleEvent,
+  type SlackRequestRejectionContext,
   SlackRequestRejectedError,
 } from "#server/services/messaging/slack.js";
 import {
@@ -76,6 +78,8 @@ export type SlackIngressNotice = (input: {
   visibility: "private" | "channel";
   text: string;
   connectionIds?: readonly string[];
+  orgId?: string;
+  connectionId?: string;
 }) => Promise<void>;
 
 export interface SlackIngressOptions {
@@ -568,16 +572,24 @@ export class SlackIngressService {
             this.#channelBindingNotice(event),
             "channel",
             connectionIds,
+            error.context,
           );
         } else if (error.reason === "identity_unlinked") {
           await this.#safeNotice(
             event,
-            await this.#identityLinkNotice(event, connectionIds),
+            await this.#identityLinkNotice(event, error.context),
             "private",
             connectionIds,
+            error.context,
           );
         } else if (shouldNotify(error.reason)) {
-          await this.#safeNotice(event, SAFE_REJECTION, "private", connectionIds);
+          await this.#safeNotice(
+            event,
+            SAFE_REJECTION,
+            "private",
+            connectionIds,
+            error.context,
+          );
         }
         return "completed";
       }
@@ -867,6 +879,7 @@ export class SlackIngressService {
     text: string,
     visibility: "private" | "channel" = "private",
     connectionIds?: readonly string[],
+    resolved?: SlackRequestRejectionContext,
   ): Promise<void> {
     if (event.surfaceRef === undefined || event.surfaceRef.teamRef === undefined) return;
     await this.#notify({
@@ -878,6 +891,9 @@ export class SlackIngressService {
       visibility,
       text,
       ...(connectionIds === undefined ? {} : { connectionIds }),
+      ...(resolved === undefined
+        ? {}
+        : { orgId: resolved.orgId, connectionId: resolved.connectionId }),
     }).catch(() => {
       // Provider failures can retain request objects containing credentials.
       // Report only that the safe response failed, never the error object.
@@ -897,31 +913,21 @@ export class SlackIngressService {
 
   async #identityLinkNotice(
     event: MessageSurfaceEvent | InteractionSurfaceEvent,
-    connectionIds?: readonly string[],
+    resolved?: SlackRequestRejectionContext,
   ): Promise<string> {
     const surfaceRef = event.surfaceRef;
     if (surfaceRef === undefined || surfaceRef.teamRef === undefined) return SAFE_REJECTION;
-    const connection = await this.#options.db.connectorConnection.findFirst({
-      where: {
-        ...(connectionIds === undefined ? {} : { id: { in: [...connectionIds] } }),
-        providerKey: "slack",
-        revokedAt: null,
-        config: { path: ["team.id"], equals: surfaceRef.teamRef },
-        owner: { kind: "agent", deactivatedAt: null },
-      },
-      select: { orgId: true },
-    });
-    if (connection === null) return SAFE_REJECTION;
+    if (resolved === undefined) return SAFE_REJECTION;
     try {
       const minted = await mintSlackIdentityLinkChallenge(this.#options.db, this.#options.env, {
-        orgId: connection.orgId,
+        orgId: resolved.orgId,
         workspaceId: surfaceRef.teamRef,
         userId: event.authorRef,
       });
       return `This Slack account isn't linked to Trema. <${minted.link}|Link your Trema account>, then retry your message.`;
     } catch (error) {
       log.warn("Slack identity link challenge mint failed", {
-        orgId: connection.orgId,
+        orgId: resolved.orgId,
         workspaceId: surfaceRef.teamRef,
         userId: event.authorRef,
         error,
@@ -931,16 +937,19 @@ export class SlackIngressService {
   }
 
   async #sendNotice(input: Parameters<SlackIngressNotice>[0]): Promise<void> {
-    const connection = await this.#options.db.connectorConnection.findFirst({
-      where: {
-        ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
-        providerKey: "slack",
-        revokedAt: null,
-        config: { path: ["team.id"], equals: input.workspaceId },
-        owner: { kind: "agent", deactivatedAt: null },
-      },
-      select: { id: true, orgId: true },
-    });
+    const connection =
+      input.orgId !== undefined && input.connectionId !== undefined
+        ? { id: input.connectionId, orgId: input.orgId }
+        : await this.#options.db.connectorConnection.findFirst({
+            where: {
+              ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
+              providerKey: SLACK_PROVIDER_KEY,
+              revokedAt: null,
+              config: { path: ["team.id"], equals: input.workspaceId },
+              owner: { kind: "agent", deactivatedAt: null },
+            },
+            select: { id: true, orgId: true },
+          });
     if (connection === null) return;
     let resolved: Awaited<ReturnType<typeof resolveConnectionCredential>>;
     try {
@@ -1011,6 +1020,7 @@ class SlackTargetMismatchError extends Error {
 function shouldNotify(reason: SlackRequestRejectedError["reason"]): boolean {
   return (
     reason === "identity_unlinked" ||
+    reason === "identity_deactivated" ||
     reason === "location_unbound" ||
     reason === "personal_scopes_disabled" ||
     reason === "connector_mismatch"

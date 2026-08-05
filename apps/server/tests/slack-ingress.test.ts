@@ -1231,6 +1231,8 @@ integration("Slack ingress", () => {
         text: expect.stringMatching(
           /http:\/\/127\.0\.0\.1:5173\/link\/slack\?token=[^|>]+\|Link your Trema account>/,
         ),
+        orgId: unlinked.org.id,
+        connectionId: unlinked.connection.id,
       }),
     );
     await expect(
@@ -1276,6 +1278,46 @@ integration("Slack ingress", () => {
 
     await expect(db.runIntent.count()).resolves.toBe(0);
     expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it("returns the generic safe rejection for deactivated linked members without minting", async () => {
+    const notify = vi.fn<SlackIngressNotice>(async () => undefined);
+    const fixture = await setup("TDEACTIVATEDLINK", true);
+    await db.principal.update({
+      where: { id: fixture.member.id },
+      data: { deactivatedAt: new Date() },
+    });
+    const ingress = subject({ notify });
+
+    await ingress.service.accept(
+      signedRequest(
+        JSON.stringify(
+          appMention({ eventId: "Ev-deactivated", workspaceId: fixture.workspaceId }),
+        ),
+      ),
+    );
+    await ingress.drain();
+
+    expect(notify).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        channelId: "C123ABC",
+        visibility: "private",
+        text: "Trema can't start work from this Slack account or conversation. Ask a Trema administrator to check the Slack connection, member link, and conversation binding.",
+        orgId: fixture.org.id,
+        connectionId: fixture.connection.id,
+      }),
+    );
+    await expect(
+      db.identityLinkChallenge.count({
+        where: {
+          orgId: fixture.org.id,
+          surface: "slack",
+          externalUserId: `${fixture.workspaceId}:U123ABC`,
+        },
+      }),
+    ).resolves.toBe(0);
+    await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
   });
 
   it("emits one rejection notice for a mentioned reply's message and app-mention deliveries", async () => {
