@@ -1291,9 +1291,7 @@ integration("Slack ingress", () => {
 
     await ingress.service.accept(
       signedRequest(
-        JSON.stringify(
-          appMention({ eventId: "Ev-deactivated", workspaceId: fixture.workspaceId }),
-        ),
+        JSON.stringify(appMention({ eventId: "Ev-deactivated", workspaceId: fixture.workspaceId })),
       ),
     );
     await ingress.drain();

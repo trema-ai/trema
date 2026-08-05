@@ -28,8 +28,8 @@ import {
   resolveSlackRequest,
   SLACK_PROVIDER_KEY,
   type SlackLifecycleEvent,
-  type SlackRequestRejectionContext,
   SlackRequestRejectedError,
+  type SlackRequestRejectionContext,
 } from "#server/services/messaging/slack.js";
 import {
   createRunServices,
@@ -583,13 +583,7 @@ export class SlackIngressService {
             error.context,
           );
         } else if (shouldNotify(error.reason)) {
-          await this.#safeNotice(
-            event,
-            SAFE_REJECTION,
-            "private",
-            connectionIds,
-            error.context,
-          );
+          await this.#safeNotice(event, SAFE_REJECTION, "private", connectionIds, error.context);
         }
         return "completed";
       }
@@ -942,7 +936,9 @@ export class SlackIngressService {
         ? { id: input.connectionId, orgId: input.orgId }
         : await this.#options.db.connectorConnection.findFirst({
             where: {
-              ...(input.connectionIds === undefined ? {} : { id: { in: [...input.connectionIds] } }),
+              ...(input.connectionIds === undefined
+                ? {}
+                : { id: { in: [...input.connectionIds] } }),
               providerKey: SLACK_PROVIDER_KEY,
               revokedAt: null,
               config: { path: ["team.id"], equals: input.workspaceId },

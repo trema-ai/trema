@@ -130,21 +130,24 @@ describe("LinkSlackPage", () => {
       reason: "not_a_member",
       message: "You must be an active member of this organization to link this Slack account.",
     },
-  ] as const)("renders the $reason redeem failure without matching prose", async ({ reason, message }) => {
-    api.redeem.mockRejectedValue(
-      Object.assign(new Error("Server prose that must not be parsed"), {
-        data: { reason },
-      }),
-    );
-    renderPage();
+  ] as const)(
+    "renders the $reason redeem failure without matching prose",
+    async ({ reason, message }) => {
+      api.redeem.mockRejectedValue(
+        Object.assign(new Error("Server prose that must not be parsed"), {
+          data: { reason },
+        }),
+      );
+      renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Link my Trema account" }));
+      fireEvent.click(screen.getByRole("button", { name: "Link my Trema account" }));
 
-    await waitFor(() => {
-      expect(screen.getByText(message)).toBeTruthy();
-    });
-    expect(api.switchOrg).not.toHaveBeenCalled();
-  });
+      await waitFor(() => {
+        expect(screen.getByText(message)).toBeTruthy();
+      });
+      expect(api.switchOrg).not.toHaveBeenCalled();
+    },
+  );
 
   it("confirms a successful link after redeem", async () => {
     api.redeem.mockResolvedValue({

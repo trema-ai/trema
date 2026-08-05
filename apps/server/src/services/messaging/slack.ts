@@ -931,7 +931,8 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     locationRef,
     ...(input.directMessage ? { dm: { externalUserId } } : {}),
   });
-  if (location.kind === "unbound") throw new SlackRequestRejectedError("location_unbound", resolved);
+  if (location.kind === "unbound")
+    throw new SlackRequestRejectedError("location_unbound", resolved);
   if (location.kind === "unlinked") {
     throw new SlackRequestRejectedError("identity_unlinked", resolved);
   }
