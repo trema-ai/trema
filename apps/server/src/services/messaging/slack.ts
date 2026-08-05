@@ -83,8 +83,16 @@ export class SlackUninstallError extends Error {
   }
 }
 
+export interface SlackRequestRejectionContext {
+  orgId: string;
+  connectionId: string;
+}
+
 export class SlackRequestRejectedError extends Error {
-  constructor(readonly reason: SlackRejectReason) {
+  constructor(
+    readonly reason: SlackRejectReason,
+    readonly context?: SlackRequestRejectionContext,
+  ) {
     super("Slack request could not be resolved to an authorized Trema context");
     this.name = "SlackRequestRejectedError";
   }
@@ -864,18 +872,19 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     throw new SlackRequestRejectedError("ambiguous_installation");
   }
   const connection = candidates[0]!;
+  const resolved = { orgId: connection.orgId, connectionId: connection.id };
   const botUserId = stringField(connection.config, "bot_user_id");
   if (botUserId !== null && userId === botUserId) {
-    throw new SlackRequestRejectedError("bot_event");
+    throw new SlackRequestRejectedError("bot_event", resolved);
   }
   const storedEnterpriseId = stringField(connection.config, "enterprise.id");
   if (input.enterpriseId && storedEnterpriseId && input.enterpriseId !== storedEnterpriseId) {
     log.warn("Slack enterprise did not match installation", { workspaceId });
-    throw new SlackRequestRejectedError("enterprise_mismatch");
+    throw new SlackRequestRejectedError("enterprise_mismatch", resolved);
   }
   const credentialHealth = connectorConnectionCredentialHealth(connection, input.masterKey);
   if (!credentialHealth.credentialAvailable || connection.refreshExhausted) {
-    throw new SlackRequestRejectedError("installation_unavailable");
+    throw new SlackRequestRejectedError("installation_unavailable", resolved);
   }
   try {
     await resolveConnectionCredential(db, {
@@ -888,7 +897,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     });
   } catch (error) {
     if (error instanceof ConnectorReconnectRequiredError) {
-      throw new SlackRequestRejectedError("installation_unavailable");
+      throw new SlackRequestRejectedError("installation_unavailable", resolved);
     }
     throw error;
   }
@@ -904,8 +913,9 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     },
     include: { principal: true },
   });
+  // Control-plane deactivation deletes IdentityLink rows; deactivatedAt is defensive only.
   if (identity?.principal.kind !== "human" || identity.principal.deactivatedAt !== null) {
-    throw new SlackRequestRejectedError("identity_unlinked");
+    throw new SlackRequestRejectedError("identity_unlinked", resolved);
   }
 
   const location = await resolveLocation(db, {
@@ -914,17 +924,20 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     locationRef,
     ...(input.directMessage ? { dm: { externalUserId } } : {}),
   });
-  if (location.kind === "unbound") throw new SlackRequestRejectedError("location_unbound");
-  if (location.kind === "unlinked") throw new SlackRequestRejectedError("identity_unlinked");
+  if (location.kind === "unbound")
+    throw new SlackRequestRejectedError("location_unbound", resolved);
+  if (location.kind === "unlinked") {
+    throw new SlackRequestRejectedError("identity_unlinked", resolved);
+  }
   if (location.kind === "personal_disabled") {
-    throw new SlackRequestRejectedError("personal_scopes_disabled");
+    throw new SlackRequestRejectedError("personal_scopes_disabled", resolved);
   }
 
   const orgScope = await db.scope.findFirst({
     where: { orgId: connection.orgId, kind: "org" },
     select: { id: true },
   });
-  if (!orgScope) throw new SlackRequestRejectedError("connector_mismatch");
+  if (!orgScope) throw new SlackRequestRejectedError("connector_mismatch", resolved);
   const scopeChain =
     location.scope.id === orgScope.id ? [orgScope.id] : [orgScope.id, location.scope.id];
   let installation: Awaited<ReturnType<typeof resolveConnectorInstallation>>;
@@ -941,7 +954,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     );
   } catch (error) {
     if (isConnectorResolutionRejection(error)) {
-      throw new SlackRequestRejectedError("connector_mismatch");
+      throw new SlackRequestRejectedError("connector_mismatch", resolved);
     }
     throw error;
   }
@@ -949,7 +962,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     installation.connectionId !== connection.id ||
     installation.credentialOwnerPrincipalId !== connection.ownerPrincipalId
   ) {
-    throw new SlackRequestRejectedError("connector_mismatch");
+    throw new SlackRequestRejectedError("connector_mismatch", resolved);
   }
 
   const conversationThreadRef = input.directMessage ? "" : (threadTs ?? "");
@@ -976,7 +989,7 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     }),
   ]);
   if (binding === null) {
-    throw new SlackRequestRejectedError("location_unbound");
+    throw new SlackRequestRejectedError("location_unbound", resolved);
   }
   // The binding and requester together are the authorization epoch. Rebinding
   // a channel or relinking a Slack user must not steer an active run whose

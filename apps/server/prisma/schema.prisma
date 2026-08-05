@@ -349,7 +349,6 @@ model IdentityLinkChallenge {
   org            Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, surface, externalUserId])
-  @@index([expiresAt])
 }
 
 /// Personal-scope uniqueness is enforced by the DB-level partial unique index

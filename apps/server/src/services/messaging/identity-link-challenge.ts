@@ -19,8 +19,16 @@ export class IdentityLinkChallengeNotFoundError extends Error {
   }
 }
 
+export type IdentityLinkChallengeConflictReason =
+  | "identity_conflict"
+  | "deactivated"
+  | "not_a_member";
+
 export class IdentityLinkChallengeConflictError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly reason: IdentityLinkChallengeConflictReason,
+  ) {
     super(message);
     this.name = "IdentityLinkChallengeConflictError";
   }
@@ -191,6 +199,7 @@ export async function redeemSlackIdentityLinkChallenge(
       });
       throw new IdentityLinkChallengeConflictError(
         "You must be an active member of this organization to link this Slack account",
+        "not_a_member",
       );
     }
     if (principal.deactivatedAt !== null) {
@@ -201,6 +210,7 @@ export async function redeemSlackIdentityLinkChallenge(
       });
       throw new IdentityLinkChallengeConflictError(
         "A deactivated member cannot link a Slack identity",
+        "deactivated",
       );
     }
 
@@ -235,10 +245,11 @@ export async function redeemSlackIdentityLinkChallenge(
       log.warn("Slack identity link challenge rejected", {
         challengeId: challenge.id,
         identityLinkId: existing.id,
-        reason: "conflict",
+        reason: "identity_conflict",
       });
       throw new IdentityLinkChallengeConflictError(
         "This Slack account is already linked to another Trema member. Ask a Trema administrator to resolve the conflict.",
+        "identity_conflict",
       );
     }
 

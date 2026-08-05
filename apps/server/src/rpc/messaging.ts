@@ -34,11 +34,13 @@ function throwMessagingError(error: unknown): never {
   if (error instanceof SlackMessagingValidationError) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
-  if (
-    error instanceof SlackMessagingConflictError ||
-    error instanceof BindingConflictError ||
-    error instanceof IdentityLinkChallengeConflictError
-  ) {
+  if (error instanceof IdentityLinkChallengeConflictError) {
+    throw new ORPCError("CONFLICT", {
+      message: error.message,
+      data: { reason: error.reason },
+    });
+  }
+  if (error instanceof SlackMessagingConflictError || error instanceof BindingConflictError) {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
   if (
