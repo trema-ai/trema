@@ -125,3 +125,34 @@ so the setup refuses any other name to protect dev data. `mise run test`
 wires this up: it starts this worktree's Postgres and runs the suite
 against a `trema_test` database on it, created on first use. Never point
 `TEST_DATABASE_URL` at the dev database from `apps/server/.env`.
+
+## Cursor Cloud specific instructions
+
+The startup update script only refreshes the toolchain and node deps
+(`mise install` + `pnpm install`); everything below must be done by hand
+in the session because it starts services or depends on live state.
+
+- Docker is required (Postgres + Hatchet run in containers) but is not
+  started automatically. Start the daemon and make the socket usable
+  before any `mise run db:*`/`hatchet:*`/`dev` task, because those tasks
+  call `docker` directly (not via sudo):
+  `sudo service docker start` then `sudo chmod 666 /var/run/docker.sock`.
+  The `ubuntu` user is in the `docker` group, so a fresh login also works.
+- `mise` lives at `~/.local/bin/mise` and is activated from `~/.bashrc`;
+  a non-login shell may need `~/.local/bin` on `PATH` first. Prefix repo
+  commands with `mise exec --` when a shell has not activated mise.
+- Bring the stack up with `mise run dev` (or the split `dev:server`,
+  `dev:worker`, `dev:web` tasks). This checkout is dev slot 0, so the
+  documented default ports apply: web `5173`, server `3000`, Postgres
+  `5432`, Hatchet dashboard `8888`/gRPC `7077`. Develop against
+  `http://localhost:5173` (Vite proxies `/api` and `/rpc` to the server).
+- First boot is dedicated mode: the server logs a one-time
+  `Bootstrap token generated` line on startup. Create an account in the
+  web UI, then redeem that token with an org name on `/bootstrap` to
+  become owner. A new token is minted only when the org does not yet
+  exist, so if you reset the Postgres volume (`mise run dev:clean`) you
+  must read the fresh token from the server log again.
+- Agent runs (chat) also need a model provider configured in the org's
+  admin settings (an OpenAI-compatible endpoint + API key); without one
+  the server still serves context, auth, and admin, and run scheduling
+  simply reports unavailable.
