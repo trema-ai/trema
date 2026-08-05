@@ -51,7 +51,6 @@ type SlackRejectReason =
   | "enterprise_mismatch"
   | "location_unbound"
   | "identity_unlinked"
-  | "identity_deactivated"
   | "personal_scopes_disabled"
   | "connector_mismatch"
   | "bot_event";
@@ -914,14 +913,8 @@ export async function resolveSlackRequest(db: Database, input: ResolveSlackReque
     },
     include: { principal: true },
   });
-  if (
-    identity !== null &&
-    identity.principal.kind === "human" &&
-    identity.principal.deactivatedAt !== null
-  ) {
-    throw new SlackRequestRejectedError("identity_deactivated", resolved);
-  }
-  if (identity?.principal.kind !== "human") {
+  // Control-plane deactivation deletes IdentityLink rows; deactivatedAt is defensive only.
+  if (identity?.principal.kind !== "human" || identity.principal.deactivatedAt !== null) {
     throw new SlackRequestRejectedError("identity_unlinked", resolved);
   }
 

@@ -10,6 +10,7 @@ import {
   createClientRegistration,
   deleteClientRegistration,
 } from "#server/services/connectors/index.js";
+import { deactivateMember } from "#server/services/members/index.js";
 import {
   createSlackBinding,
   deleteSlackBinding,
@@ -1280,15 +1281,24 @@ integration("Slack ingress", () => {
     expect(notify).toHaveBeenCalledOnce();
   });
 
-  it("returns the generic safe rejection for deactivated linked members without minting", async () => {
+  it("after control-plane deactivation, Slack messages take the unlinked path and mint a challenge", async () => {
     const notify = vi.fn<SlackIngressNotice>(async () => undefined);
     const fixture = await setup("TDEACTIVATEDLINK", true);
-    await db.principal.update({
-      where: { id: fixture.member.id },
-      data: { deactivatedAt: new Date() },
+    const owner = await db.principal.create({
+      data: { orgId: fixture.org.id, kind: "human", displayName: "Owner" },
     });
-    const ingress = subject({ notify });
+    await deactivateMember(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: owner.id,
+      principalId: fixture.member.id,
+    });
+    await expect(
+      db.identityLink.count({
+        where: { orgId: fixture.org.id, principalId: fixture.member.id },
+      }),
+    ).resolves.toBe(0);
 
+    const ingress = subject({ notify });
     await ingress.service.accept(
       signedRequest(
         JSON.stringify(appMention({ eventId: "Ev-deactivated", workspaceId: fixture.workspaceId })),
@@ -1301,7 +1311,9 @@ integration("Slack ingress", () => {
       expect.objectContaining({
         channelId: "C123ABC",
         visibility: "private",
-        text: "Trema can't start work from this Slack account or conversation. Ask a Trema administrator to check the Slack connection, member link, and conversation binding.",
+        text: expect.stringMatching(
+          /This Slack account isn't linked to Trema\. <http:\/\/127\.0\.0\.1:5173\/link\/slack\?token=[^|>]+\|Link your Trema account>, then retry your message\./,
+        ),
         orgId: fixture.org.id,
         connectionId: fixture.connection.id,
       }),
@@ -1314,7 +1326,7 @@ integration("Slack ingress", () => {
           externalUserId: `${fixture.workspaceId}:U123ABC`,
         },
       }),
-    ).resolves.toBe(0);
+    ).resolves.toBe(1);
     await expect(db.runIntent.count({ where: { orgId: fixture.org.id } })).resolves.toBe(0);
   });
 

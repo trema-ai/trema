@@ -931,6 +931,8 @@ export class SlackIngressService {
   }
 
   async #sendNotice(input: Parameters<SlackIngressNotice>[0]): Promise<void> {
+    // When orgId+connectionId are threaded from resolveSlackRequest, skip the
+    // findFirst predicates — that connection was already validated in this request.
     const connection =
       input.orgId !== undefined && input.connectionId !== undefined
         ? { id: input.connectionId, orgId: input.orgId }
@@ -1016,7 +1018,6 @@ class SlackTargetMismatchError extends Error {
 function shouldNotify(reason: SlackRequestRejectedError["reason"]): boolean {
   return (
     reason === "identity_unlinked" ||
-    reason === "identity_deactivated" ||
     reason === "location_unbound" ||
     reason === "personal_scopes_disabled" ||
     reason === "connector_mismatch"

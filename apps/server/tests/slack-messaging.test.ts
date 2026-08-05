@@ -5,6 +5,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptEnvelope, encryptEnvelope } from "#server/lib/crypto/index.js";
 import { createPrismaClient } from "#server/lib/db/index.js";
 import { createClientRegistration } from "#server/services/connectors/index.js";
+import { deactivateMember } from "#server/services/members/index.js";
 import {
   createSlackBinding,
   listSlackBindings,
@@ -244,7 +245,7 @@ integration("Slack installation and conversation bindings", () => {
     ).rejects.toBeInstanceOf(SlackRequestRejectedError);
   });
 
-  it("rejects deactivated linked members without treating them as unlinked", async () => {
+  it("after control-plane deactivation, resolveSlackRequest rejects as identity_unlinked", async () => {
     const fixture = await setup("TDEACTIVATED");
     await createSlackBinding(db, {
       orgId: fixture.org.id,
@@ -261,10 +262,19 @@ integration("Slack installation and conversation bindings", () => {
       userId: "U123ABC",
       principalId: fixture.member.id,
     });
-    await db.principal.update({
-      where: { id: fixture.member.id },
-      data: { deactivatedAt: new Date() },
+    const owner = await db.principal.create({
+      data: { orgId: fixture.org.id, kind: "human", displayName: "Owner" },
     });
+    await deactivateMember(db, {
+      orgId: fixture.org.id,
+      actorPrincipalId: owner.id,
+      principalId: fixture.member.id,
+    });
+    await expect(
+      db.identityLink.count({
+        where: { orgId: fixture.org.id, principalId: fixture.member.id },
+      }),
+    ).resolves.toBe(0);
 
     await expect(
       resolveSlackRequest(db, {
@@ -274,7 +284,7 @@ integration("Slack installation and conversation bindings", () => {
         masterKey,
       }),
     ).rejects.toMatchObject({
-      reason: "identity_deactivated",
+      reason: "identity_unlinked",
       context: { orgId: fixture.org.id, connectionId: fixture.connection.id },
     });
   });

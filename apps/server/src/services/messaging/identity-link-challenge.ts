@@ -245,7 +245,7 @@ export async function redeemSlackIdentityLinkChallenge(
       log.warn("Slack identity link challenge rejected", {
         challengeId: challenge.id,
         identityLinkId: existing.id,
-        reason: "conflict",
+        reason: "identity_conflict",
       });
       throw new IdentityLinkChallengeConflictError(
         "This Slack account is already linked to another Trema member. Ask a Trema administrator to resolve the conflict.",
