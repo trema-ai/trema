@@ -22,6 +22,7 @@ import {
   resolveConnectionCredential,
   resolveStoredClientRegistration,
 } from "#server/services/connectors/index.js";
+import { mintSlackIdentityLinkChallenge } from "#server/services/messaging/identity-link-challenge.js";
 import {
   applySlackLifecycleEvent,
   resolveSlackRequest,
@@ -568,6 +569,13 @@ export class SlackIngressService {
             "channel",
             connectionIds,
           );
+        } else if (error.reason === "identity_unlinked") {
+          await this.#safeNotice(
+            event,
+            await this.#identityLinkNotice(event, connectionIds),
+            "private",
+            connectionIds,
+          );
         } else if (shouldNotify(error.reason)) {
           await this.#safeNotice(event, SAFE_REJECTION, "private", connectionIds);
         }
@@ -885,6 +893,41 @@ export class SlackIngressService {
     url.searchParams.set("workspaceId", surfaceRef.teamRef);
     url.searchParams.set("channelId", surfaceRef.channelRef);
     return `This channel isn't connected to a Trema scope. <${url.toString()}|Configure channel>.`;
+  }
+
+  async #identityLinkNotice(
+    event: MessageSurfaceEvent | InteractionSurfaceEvent,
+    connectionIds?: readonly string[],
+  ): Promise<string> {
+    const surfaceRef = event.surfaceRef;
+    if (surfaceRef === undefined || surfaceRef.teamRef === undefined) return SAFE_REJECTION;
+    const connection = await this.#options.db.connectorConnection.findFirst({
+      where: {
+        ...(connectionIds === undefined ? {} : { id: { in: [...connectionIds] } }),
+        providerKey: "slack",
+        revokedAt: null,
+        config: { path: ["team.id"], equals: surfaceRef.teamRef },
+        owner: { kind: "agent", deactivatedAt: null },
+      },
+      select: { orgId: true },
+    });
+    if (connection === null) return SAFE_REJECTION;
+    try {
+      const minted = await mintSlackIdentityLinkChallenge(this.#options.db, this.#options.env, {
+        orgId: connection.orgId,
+        workspaceId: surfaceRef.teamRef,
+        userId: event.authorRef,
+      });
+      return `This Slack account isn't linked to Trema. <${minted.link}|Link your Trema account>, then retry your message.`;
+    } catch (error) {
+      log.warn("Slack identity link challenge mint failed", {
+        orgId: connection.orgId,
+        workspaceId: surfaceRef.teamRef,
+        userId: event.authorRef,
+        error,
+      });
+      return SAFE_REJECTION;
+    }
   }
 
   async #sendNotice(input: Parameters<SlackIngressNotice>[0]): Promise<void> {

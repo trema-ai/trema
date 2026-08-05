@@ -21,7 +21,7 @@ import {
   startOAuthConnect,
 } from "#server/services/connectors/index.js";
 
-const SLACK_PROVIDER_KEY = "slack";
+export const SLACK_PROVIDER_KEY = "slack";
 const slackProvider = loadProviderCatalog().find(({ key }) => key === SLACK_PROVIDER_KEY);
 
 if (!slackProvider) throw new Error("Slack connector provider is missing from the catalog");

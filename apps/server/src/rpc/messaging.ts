@@ -9,9 +9,13 @@ import {
   createSlackBinding,
   deleteSlackBinding,
   deleteSlackIdentityLink,
+  IdentityLinkChallengeConflictError,
+  IdentityLinkChallengeNotFoundError,
   listSlackBindings,
   listSlackIdentityLinks,
   listSlackInstallations,
+  previewSlackIdentityLinkChallenge,
+  redeemSlackIdentityLinkChallenge,
   SLACK_INTERACTIONS_PATH,
   SlackInstallationNotFoundError,
   SlackMessagingConflictError,
@@ -24,19 +28,24 @@ import {
   uninstallSlackInstallation,
 } from "#server/services/messaging/index.js";
 import { OrgAgentNotFoundError, requireOrgAgent } from "#server/services/org/index.js";
-import { requireCapability } from "./builders.js";
+import { authed, pub, requireCapability } from "./builders.js";
 
 function throwMessagingError(error: unknown): never {
   if (error instanceof SlackMessagingValidationError) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
-  if (error instanceof SlackMessagingConflictError || error instanceof BindingConflictError) {
+  if (
+    error instanceof SlackMessagingConflictError ||
+    error instanceof BindingConflictError ||
+    error instanceof IdentityLinkChallengeConflictError
+  ) {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
   if (
     error instanceof SlackInstallationNotFoundError ||
     error instanceof BindingNotFoundError ||
-    error instanceof OrgAgentNotFoundError
+    error instanceof OrgAgentNotFoundError ||
+    error instanceof IdentityLinkChallengeNotFoundError
   ) {
     throw new ORPCError("NOT_FOUND", { message: error.message });
   }
@@ -394,6 +403,80 @@ const removeIdentity = requireCapability("manage_members")
     }
   });
 
+const previewIdentityChallenge = pub
+  .route({
+    method: "POST",
+    path: "/messaging/slack/identity-challenges/preview",
+    summary: "Preview a Slack identity link challenge",
+    description:
+      "Look up the organization and Slack identity bound to a self-link challenge token before redeeming it. Returns not-found when the challenge is invalid, expired, or already redeemed.",
+    tags: ["Messaging"],
+  })
+  .input(
+    z.object({
+      token: z.string().min(1).describe("The challenge token from the Slack self-link URL."),
+    }),
+  )
+  .output(
+    z.object({
+      orgId: z.uuid(),
+      orgName: z.string(),
+      surface: z.literal("slack"),
+      workspaceId: z.string(),
+      userId: z.string(),
+      expiresAt: z.string(),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    try {
+      const preview = await previewSlackIdentityLinkChallenge(context.db, input.token);
+      return {
+        orgId: preview.orgId,
+        orgName: preview.orgName,
+        surface: "slack" as const,
+        workspaceId: preview.workspaceId,
+        userId: preview.userId,
+        expiresAt: preview.expiresAt.toISOString(),
+      };
+    } catch (error) {
+      throwMessagingError(error);
+    }
+  });
+
+const redeemIdentityChallenge = authed
+  .route({
+    method: "POST",
+    path: "/messaging/slack/identity-challenges/redeem",
+    summary: "Redeem a Slack identity link challenge",
+    description:
+      "Link the Slack identity that initiated a self-link challenge to the signed-in member's own Trema principal. Rejects expired, replayed, conflicting, and deactivated-member attempts.",
+    tags: ["Messaging"],
+  })
+  .input(
+    z.object({
+      token: z.string().min(1).describe("The challenge token from the Slack self-link URL."),
+    }),
+  )
+  .output(
+    z.object({
+      orgId: z.uuid(),
+      identityLinkId: z.uuid(),
+      principalId: z.uuid(),
+      workspaceId: z.string(),
+      userId: z.string(),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    try {
+      return await redeemSlackIdentityLinkChallenge(context.db, {
+        token: input.token,
+        authId: context.session.user.id,
+      });
+    } catch (error) {
+      throwMessagingError(error);
+    }
+  });
+
 export const messagingRouter = {
   slack: {
     manifest,
@@ -404,5 +487,9 @@ export const messagingRouter = {
     },
     bindings: { list: listBindings, create: createBinding, remove: removeBinding },
     identities: { list: listIdentities, set: setIdentity, remove: removeIdentity },
+    identityChallenges: {
+      preview: previewIdentityChallenge,
+      redeem: redeemIdentityChallenge,
+    },
   },
 };

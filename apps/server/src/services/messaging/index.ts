@@ -1,4 +1,16 @@
 export {
+  hashIdentityLinkChallengeToken,
+  IDENTITY_LINK_CHALLENGE_TTL_MS,
+  IdentityLinkChallengeConflictError,
+  IdentityLinkChallengeNotFoundError,
+  type MintSlackIdentityLinkChallengeInput,
+  mintSlackIdentityLinkChallenge,
+  previewSlackIdentityLinkChallenge,
+  type RedeemSlackIdentityLinkChallengeInput,
+  redeemSlackIdentityLinkChallenge,
+  slackIdentityLinkUrl,
+} from "#server/services/messaging/identity-link-challenge.js";
+export {
   IngressWorkTracker,
   type SlackIngressAcknowledgement,
   SlackIngressBodyTooLargeError,
@@ -20,6 +32,7 @@ export {
   SLACK_BOT_SCOPES,
   SLACK_EVENTS_PATH,
   SLACK_INTERACTIONS_PATH,
+  SLACK_PROVIDER_KEY,
   SlackInstallationNotFoundError,
   type SlackLifecycleEvent,
   SlackMessagingConflictError,
